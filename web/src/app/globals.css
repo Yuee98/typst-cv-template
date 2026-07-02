@@ -36,7 +36,7 @@ body {
 
 @page {
   margin: 0;
-  size: Letter;
+  size: A4;
 }
 
 @media print {
@@ -49,10 +49,11 @@ body {
 
   body {
     print-color-adjust: exact;
+    width: 210mm;
   }
 
   header,
-  .editor-pane,
+  .editor-column,
   .preview-pane > div:first-child,
   .preview-error {
     display: none !important;
@@ -60,24 +61,35 @@ body {
 
   main,
   main > div,
+  .workspace,
+  .preview-column,
   .preview-pane,
   .preview-scroll,
   .preview-scroll > div {
     display: block !important;
     height: auto !important;
     min-height: 0 !important;
+    max-width: none !important;
+    width: 210mm !important;
     overflow: visible !important;
     padding: 0 !important;
     margin: 0 !important;
+    gap: 0 !important;
     background: white !important;
     border: 0 !important;
     box-shadow: none !important;
   }
 
   .typst-page-shell {
-    break-after: page;
+    height: 297mm !important;
     box-shadow: none !important;
     margin: 0 !important;
+    overflow: hidden !important;
+    width: 210mm !important;
+  }
+
+  .typst-page-shell:not(:last-child) {
+    break-after: page;
     page-break-after: always;
   }
 
@@ -87,7 +99,7 @@ body {
   }
 
   .typst-page-shell svg {
-    height: 11in !important;
-    width: 8.5in !important;
+    height: 297mm !important;
+    width: 210mm !important;
   }
 }

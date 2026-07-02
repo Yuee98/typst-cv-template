@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export function Toolbar({ children }: { children: ReactNode }) {
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 print:hidden">
+    <header className="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border border-slate-200 bg-white px-4 py-3 shadow-sm print:hidden">
       {children}
     </header>
   );
@@ -10,6 +10,10 @@ export function Toolbar({ children }: { children: ReactNode }) {
 
 export function ToolbarGroup({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center gap-2">{children}</div>;
+}
+
+export function ToolbarSeparator() {
+  return <span aria-hidden="true" className="hidden h-6 w-px bg-slate-200 sm:block" />;
 }
 
 export function ToolbarTitle() {

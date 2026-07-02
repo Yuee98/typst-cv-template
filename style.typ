@@ -1,5 +1,5 @@
-#let page-width = 8.5in
-#let page-height = 11in
+#let page-width = 210mm
+#let page-height = 297mm
 #let page-margin-x = 0.55in
 #let page-margin-top = 0.52in
 #let page-margin-bottom = 0.46in

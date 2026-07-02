@@ -6,8 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { FormProvider, useForm, useWatch } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
-import { Toolbar, ToolbarGroup, ToolbarTitle } from "@/components/layout/toolbar";
+import { Toolbar, ToolbarGroup, ToolbarSeparator, ToolbarTitle } from "@/components/layout/toolbar";
 import { Button } from "@/components/ui/button";
+import { GithubIcon } from "@/components/ui/github-icon";
 import { CvEditor } from "@/components/cv-builder/editors";
 import { PreviewPane, type PreviewStatus } from "@/components/cv-builder/preview-pane";
 import { buildTypstDocument } from "@/lib/cv/typst";
@@ -137,10 +138,17 @@ export function CvBuilder() {
         <Toolbar>
           <ToolbarTitle />
           <ToolbarGroup>
-            <Button type="button" variant="secondary" onClick={() => window.print()}>
-              <Printer />
-              Print
+            <Button variant="secondary" asChild>
+              <a
+                href="https://github.com/Yuee98/typst-cv-template"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <GithubIcon className="!size-5" />
+                GitHub
+              </a>
             </Button>
+            <ToolbarSeparator />
             <Button type="button" variant="secondary" onClick={exportJson}>
               <Download />
               Export JSON
@@ -149,6 +157,7 @@ export function CvBuilder() {
               <Upload />
               Import JSON
             </Button>
+            <ToolbarSeparator />
             <Button type="button" variant="ghost" onClick={resetToSample}>
               <RefreshCcw />
               Reset sample
@@ -156,6 +165,11 @@ export function CvBuilder() {
             <Button type="button" variant="destructive" onClick={clearLocalData}>
               <Trash2 />
               Clear local
+            </Button>
+            <ToolbarSeparator />
+            <Button type="button" onClick={() => window.print()}>
+              <Printer />
+              Print
             </Button>
             <input
               ref={importInputRef}
