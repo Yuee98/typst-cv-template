@@ -22,7 +22,7 @@
 #let one-line-body-gap = 0.36em
 #let publication-gap = 0.30em
 
-#let resume-style(title: "Alex Chen - Resume", author: "Alex Chen", lang: "zh", body) = {
+#let resume-style(title: "Alex Chen - Resume", author: "Alex Chen", lang: "zh", font: none, body) = {
   set document(title: title, author: author)
   set page(
     width: page-width,
@@ -35,7 +35,7 @@
     ),
   )
   set text(
-    font: body-font,
+    font: if font != none { font } else { body-font },
     size: body-size,
     lang: lang,
   )

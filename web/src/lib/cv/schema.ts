@@ -61,6 +61,7 @@ const headerSchema = z.object({
 export const cvSchema = z.object({
   schemaVersion: z.literal(3),
   typstLang: z.enum(["zh", "en"]),
+  bodyFont: z.string().optional(),
   header: headerSchema,
   sectionTitles: sectionTitlesSchema,
   profile: z.array(textItemSchema),

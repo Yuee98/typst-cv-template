@@ -123,9 +123,21 @@ function renderShowRule(data: CvData) {
   const name = data.header.name.trim() || fallbackName;
   const title = data.typstLang === "zh" ? `${name} - 简历` : `${name} - Resume`;
 
-  return `#show: resume-style.with(title: ${typstString(title)}, author: ${typstString(
-    name,
-  )}, lang: ${typstString(data.typstLang)})`;
+  const args = [
+    `title: ${typstString(title)}`,
+    `author: ${typstString(name)}`,
+    `lang: ${typstString(data.typstLang)}`,
+  ];
+
+  if (data.bodyFont && data.bodyFont !== "__custom__") {
+    const fontList = data.bodyFont
+      .split(",")
+      .map((f) => typstString(f.trim()))
+      .join(", ");
+    args.push(`font: (${fontList})`);
+  }
+
+  return `#show: resume-style.with(${args.join(", ")})`;
 }
 
 export function buildTypstDocument(data: CvData) {
