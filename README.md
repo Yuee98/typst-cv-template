@@ -30,7 +30,10 @@ Create `output/pdf` first if it does not already exist.
 ## Content Helpers
 
 - `resume-entry(...)`: one company or role with a single project or scope.
-- `company-entry(...)` with nested `project-entry(...)`: one company or role with multiple projects.
+- `company-entry(org, date)[...]`: one company or role block.
+- `project-entry(title, detail, bullets, date: none)`: one project inside a company block.
+
+`project-entry` keeps the project title on the left and project metadata on the right. If `date` is provided, it is rendered inline as `date · detail`; no extra line is added.
 
 ## Using This Template Privately
 

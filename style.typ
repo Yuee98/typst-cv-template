@@ -19,7 +19,6 @@
 #let entry-heading-detail-gap = 0.44em
 #let entry-detail-body-gap = 0.38em
 #let entry-after-gap = 0.72em
-#let project-after-gap = 0.46em
 #let one-line-body-gap = 0.36em
 #let publication-gap = 0.30em
 
@@ -115,40 +114,36 @@
   )
 ]
 
-#let resume-entry(org, title, detail, date, bullets) = {
-  entry-heading(org, date)
-  v(entry-heading-detail-gap)
+#let project-meta(detail, date: none) = {
+  if date == none {
+    detail
+  } else if detail == none {
+    date
+  } else {
+    [#date · #detail]
+  }
+}
+
+#let project-entry(title, detail, bullets, date: none) = {
   block(width: 100%)[
-    #entry-detail-row(title, detail)
+    #entry-detail-row(title, project-meta(detail, date: date))
   ]
   v(entry-detail-body-gap)
   for item in bullets {
     sub-item(item)
   }
-  v(entry-after-gap)
 }
 
-#let project-entry(name, detail, bullets) = {
-  block(width: 100%)[
-    #entry-detail-row(name, detail)
-  ]
-  v(entry-detail-body-gap)
-  for item in bullets {
-    sub-item(item)
-  }
-  v(project-after-gap)
-}
-
-#let company-entry(org, title, detail, date, projects) = {
+#let company-entry(org, date, body) = {
   entry-heading(org, date)
   v(entry-heading-detail-gap)
-  block(width: 100%)[
-    #entry-detail-row(title, detail)
-  ]
-  v(entry-detail-body-gap)
-  projects
+  body
   v(entry-after-gap)
 }
+
+#let resume-entry(org, title, detail, date, bullets) = company-entry(org, date)[
+  #project-entry(title, detail, bullets)
+]
 
 #let one-line-entry(title, date, bullets) = {
   entry-heading(title, date)
