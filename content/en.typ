@@ -18,16 +18,29 @@
 #skill-item-en("Delivery")[Git, CI/CD, automated testing, code review, release support]
 
 #resume-section("Experience")
-#resume-entry(
+#company-entry(
   "Example Technology",
   [Senior Software Engineer],
-  [Customer Platform],
+  [Product Engineering Team],
   [2023 - Present],
-  (
-    [Led full-stack delivery for customer-facing workflows, including frontend screens, API integration, and database changes.],
-    [Improved performance for selected workflows through request reduction, query tuning, caching, and batch loading.],
-    [Supported release preparation, production investigation, code review, and onboarding for new team members.],
-  ),
+  [
+    #project-entry(
+      [Customer Platform],
+      [Full-stack Development],
+      (
+        [Led full-stack delivery for customer-facing workflows, including frontend screens, API integration, and database changes.],
+        [Improved performance for selected workflows through request reduction, query tuning, caching, and batch loading.],
+      ),
+    )
+    #project-entry(
+      [Internal Engineering Platform],
+      [Developer Productivity],
+      (
+        [Supported release preparation, production investigation, code review, and onboarding for new team members.],
+        [Maintained automation scripts and engineering conventions to reduce repeated work and improve delivery stability.],
+      ),
+    )
+  ],
 )
 
 #resume-entry(

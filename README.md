@@ -27,6 +27,11 @@ Create `output/pdf` first if it does not already exist.
 - `content/cn.typ`: sample Chinese resume content.
 - `content/en.typ`: sample English resume content.
 
+## Content Helpers
+
+- `resume-entry(...)`: one company or role with a single project or scope.
+- `company-entry(...)` with nested `project-entry(...)`: one company or role with multiple projects.
+
 ## Using This Template Privately
 
 Keep your real resume content in a private repository and import this template as a subtree:
