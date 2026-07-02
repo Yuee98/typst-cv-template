@@ -23,8 +23,8 @@
   [2023 - Present],
 )[
   #project-entry(
-    [Customer Platform],
     [Senior Software Engineer],
+    [Customer Platform],
     (
       [Led full-stack delivery for customer-facing workflows, including frontend screens, API integration, and database changes.],
       [Improved performance for selected workflows through request reduction, query tuning, caching, and batch loading.],
@@ -32,8 +32,8 @@
     date: [2023 - 2024],
   )
   #project-entry(
-    [Internal Engineering Platform],
     [Senior Software Engineer],
+    [Internal Engineering Platform],
     (
       [Supported release preparation, production investigation, code review, and onboarding for new team members.],
       [Maintained automation scripts and engineering conventions to reduce repeated work and improve delivery stability.],
