@@ -26,6 +26,24 @@ Create `output/pdf` first if it does not already exist.
 - `style.typ`: shared layout and typography helpers.
 - `content/cn.typ`: sample Chinese resume content.
 - `content/en.typ`: sample English resume content.
+- `web/`: static Next.js CV builder that renders this template in the browser.
+
+## Web Builder
+
+```powershell
+pnpm install
+pnpm --filter web dev
+pnpm --filter web build
+pnpm --filter web lint
+pnpm --filter web typecheck
+```
+
+The web app syncs the root `style.typ` into `web/public/typst/style.typ` before dev and build, so the root Typst style remains the source of truth.
+
+For Vercel, keep the project root at the repository root:
+
+- Build command: `pnpm --filter web build`
+- Output directory: `web/out`
 
 ## Content Helpers
 
