@@ -1,6 +1,6 @@
 import { cvSchema, type CvData } from "./schema";
 
-export const CV_STORAGE_KEY = "typst-cv-builder:data:v3";
+const CV_STORAGE_KEY = "typst-cv-builder:data";
 
 export function loadStoredCvData(): CvData | null {
   if (typeof window === "undefined") {

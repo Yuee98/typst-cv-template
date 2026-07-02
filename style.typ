@@ -150,12 +150,20 @@
   v(entry-after-gap)
 }
 
-#let publication(label, body) = {
+#let publication-counter = counter("publication")
+
+#let publication(authors, title, venue, year) = {
+  publication-counter.step()
   grid(
     columns: (1.65em, 1fr),
     column-gutter: 0.08em,
-    [#label],
-    body,
+    context { [[#{publication-counter.get().first()}]] },
+    {
+      authors
+      [. ]
+      title
+      [. #emph[#venue], #year.]
+    },
   )
   v(publication-gap)
 }

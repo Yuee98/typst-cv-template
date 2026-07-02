@@ -1,22 +1,23 @@
 import type { CvData } from "./schema";
 
 export const sampleCvData: CvData = {
-  schemaVersion: 3,
+  schemaVersion: 5,
   typstLang: "zh",
   header: {
     name: "陈明",
     subtitle: "全栈开发工程师 | 产品工程 | 技术负责人",
     email: "alex.chen@example.com",
     phone: "+1 555-0100",
+    selfName: "Ming Chen",
   },
   sectionTitles: {
-    profile: "个人简介",
-    skills: "技术能力",
-    experience: "工作经历",
-    education: "教育背景",
-    research: "研究经历",
-    publications: "发表成果",
-    additional: "其他",
+    profile: { title: "个人简介", isDisplay: true },
+    skills: { title: "技术能力", isDisplay: true },
+    experience: { title: "工作经历", isDisplay: true },
+    education: { title: "教育背景", isDisplay: true },
+    research: { title: "研究经历", isDisplay: true },
+    publications: { title: "发表成果", isDisplay: true },
+    additional: { title: "其他", isDisplay: true },
   },
   profile: [
     {
@@ -107,7 +108,15 @@ export const sampleCvData: CvData = {
     },
   ],
   research: [],
-  publications: [],
+  publications: [
+    {
+      authors: "Ming Chen, John Doe, Jane Smith",
+      title: "Scalable Micro-Frontend Architecture for Large-Scale SPAs",
+      venue: "IEEE International Conference on Web Services",
+      year: "2023",
+      url: "https://doi.org/10.1109/ICWS.2023.00012",
+    },
+  ],
   additional: [
     {
       label: "语言能力",

@@ -1,4 +1,4 @@
-import type { Company, CvData, Project, ResumeEntry } from "./schema";
+import type { Company, CvData, Project, Publication, ResumeEntry } from "./schema";
 
 function typstString(value: string) {
   return JSON.stringify(value);
@@ -17,13 +17,15 @@ function typstTuple(items: string[]) {
   return `(\n${items.map((item) => `    ${item},`).join("\n")}\n  )`;
 }
 
-function renderSection(title: string, body: string[]) {
+function renderSection(
+  section: { title: string; isDisplay: boolean },
+  body: string[],
+) {
+  if (!section.isDisplay) return "";
   const nonEmptyBody = body.filter(Boolean);
-  if (nonEmptyBody.length === 0) {
-    return "";
-  }
+  if (nonEmptyBody.length === 0) return "";
 
-  return [`#resume-section(${typstString(title)})`, ...nonEmptyBody].join("\n");
+  return [`#resume-section(${typstString(section.title)})`, ...nonEmptyBody].join("\n");
 }
 
 function renderProject(project: Project) {
@@ -67,6 +69,32 @@ function renderResumeEntry(entry: ResumeEntry) {
   ].join("\n");
 }
 
+function renderAuthors(authors: string, selfName: string): string {
+  if (!selfName.trim()) return typstString(authors);
+
+  const segments = authors.split(",").map((s) => s.trim());
+  const normalized = selfName.trim().toLowerCase();
+  const parts = segments.map((segment) =>
+    segment.toLowerCase().includes(normalized) ? `#underline[${segment}]` : segment,
+  );
+  return `[${parts.join(", ")}]`;
+}
+
+function renderPublication(pub: Publication, selfName: string): string {
+  const titleContent = pub.url.trim()
+    ? `[#link(${typstString(pub.url.trim())})[${pub.title}]]`
+    : `[${pub.title}]`;
+
+  return [
+    "#publication(",
+    `  ${renderAuthors(pub.authors, selfName)},`,
+    `  ${titleContent},`,
+    `  ${typstString(pub.venue)},`,
+    `  ${typstString(pub.year)},`,
+    ")",
+  ].join("\n");
+}
+
 function renderContent(data: CvData) {
   const sections = [
     [
@@ -103,9 +131,7 @@ function renderContent(data: CvData) {
     ),
     renderSection(
       data.sectionTitles.publications,
-      data.publications.map(
-        (item) => `#publication(${typstString(item.label)}, ${typstString(item.body)})`,
-      ),
+      data.publications.map((item) => renderPublication(item, data.header.selfName)),
     ),
     renderSection(
       data.sectionTitles.additional,

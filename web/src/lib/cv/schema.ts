@@ -37,18 +37,26 @@ const oneLineEntrySchema = z.object({
 });
 
 const publicationSchema = z.object({
-  label: z.string(),
-  body: z.string(),
+  authors: z.string(),
+  title: z.string(),
+  venue: z.string(),
+  year: z.string(),
+  url: z.string(),
+});
+
+const sectionTitleSchema = z.object({
+  title: z.string(),
+  isDisplay: z.boolean(),
 });
 
 const sectionTitlesSchema = z.object({
-  profile: z.string(),
-  skills: z.string(),
-  experience: z.string(),
-  education: z.string(),
-  research: z.string(),
-  publications: z.string(),
-  additional: z.string(),
+  profile: sectionTitleSchema,
+  skills: sectionTitleSchema,
+  experience: sectionTitleSchema,
+  education: sectionTitleSchema,
+  research: sectionTitleSchema,
+  publications: sectionTitleSchema,
+  additional: sectionTitleSchema,
 });
 
 const headerSchema = z.object({
@@ -56,10 +64,11 @@ const headerSchema = z.object({
   subtitle: z.string(),
   email: z.string(),
   phone: z.string(),
+  selfName: z.string(),
 });
 
 export const cvSchema = z.object({
-  schemaVersion: z.literal(3),
+  schemaVersion: z.literal(5),
   typstLang: z.enum(["zh", "en"]),
   bodyFont: z.string().optional(),
   header: headerSchema,
