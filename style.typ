@@ -90,10 +90,6 @@
   #strong[#label]: #body
 ]
 
-#let skill-item-en(label, body) = bullet[
-  #strong[#label]: #body
-]
-
 #let sub-item(body) = bullet(body, level: 2)
 
 #let entry-heading(org, date) = block(width: 100%)[
@@ -116,11 +112,11 @@
 
 #let project-meta(detail, date: none) = {
   if date == none {
-    detail
+    text(style: "italic")[#detail]
   } else if detail == none {
     date
   } else {
-    [#date | #detail]
+    [#date · #text(style: "italic")[#detail]]
   }
 }
 

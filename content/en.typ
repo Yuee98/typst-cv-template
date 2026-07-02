@@ -12,10 +12,10 @@
 #plain-item[Regularly works on product requirements, technical design, code review, performance tuning, and engineering quality improvements.]
 
 #resume-section("Technical Skills")
-#skill-item-en("Frontend")[TypeScript, JavaScript, React, HTML/CSS, complex forms, reusable components]
-#skill-item-en("Backend")[C\#, .NET, Web API, authorization, data aggregation, service integration]
-#skill-item-en("Database")[SQL Server, T-SQL, query tuning, indexing, stored procedures]
-#skill-item-en("Delivery")[Git, CI/CD, automated testing, code review, release support]
+#skill-item("Frontend")[TypeScript, JavaScript, React, HTML/CSS, complex forms, reusable components]
+#skill-item("Backend")[C\#, .NET, Web API, authorization, data aggregation, service integration]
+#skill-item("Database")[SQL Server, T-SQL, query tuning, indexing, stored procedures]
+#skill-item("Delivery")[Git, CI/CD, automated testing, code review, release support]
 
 #resume-section("Experience")
 #company-entry(
@@ -62,5 +62,5 @@
 )
 
 #resume-section("Additional")
-#skill-item-en("Languages")[English for professional communication and documentation.]
-#skill-item-en("Interests")[Developer productivity, platform engineering, and practical automation.]
+#skill-item("Languages")[English for professional communication and documentation.]
+#skill-item("Interests")[Developer productivity, platform engineering, and practical automation.]
