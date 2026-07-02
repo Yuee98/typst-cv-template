@@ -4,11 +4,11 @@ export const sampleCvData: CvData = {
   schemaVersion: 5,
   typstLang: "zh",
   header: {
-    name: "陈明",
-    subtitle: "全栈开发工程师 | 产品工程 | 技术负责人",
-    email: "alex.chen@example.com",
-    phone: "+1 555-0100",
-    selfName: "Ming Chen",
+    name: "周林",
+    subtitle: "Senior Full-Stack Engineer | Platform Engineering | AI Products",
+    email: "lin.zhou@example.com",
+    phone: "+1 415-555-0128",
+    selfName: "Lin Zhou",
   },
   sectionTitles: {
     profile: { title: "个人简介", isDisplay: true },
@@ -21,77 +21,81 @@ export const sampleCvData: CvData = {
   },
   profile: [
     {
-      body: "全栈开发工程师，具备前端、后端、数据库、交付工具和线上支持经验，能够参与从需求分析到功能上线的完整研发流程。",
+      body: "全栈工程师，长期参与 B2B SaaS、AI workflow 和内部平台建设，能够从产品需求、系统设计一路推进到上线交付。",
     },
     {
-      body: "日常负责产品需求拆解、技术方案设计、代码评审、性能优化、工程质量改进和团队协作支持。",
+      body: "关注 developer experience、type-safe API、可观测性和性能优化，习惯在中英文团队环境中推动工程规范落地。",
     },
   ],
   skills: [
     {
       label: "前端开发",
-      body: "TypeScript、JavaScript、React、HTML/CSS、复杂表单、可复用组件",
+      body: "TypeScript、React、Next.js、React Hook Form、Zod、Design System、复杂表单与可访问性",
     },
     {
       label: "后端开发",
-      body: "C#、.NET、Web API、权限校验、数据聚合、服务集成",
+      body: "Node.js、C#/.NET、REST API、PostgreSQL、SQL Server、权限模型、任务队列",
     },
     {
-      label: "数据库",
-      body: "SQL Server、T-SQL、查询优化、索引设计、存储过程",
+      label: "平台工程",
+      body: "CI/CD、Docker、Vercel、Azure、OpenTelemetry、feature flags、发布与回滚流程",
     },
     {
-      label: "工程交付",
-      body: "Git、CI/CD、自动化测试、代码评审、发布支持",
+      label: "AI 产品",
+      body: "LLM workflow、prompt evaluation、human-in-the-loop review、RAG 原型和内部工具自动化",
+    },
+    {
+      label: "协作能力",
+      body: "技术方案写作、code review、跨时区沟通、mentoring、英文技术文档",
     },
   ],
   experience: [
     {
-      org: "示例科技有限公司",
+      org: "Northstar Labs 北辰实验室",
       date: "2023年 - 至今",
       projects: [
         {
-          title: "高级软件工程师",
-          detail: "客户业务平台",
-          date: "2023年 - 2024年",
+          title: "Senior Software Engineer",
+          detail: "AI Workflow Platform",
+          date: "2024年 - 至今",
           bullets: [
             {
-              body: "负责面向客户业务流程的全栈交付，覆盖前端页面、API 集成和数据库变更。",
+              body: "负责 LLM task orchestration、人工审批流和 audit log 的端到端实现，支持运营团队配置多步骤自动化流程。",
             },
             {
-              body: "通过减少请求数量、优化查询、增加缓存和批量加载等方式改进关键流程性能。",
+              body: "用 Zod schema 和 typed API contract 统一前后端数据边界，减少表单回归问题并提升 review 效率。",
             },
           ],
         },
         {
-          title: "高级软件工程师",
-          detail: "内部工程平台",
-          date: "",
+          title: "Full-Stack Engineer",
+          detail: "Developer Portal / Design System",
+          date: "2023年 - 2024年",
           bullets: [
             {
-              body: "参与发布准备、线上问题排查、代码评审和新人引导，推动团队工程实践落地。",
+              body: "建设内部 developer portal，整合服务目录、runbook、on-call dashboard 和发布检查清单。",
             },
             {
-              body: "维护自动化脚本和工程规范，帮助团队减少重复操作并提升交付稳定性。",
+              body: "抽象 React 组件和 shadcn/ui 封装层，统一表单、表格、空状态和错误反馈体验。",
             },
           ],
         },
       ],
     },
     {
-      org: "示例软件有限公司",
+      org: "HarborCloud 数据平台",
       date: "2020年 - 2023年",
       projects: [
         {
-          title: "软件工程师",
-          detail: "内部工具平台",
+          title: "Software Engineer",
+          detail: "Order & Fulfillment Platform",
           date: "",
           bullets: [
             {
-              body: "为运营团队构建内部应用和自动化脚本，提升日常处理效率。",
+              body: "维护订单履约、库存同步和客户通知模块，参与从 legacy service 到 event-driven API 的迁移。",
             },
             {
-              body: "维护 API 服务、数据库查询和监控看板，支持稳定的内部工具运行。",
+              body: "优化高频 SQL 查询和批量导入流程，将关键后台任务的平均处理时间降低 35%。",
             },
           ],
         },
@@ -100,31 +104,78 @@ export const sampleCvData: CvData = {
   ],
   education: [
     {
-      org: "示例大学",
-      title: "理学硕士",
-      detail: "计算机科学",
+      org: "Riverstone University",
+      title: "M.S. in Computer Science",
+      detail: "Distributed Systems",
       date: "2018年 - 2020年",
-      bullets: [],
+      bullets: [
+        {
+          body: "Thesis: Scheduling interactive workloads across heterogeneous edge nodes.",
+        },
+      ],
+    },
+    {
+      org: "江城大学",
+      title: "工学学士",
+      detail: "软件工程",
+      date: "2014年 - 2018年",
+      bullets: [
+        {
+          body: "主修数据结构、操作系统、数据库系统和软件工程实践，参与 ACM 校队训练与课程项目开发。",
+        },
+      ],
     },
   ],
-  research: [],
+  research: [
+    {
+      title: "Human-in-the-loop Code Review Study",
+      date: "2024年",
+      bullets: [
+        {
+          body: "设计实验流程比较 LLM review、人工 review 和 hybrid workflow 在缺陷发现率与误报率上的差异。",
+        },
+        {
+          body: "整理评审日志和开发者反馈，形成 prompt guideline、review checklist 和定量分析报告。",
+        },
+      ],
+    },
+    {
+      title: "Edge Cache Scheduling",
+      date: "2019年 - 2020年",
+      bullets: [
+        {
+          body: "基于 workload trace 构建调度模拟器，分析 cache locality 与 tail latency 之间的权衡。",
+        },
+        {
+          body: "实现多种 baseline 策略并对比 p95/p99 latency、cache hit rate 和资源利用率。",
+        },
+      ],
+    },
+  ],
   publications: [
     {
-      authors: "Ming Chen, John Doe, Jane Smith",
-      title: "Scalable Micro-Frontend Architecture for Large-Scale SPAs",
-      venue: "IEEE International Conference on Web Services",
-      year: "2023",
-      url: "https://doi.org/10.1109/ICWS.2023.00012",
+      authors: "Lin Zhou, Emily Park, Wei Chen",
+      title: "Type-Safe Workflow Orchestration for Internal AI Tools",
+      venue: "ACM Symposium on Cloud Computing Workshop",
+      year: "2024",
+      url: "https://example.com/publications/workflow-orchestration",
+    },
+    {
+      authors: "Wei Chen, Lin Zhou, Sara Ahmed",
+      title: "Adaptive Edge Cache Scheduling with Mixed Workloads",
+      venue: "IEEE ICWS",
+      year: "2021",
+      url: "",
     },
   ],
   additional: [
     {
-      label: "语言能力",
-      body: "英语可用于工作沟通、技术文档和跨团队协作。",
+      label: "开源协作",
+      body: "维护 TypeScript utilities 和 internal CLI templates，偶尔向 React ecosystem 相关项目提交修复。",
     },
     {
-      label: "关注方向",
-      body: "开发者效率、平台工程和实用自动化。",
+      label: "语言能力",
+      body: "中文母语；English 可用于 technical writing、design review 和跨时区协作。",
     },
   ],
 };
