@@ -33,7 +33,7 @@ Create `output/pdf` first if it does not already exist.
 - `company-entry(org, date)[...]`: one company or role block.
 - `project-entry(title, detail, bullets, date: none)`: one project or scope inside a company block. Use `title` for the role or position, and `detail` for the project, team, or product line.
 
-`project-entry` keeps the role title on the left and project metadata on the right. If `date` is provided, it is rendered inline as `date · detail`; no extra line is added.
+`project-entry` keeps the role title on the left and project metadata on the right. If `date` is provided, it is rendered inline as `date | detail`; no extra line is added.
 
 ## Using This Template Privately
 

@@ -87,7 +87,7 @@
 #let plain-item(body) = bullet(body)
 
 #let skill-item(label, body) = bullet[
-  #strong[#label]：#body
+  #strong[#label]: #body
 ]
 
 #let skill-item-en(label, body) = bullet[
@@ -110,7 +110,7 @@
     columns: (1fr, 1.25fr),
     column-gutter: 1em,
     text(size: 9.4pt, style: "italic")[#title],
-    align(right)[#text(size: 9.4pt, style: "italic")[#detail]],
+    align(right)[#text(size: 9.4pt)[#detail]],
   )
 ]
 
@@ -120,7 +120,7 @@
   } else if detail == none {
     date
   } else {
-    [#date · #detail]
+    [#date | #detail]
   }
 }
 
