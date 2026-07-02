@@ -1,55 +1,55 @@
 #import "../style.typ": *
 
 #resume-header(
-  "Alex Chen",
-  [Full-stack Developer | Product Engineering | Technical Lead],
+  "陈明",
+  [全栈开发工程师 | 产品工程 | 技术负责人],
   "alex.chen@example.com",
   "+1 555-0100",
 )
 
-#resume-section("Profile")
-#plain-item[Full-stack developer with experience across frontend, backend, databases, delivery tooling, and production support.]
-#plain-item[Regularly works on product requirements, technical design, code review, performance tuning, and engineering quality improvements.]
+#resume-section("个人简介")
+#plain-item[全栈开发工程师，具备前端、后端、数据库、交付工具和线上支持经验，能够参与从需求分析到功能上线的完整研发流程。]
+#plain-item[日常负责产品需求拆解、技术方案设计、代码评审、性能优化、工程质量改进和团队协作支持。]
 
-#resume-section("Technical Skills")
-#skill-item("Frontend")[TypeScript, JavaScript, React, HTML/CSS, complex forms, reusable components]
-#skill-item("Backend")[C\#, .NET, Web API, authorization, data aggregation, service integration]
-#skill-item("Database")[SQL Server, T-SQL, query tuning, indexing, stored procedures]
-#skill-item("Delivery")[Git, CI/CD, automated testing, code review, release support]
+#resume-section("技术能力")
+#skill-item("前端开发")[TypeScript、JavaScript、React、HTML/CSS、复杂表单、可复用组件]
+#skill-item("后端开发")[C\#、.NET、Web API、权限校验、数据聚合、服务集成]
+#skill-item("数据库")[SQL Server、T-SQL、查询优化、索引设计、存储过程]
+#skill-item("工程交付")[Git、CI/CD、自动化测试、代码评审、发布支持]
 
-#resume-section("Experience")
+#resume-section("工作经历")
 #resume-entry(
-  "Example Technology",
-  [Senior Software Engineer],
-  [Customer Platform],
-  [2023 - Present],
+  "示例科技有限公司",
+  [高级软件工程师],
+  [客户平台],
+  [2023年 - 至今],
   (
-    [Led full-stack delivery for customer-facing workflows, including frontend screens, API integration, and database changes.],
-    [Improved performance for selected workflows through request reduction, query tuning, caching, and batch loading.],
-    [Supported release preparation, production investigation, code review, and onboarding for new team members.],
+    [负责面向客户业务流程的全栈交付，覆盖前端页面、API 集成和数据库变更。],
+    [通过减少请求数量、优化查询、增加缓存和批量加载等方式改进关键流程性能。],
+    [参与发布准备、线上问题排查、代码评审和新人引导，推动团队工程实践落地。],
   ),
 )
 
 #resume-entry(
-  "Example Software",
-  [Software Engineer],
-  [Internal Tools],
-  [2020 - 2023],
+  "示例软件有限公司",
+  [软件工程师],
+  [内部工具平台],
+  [2020年 - 2023年],
   (
-    [Built internal applications and automation scripts for operational teams.],
-    [Maintained API services, database queries, and monitoring dashboards.],
+    [为运营团队构建内部应用和自动化脚本，提升日常处理效率。],
+    [维护 API 服务、数据库查询和监控看板，支持稳定的内部工具运行。],
   ),
 )
 
-#resume-section("Education")
+#resume-section("教育背景")
 #resume-entry(
-  "Example University",
-  [Master of Science],
-  [Computer Science],
-  [2018 - 2020],
+  "示例大学",
+  [理学硕士],
+  [计算机科学],
+  [2018年 - 2020年],
   (),
 )
 
-#resume-section("Additional")
-#skill-item("Languages")[English for professional communication and documentation.]
-#skill-item("Interests")[Developer productivity, platform engineering, and practical automation.]
+#resume-section("其他")
+#skill-item("语言能力")[英语可用于工作沟通、技术文档和跨团队协作。]
+#skill-item("关注方向")[开发者效率、平台工程和实用自动化。]
