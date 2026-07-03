@@ -57,8 +57,13 @@
       #text(size: 10.5pt)[#subtitle]
     ],
     align(right)[
-      #text(size: 10pt)[Email : #link("mailto:" + email)[#email]] \
-      #text(size: 10pt)[Mobile : #phone]
+      #if email != "" {
+        text(size: 10pt)[Email : #link("mailto:" + email)[#email]]
+        linebreak()
+      }
+      #if phone != "" {
+        text(size: 10pt)[Mobile : #phone]
+      }
     ],
   )
   v(header-after-gap)
