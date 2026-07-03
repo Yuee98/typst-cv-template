@@ -206,11 +206,28 @@ export function useCvBuilder() {
     try {
       const cloudDocuments = await listCloudCvDocuments(client);
       replaceCloudSummaries(cloudDocuments);
-      if (!activeDocumentId && cloudDocuments[0]?.storageKind === "cloud") {
+
+      const currentActiveId = activeDocumentId;
+      const activeIsCloud = cloudDocuments.some((d) => d.id === currentActiveId && d.storageKind === "cloud");
+      const activeIsEncrypted = cloudDocuments.some((d) => d.id === currentActiveId && d.storageKind === "encrypted");
+
+      if (activeIsCloud && currentActiveId) {
+        const document = await loadCloudCvDocument(client, currentActiveId);
+        upsertDocumentSummary(document);
+        const draft = loadDraft(currentActiveId);
+        loadDataIntoForm(document.id, draft ?? document.data);
+        if (draft) {
+          setIsDirty(true);
+        }
+      } else if (activeIsEncrypted && currentActiveId) {
+        // Encrypted CV needs password to load — don't auto-load here
+        // User will click to unlock via selectDocument
+      } else if (!currentActiveId && cloudDocuments[0]?.storageKind === "cloud") {
         const document = await loadCloudCvDocument(client, cloudDocuments[0].id);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, document.data);
       }
+
       setCloudStatus("ready");
     } catch (cloudError) {
       setCloudStatus("error");
@@ -230,6 +247,8 @@ export function useCvBuilder() {
       }
 
       const library = initializeCvDocumentLibrary(cloneCvData(sampleCvData));
+      const activeSummary = library.documents.find((d) => d.id === library.activeDocumentId);
+      const isCloudActive = activeSummary?.storageKind === "cloud" || activeSummary?.storageKind === "encrypted";
       const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
 
       if (!initialDocument && library.documents.length === 0) {
@@ -239,6 +258,15 @@ export function useCvBuilder() {
         saveActiveCvDocumentId(document.id);
         setLibraryCollapsed(loadCvLibraryCollapsed());
         form.reset(document.data);
+        initializedRef.current = true;
+        return;
+      }
+
+      // Cloud/encrypted CV: keep the ID, let refreshCloudDocuments load it later
+      if (!initialDocument && isCloudActive && library.activeDocumentId) {
+        setDocuments(library.documents);
+        setActiveDocumentId(library.activeDocumentId);
+        setLibraryCollapsed(loadCvLibraryCollapsed());
         initializedRef.current = true;
         return;
       }
