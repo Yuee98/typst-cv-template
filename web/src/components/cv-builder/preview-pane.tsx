@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
@@ -163,17 +164,24 @@ export function PreviewPane({
   svg,
   status,
   error,
+  actions,
 }: {
   svg: string | null;
   status: PreviewStatus;
   error: string | null;
+  actions?: ReactNode;
 }) {
   const pages = useMemo(() => splitTypstSvg(svg ?? ""), [svg]);
 
   return (
     <Panel
       title="Preview"
-      actions={<StatusBadge status={status} />}
+      actions={
+        <div className="flex items-center gap-2">
+          <StatusBadge status={status} />
+          {actions}
+        </div>
+      }
       className="preview-pane flex h-full min-h-[720px] flex-col overflow-hidden"
     >
       {error && (

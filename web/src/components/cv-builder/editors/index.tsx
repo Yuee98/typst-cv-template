@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { Panel } from "@/components/ui/panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -13,9 +15,9 @@ import { OneLineEntriesEditor } from "./research-editor";
 import { PublicationsEditor } from "./publications-editor";
 import { FontSettingsEditor } from "./settings-editor";
 
-export function CvEditor() {
+export function CvEditor({ actions }: { actions?: ReactNode }) {
   return (
-    <Panel title="Editor" className="editor-pane h-full min-h-[720px] overflow-hidden">
+    <Panel title="Editor" actions={actions} className="editor-pane h-full min-h-[720px] overflow-hidden">
       <Tabs defaultValue="header" className="flex h-full min-h-0 flex-col">
         <TabsList>
           <TabsTrigger value="header">Header</TabsTrigger>

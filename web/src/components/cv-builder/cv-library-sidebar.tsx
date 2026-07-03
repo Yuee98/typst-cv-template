@@ -6,12 +6,16 @@ import {
   Cloud,
   CloudUpload,
   Copy,
+  Download,
+  FileJson,
+  FilePlus2,
   HardDrive,
   LockKeyhole,
   Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -72,10 +76,13 @@ export function CvLibrarySidebar({
   collapsed,
   cloudActionsEnabled,
   onToggleCollapsed,
-  onCreate,
+  onCreateEmpty,
+  onCreateSample,
+  onImportJson,
   onSelect,
   onRename,
   onDuplicate,
+  onExport,
   onDelete,
   onMoveToCloud,
   onEnableEncryption,
@@ -85,18 +92,62 @@ export function CvLibrarySidebar({
   collapsed: boolean;
   cloudActionsEnabled: boolean;
   onToggleCollapsed: () => void;
-  onCreate: () => void;
+  onCreateEmpty: () => void;
+  onCreateSample: () => void;
+  onImportJson: () => void;
   onSelect: (id: string) => void;
   onRename: (id: string) => void;
   onDuplicate: (id: string) => void;
+  onExport: (id: string) => void;
   onDelete: (id: string) => void;
   onMoveToCloud: (id: string) => void;
   onEnableEncryption: (id: string) => void;
 }) {
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+
+  function runCreateAction(action: () => void) {
+    setCreateMenuOpen(false);
+    action();
+  }
+
+  const createMenu = createMenuOpen && (
+    <div
+      className={cn(
+        "absolute z-20 w-44 rounded-md border border-slate-200 bg-white p-1 shadow-lg",
+        collapsed ? "left-2 top-24" : "right-2 top-11",
+      )}
+    >
+      <button
+        type="button"
+        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+        onClick={() => runCreateAction(onCreateEmpty)}
+      >
+        <FilePlus2 className="size-4" />
+        Empty CV
+      </button>
+      <button
+        type="button"
+        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+        onClick={() => runCreateAction(onCreateSample)}
+      >
+        <FilePlus2 className="size-4" />
+        Sample CV
+      </button>
+      <button
+        type="button"
+        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+        onClick={() => runCreateAction(onImportJson)}
+      >
+        <FileJson className="size-4" />
+        Import JSON
+      </button>
+    </div>
+  );
+
   return (
     <aside
       className={cn(
-        "library-sidebar flex h-full min-h-[720px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[width] print:hidden",
+        "library-sidebar relative flex h-full min-h-[720px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[width] print:hidden",
         collapsed ? "w-14" : "w-full lg:w-72",
       )}
     >
@@ -116,7 +167,13 @@ export function CvLibrarySidebar({
               <h2 className="truncate text-sm font-semibold text-slate-950">CVs</h2>
             </div>
             <div className="flex items-center gap-1">
-              <Button type="button" variant="ghost" size="icon" onClick={onCreate} title="New CV">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setCreateMenuOpen((open) => !open)}
+                title="New CV"
+              >
                 <Plus />
               </Button>
               <Button
@@ -135,11 +192,18 @@ export function CvLibrarySidebar({
 
       {collapsed && (
         <div className="border-b border-slate-200 p-2">
-          <Button type="button" variant="secondary" size="icon" onClick={onCreate} title="New CV">
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon"
+            onClick={() => setCreateMenuOpen((open) => !open)}
+            title="New CV"
+          >
             <Plus />
           </Button>
         </div>
       )}
+      {createMenu}
 
       <div className={cn("min-h-0 flex-1 overflow-y-auto", collapsed ? "p-2" : "p-2")}>
         <div className="flex flex-col gap-2">
@@ -205,6 +269,15 @@ export function CvLibrarySidebar({
                     title="Duplicate"
                   >
                     <Copy />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onExport(document.id)}
+                    title="Export JSON"
+                  >
+                    <Download />
                   </Button>
                   <Button
                     type="button"

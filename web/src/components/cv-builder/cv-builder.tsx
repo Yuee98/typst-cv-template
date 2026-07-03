@@ -4,23 +4,23 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import {
   Cloud,
-  Download,
   LogIn,
   LogOut,
   Printer,
-  RefreshCcw,
   Save,
-  Upload,
+  ShieldCheck,
   UserPlus,
+  UserRound,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormProvider, useForm, useWatch } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
-import { Toolbar, ToolbarGroup, ToolbarSeparator, ToolbarTitle } from "@/components/layout/toolbar";
+import { Toolbar, ToolbarGroup, ToolbarTitle } from "@/components/layout/toolbar";
 import { Button } from "@/components/ui/button";
 import { GithubIcon } from "@/components/ui/github-icon";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { CvEditor } from "@/components/cv-builder/editors";
 import { CvLibrarySidebar } from "@/components/cv-builder/cv-library-sidebar";
 import { PreviewPane, type PreviewStatus } from "@/components/cv-builder/preview-pane";
@@ -57,10 +57,16 @@ import {
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { renderTypstSvg } from "@/lib/typst/render";
 
-type SaveStatus = "idle" | "saving" | "saved" | "error";
 type CloudStatus = "idle" | "loading" | "ready" | "error";
+type AuthModalMode = "signIn" | "signUp";
+type EncryptionModalMode = "enable" | "unlock" | "export" | "duplicate";
+type EncryptionModalState = {
+  mode: EncryptionModalMode;
+  documentId: string;
+};
 const ENCRYPTION_SESSION_KEY_PREFIX = "typst-cv-builder:encryption-session:";
 const ENCRYPTION_SESSION_REMEMBER_KEY = "typst-cv-builder:encryption-session:remember";
+const ENCRYPTION_DEVICE_KEY_PREFIX = "typst-cv-builder:encryption-device:";
 
 function cloneCvData(data: CvData): CvData {
   return JSON.parse(JSON.stringify(data)) as CvData;
@@ -89,8 +95,47 @@ function titleFromImportedData(data: CvData) {
   return name ? `${name} CV` : "Imported CV";
 }
 
+function createEmptyCvData(): CvData {
+  return {
+    schemaVersion: 5,
+    typstLang: sampleCvData.typstLang,
+    bodyFont: sampleCvData.bodyFont,
+    header: {
+      name: "",
+      subtitle: "",
+      email: "",
+      phone: "",
+      selfName: "",
+    },
+    sectionTitles: cloneCvData(sampleCvData).sectionTitles,
+    profile: [],
+    skills: [],
+    experience: [],
+    education: [],
+    research: [],
+    publications: [],
+    additional: [],
+  };
+}
+
 function encryptionSessionKey(id: string) {
   return `${ENCRYPTION_SESSION_KEY_PREFIX}${id}`;
+}
+
+function encryptionDeviceKey(id: string) {
+  return `${ENCRYPTION_DEVICE_KEY_PREFIX}${id}`;
+}
+
+function encodeStoredPassphrase(passphrase: string) {
+  return btoa(encodeURIComponent(passphrase));
+}
+
+function decodeStoredPassphrase(stored: string) {
+  try {
+    return decodeURIComponent(atob(stored));
+  } catch {
+    return null;
+  }
 }
 
 function loadSessionEncryptionPassword(id: string) {
@@ -107,6 +152,23 @@ function storeSessionEncryptionPassword(id: string, passphrase: string) {
   }
 
   window.sessionStorage.setItem(encryptionSessionKey(id), passphrase);
+}
+
+function loadDeviceEncryptionPassword(id: string) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const stored = window.localStorage.getItem(encryptionDeviceKey(id));
+  return stored ? decodeStoredPassphrase(stored) : null;
+}
+
+function storeDeviceEncryptionPassword(id: string, passphrase: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(encryptionDeviceKey(id), encodeStoredPassphrase(passphrase));
 }
 
 function clearSessionEncryptionPasswords() {
@@ -149,14 +211,17 @@ export function CvBuilder() {
   const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [supabase] = useState(() => getSupabaseBrowserClient());
   const [session, setSession] = useState<Session | null>(null);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("idle");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<AuthModalMode | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [encryptionPassword, setEncryptionPassword] = useState("");
   const [rememberEncryptionSession, setRememberEncryptionSession] = useState(loadRememberEncryptionSession);
+  const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
+  const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const encryptedPasswordsRef = useRef<Record<string, string>>({});
   const initializedRef = useRef(false);
@@ -188,11 +253,12 @@ export function CvBuilder() {
       const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
 
       if (!initialDocument && library.documents.length === 0) {
-        setDocuments([]);
-        setActiveDocumentId(null);
-        saveActiveCvDocumentId(null);
+        const document = createLocalCvDocument(createEmptyCvData(), "Untitled CV");
+        setDocuments([summarizeLocalDocument(document)]);
+        setActiveDocumentId(document.id);
+        saveActiveCvDocumentId(document.id);
         setLibraryCollapsed(loadCvLibraryCollapsed());
-        form.reset(cloneCvData(sampleCvData));
+        form.reset(document.data);
         initializedRef.current = true;
         return;
       }
@@ -263,7 +329,11 @@ export function CvBuilder() {
 
   function getEncryptionPassphrase(id: string) {
     const passphrase =
-      encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id) ?? encryptionPassword;
+      encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id) ?? loadDeviceEncryptionPassword(id);
+
+    if (!passphrase) {
+      throw new Error("Enter the encryption password to unlock this CV.");
+    }
 
     if (passphrase) {
       encryptedPasswordsRef.current[id] = passphrase;
@@ -272,10 +342,19 @@ export function CvBuilder() {
     return passphrase;
   }
 
+  function hasKnownEncryptionPassphrase(id: string) {
+    return Boolean(
+      encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id) ?? loadDeviceEncryptionPassword(id),
+    );
+  }
+
   function rememberEncryptionPassphrase(id: string, passphrase: string) {
     encryptedPasswordsRef.current[id] = passphrase;
     if (rememberEncryptionSession) {
       storeSessionEncryptionPassword(id, passphrase);
+    }
+    if (trustEncryptionDevice) {
+      storeDeviceEncryptionPassword(id, passphrase);
     }
   }
 
@@ -350,6 +429,8 @@ export function CvBuilder() {
       setError(signInError.message);
     } else {
       setAuthPassword("");
+      setAuthModalMode(null);
+      setAccountMenuOpen(false);
     }
   }
 
@@ -382,6 +463,28 @@ export function CvBuilder() {
       setError("Account created. Check your email before signing in.");
     } else {
       setAuthPassword("");
+      setAuthModalMode(null);
+      setAccountMenuOpen(false);
+    }
+  }
+
+  async function signInWithGithub() {
+    if (!supabase) {
+      setStatus("error");
+      setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      return;
+    }
+
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "github",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+
+    if (oauthError) {
+      setStatus("error");
+      setError(oauthError.message);
     }
   }
 
@@ -402,9 +505,11 @@ export function CvBuilder() {
     storeRememberEncryptionSession(false);
     setRememberEncryptionSession(false);
     setEncryptionPassword("");
+    setAccountMenuOpen(false);
 
     const localDocuments = documents.filter((document) => document.storageKind === "local");
-    if (activeDocument?.storageKind === "cloud" || localDocuments.length === 0) {
+    const activeIsCloudBacked = activeDocument?.storageKind === "cloud" || activeDocument?.storageKind === "encrypted";
+    if (activeIsCloudBacked || localDocuments.length === 0) {
       const parsed = cvSchema.safeParse(form.getValues());
       const fallbackData = parsed.success ? parsed.data : cloneCvData(sampleCvData);
       const fallbackTitle = activeDocument?.title ?? titleFromImportedData(fallbackData);
@@ -423,15 +528,12 @@ export function CvBuilder() {
 
     const parsed = cvSchema.safeParse(form.getValues());
     if (!parsed.success) {
-      setSaveStatus("error");
       setStatus("error");
       setError("The current form data does not match the CV schema.");
       return false;
     }
 
-    if (!silent) {
-      setSaveStatus("saving");
-    }
+    void silent;
 
     try {
       if (activeDocument.storageKind === "local") {
@@ -453,6 +555,12 @@ export function CvBuilder() {
           throw new Error("Sign in before saving this encrypted CV.");
         }
 
+        if (!hasKnownEncryptionPassphrase(activeDocumentId)) {
+          setEncryptionModal({ mode: "unlock", documentId: activeDocumentId });
+          setEncryptionPassword("");
+          return false;
+        }
+
         const passphrase = getEncryptionPassphrase(activeDocumentId);
         const encryptedPayload = await encryptCvData(parsed.data, passphrase);
         const updated = await updateEncryptedCloudCvDocumentData(supabase, activeDocumentId, {
@@ -463,13 +571,11 @@ export function CvBuilder() {
         upsertDocumentSummary(updated);
       }
     } catch (saveError) {
-      setSaveStatus("error");
       setStatus("error");
       setError(errorMessage(saveError));
       return false;
     }
 
-    setSaveStatus("saved");
     return true;
   }
 
@@ -481,7 +587,6 @@ export function CvBuilder() {
     const timer = window.setTimeout(async () => {
       const parsed = cvSchema.safeParse(form.getValues());
       if (!parsed.success) {
-        setSaveStatus("error");
         setStatus("error");
         setError("The current form data does not match the CV schema.");
         return;
@@ -525,7 +630,6 @@ export function CvBuilder() {
     setSvg(null);
     setStatus("idle");
     setError(null);
-    setSaveStatus("saved");
   }
 
   async function selectDocument(id: string) {
@@ -565,6 +669,12 @@ export function CvBuilder() {
           throw new Error("Sign in before opening this encrypted CV.");
         }
 
+        if (!hasKnownEncryptionPassphrase(id)) {
+          setEncryptionModal({ mode: "unlock", documentId: id });
+          setEncryptionPassword("");
+          return;
+        }
+
         const passphrase = getEncryptionPassphrase(id);
         const document = await loadEncryptedCloudCvDocument(supabase, id);
         const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
@@ -600,6 +710,12 @@ export function CvBuilder() {
           throw new Error("Sign in before opening this encrypted CV.");
         }
 
+        if (!hasKnownEncryptionPassphrase(documentSummary.id)) {
+          setEncryptionModal({ mode: "unlock", documentId: documentSummary.id });
+          setEncryptionPassword("");
+          return;
+        }
+
         const passphrase = getEncryptionPassphrase(documentSummary.id);
         const document = await loadEncryptedCloudCvDocument(supabase, documentSummary.id);
         const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
@@ -613,14 +729,22 @@ export function CvBuilder() {
     }
   }
 
-  async function createDocument() {
+  async function createDocumentFromData(data: CvData, title: string) {
     if (activeDocumentId) {
       await saveCurrentDocument({ silent: true });
     }
 
-    const document = createLocalCvDocument(cloneCvData(sampleCvData), "Untitled CV");
+    const document = createLocalCvDocument(data, title);
     replaceLocalDocumentSummary(document);
     loadDataIntoForm(document.id, document.data);
+  }
+
+  async function createSampleDocument() {
+    await createDocumentFromData(cloneCvData(sampleCvData), "Sample CV");
+  }
+
+  async function createEmptyDocument() {
+    await createDocumentFromData(createEmptyCvData(), "Untitled CV");
   }
 
   async function renameDocument(id: string) {
@@ -658,7 +782,7 @@ export function CvBuilder() {
     }
   }
 
-  async function duplicateDocument(id: string) {
+  async function duplicateDocument(id: string, passphraseOverride?: string) {
     const current = documents.find((document) => document.id === id);
     if (!current) return;
 
@@ -688,7 +812,13 @@ export function CvBuilder() {
           throw new Error("Sign in before duplicating this encrypted CV.");
         }
 
-        const passphrase = getEncryptionPassphrase(id);
+        if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
+          setEncryptionModal({ mode: "duplicate", documentId: id });
+          setEncryptionPassword("");
+          return;
+        }
+
+        const passphrase = passphraseOverride ?? getEncryptionPassphrase(id);
         const source = await loadEncryptedCloudCvDocument(supabase, id);
         const decryptedData = await decryptCvData(source.encryptedPayload, passphrase);
         const encryptedPayload = await encryptCvData(decryptedData, passphrase);
@@ -697,6 +827,7 @@ export function CvBuilder() {
           encryptedPayload,
           schemaVersion: decryptedData.schemaVersion,
         });
+        rememberEncryptionPassphrase(id, passphrase);
         rememberEncryptionPassphrase(document.id, passphrase);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, decryptedData);
@@ -723,7 +854,7 @@ export function CvBuilder() {
         const nextDocuments = documents.filter((document) => document.id !== id);
 
         if (nextDocuments.length === 0) {
-          const document = createLocalCvDocument(cloneCvData(sampleCvData), "Untitled CV");
+          const document = createLocalCvDocument(createEmptyCvData(), "Untitled CV");
           setDocuments([summarizeLocalDocument(document)]);
           loadDataIntoForm(document.id, document.data);
           return;
@@ -751,7 +882,7 @@ export function CvBuilder() {
         const nextDocuments = documents.filter((document) => document.id !== id);
 
         if (nextDocuments.length === 0) {
-          const document = createLocalCvDocument(cloneCvData(sampleCvData), "Untitled CV");
+          const document = createLocalCvDocument(createEmptyCvData(), "Untitled CV");
           setDocuments([summarizeLocalDocument(document)]);
           loadDataIntoForm(document.id, document.data);
           return;
@@ -883,15 +1014,120 @@ export function CvBuilder() {
     }
   }
 
-  function exportJson() {
-    const parsed = cvSchema.safeParse(form.getValues());
-    const payload = JSON.stringify(parsed.success ? parsed.data : form.getValues(), null, 2);
+  function closeEncryptionModal() {
+    setEncryptionModal(null);
+    setEncryptionPassword("");
+    setTrustEncryptionDevice(false);
+  }
+
+  async function unlockEncryptedDocument(id: string) {
+    if (!supabase || !session) {
+      throw new Error("Sign in before opening this encrypted CV.");
+    }
+
+    const document = await loadEncryptedCloudCvDocument(supabase, id);
+    const decryptedData = await decryptCvData(document.encryptedPayload, encryptionPassword);
+    rememberEncryptionPassphrase(id, encryptionPassword);
+    upsertDocumentSummary(document);
+    loadDataIntoForm(document.id, decryptedData);
+  }
+
+  async function submitEncryptionModal() {
+    if (!encryptionModal) {
+      return;
+    }
+
+    if (!encryptionPassword) {
+      setStatus("error");
+      setError("Enter the encryption password first.");
+      return;
+    }
+
+    try {
+      if (rememberEncryptionSession) {
+        storeRememberEncryptionSession(true);
+      }
+
+      if (encryptionModal.mode === "enable") {
+        await enableEncryption(encryptionModal.documentId);
+      } else if (encryptionModal.mode === "unlock") {
+        await unlockEncryptedDocument(encryptionModal.documentId);
+      } else if (encryptionModal.mode === "duplicate") {
+        await duplicateDocument(encryptionModal.documentId, encryptionPassword);
+      } else {
+        await exportDocument(encryptionModal.documentId, encryptionPassword);
+      }
+
+      closeEncryptionModal();
+    } catch (modalError) {
+      setStatus("error");
+      setError(errorMessage(modalError));
+    }
+  }
+
+  function downloadJsonData(data: CvData, title: string) {
+    const payload = JSON.stringify(data, null, 2);
     const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${activeDocument?.title ?? "cv-data"}.json`;
+    anchor.download = `${title || "cv-data"}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function exportDocument(id: string, passphraseOverride?: string) {
+    const current = documents.find((document) => document.id === id);
+    if (!current) {
+      return;
+    }
+
+    try {
+      if (id === activeDocumentId) {
+        const parsed = cvSchema.safeParse(form.getValues());
+        if (!parsed.success) {
+          throw new Error("The current form data does not match the CV schema.");
+        }
+
+        downloadJsonData(parsed.data, current.title);
+        return;
+      }
+
+      if (current.storageKind === "local") {
+        const document = loadCvDocument(id);
+        if (!document) {
+          throw new Error("The selected local CV could not be loaded.");
+        }
+
+        downloadJsonData(document.data, document.title);
+      } else if (current.storageKind === "cloud") {
+        if (!supabase || !session) {
+          throw new Error("Sign in before exporting this cloud CV.");
+        }
+
+        const document = await loadCloudCvDocument(supabase, id);
+        downloadJsonData(document.data, document.title);
+      } else {
+        if (!supabase || !session) {
+          throw new Error("Sign in before exporting this encrypted CV.");
+        }
+
+        if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
+          setEncryptionModal({ mode: "export", documentId: id });
+          setEncryptionPassword("");
+          return;
+        }
+
+        const document = await loadEncryptedCloudCvDocument(supabase, id);
+        const data = await decryptCvData(document.encryptedPayload, passphraseOverride ?? getEncryptionPassphrase(id));
+        if (passphraseOverride) {
+          rememberEncryptionPassphrase(id, passphraseOverride);
+        }
+        downloadJsonData(data, document.title);
+      }
+    } catch (exportError) {
+      setStatus("error");
+      setError(errorMessage(exportError));
+    }
   }
 
   async function importJson(file: File | undefined) {
@@ -920,146 +1156,102 @@ export function CvBuilder() {
     }
   }
 
-  async function resetToSample() {
-    const sample = cloneCvData(sampleCvData);
-    form.reset(sample);
-    try {
-      if (activeDocumentId && activeDocument?.storageKind === "local") {
-        const updated = updateLocalCvDocumentData(activeDocumentId, sample);
-        if (updated) {
-          replaceLocalDocumentSummary(updated);
-        }
-      } else if (activeDocumentId && activeDocument?.storageKind === "cloud" && supabase && session) {
-        const updated = await updateCloudCvDocumentData(supabase, activeDocumentId, sample);
-        upsertDocumentSummary(updated);
-      } else if (activeDocumentId && activeDocument?.storageKind === "encrypted" && supabase && session) {
-        const passphrase = getEncryptionPassphrase(activeDocumentId);
-        const encryptedPayload = await encryptCvData(sample, passphrase);
-        const updated = await updateEncryptedCloudCvDocumentData(supabase, activeDocumentId, {
-          encryptedPayload,
-          schemaVersion: sample.schemaVersion,
-        });
-        rememberEncryptionPassphrase(activeDocumentId, passphrase);
-        upsertDocumentSummary(updated);
-      }
-      setError(null);
-      setSaveStatus("saved");
-    } catch (resetError) {
-      setSaveStatus("error");
-      setStatus("error");
-      setError(errorMessage(resetError));
-    }
-  }
-
   return (
     <FormProvider {...form}>
       <AppShell>
         <Toolbar>
           <ToolbarTitle />
           <ToolbarGroup>
-            <Button variant="secondary" asChild>
+            <Button variant="secondary" size="icon" asChild title="GitHub">
               <a
                 href="https://github.com/Yuee98/typst-cv-template"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 <GithubIcon className="!size-5" />
-                GitHub
               </a>
             </Button>
-            <ToolbarSeparator />
-            {supabaseConfigured &&
-              (session ? (
-                <>
-                  <Button type="button" variant="secondary" onClick={() => void refreshCloudDocuments()}>
-                    <Cloud />
-                    {cloudStatus === "loading" ? "Syncing" : "Cloud"}
-                  </Button>
-                  <span className="hidden max-w-44 truncate text-xs font-medium text-slate-500 lg:inline">
-                    {session.user.email}
-                  </span>
-                  <Input
-                    type="password"
-                    value={encryptionPassword}
-                    onChange={(event) => setEncryptionPassword(event.target.value)}
-                    placeholder="encryption password"
-                    className="w-48"
-                  />
-                  <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={rememberEncryptionSession}
-                      onChange={(event) => {
-                        setRememberEncryptionSession(event.target.checked);
-                        storeRememberEncryptionSession(event.target.checked);
-                        if (!event.target.checked) {
-                          clearSessionEncryptionPasswords();
-                        }
-                      }}
-                      className="size-3.5 accent-emerald-600"
-                    />
-                    Remember session
-                  </label>
-                  <Button type="button" variant="ghost" onClick={() => void signOut()}>
-                    <LogOut />
-                    Sign out
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Input
-                    type="email"
-                    value={authEmail}
-                    onChange={(event) => setAuthEmail(event.target.value)}
-                    placeholder="email"
-                    className="w-44"
-                  />
-                  <Input
-                    type="password"
-                    value={authPassword}
-                    onChange={(event) => setAuthPassword(event.target.value)}
-                    placeholder="password"
-                    className="w-36"
-                  />
-                  <Button type="button" variant="secondary" onClick={() => void signIn()}>
-                    <LogIn />
-                    Sign in
-                  </Button>
-                  <Button type="button" variant="ghost" onClick={() => void signUp()}>
-                    <UserPlus />
-                    Create
-                  </Button>
-                </>
-              ))}
-            {supabaseConfigured && <ToolbarSeparator />}
-            <Button type="button" onClick={() => void saveCurrentDocument()}>
-              <Save />
-              Save
-            </Button>
-            <span className="hidden text-xs font-medium text-slate-500 sm:inline">
-              {saveStatus === "saving" && "Saving"}
-              {saveStatus === "saved" && "Saved"}
-              {saveStatus === "error" && "Save error"}
-            </span>
-            <ToolbarSeparator />
-            <Button type="button" variant="secondary" onClick={exportJson}>
-              <Download />
-              Export JSON
-            </Button>
-            <Button type="button" variant="secondary" onClick={() => importInputRef.current?.click()}>
-              <Upload />
-              Import JSON
-            </Button>
-            <ToolbarSeparator />
-            <Button type="button" variant="ghost" onClick={() => void resetToSample()}>
-              <RefreshCcw />
-              Reset sample
-            </Button>
-            <ToolbarSeparator />
-            <Button type="button" onClick={() => window.print()}>
-              <Printer />
-              Print
-            </Button>
+            <div className="relative">
+              <Button
+                type="button"
+                variant={session ? "default" : "secondary"}
+                size="icon"
+                onClick={() => setAccountMenuOpen((open) => !open)}
+                title="Account"
+              >
+                <UserRound />
+              </Button>
+              {accountMenuOpen && (
+                <div className="absolute right-0 z-30 mt-2 w-64 rounded-md border border-slate-200 bg-white p-2 shadow-lg">
+                  {session ? (
+                    <div className="space-y-1">
+                      <div className="border-b border-slate-200 px-2 pb-2">
+                        <div className="truncate text-sm font-medium text-slate-950">{session.user.email}</div>
+                        <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
+                          <Cloud className="size-3.5" />
+                          {cloudStatus === "loading" ? "Syncing" : "Cloud ready"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        onClick={() => void refreshCloudDocuments()}
+                      >
+                        <Cloud className="size-4" />
+                        Sync cloud
+                      </button>
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        onClick={() => void signOut()}
+                      >
+                        <LogOut className="size-4" />
+                        Log out
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="border-b border-slate-200 px-2 pb-2 text-xs text-slate-500">
+                        {supabaseConfigured ? "Cloud signed out" : "Cloud not configured"}
+                      </div>
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        disabled={!supabaseConfigured}
+                        onClick={() => {
+                          setAuthModalMode("signIn");
+                          setAccountMenuOpen(false);
+                        }}
+                      >
+                        <LogIn className="size-4" />
+                        Log in
+                      </button>
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        disabled={!supabaseConfigured}
+                        onClick={() => {
+                          setAuthModalMode("signUp");
+                          setAccountMenuOpen(false);
+                        }}
+                      >
+                        <UserPlus className="size-4" />
+                        Sign up
+                      </button>
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        disabled={!supabaseConfigured}
+                        onClick={() => void signInWithGithub()}
+                      >
+                        <GithubIcon className="!size-4" />
+                        GitHub SSO
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <input
               ref={importInputRef}
               type="file"
@@ -1077,18 +1269,136 @@ export function CvBuilder() {
               collapsed={libraryCollapsed}
               cloudActionsEnabled={cloudActionsEnabled}
               onToggleCollapsed={toggleLibraryCollapsed}
-              onCreate={() => void createDocument()}
+              onCreateEmpty={() => void createEmptyDocument()}
+              onCreateSample={() => void createSampleDocument()}
+              onImportJson={() => importInputRef.current?.click()}
               onSelect={(id) => void selectDocument(id)}
               onRename={(id) => void renameDocument(id)}
               onDuplicate={(id) => void duplicateDocument(id)}
+              onExport={(id) => void exportDocument(id)}
               onDelete={(id) => void deleteDocument(id)}
               onMoveToCloud={(id) => void moveToCloud(id)}
-              onEnableEncryption={(id) => void enableEncryption(id)}
+              onEnableEncryption={(id) => {
+                setEncryptionModal({ mode: "enable", documentId: id });
+                setEncryptionPassword("");
+              }}
             />
           }
-          editor={<CvEditor />}
-          preview={<PreviewPane svg={svg} status={status} error={error} />}
+          editor={
+            <CvEditor
+              actions={
+                <Button type="button" variant="secondary" size="icon" onClick={() => void saveCurrentDocument()} title="Save">
+                  <Save />
+                </Button>
+              }
+            />
+          }
+          preview={
+            <PreviewPane
+              svg={svg}
+              status={status}
+              error={error}
+              actions={
+                <Button type="button" variant="secondary" size="icon" onClick={() => window.print()} title="Print">
+                  <Printer />
+                </Button>
+              }
+            />
+          }
         />
+        {authModalMode && (
+          <Modal
+            title={authModalMode === "signIn" ? "Log in" : "Sign up"}
+            onClose={() => setAuthModalMode(null)}
+            footer={
+              <>
+                <Button type="button" variant="secondary" onClick={() => setAuthModalMode(null)}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={() => void (authModalMode === "signIn" ? signIn() : signUp())}>
+                  {authModalMode === "signIn" ? "Log in" : "Sign up"}
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-3">
+              <Input
+                type="email"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="email"
+              />
+              <Input
+                type="password"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="password"
+              />
+              <Button type="button" variant="secondary" className="w-full" onClick={() => void signInWithGithub()}>
+                <GithubIcon className="!size-4" />
+                GitHub SSO
+              </Button>
+            </div>
+          </Modal>
+        )}
+        {encryptionModal && (
+          <Modal
+            title={
+              encryptionModal.mode === "enable"
+                ? "Enable encryption"
+                : encryptionModal.mode === "unlock"
+                  ? "Unlock encrypted CV"
+                  : encryptionModal.mode === "duplicate"
+                    ? "Duplicate encrypted CV"
+                    : "Export encrypted CV"
+            }
+            onClose={closeEncryptionModal}
+            footer={
+              <>
+                <Button type="button" variant="secondary" onClick={closeEncryptionModal}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={() => void submitEncryptionModal()}>
+                  <ShieldCheck />
+                  Continue
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-3">
+              <Input
+                type="password"
+                value={encryptionPassword}
+                onChange={(event) => setEncryptionPassword(event.target.value)}
+                placeholder="encryption password"
+              />
+              <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={rememberEncryptionSession}
+                  onChange={(event) => {
+                    setRememberEncryptionSession(event.target.checked);
+                    storeRememberEncryptionSession(event.target.checked);
+                    if (!event.target.checked) {
+                      clearSessionEncryptionPasswords();
+                    }
+                  }}
+                  className="size-3.5 accent-emerald-600"
+                />
+                Remember session
+              </label>
+              <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={trustEncryptionDevice}
+                  onChange={(event) => setTrustEncryptionDevice(event.target.checked)}
+                  className="size-3.5 accent-emerald-600"
+                />
+                Trust this device
+              </label>
+            </div>
+          </Modal>
+        )}
       </AppShell>
     </FormProvider>
   );
