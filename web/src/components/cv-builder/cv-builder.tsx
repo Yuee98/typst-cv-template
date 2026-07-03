@@ -1,6 +1,6 @@
 "use client";
 
-import { Circle, FilePlus2, Printer, Save } from "lucide-react";
+import { Circle, FilePlus2, Printer, RotateCcw, Save } from "lucide-react";
 import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
@@ -64,13 +64,20 @@ export function CvBuilder() {
               <CvEditor
                 actions={
                   h.activeDocument?.storageKind !== "local" && (
-                    <div className="relative">
-                      <Button type="button" variant="secondary" size="icon" onClick={() => void h.saveCurrentDocument()} title="Save">
-                        <Save />
-                      </Button>
+                    <div className="flex items-center gap-1">
                       {h.isDirty && (
-                        <Circle className="absolute -right-0.5 -top-0.5 size-2.5 fill-amber-500 text-amber-500" />
+                        <Button type="button" variant="ghost" size="icon" onClick={() => void h.discardChanges()} title="Discard changes">
+                          <RotateCcw />
+                        </Button>
                       )}
+                      <div className="relative">
+                        <Button type="button" variant="secondary" size="icon" onClick={() => void h.saveCurrentDocument()} title="Save">
+                          <Save />
+                        </Button>
+                        {h.isDirty && (
+                          <Circle className="absolute -right-0.5 -top-0.5 size-2.5 fill-amber-500 text-amber-500" />
+                        )}
+                      </div>
                     </div>
                   )
                 }

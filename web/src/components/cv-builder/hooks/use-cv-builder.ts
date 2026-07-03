@@ -404,6 +404,36 @@ export function useCvBuilder() {
     return true;
   }
 
+  async function discardChanges() {
+    if (!activeDocumentId || !activeDocument) {
+      return;
+    }
+
+    try {
+      if (activeDocument.storageKind === "cloud") {
+        if (!supabase || !session) {
+          throw new Error("Sign in before discarding changes.");
+        }
+
+        clearDraft(activeDocumentId);
+        const document = await loadCloudCvDocument(supabase, activeDocumentId);
+        loadDataIntoForm(document.id, document.data);
+      } else if (activeDocument.storageKind === "encrypted") {
+        if (!supabase || !session) {
+          throw new Error("Sign in before discarding changes.");
+        }
+
+        const passphrase = getEncryptionPassphrase(activeDocumentId);
+        const document = await loadEncryptedCloudCvDocument(supabase, activeDocumentId);
+        const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
+        loadDataIntoForm(document.id, decryptedData);
+      }
+    } catch (discardError) {
+      setStatus("error");
+      setError(errorMessage(discardError));
+    }
+  }
+
   useEffect(() => {
     if (!initializedRef.current || !activeDocumentId) {
       return;
@@ -1140,6 +1170,7 @@ export function useCvBuilder() {
     signInWithGithub,
     signOut,
     saveCurrentDocument,
+    discardChanges,
     selectDocument,
     createSampleDocument,
     createEmptyDocument,
