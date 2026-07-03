@@ -2,27 +2,17 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
-import {
-  Cloud,
-  LogIn,
-  LogOut,
-  Printer,
-  Save,
-  ShieldCheck,
-  UserPlus,
-  UserRound,
-} from "lucide-react";
+import { Printer, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormProvider, useForm, useWatch } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
-import { Toolbar, ToolbarGroup, ToolbarTitle } from "@/components/layout/toolbar";
 import { Button } from "@/components/ui/button";
-import { GithubIcon } from "@/components/ui/github-icon";
-import { Input } from "@/components/ui/input";
-import { Modal } from "@/components/ui/modal";
+import { AuthModal } from "@/components/cv-builder/auth-modal";
 import { CvEditor } from "@/components/cv-builder/editors";
+import { EncryptionModal, type EncryptionModalMode } from "@/components/cv-builder/encryption-modal";
 import { CvLibrarySidebar } from "@/components/cv-builder/cv-library-sidebar";
+import { CvToolbar } from "@/components/cv-builder/cv-toolbar";
 import { PreviewPane, type PreviewStatus } from "@/components/cv-builder/preview-pane";
 import {
   createCloudCvDocument,
@@ -37,6 +27,13 @@ import {
   updateEncryptedCloudCvDocumentData,
 } from "@/lib/cv/cloud-storage";
 import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
+import {
+  clearEncryptionPasswords,
+  loadEncryptionPassword,
+  loadTrustDevice,
+  storeEncryptionPassword,
+  storeTrustDevice,
+} from "@/lib/cv/encryption-storage";
 import { buildTypstDocument } from "@/lib/cv/typst";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import { sampleCvData } from "@/lib/cv/sample-data";
@@ -58,13 +55,10 @@ import { renderTypstSvg } from "@/lib/typst/render";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
 type AuthModalMode = "signIn" | "signUp";
-type EncryptionModalMode = "enable" | "unlock" | "export" | "duplicate";
 type EncryptionModalState = {
   mode: EncryptionModalMode;
   documentId: string;
 };
-const ENCRYPTION_KEY_PREFIX = "typst-cv-builder:encryption:";
-const TRUST_DEVICE_KEY_PREFIX = "typst-cv-builder:encryption-trust-device:";
 
 function cloneCvData(data: CvData): CvData {
   return JSON.parse(JSON.stringify(data)) as CvData;
@@ -114,66 +108,6 @@ function createEmptyCvData(): CvData {
     publications: [],
     additional: [],
   };
-}
-
-function encryptionKey(userId: string, cvId: string) {
-  return `${ENCRYPTION_KEY_PREFIX}${userId}:${cvId}`;
-}
-
-function loadEncryptionPassword(userId: string, cvId: string) {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return (
-    window.sessionStorage.getItem(encryptionKey(userId, cvId)) ??
-    window.localStorage.getItem(encryptionKey(userId, cvId))
-  );
-}
-
-function storeEncryptionPassword(userId: string, cvId: string, passphrase: string, persist: boolean) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.sessionStorage.setItem(encryptionKey(userId, cvId), passphrase);
-  if (persist) {
-    window.localStorage.setItem(encryptionKey(userId, cvId), passphrase);
-  }
-}
-
-function clearEncryptionPasswords(storage: Storage, userId: string) {
-  const prefix = `${ENCRYPTION_KEY_PREFIX}${userId}:`;
-  for (let index = storage.length - 1; index >= 0; index -= 1) {
-    const key = storage.key(index);
-    if (key?.startsWith(prefix)) {
-      storage.removeItem(key);
-    }
-  }
-}
-
-function trustDeviceKey(userId: string) {
-  return `${TRUST_DEVICE_KEY_PREFIX}${userId}`;
-}
-
-function loadTrustDevice(userId: string) {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  return window.localStorage.getItem(trustDeviceKey(userId)) === "true";
-}
-
-function storeTrustDevice(userId: string, trust: boolean) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  if (trust) {
-    window.localStorage.setItem(trustDeviceKey(userId), "true");
-  } else {
-    window.localStorage.removeItem(trustDeviceKey(userId));
-  }
 }
 
 export function CvBuilder() {
@@ -1119,108 +1053,22 @@ export function CvBuilder() {
   return (
     <FormProvider {...form}>
       <AppShell>
-        <Toolbar>
-          <ToolbarTitle />
-          <ToolbarGroup>
-            <Button variant="secondary" size="icon" asChild title="GitHub">
-              <a
-                href="https://github.com/Yuee98/typst-cv-template"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <GithubIcon className="!size-5" />
-              </a>
-            </Button>
-            <div className="relative">
-              <Button
-                type="button"
-                variant={session ? "default" : "secondary"}
-                size="icon"
-                onClick={() => setAccountMenuOpen((open) => !open)}
-                title="Account"
-              >
-                <UserRound />
-              </Button>
-              {accountMenuOpen && (
-                <div className="absolute right-0 z-30 mt-2 w-64 rounded-md border border-slate-200 bg-white p-2 shadow-lg">
-                  {session ? (
-                    <div className="space-y-1">
-                      <div className="border-b border-slate-200 px-2 pb-2">
-                        <div className="truncate text-sm font-medium text-slate-950">{session.user.email}</div>
-                        <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
-                          <Cloud className="size-3.5" />
-                          {cloudStatus === "loading" ? "Syncing" : "Cloud ready"}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                        onClick={() => void refreshCloudDocuments()}
-                      >
-                        <Cloud className="size-4" />
-                        Sync cloud
-                      </button>
-                      <button
-                        type="button"
-                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                        onClick={() => void signOut()}
-                      >
-                        <LogOut className="size-4" />
-                        Log out
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="border-b border-slate-200 px-2 pb-2 text-xs text-slate-500">
-                        {supabaseConfigured ? "Cloud signed out" : "Cloud not configured"}
-                      </div>
-                      <button
-                        type="button"
-                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                        disabled={!supabaseConfigured}
-                        onClick={() => {
-                          setAuthModalMode("signIn");
-                          setAccountMenuOpen(false);
-                        }}
-                      >
-                        <LogIn className="size-4" />
-                        Log in
-                      </button>
-                      <button
-                        type="button"
-                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                        disabled={!supabaseConfigured}
-                        onClick={() => {
-                          setAuthModalMode("signUp");
-                          setAccountMenuOpen(false);
-                        }}
-                      >
-                        <UserPlus className="size-4" />
-                        Sign up
-                      </button>
-                      <button
-                        type="button"
-                        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                        disabled={!supabaseConfigured}
-                        onClick={() => void signInWithGithub()}
-                      >
-                        <GithubIcon className="!size-4" />
-                        GitHub SSO
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={(event) => void importJson(event.target.files?.[0])}
-            />
-          </ToolbarGroup>
-        </Toolbar>
+        <CvToolbar
+          session={session}
+          cloudStatus={cloudStatus}
+          accountMenuOpen={accountMenuOpen}
+          supabaseConfigured={supabaseConfigured}
+          importInputRef={importInputRef}
+          onToggleAccountMenu={() => setAccountMenuOpen((open) => !open)}
+          onOpenAuthModal={(mode) => {
+            setAuthModalMode(mode);
+            setAccountMenuOpen(false);
+          }}
+          onSyncCloud={() => void refreshCloudDocuments()}
+          onSignOut={() => void signOut()}
+          onGithubSignIn={() => void signInWithGithub()}
+          onImportFile={(file) => void importJson(file)}
+        />
         <Workspace
           library={
             <CvLibrarySidebar
@@ -1268,90 +1116,32 @@ export function CvBuilder() {
           }
         />
         {authModalMode && (
-          <Modal
-            title={authModalMode === "signIn" ? "Log in" : "Sign up"}
+          <AuthModal
+            mode={authModalMode}
+            email={authEmail}
+            password={authPassword}
+            onEmailChange={setAuthEmail}
+            onPasswordChange={setAuthPassword}
+            onSignIn={() => void signIn()}
+            onSignUp={() => void signUp()}
+            onGithubSignIn={() => void signInWithGithub()}
             onClose={() => setAuthModalMode(null)}
-            footer={
-              <>
-                <Button type="button" variant="secondary" onClick={() => setAuthModalMode(null)}>
-                  Cancel
-                </Button>
-                <Button type="button" onClick={() => void (authModalMode === "signIn" ? signIn() : signUp())}>
-                  {authModalMode === "signIn" ? "Log in" : "Sign up"}
-                </Button>
-              </>
-            }
-          >
-            <div className="space-y-3">
-              <Input
-                type="email"
-                value={authEmail}
-                onChange={(event) => setAuthEmail(event.target.value)}
-                placeholder="email"
-              />
-              <Input
-                type="password"
-                value={authPassword}
-                onChange={(event) => setAuthPassword(event.target.value)}
-                placeholder="password"
-              />
-              <Button type="button" variant="secondary" className="w-full" onClick={() => void signInWithGithub()}>
-                <GithubIcon className="!size-4" />
-                GitHub SSO
-              </Button>
-            </div>
-          </Modal>
+          />
         )}
         {encryptionModal && (
-          <Modal
-            title={
-              encryptionModal.mode === "enable"
-                ? "Enable encryption"
-                : encryptionModal.mode === "unlock"
-                  ? "Unlock encrypted CV"
-                  : encryptionModal.mode === "duplicate"
-                    ? "Duplicate encrypted CV"
-                    : "Export encrypted CV"
-            }
+          <EncryptionModal
+            mode={encryptionModal.mode}
+            password={encryptionPassword}
+            error={encryptionModalError}
+            trustDevice={trustEncryptionDevice}
+            onPasswordChange={(value) => {
+              setEncryptionPassword(value);
+              setEncryptionModalError(null);
+            }}
+            onTrustDeviceChange={setTrustEncryptionDevice}
+            onSubmit={() => void submitEncryptionModal()}
             onClose={closeEncryptionModal}
-            footer={
-              <>
-                <Button type="button" variant="secondary" onClick={closeEncryptionModal}>
-                  Cancel
-                </Button>
-                <Button type="button" onClick={() => void submitEncryptionModal()}>
-                  <ShieldCheck />
-                  Continue
-                </Button>
-              </>
-            }
-          >
-            <div className="space-y-3">
-              <Input
-                type="password"
-                value={encryptionPassword}
-                onChange={(event) => {
-                  setEncryptionPassword(event.target.value);
-                  setEncryptionModalError(null);
-                }}
-                placeholder="encryption password"
-              />
-              {encryptionModalError && (
-                <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                  {encryptionModalError}
-                </p>
-              )}
-              <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={trustEncryptionDevice}
-                  onChange={(event) => setTrustEncryptionDevice(event.target.checked)}
-                  className="size-3.5 accent-emerald-600"
-                />
-                Remember this device
-              </label>
-            </div>
-          </Modal>
+          />
         )}
       </AppShell>
     </FormProvider>
