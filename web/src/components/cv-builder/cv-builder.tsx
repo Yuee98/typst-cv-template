@@ -42,7 +42,6 @@ import { cvSchema, type CvData } from "@/lib/cv/schema";
 import { sampleCvData } from "@/lib/cv/sample-data";
 import {
   createLocalCvDocument,
-  duplicateCvDocument,
   initializeCvDocumentLibrary,
   loadCvDocument,
   loadCvLibraryCollapsed,
@@ -787,26 +786,24 @@ export function CvBuilder() {
     if (!current) return;
 
     try {
+      let data: CvData;
+      let title: string | undefined;
+
       if (current.storageKind === "local") {
-        const document = duplicateCvDocument(id);
-        if (!document) {
+        const source = loadCvDocument(id);
+        if (!source) {
           throw new Error("The selected CV could not be duplicated.");
         }
-
-        replaceLocalDocumentSummary(document);
-        loadDataIntoForm(document.id, document.data);
+        data = source.data;
+        title = `${source.title} Copy`;
       } else if (current.storageKind === "cloud") {
         if (!supabase || !session) {
           throw new Error("Sign in before duplicating this cloud CV.");
         }
 
         const source = await loadCloudCvDocument(supabase, id);
-        const document = await createCloudCvDocument(supabase, {
-          title: `${source.title} Copy`,
-          data: source.data,
-        });
-        upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, document.data);
+        data = source.data;
+        title = `${source.title} Copy`;
       } else {
         if (!supabase || !session) {
           throw new Error("Sign in before duplicating this encrypted CV.");
@@ -820,18 +817,14 @@ export function CvBuilder() {
 
         const passphrase = passphraseOverride ?? getEncryptionPassphrase(id);
         const source = await loadEncryptedCloudCvDocument(supabase, id);
-        const decryptedData = await decryptCvData(source.encryptedPayload, passphrase);
-        const encryptedPayload = await encryptCvData(decryptedData, passphrase);
-        const document = await createEncryptedCloudCvDocument(supabase, {
-          title: `${source.title} Copy`,
-          encryptedPayload,
-          schemaVersion: decryptedData.schemaVersion,
-        });
+        data = await decryptCvData(source.encryptedPayload, passphrase);
+        title = `${source.title} Copy`;
         rememberEncryptionPassphrase(id, passphrase);
-        rememberEncryptionPassphrase(document.id, passphrase);
-        upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, decryptedData);
       }
+
+      const document = createLocalCvDocument(data, title);
+      replaceLocalDocumentSummary(document);
+      loadDataIntoForm(document.id, document.data);
     } catch (duplicateError) {
       setStatus("error");
       setError(errorMessage(duplicateError));
