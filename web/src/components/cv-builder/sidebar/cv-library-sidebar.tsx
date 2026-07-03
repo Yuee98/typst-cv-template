@@ -7,11 +7,12 @@ import {
   FilePlus2,
   Plus,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
+import { useClickOutside } from "@/hooks/use-click-outside";
 
 import { CvDocumentCard } from "./cv-document-card";
 
@@ -49,6 +50,8 @@ export function CvLibrarySidebar({
   onEnableEncryption: (id: string) => void;
 }) {
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const createMenuRef = useRef<HTMLDivElement>(null);
+  useClickOutside(createMenuRef, () => setCreateMenuOpen(false), createMenuOpen);
 
   function runCreateAction(action: () => void) {
     setCreateMenuOpen(false);
@@ -96,59 +99,61 @@ export function CvLibrarySidebar({
         collapsed ? "w-14" : "w-full lg:w-72",
       )}
     >
-      <div
-        className={cn(
-          "flex min-h-12 items-center border-b border-slate-200 px-2",
-          collapsed ? "justify-center" : "justify-between gap-2",
-        )}
-      >
-        {collapsed ? (
-          <Button type="button" variant="ghost" size="icon" onClick={onToggleCollapsed} title="Expand CV library">
-            <ChevronRight />
-          </Button>
-        ) : (
-          <>
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-slate-950">CVs</h2>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setCreateMenuOpen((open) => !open)}
-                title="New CV"
-              >
-                <Plus />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onToggleCollapsed}
-                title="Collapse CV library"
-              >
-                <ChevronLeft />
-              </Button>
-            </div>
-          </>
+      <div ref={createMenuRef}>
+        <div
+          className={cn(
+            "flex min-h-12 items-center border-b border-slate-200 px-2",
+            collapsed ? "justify-center" : "justify-between gap-2",
+          )}
+        >
+          {collapsed ? (
+            <Button type="button" variant="ghost" size="icon" onClick={onToggleCollapsed} title="Expand CV library">
+              <ChevronRight />
+            </Button>
+          ) : (
+            <>
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-semibold text-slate-950">CVs</h2>
+              </div>
+              <div className="relative flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCreateMenuOpen((open) => !open)}
+                  title="New CV"
+                >
+                  <Plus />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onToggleCollapsed}
+                  title="Collapse CV library"
+                >
+                  <ChevronLeft />
+                </Button>
+                {createMenu}
+              </div>
+            </>
+          )}
+        </div>
+
+        {collapsed && (
+          <div className="border-b border-slate-200 p-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              onClick={() => setCreateMenuOpen((open) => !open)}
+              title="New CV"
+            >
+              <Plus />
+            </Button>
+          </div>
         )}
       </div>
-
-      {collapsed && (
-        <div className="border-b border-slate-200 p-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon"
-            onClick={() => setCreateMenuOpen((open) => !open)}
-            title="New CV"
-          >
-            <Plus />
-          </Button>
-        </div>
-      )}
-      {createMenu}
 
       <div className={cn("min-h-0 flex-1 overflow-y-auto", collapsed ? "p-2" : "p-2")}>
         <div className="flex flex-col gap-2">

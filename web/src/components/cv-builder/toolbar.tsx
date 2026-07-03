@@ -3,11 +3,13 @@
 import { Cloud, LogIn, LogOut, UserPlus, UserRound } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import type { RefObject } from "react";
+import { useRef } from "react";
 
 import { Toolbar, ToolbarGroup, ToolbarTitle } from "@/components/layout/toolbar";
 import { Button } from "@/components/ui/button";
 import { GithubIcon } from "@/components/ui/github-icon";
 import { MenuContainer, MenuDivider, MenuItem } from "@/components/ui/menu-item";
+import { useClickOutside } from "@/hooks/use-click-outside";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
 
@@ -36,6 +38,9 @@ export function CvToolbar({
   onGithubSignIn: () => void;
   onImportFile: (file: File | undefined) => void;
 }) {
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+  useClickOutside(accountMenuRef, onToggleAccountMenu, accountMenuOpen);
+
   return (
     <Toolbar>
       <ToolbarTitle />
@@ -49,7 +54,7 @@ export function CvToolbar({
             <GithubIcon className="!size-5" />
           </a>
         </Button>
-        <div className="relative">
+        <div className="relative" ref={accountMenuRef}>
           <Button
             type="button"
             variant={session ? "default" : "secondary"}
