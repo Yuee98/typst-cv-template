@@ -218,6 +218,7 @@ export function CvBuilder() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [encryptionPassword, setEncryptionPassword] = useState("");
+  const [encryptionModalError, setEncryptionModalError] = useState<string | null>(null);
   const [rememberEncryptionSession, setRememberEncryptionSession] = useState(loadRememberEncryptionSession);
   const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
   const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
@@ -557,6 +558,7 @@ export function CvBuilder() {
         if (!hasKnownEncryptionPassphrase(activeDocumentId)) {
           setEncryptionModal({ mode: "unlock", documentId: activeDocumentId });
           setEncryptionPassword("");
+          setEncryptionModalError(null);
           return false;
         }
 
@@ -671,6 +673,7 @@ export function CvBuilder() {
         if (!hasKnownEncryptionPassphrase(id)) {
           setEncryptionModal({ mode: "unlock", documentId: id });
           setEncryptionPassword("");
+          setEncryptionModalError(null);
           return;
         }
 
@@ -712,6 +715,7 @@ export function CvBuilder() {
         if (!hasKnownEncryptionPassphrase(documentSummary.id)) {
           setEncryptionModal({ mode: "unlock", documentId: documentSummary.id });
           setEncryptionPassword("");
+          setEncryptionModalError(null);
           return;
         }
 
@@ -812,6 +816,7 @@ export function CvBuilder() {
         if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
           setEncryptionModal({ mode: "duplicate", documentId: id });
           setEncryptionPassword("");
+          setEncryptionModalError(null);
           return;
         }
 
@@ -1010,6 +1015,7 @@ export function CvBuilder() {
   function closeEncryptionModal() {
     setEncryptionModal(null);
     setEncryptionPassword("");
+    setEncryptionModalError(null);
     setTrustEncryptionDevice(false);
   }
 
@@ -1031,12 +1037,13 @@ export function CvBuilder() {
     }
 
     if (!encryptionPassword) {
-      setStatus("error");
-      setError("Enter the encryption password first.");
+      setEncryptionModalError("Enter the encryption password first.");
       return;
     }
 
     try {
+      setEncryptionModalError(null);
+
       if (rememberEncryptionSession) {
         storeRememberEncryptionSession(true);
       }
@@ -1053,8 +1060,7 @@ export function CvBuilder() {
 
       closeEncryptionModal();
     } catch (modalError) {
-      setStatus("error");
-      setError(errorMessage(modalError));
+      setEncryptionModalError(errorMessage(modalError));
     }
   }
 
@@ -1107,6 +1113,7 @@ export function CvBuilder() {
         if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
           setEncryptionModal({ mode: "export", documentId: id });
           setEncryptionPassword("");
+          setEncryptionModalError(null);
           return;
         }
 
@@ -1274,6 +1281,7 @@ export function CvBuilder() {
               onEnableEncryption={(id) => {
                 setEncryptionModal({ mode: "enable", documentId: id });
                 setEncryptionPassword("");
+                setEncryptionModalError(null);
               }}
             />
           }
@@ -1362,9 +1370,17 @@ export function CvBuilder() {
               <Input
                 type="password"
                 value={encryptionPassword}
-                onChange={(event) => setEncryptionPassword(event.target.value)}
+                onChange={(event) => {
+                  setEncryptionPassword(event.target.value);
+                  setEncryptionModalError(null);
+                }}
                 placeholder="encryption password"
               />
+              {encryptionModalError && (
+                <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {encryptionModalError}
+                </p>
+              )}
               <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600">
                 <input
                   type="checkbox"
