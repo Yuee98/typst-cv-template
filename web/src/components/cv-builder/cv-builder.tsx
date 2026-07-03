@@ -1,6 +1,6 @@
 "use client";
 
-import { Circle, Printer, Save } from "lucide-react";
+import { Circle, FilePlus2, Printer, Save } from "lucide-react";
 import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
@@ -60,26 +60,35 @@ export function CvBuilder() {
             />
           }
           editor={
-            <CvEditor
-              actions={
-                h.activeDocument?.storageKind !== "local" && (
-                  <div className="relative">
-                    <Button type="button" variant="secondary" size="icon" onClick={() => void h.saveCurrentDocument()} title="Save">
-                      <Save />
-                    </Button>
-                    {h.isDirty && (
-                      <Circle className="absolute -right-0.5 -top-0.5 size-2.5 fill-amber-500 text-amber-500" />
-                    )}
-                  </div>
-                )
-              }
-            />
+            h.activeDocumentId ? (
+              <CvEditor
+                actions={
+                  h.activeDocument?.storageKind !== "local" && (
+                    <div className="relative">
+                      <Button type="button" variant="secondary" size="icon" onClick={() => void h.saveCurrentDocument()} title="Save">
+                        <Save />
+                      </Button>
+                      {h.isDirty && (
+                        <Circle className="absolute -right-0.5 -top-0.5 size-2.5 fill-amber-500 text-amber-500" />
+                      )}
+                    </div>
+                  )
+                }
+              />
+            ) : (
+              <div className="flex h-full min-h-[720px] items-center justify-center rounded-lg border border-slate-200 bg-white">
+                <div className="flex flex-col items-center gap-3 text-slate-400">
+                  <FilePlus2 className="size-10" />
+                  <p className="text-sm">Select or create a CV to start editing</p>
+                </div>
+              </div>
+            )
           }
           preview={
             <PreviewPane
-              svg={h.svg}
-              status={h.status}
-              error={h.error}
+              svg={h.activeDocumentId ? h.svg : null}
+              status={h.activeDocumentId ? h.status : "idle"}
+              error={h.activeDocumentId ? h.error : null}
               actions={
                 <Button type="button" variant="secondary" size="icon" onClick={() => window.print()} title="Print">
                   <Printer />

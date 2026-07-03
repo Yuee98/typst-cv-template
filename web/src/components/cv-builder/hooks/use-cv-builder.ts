@@ -810,49 +810,27 @@ export function useCvBuilder() {
 
     try {
       if (current.storageKind === "local") {
-        const library = removeCvDocument(id);
-        const nextDocuments = documents.filter((document) => document.id !== id);
-
-        if (nextDocuments.length === 0) {
-          const document = createLocalCvDocument(createEmptyCvData(), "Untitled CV");
-          setDocuments([summarizeLocalDocument(document)]);
-          loadDataIntoForm(document.id, document.data);
-          return;
-        }
-
-        setDocuments(nextDocuments);
-
-        if (id === activeDocumentId) {
-          const nextDocumentId =
-            library.activeDocumentId && nextDocuments.some((document) => document.id === library.activeDocumentId)
-              ? library.activeDocumentId
-              : nextDocuments[0]?.id;
-
-          const nextDocument = nextDocuments.find((document) => document.id === nextDocumentId);
-          if (nextDocument) {
-            await openDocumentWithoutSaving(nextDocument);
-          }
-        }
+        removeCvDocument(id);
       } else if (current.storageKind === "cloud" || current.storageKind === "encrypted") {
         if (!supabase || !session) {
           throw new Error("Sign in before deleting this cloud CV.");
         }
 
         await deleteCloudCvDocument(supabase, id);
-        const nextDocuments = documents.filter((document) => document.id !== id);
+      }
 
-        if (nextDocuments.length === 0) {
-          const document = createLocalCvDocument(createEmptyCvData(), "Untitled CV");
-          setDocuments([summarizeLocalDocument(document)]);
-          loadDataIntoForm(document.id, document.data);
-          return;
-        }
+      const nextDocuments = documents.filter((document) => document.id !== id);
+      setDocuments(nextDocuments);
 
-        setDocuments(nextDocuments);
-
-        if (id === activeDocumentId && nextDocuments[0]) {
-          await openDocumentWithoutSaving(nextDocuments[0]);
-        }
+      if (id === activeDocumentId) {
+        setActiveDocumentId(null);
+        saveActiveCvDocumentId(null);
+        renderId.current += 1;
+        form.reset(createEmptyCvData());
+        setSvg(null);
+        setStatus("idle");
+        setError(null);
+        setIsDirty(false);
       }
     } catch (deleteError) {
       setStatus("error");
