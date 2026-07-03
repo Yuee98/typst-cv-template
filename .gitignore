@@ -4,3 +4,7 @@ output/
 node_modules/
 .next/
 out/
+.env*
+!.env.example
+web/.env*
+!web/.env.example

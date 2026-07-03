@@ -7,6 +7,12 @@
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm --filter web typecheck",
-    "sync:typst-assets": "pnpm --filter web sync:typst-assets"
+    "sync:typst-assets": "pnpm --filter web sync:typst-assets",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset"
+  },
+  "devDependencies": {
+    "supabase": "^2.109.0"
   }
 }

@@ -1,0 +1,1 @@
+-- Local seed data can be added here when cloud CV flows need fixtures.
