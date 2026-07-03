@@ -83,6 +83,7 @@ export function useCvBuilder() {
   const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
   const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
   const isResettingRef = useRef(false);
@@ -347,6 +348,10 @@ export function useCvBuilder() {
       return false;
     }
 
+    if (saving) {
+      return false;
+    }
+
     const parsed = cvSchema.safeParse(form.getValues());
     if (!parsed.success) {
       setStatus("error");
@@ -356,6 +361,7 @@ export function useCvBuilder() {
 
     void silent;
 
+    setSaving(true);
     try {
       if (activeDocument.storageKind === "local") {
         const updated = updateLocalCvDocumentData(activeDocumentId, parsed.data);
@@ -395,6 +401,8 @@ export function useCvBuilder() {
       setStatus("error");
       setError(errorMessage(saveError));
       return false;
+    } finally {
+      setSaving(false);
     }
 
     setIsDirty(false);
@@ -1140,6 +1148,7 @@ export function useCvBuilder() {
     activeDocumentId,
     activeDocument,
     isDirty,
+    saving,
     libraryCollapsed,
     session,
     cloudStatus,

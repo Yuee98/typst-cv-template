@@ -1,6 +1,6 @@
 "use client";
 
-import { Circle, FilePlus2, Printer, RotateCcw, Save } from "lucide-react";
+import { Circle, FilePlus2, Loader2, Printer, RotateCcw, Save } from "lucide-react";
 import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
@@ -71,8 +71,8 @@ export function CvBuilder() {
                         </Button>
                       )}
                       <div className="relative">
-                        <Button type="button" variant="secondary" size="icon" onClick={() => void h.saveCurrentDocument()} title="Save">
-                          <Save />
+                        <Button type="button" variant="secondary" size="icon" disabled={h.saving} onClick={() => void h.saveCurrentDocument()} title="Save">
+                          {h.saving ? <Loader2 className="animate-spin" /> : <Save />}
                         </Button>
                         {h.isDirty && (
                           <Circle className="absolute -right-0.5 -top-0.5 size-2.5 fill-amber-500 text-amber-500" />
