@@ -48,7 +48,7 @@ execute function public.set_updated_at();
 
 alter table public.cv_documents enable row level security;
 
-grant select, insert, update, delete on public.cv_documents to authenticated;
+grant select, insert, update, delete on public.cv_documents to authenticated, service_role;
 
 create policy "Users can read their own CV documents"
 on public.cv_documents
@@ -104,7 +104,7 @@ execute function public.set_updated_at();
 
 alter table public.cv_key_wrappings enable row level security;
 
-grant select, insert, update, delete on public.cv_key_wrappings to authenticated;
+grant select, insert, update, delete on public.cv_key_wrappings to authenticated, service_role;
 
 create policy "Users can read their own key wrappings"
 on public.cv_key_wrappings
