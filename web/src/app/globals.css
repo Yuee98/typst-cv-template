@@ -53,6 +53,7 @@ body {
   }
 
   header,
+  .library-column,
   .editor-column,
   .preview-pane > div:first-child,
   .preview-error {
