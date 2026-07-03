@@ -63,8 +63,8 @@ type EncryptionModalState = {
   mode: EncryptionModalMode;
   documentId: string;
 };
-const ENCRYPTION_SESSION_KEY_PREFIX = "typst-cv-builder:encryption-session:";
-const ENCRYPTION_SESSION_REMEMBER_KEY = "typst-cv-builder:encryption-session:remember";
+const ENCRYPTION_KEY_PREFIX = "typst-cv-builder:encryption:";
+const TRUST_DEVICE_KEY_PREFIX = "typst-cv-builder:encryption-trust-device:";
 
 function cloneCvData(data: CvData): CvData {
   return JSON.parse(JSON.stringify(data)) as CvData;
@@ -116,56 +116,63 @@ function createEmptyCvData(): CvData {
   };
 }
 
-function encryptionSessionKey(id: string) {
-  return `${ENCRYPTION_SESSION_KEY_PREFIX}${id}`;
+function encryptionKey(userId: string, cvId: string) {
+  return `${ENCRYPTION_KEY_PREFIX}${userId}:${cvId}`;
 }
 
-function loadSessionEncryptionPassword(id: string) {
+function loadEncryptionPassword(userId: string, cvId: string) {
   if (typeof window === "undefined") {
     return null;
   }
 
-  return window.sessionStorage.getItem(encryptionSessionKey(id));
+  return (
+    window.sessionStorage.getItem(encryptionKey(userId, cvId)) ??
+    window.localStorage.getItem(encryptionKey(userId, cvId))
+  );
 }
 
-function storeSessionEncryptionPassword(id: string, passphrase: string) {
+function storeEncryptionPassword(userId: string, cvId: string, passphrase: string, persist: boolean) {
   if (typeof window === "undefined") {
     return;
   }
 
-  window.sessionStorage.setItem(encryptionSessionKey(id), passphrase);
+  window.sessionStorage.setItem(encryptionKey(userId, cvId), passphrase);
+  if (persist) {
+    window.localStorage.setItem(encryptionKey(userId, cvId), passphrase);
+  }
 }
 
-function clearSessionEncryptionPasswords() {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
-    const key = window.sessionStorage.key(index);
-    if (key?.startsWith(ENCRYPTION_SESSION_KEY_PREFIX)) {
-      window.sessionStorage.removeItem(key);
+function clearEncryptionPasswords(storage: Storage, userId: string) {
+  const prefix = `${ENCRYPTION_KEY_PREFIX}${userId}:`;
+  for (let index = storage.length - 1; index >= 0; index -= 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(prefix)) {
+      storage.removeItem(key);
     }
   }
 }
 
-function loadRememberEncryptionSession() {
+function trustDeviceKey(userId: string) {
+  return `${TRUST_DEVICE_KEY_PREFIX}${userId}`;
+}
+
+function loadTrustDevice(userId: string) {
   if (typeof window === "undefined") {
     return false;
   }
 
-  return window.sessionStorage.getItem(ENCRYPTION_SESSION_REMEMBER_KEY) === "true";
+  return window.localStorage.getItem(trustDeviceKey(userId)) === "true";
 }
 
-function storeRememberEncryptionSession(remember: boolean) {
+function storeTrustDevice(userId: string, trust: boolean) {
   if (typeof window === "undefined") {
     return;
   }
 
-  if (remember) {
-    window.sessionStorage.setItem(ENCRYPTION_SESSION_REMEMBER_KEY, "true");
+  if (trust) {
+    window.localStorage.setItem(trustDeviceKey(userId), "true");
   } else {
-    window.sessionStorage.removeItem(ENCRYPTION_SESSION_REMEMBER_KEY);
+    window.localStorage.removeItem(trustDeviceKey(userId));
   }
 }
 
@@ -185,10 +192,9 @@ export function CvBuilder() {
   const [authPassword, setAuthPassword] = useState("");
   const [encryptionPassword, setEncryptionPassword] = useState("");
   const [encryptionModalError, setEncryptionModalError] = useState<string | null>(null);
-  const [rememberEncryptionSession, setRememberEncryptionSession] = useState(loadRememberEncryptionSession);
+  const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
   const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
-  const encryptedPasswordsRef = useRef<Record<string, string>>({});
   const initializedRef = useRef(false);
   const renderId = useRef(0);
 
@@ -293,28 +299,26 @@ export function CvBuilder() {
   }
 
   function getEncryptionPassphrase(id: string) {
-    const passphrase = encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id);
-
-    if (!passphrase) {
+    const userId = session?.user.id;
+    if (!userId) {
       throw new Error("Enter the encryption password to unlock this CV.");
     }
 
-    if (passphrase) {
-      encryptedPasswordsRef.current[id] = passphrase;
+    const passphrase = loadEncryptionPassword(userId, id);
+    if (!passphrase) {
+      throw new Error("Enter the encryption password to unlock this CV.");
     }
 
     return passphrase;
   }
 
   function hasKnownEncryptionPassphrase(id: string) {
-    return Boolean(encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id));
-  }
-
-  function rememberEncryptionPassphrase(id: string, passphrase: string) {
-    encryptedPasswordsRef.current[id] = passphrase;
-    if (rememberEncryptionSession) {
-      storeSessionEncryptionPassword(id, passphrase);
+    const userId = session?.user.id;
+    if (!userId) {
+      return false;
     }
+
+    return Boolean(loadEncryptionPassword(userId, id));
   }
 
   useEffect(() => {
@@ -339,6 +343,7 @@ export function CvBuilder() {
 
       setSession(data.session);
       if (data.session) {
+        setTrustEncryptionDevice(loadTrustDevice(data.session.user.id));
         await refreshCloudDocuments(client);
       }
     }
@@ -350,6 +355,7 @@ export function CvBuilder() {
     } = client.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       if (nextSession) {
+        setTrustEncryptionDevice(loadTrustDevice(nextSession.user.id));
         void refreshCloudDocuments(client);
       } else {
         removeCloudSummaries();
@@ -459,10 +465,11 @@ export function CvBuilder() {
       return;
     }
 
-    encryptedPasswordsRef.current = {};
-    clearSessionEncryptionPasswords();
-    storeRememberEncryptionSession(false);
-    setRememberEncryptionSession(false);
+    if (session?.user.id) {
+      clearEncryptionPasswords(window.sessionStorage, session.user.id);
+      clearEncryptionPasswords(window.localStorage, session.user.id);
+    }
+    setTrustEncryptionDevice(false);
     setEncryptionPassword("");
     setAccountMenuOpen(false);
 
@@ -527,7 +534,6 @@ export function CvBuilder() {
           encryptedPayload,
           schemaVersion: parsed.data.schemaVersion,
         });
-        rememberEncryptionPassphrase(activeDocumentId, passphrase);
         upsertDocumentSummary(updated);
       }
     } catch (saveError) {
@@ -639,7 +645,6 @@ export function CvBuilder() {
         const passphrase = getEncryptionPassphrase(id);
         const document = await loadEncryptedCloudCvDocument(supabase, id);
         const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
-        rememberEncryptionPassphrase(id, passphrase);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, decryptedData);
       }
@@ -681,7 +686,6 @@ export function CvBuilder() {
         const passphrase = getEncryptionPassphrase(documentSummary.id);
         const document = await loadEncryptedCloudCvDocument(supabase, documentSummary.id);
         const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
-        rememberEncryptionPassphrase(documentSummary.id, passphrase);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, decryptedData);
       }
@@ -783,7 +787,6 @@ export function CvBuilder() {
         const source = await loadEncryptedCloudCvDocument(supabase, id);
         data = await decryptCvData(source.encryptedPayload, passphrase);
         title = `${source.title} Copy`;
-        rememberEncryptionPassphrase(id, passphrase);
       }
 
       const document = createLocalCvDocument(data, title);
@@ -947,7 +950,9 @@ export function CvBuilder() {
           schemaVersion: sourceData.schemaVersion,
         });
         removeCvDocument(id);
-        rememberEncryptionPassphrase(encryptedDocument.id, encryptionPassword);
+        if (session?.user.id) {
+          storeEncryptionPassword(session.user.id, encryptedDocument.id, encryptionPassword, trustEncryptionDevice);
+        }
         setDocuments((currentDocuments) => [
           encryptedDocument,
           ...currentDocuments.filter((document) => document.id !== id),
@@ -958,7 +963,6 @@ export function CvBuilder() {
           encryptedPayload,
           schemaVersion: sourceData.schemaVersion,
         });
-        rememberEncryptionPassphrase(id, encryptionPassword);
         upsertDocumentSummary(encryptedDocument);
         loadDataIntoForm(id, sourceData);
       }
@@ -984,7 +988,6 @@ export function CvBuilder() {
 
     const document = await loadEncryptedCloudCvDocument(supabase, id);
     const decryptedData = await decryptCvData(document.encryptedPayload, encryptionPassword);
-    rememberEncryptionPassphrase(id, encryptionPassword);
     upsertDocumentSummary(document);
     loadDataIntoForm(document.id, decryptedData);
   }
@@ -1002,8 +1005,10 @@ export function CvBuilder() {
     try {
       setEncryptionModalError(null);
 
-      if (rememberEncryptionSession) {
-        storeRememberEncryptionSession(true);
+      const userId = session?.user.id;
+      if (userId) {
+        storeEncryptionPassword(userId, encryptionModal.documentId, encryptionPassword, trustEncryptionDevice);
+        storeTrustDevice(userId, trustEncryptionDevice);
       }
 
       if (encryptionModal.mode === "enable") {
@@ -1077,9 +1082,6 @@ export function CvBuilder() {
 
         const document = await loadEncryptedCloudCvDocument(supabase, id);
         const data = await decryptCvData(document.encryptedPayload, passphraseOverride ?? getEncryptionPassphrase(id));
-        if (passphraseOverride) {
-          rememberEncryptionPassphrase(id, passphraseOverride);
-        }
         downloadJsonData(data, document.title);
       }
     } catch (exportError) {
@@ -1342,17 +1344,11 @@ export function CvBuilder() {
               <label className="flex items-center gap-1.5 text-xs text-slate-600">
                 <input
                   type="checkbox"
-                  checked={rememberEncryptionSession}
-                  onChange={(event) => {
-                    setRememberEncryptionSession(event.target.checked);
-                    storeRememberEncryptionSession(event.target.checked);
-                    if (!event.target.checked) {
-                      clearSessionEncryptionPasswords();
-                    }
-                  }}
+                  checked={trustEncryptionDevice}
+                  onChange={(event) => setTrustEncryptionDevice(event.target.checked)}
                   className="size-3.5 accent-emerald-600"
                 />
-                Remember this session
+                Remember this device
               </label>
             </div>
           </Modal>
