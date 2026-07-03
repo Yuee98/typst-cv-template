@@ -15,7 +15,6 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
 
@@ -233,7 +232,7 @@ function SortableSectionTab({ id, label }: { id: CvSectionId; label: string }) {
     "aria-roledescription": attributes["aria-roledescription"],
   };
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: transform ? `translate3d(${transform.x}px, 0, 0)` : undefined,
     transition,
     zIndex: isDragging ? 20 : undefined,
   };
