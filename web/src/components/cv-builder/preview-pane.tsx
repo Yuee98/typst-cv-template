@@ -75,7 +75,7 @@ export function PreviewPane({
               />
             ))
           ) : (
-            <div className="flex h-[297mm] w-[210mm] items-center justify-center bg-white text-sm text-slate-500 shadow-md ring-1 ring-slate-300">
+            <div className="flex aspect-[210/297] w-full items-center justify-center bg-white text-sm text-slate-500 shadow-md ring-1 ring-slate-300">
               Preview will appear here.
             </div>
           )}
