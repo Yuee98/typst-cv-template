@@ -79,6 +79,7 @@ export function useCvBuilder() {
   const [isDirty, setIsDirty] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
+  const isResettingRef = useRef(false);
   const renderId = useRef(0);
 
   const form = useForm<CvData>({
@@ -145,6 +146,7 @@ export function useCvBuilder() {
 
   function loadDataIntoForm(id: string, data: CvData) {
     renderId.current += 1;
+    isResettingRef.current = true;
     setActiveDocumentId(id);
     saveActiveCvDocumentId(id);
     form.reset(data);
@@ -152,6 +154,10 @@ export function useCvBuilder() {
     setStatus("idle");
     setError(null);
     setIsDirty(false);
+    // Allow the effect to fire after React has processed the reset
+    queueMicrotask(() => {
+      isResettingRef.current = false;
+    });
   }
 
   // ── cloud draft ──────────────────────────────────────────────────
@@ -377,6 +383,10 @@ export function useCvBuilder() {
     }
 
     const timer = window.setTimeout(async () => {
+      if (isResettingRef.current) {
+        return;
+      }
+
       const parsed = cvSchema.safeParse(form.getValues());
       if (!parsed.success) {
         setStatus("error");
