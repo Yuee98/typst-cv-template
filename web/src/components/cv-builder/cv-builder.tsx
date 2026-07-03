@@ -65,7 +65,6 @@ type EncryptionModalState = {
 };
 const ENCRYPTION_SESSION_KEY_PREFIX = "typst-cv-builder:encryption-session:";
 const ENCRYPTION_SESSION_REMEMBER_KEY = "typst-cv-builder:encryption-session:remember";
-const ENCRYPTION_DEVICE_KEY_PREFIX = "typst-cv-builder:encryption-device:";
 
 function cloneCvData(data: CvData): CvData {
   return JSON.parse(JSON.stringify(data)) as CvData;
@@ -121,22 +120,6 @@ function encryptionSessionKey(id: string) {
   return `${ENCRYPTION_SESSION_KEY_PREFIX}${id}`;
 }
 
-function encryptionDeviceKey(id: string) {
-  return `${ENCRYPTION_DEVICE_KEY_PREFIX}${id}`;
-}
-
-function encodeStoredPassphrase(passphrase: string) {
-  return btoa(encodeURIComponent(passphrase));
-}
-
-function decodeStoredPassphrase(stored: string) {
-  try {
-    return decodeURIComponent(atob(stored));
-  } catch {
-    return null;
-  }
-}
-
 function loadSessionEncryptionPassword(id: string) {
   if (typeof window === "undefined") {
     return null;
@@ -151,23 +134,6 @@ function storeSessionEncryptionPassword(id: string, passphrase: string) {
   }
 
   window.sessionStorage.setItem(encryptionSessionKey(id), passphrase);
-}
-
-function loadDeviceEncryptionPassword(id: string) {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const stored = window.localStorage.getItem(encryptionDeviceKey(id));
-  return stored ? decodeStoredPassphrase(stored) : null;
-}
-
-function storeDeviceEncryptionPassword(id: string, passphrase: string) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(encryptionDeviceKey(id), encodeStoredPassphrase(passphrase));
 }
 
 function clearSessionEncryptionPasswords() {
@@ -185,11 +151,10 @@ function clearSessionEncryptionPasswords() {
 
 function loadRememberEncryptionSession() {
   if (typeof window === "undefined") {
-    return true;
+    return false;
   }
 
-  const stored = window.sessionStorage.getItem(ENCRYPTION_SESSION_REMEMBER_KEY);
-  return stored === null ? true : stored === "true";
+  return window.sessionStorage.getItem(ENCRYPTION_SESSION_REMEMBER_KEY) === "true";
 }
 
 function storeRememberEncryptionSession(remember: boolean) {
@@ -221,7 +186,6 @@ export function CvBuilder() {
   const [encryptionPassword, setEncryptionPassword] = useState("");
   const [encryptionModalError, setEncryptionModalError] = useState<string | null>(null);
   const [rememberEncryptionSession, setRememberEncryptionSession] = useState(loadRememberEncryptionSession);
-  const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
   const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const encryptedPasswordsRef = useRef<Record<string, string>>({});
@@ -282,23 +246,6 @@ export function CvBuilder() {
     };
   }, [form]);
 
-  const previousActiveIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    const previousId = previousActiveIdRef.current;
-    previousActiveIdRef.current = activeDocumentId;
-
-    if (!previousId || previousId === activeDocumentId) {
-      return;
-    }
-
-    const previousDoc = documents.find((document) => document.id === previousId);
-    if (previousDoc?.storageKind !== "encrypted" || rememberEncryptionSession) {
-      return;
-    }
-
-    delete encryptedPasswordsRef.current[previousId];
-  }, [activeDocumentId, documents, rememberEncryptionSession]);
-
   function upsertDocumentSummary(summary: CvDocumentSummary) {
     setDocuments((current) =>
       current.some((item) => item.id === summary.id)
@@ -346,8 +293,7 @@ export function CvBuilder() {
   }
 
   function getEncryptionPassphrase(id: string) {
-    const passphrase =
-      encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id) ?? loadDeviceEncryptionPassword(id);
+    const passphrase = encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id);
 
     if (!passphrase) {
       throw new Error("Enter the encryption password to unlock this CV.");
@@ -361,18 +307,13 @@ export function CvBuilder() {
   }
 
   function hasKnownEncryptionPassphrase(id: string) {
-    return Boolean(
-      encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id) ?? loadDeviceEncryptionPassword(id),
-    );
+    return Boolean(encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id));
   }
 
   function rememberEncryptionPassphrase(id: string, passphrase: string) {
     encryptedPasswordsRef.current[id] = passphrase;
     if (rememberEncryptionSession) {
       storeSessionEncryptionPassword(id, passphrase);
-    }
-    if (trustEncryptionDevice) {
-      storeDeviceEncryptionPassword(id, passphrase);
     }
   }
 
@@ -1034,7 +975,6 @@ export function CvBuilder() {
     setEncryptionModal(null);
     setEncryptionPassword("");
     setEncryptionModalError(null);
-    setTrustEncryptionDevice(false);
   }
 
   async function unlockEncryptedDocument(id: string) {
@@ -1399,32 +1339,21 @@ export function CvBuilder() {
                   {encryptionModalError}
                 </p>
               )}
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={rememberEncryptionSession}
-                    onChange={(event) => {
-                      setRememberEncryptionSession(event.target.checked);
-                      storeRememberEncryptionSession(event.target.checked);
-                      if (!event.target.checked) {
-                        clearSessionEncryptionPasswords();
-                      }
-                    }}
-                    className="size-3.5 accent-emerald-600"
-                  />
-                  Remember until refresh
-                </label>
-                <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={trustEncryptionDevice}
-                    onChange={(event) => setTrustEncryptionDevice(event.target.checked)}
-                    className="size-3.5 accent-emerald-600"
-                  />
-                  Trust this device
-                </label>
-              </div>
+              <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={rememberEncryptionSession}
+                  onChange={(event) => {
+                    setRememberEncryptionSession(event.target.checked);
+                    storeRememberEncryptionSession(event.target.checked);
+                    if (!event.target.checked) {
+                      clearSessionEncryptionPasswords();
+                    }
+                  }}
+                  className="size-3.5 accent-emerald-600"
+                />
+                Remember this session
+              </label>
             </div>
           </Modal>
         )}
