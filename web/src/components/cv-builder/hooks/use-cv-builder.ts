@@ -154,10 +154,6 @@ export function useCvBuilder() {
     setStatus("idle");
     setError(null);
     setIsDirty(false);
-    // Allow the effect to fire after React has processed the reset
-    queueMicrotask(() => {
-      isResettingRef.current = false;
-    });
   }
 
   // ── cloud draft ──────────────────────────────────────────────────
@@ -384,6 +380,7 @@ export function useCvBuilder() {
 
     const timer = window.setTimeout(async () => {
       if (isResettingRef.current) {
+        isResettingRef.current = false;
         return;
       }
 
