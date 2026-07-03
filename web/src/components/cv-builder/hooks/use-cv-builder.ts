@@ -76,6 +76,7 @@ export function useCvBuilder() {
   const [encryptionModalError, setEncryptionModalError] = useState<string | null>(null);
   const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
   const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
   const renderId = useRef(0);
@@ -150,6 +151,45 @@ export function useCvBuilder() {
     setSvg(null);
     setStatus("idle");
     setError(null);
+    setIsDirty(false);
+  }
+
+  // ── cloud draft ──────────────────────────────────────────────────
+
+  function draftKey(userId: string, cvId: string) {
+    return `typst-cv-builder:draft:${userId}:${cvId}`;
+  }
+
+  function saveDraft(cvId: string, data: CvData) {
+    const userId = session?.user.id;
+    if (!userId) return;
+
+    try {
+      window.localStorage.setItem(draftKey(userId, cvId), JSON.stringify(data));
+    } catch {
+      // localStorage full or unavailable — non-critical, skip
+    }
+  }
+
+  function loadDraft(cvId: string): CvData | null {
+    const userId = session?.user.id;
+    if (!userId) return null;
+
+    try {
+      const raw = window.localStorage.getItem(draftKey(userId, cvId));
+      if (!raw) return null;
+      const parsed = cvSchema.safeParse(JSON.parse(raw));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function clearDraft(cvId: string) {
+    const userId = session?.user.id;
+    if (!userId) return;
+
+    window.localStorage.removeItem(draftKey(userId, cvId));
   }
 
   // ── cloud sync ───────────────────────────────────────────────────
@@ -324,6 +364,10 @@ export function useCvBuilder() {
       return false;
     }
 
+    setIsDirty(false);
+    if (activeDocument.storageKind === "cloud") {
+      clearDraft(activeDocumentId);
+    }
     return true;
   }
 
@@ -340,11 +384,22 @@ export function useCvBuilder() {
         return;
       }
 
-      const saved = await saveCurrentDocument({ silent: true });
-      if (!saved) {
-        return;
+      // Auto-save: only for local CVs
+      if (activeDocument?.storageKind === "local") {
+        const saved = await saveCurrentDocument({ silent: true });
+        if (!saved) {
+          return;
+        }
+      } else if (activeDocument?.storageKind === "cloud") {
+        // Cloud CVs: save draft to localStorage as safety net
+        saveDraft(activeDocumentId, parsed.data);
+        setIsDirty(true);
+      } else {
+        // Encrypted CVs: no auto-save, no draft
+        setIsDirty(true);
       }
 
+      // Always render preview
       const nextRenderId = renderId.current + 1;
       renderId.current = nextRenderId;
       setStatus("rendering");
@@ -368,7 +423,7 @@ export function useCvBuilder() {
     return () => window.clearTimeout(timer);
     // saveCurrentDocument updates document summaries, so depending on it would retrigger saves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchedData, form, activeDocumentId]);
+  }, [watchedData, form, activeDocumentId, activeDocument?.storageKind]);
 
   // ── auth ─────────────────────────────────────────────────────────
 
@@ -495,8 +550,11 @@ export function useCvBuilder() {
       return;
     }
 
-    if (activeDocumentId && !(await saveCurrentDocument({ silent: true }))) {
-      return;
+    // Auto-save only for local CVs when switching away
+    if (activeDocumentId && activeDocument?.storageKind === "local") {
+      if (!(await saveCurrentDocument({ silent: true }))) {
+        return;
+      }
     }
 
     const documentSummary = documents.find((document) => document.id === id);
@@ -521,7 +579,12 @@ export function useCvBuilder() {
 
         const document = await loadCloudCvDocument(supabase, id);
         upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, document.data);
+        // Check for local draft first
+        const draft = loadDraft(id);
+        loadDataIntoForm(document.id, draft ?? document.data);
+        if (draft) {
+          setIsDirty(true);
+        }
       } else {
         if (!supabase || !session) {
           throw new Error("Sign in before opening this encrypted CV.");
@@ -562,7 +625,11 @@ export function useCvBuilder() {
 
         const document = await loadCloudCvDocument(supabase, documentSummary.id);
         upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, document.data);
+        const draft = loadDraft(documentSummary.id);
+        loadDataIntoForm(document.id, draft ?? document.data);
+        if (draft) {
+          setIsDirty(true);
+        }
       } else {
         if (!supabase || !session) {
           throw new Error("Sign in before opening this encrypted CV.");
@@ -1023,6 +1090,8 @@ export function useCvBuilder() {
     error,
     documents,
     activeDocumentId,
+    activeDocument,
+    isDirty,
     libraryCollapsed,
     session,
     cloudStatus,
