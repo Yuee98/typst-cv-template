@@ -59,6 +59,8 @@ import { renderTypstSvg } from "@/lib/typst/render";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type CloudStatus = "idle" | "loading" | "ready" | "error";
+const ENCRYPTION_SESSION_KEY_PREFIX = "typst-cv-builder:encryption-session:";
+const ENCRYPTION_SESSION_REMEMBER_KEY = "typst-cv-builder:encryption-session:remember";
 
 function cloneCvData(data: CvData): CvData {
   return JSON.parse(JSON.stringify(data)) as CvData;
@@ -87,6 +89,59 @@ function titleFromImportedData(data: CvData) {
   return name ? `${name} CV` : "Imported CV";
 }
 
+function encryptionSessionKey(id: string) {
+  return `${ENCRYPTION_SESSION_KEY_PREFIX}${id}`;
+}
+
+function loadSessionEncryptionPassword(id: string) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.sessionStorage.getItem(encryptionSessionKey(id));
+}
+
+function storeSessionEncryptionPassword(id: string, passphrase: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.setItem(encryptionSessionKey(id), passphrase);
+}
+
+function clearSessionEncryptionPasswords() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = window.sessionStorage.key(index);
+    if (key?.startsWith(ENCRYPTION_SESSION_KEY_PREFIX)) {
+      window.sessionStorage.removeItem(key);
+    }
+  }
+}
+
+function loadRememberEncryptionSession() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.sessionStorage.getItem(ENCRYPTION_SESSION_REMEMBER_KEY) === "true";
+}
+
+function storeRememberEncryptionSession(remember: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (remember) {
+    window.sessionStorage.setItem(ENCRYPTION_SESSION_REMEMBER_KEY, "true");
+  } else {
+    window.sessionStorage.removeItem(ENCRYPTION_SESSION_REMEMBER_KEY);
+  }
+}
+
 export function CvBuilder() {
   const [svg, setSvg] = useState<string | null>(null);
   const [status, setStatus] = useState<PreviewStatus>("idle");
@@ -101,6 +156,7 @@ export function CvBuilder() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [encryptionPassword, setEncryptionPassword] = useState("");
+  const [rememberEncryptionSession, setRememberEncryptionSession] = useState(loadRememberEncryptionSession);
   const importInputRef = useRef<HTMLInputElement>(null);
   const encryptedPasswordsRef = useRef<Record<string, string>>({});
   const initializedRef = useRef(false);
@@ -202,6 +258,24 @@ export function CvBuilder() {
       setCloudStatus("error");
       setStatus("error");
       setError(errorMessage(cloudError));
+    }
+  }
+
+  function getEncryptionPassphrase(id: string) {
+    const passphrase =
+      encryptedPasswordsRef.current[id] ?? loadSessionEncryptionPassword(id) ?? encryptionPassword;
+
+    if (passphrase) {
+      encryptedPasswordsRef.current[id] = passphrase;
+    }
+
+    return passphrase;
+  }
+
+  function rememberEncryptionPassphrase(id: string, passphrase: string) {
+    encryptedPasswordsRef.current[id] = passphrase;
+    if (rememberEncryptionSession) {
+      storeSessionEncryptionPassword(id, passphrase);
     }
   }
 
@@ -323,6 +397,12 @@ export function CvBuilder() {
       return;
     }
 
+    encryptedPasswordsRef.current = {};
+    clearSessionEncryptionPasswords();
+    storeRememberEncryptionSession(false);
+    setRememberEncryptionSession(false);
+    setEncryptionPassword("");
+
     const localDocuments = documents.filter((document) => document.storageKind === "local");
     if (activeDocument?.storageKind === "cloud" || localDocuments.length === 0) {
       const parsed = cvSchema.safeParse(form.getValues());
@@ -373,13 +453,13 @@ export function CvBuilder() {
           throw new Error("Sign in before saving this encrypted CV.");
         }
 
-        const passphrase = encryptedPasswordsRef.current[activeDocumentId] ?? encryptionPassword;
+        const passphrase = getEncryptionPassphrase(activeDocumentId);
         const encryptedPayload = await encryptCvData(parsed.data, passphrase);
         const updated = await updateEncryptedCloudCvDocumentData(supabase, activeDocumentId, {
           encryptedPayload,
           schemaVersion: parsed.data.schemaVersion,
         });
-        encryptedPasswordsRef.current[activeDocumentId] = passphrase;
+        rememberEncryptionPassphrase(activeDocumentId, passphrase);
         upsertDocumentSummary(updated);
       }
     } catch (saveError) {
@@ -485,10 +565,10 @@ export function CvBuilder() {
           throw new Error("Sign in before opening this encrypted CV.");
         }
 
-        const passphrase = encryptedPasswordsRef.current[id] ?? encryptionPassword;
+        const passphrase = getEncryptionPassphrase(id);
         const document = await loadEncryptedCloudCvDocument(supabase, id);
         const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
-        encryptedPasswordsRef.current[id] = passphrase;
+        rememberEncryptionPassphrase(id, passphrase);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, decryptedData);
       }
@@ -520,10 +600,10 @@ export function CvBuilder() {
           throw new Error("Sign in before opening this encrypted CV.");
         }
 
-        const passphrase = encryptedPasswordsRef.current[documentSummary.id] ?? encryptionPassword;
+        const passphrase = getEncryptionPassphrase(documentSummary.id);
         const document = await loadEncryptedCloudCvDocument(supabase, documentSummary.id);
         const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
-        encryptedPasswordsRef.current[documentSummary.id] = passphrase;
+        rememberEncryptionPassphrase(documentSummary.id, passphrase);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, decryptedData);
       }
@@ -608,7 +688,7 @@ export function CvBuilder() {
           throw new Error("Sign in before duplicating this encrypted CV.");
         }
 
-        const passphrase = encryptedPasswordsRef.current[id] ?? encryptionPassword;
+        const passphrase = getEncryptionPassphrase(id);
         const source = await loadEncryptedCloudCvDocument(supabase, id);
         const decryptedData = await decryptCvData(source.encryptedPayload, passphrase);
         const encryptedPayload = await encryptCvData(decryptedData, passphrase);
@@ -617,7 +697,7 @@ export function CvBuilder() {
           encryptedPayload,
           schemaVersion: decryptedData.schemaVersion,
         });
-        encryptedPasswordsRef.current[document.id] = passphrase;
+        rememberEncryptionPassphrase(document.id, passphrase);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, decryptedData);
       }
@@ -779,7 +859,7 @@ export function CvBuilder() {
           schemaVersion: sourceData.schemaVersion,
         });
         removeCvDocument(id);
-        encryptedPasswordsRef.current[encryptedDocument.id] = encryptionPassword;
+        rememberEncryptionPassphrase(encryptedDocument.id, encryptionPassword);
         setDocuments((currentDocuments) => [
           encryptedDocument,
           ...currentDocuments.filter((document) => document.id !== id),
@@ -790,7 +870,7 @@ export function CvBuilder() {
           encryptedPayload,
           schemaVersion: sourceData.schemaVersion,
         });
-        encryptedPasswordsRef.current[id] = encryptionPassword;
+        rememberEncryptionPassphrase(id, encryptionPassword);
         upsertDocumentSummary(encryptedDocument);
         loadDataIntoForm(id, sourceData);
       }
@@ -853,13 +933,13 @@ export function CvBuilder() {
         const updated = await updateCloudCvDocumentData(supabase, activeDocumentId, sample);
         upsertDocumentSummary(updated);
       } else if (activeDocumentId && activeDocument?.storageKind === "encrypted" && supabase && session) {
-        const passphrase = encryptedPasswordsRef.current[activeDocumentId] ?? encryptionPassword;
+        const passphrase = getEncryptionPassphrase(activeDocumentId);
         const encryptedPayload = await encryptCvData(sample, passphrase);
         const updated = await updateEncryptedCloudCvDocumentData(supabase, activeDocumentId, {
           encryptedPayload,
           schemaVersion: sample.schemaVersion,
         });
-        encryptedPasswordsRef.current[activeDocumentId] = passphrase;
+        rememberEncryptionPassphrase(activeDocumentId, passphrase);
         upsertDocumentSummary(updated);
       }
       setError(null);
@@ -905,6 +985,21 @@ export function CvBuilder() {
                     placeholder="encryption password"
                     className="w-48"
                   />
+                  <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={rememberEncryptionSession}
+                      onChange={(event) => {
+                        setRememberEncryptionSession(event.target.checked);
+                        storeRememberEncryptionSession(event.target.checked);
+                        if (!event.target.checked) {
+                          clearSessionEncryptionPasswords();
+                        }
+                      }}
+                      className="size-3.5 accent-emerald-600"
+                    />
+                    Remember session
+                  </label>
                   <Button type="button" variant="ghost" onClick={() => void signOut()}>
                     <LogOut />
                     Sign out
