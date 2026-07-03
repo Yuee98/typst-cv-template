@@ -62,10 +62,8 @@ export const AccordionContent = React.forwardRef<
   return (
     <AccordionPrimitive.Content
       ref={ref}
-      className={cn(
-        "overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down",
-        sorting && "data-[state=closed]:animate-none data-[state=open]:animate-none",
-      )}
+      data-sorting={sorting ? "true" : undefined}
+      className="accordion-content overflow-hidden"
       {...props}
     >
       <div className={cn("pb-4", className)}>{children}</div>

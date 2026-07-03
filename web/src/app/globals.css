@@ -34,6 +34,44 @@ body {
   width: 100%;
 }
 
+.accordion-content[data-state="open"] {
+  animation: accordion-down 160ms ease-out;
+}
+
+.accordion-content[data-state="closed"] {
+  animation: accordion-up 160ms ease-out;
+}
+
+.accordion-content[data-sorting="true"] {
+  animation: none;
+}
+
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+
+  to {
+    height: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .accordion-content {
+    animation: none !important;
+  }
+}
+
 @page {
   margin: 0;
   size: A4;
