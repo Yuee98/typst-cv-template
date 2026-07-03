@@ -440,9 +440,9 @@ export function useCvBuilder() {
     }
 
     const timer = window.setTimeout(async () => {
-      if (isResettingRef.current) {
+      const isResetting = isResettingRef.current;
+      if (isResetting) {
         isResettingRef.current = false;
-        return;
       }
 
       const parsed = cvSchema.safeParse(form.getValues());
@@ -452,19 +452,21 @@ export function useCvBuilder() {
         return;
       }
 
-      // Auto-save: only for local CVs
-      if (activeDocument?.storageKind === "local") {
-        const saved = await saveCurrentDocument({ silent: true });
-        if (!saved) {
-          return;
+      // Auto-save: only for local CVs (skip during reset)
+      if (!isResetting) {
+        if (activeDocument?.storageKind === "local") {
+          const saved = await saveCurrentDocument({ silent: true });
+          if (!saved) {
+            return;
+          }
+        } else if (activeDocument?.storageKind === "cloud") {
+          // Cloud CVs: save draft to localStorage as safety net
+          saveDraft(activeDocumentId, parsed.data);
+          setIsDirty(true);
+        } else {
+          // Encrypted CVs: no auto-save, no draft
+          setIsDirty(true);
         }
-      } else if (activeDocument?.storageKind === "cloud") {
-        // Cloud CVs: save draft to localStorage as safety net
-        saveDraft(activeDocumentId, parsed.data);
-        setIsDirty(true);
-      } else {
-        // Encrypted CVs: no auto-save, no draft
-        setIsDirty(true);
       }
 
       // Always render preview
