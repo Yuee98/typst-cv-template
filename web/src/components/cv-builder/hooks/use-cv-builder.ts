@@ -63,7 +63,13 @@ export function useCvBuilder() {
   const [status, setStatus] = useState<PreviewStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
-  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
+  const [activeDocumentId, setActiveDocumentIdRaw] = useState<string | null>(null);
+  const activeDocumentIdRef = useRef<string | null>(null);
+
+  function setActiveDocumentId(id: string | null) {
+    activeDocumentIdRef.current = id;
+    setActiveDocumentIdRaw(id);
+  }
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [supabase] = useState(() => getSupabaseBrowserClient());
   const [session, setSession] = useState<import("@supabase/supabase-js").Session | null>(null);
@@ -207,7 +213,7 @@ export function useCvBuilder() {
       const cloudDocuments = await listCloudCvDocuments(client);
       replaceCloudSummaries(cloudDocuments);
 
-      const currentActiveId = activeDocumentId;
+      const currentActiveId = activeDocumentIdRef.current;
       const activeIsCloud = cloudDocuments.some((d) => d.id === currentActiveId && d.storageKind === "cloud");
       const activeIsEncrypted = cloudDocuments.some((d) => d.id === currentActiveId && d.storageKind === "encrypted");
 
