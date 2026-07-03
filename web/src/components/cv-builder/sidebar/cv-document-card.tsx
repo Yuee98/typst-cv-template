@@ -1,8 +1,6 @@
 "use client";
 
 import { CloudUpload, Copy, Download, LockKeyhole, Pencil, Trash2 } from "lucide-react";
-import type { ReactNode } from "react";
-
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
@@ -14,7 +12,6 @@ export function CvDocumentCard({
   selected,
   collapsed,
   cloudActionsEnabled,
-  dragHandle,
   onSelect,
   onRename,
   onDuplicate,
@@ -27,7 +24,6 @@ export function CvDocumentCard({
   selected: boolean;
   collapsed: boolean;
   cloudActionsEnabled: boolean;
-  dragHandle?: ReactNode;
   onSelect: () => void;
   onRename: () => void;
   onDuplicate: () => void;
@@ -82,7 +78,6 @@ export function CvDocumentCard({
       </button>
 
       <div className="mt-2 flex items-center gap-1">
-        {dragHandle}
         <Button type="button" variant="ghost" size="icon" onClick={onRename} title="Rename">
           <Pencil />
         </Button>
@@ -92,26 +87,16 @@ export function CvDocumentCard({
         <Button type="button" variant="ghost" size="icon" onClick={onExport} title="Export JSON">
           <Download />
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onMoveToCloud}
-          disabled={!cloudActionsEnabled || document.storageKind !== "local"}
-          title="Move to cloud"
-        >
-          <CloudUpload />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onEnableEncryption}
-          disabled={!cloudActionsEnabled || document.storageKind === "encrypted"}
-          title="Enable encryption"
-        >
-          <LockKeyhole />
-        </Button>
+        {document.storageKind === "local" && cloudActionsEnabled && (
+          <Button type="button" variant="ghost" size="icon" onClick={onMoveToCloud} title="Move to cloud">
+            <CloudUpload />
+          </Button>
+        )}
+        {document.storageKind !== "encrypted" && cloudActionsEnabled && (
+          <Button type="button" variant="ghost" size="icon" onClick={onEnableEncryption} title="Enable encryption">
+            <LockKeyhole />
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"

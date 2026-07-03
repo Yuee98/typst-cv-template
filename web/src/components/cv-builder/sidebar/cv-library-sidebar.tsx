@@ -1,21 +1,73 @@
 "use client";
 
 import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   ChevronLeft,
   ChevronRight,
   FileJson,
   FilePlus2,
   Plus,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { SortableList } from "@/components/ui/sortable-list";
 import { cn } from "@/lib/utils";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 import { useClickOutside } from "@/hooks/use-click-outside";
 
 import { CvDocumentCard } from "./cv-document-card";
+
+function SortableCard({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled: boolean;
+  children: (args: { isDragging: boolean }) => ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 20 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={isDragging ? "opacity-70" : undefined}
+      {...attributes}
+      {...listeners}
+    >
+      {children({ isDragging })}
+    </div>
+  );
+}
 
 export function CvLibrarySidebar({
   documents,
@@ -59,6 +111,29 @@ export function CvLibrarySidebar({
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
   useClickOutside(createMenuRef, () => setCreateMenuOpen(false), createMenuOpen);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: {
+        start: ["Enter"],
+        cancel: ["Escape"],
+        end: ["Enter", "Escape"],
+      },
+    }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = documents.map((d) => d.id);
+    const fromIndex = ids.indexOf(String(active.id));
+    const toIndex = ids.indexOf(String(over.id));
+    if (fromIndex !== -1 && toIndex !== -1) {
+      onReorder(fromIndex, toIndex);
+    }
+  }
 
   function runCreateAction(action: () => void) {
     setCreateMenuOpen(false);
@@ -179,30 +254,40 @@ export function CvLibrarySidebar({
       )}
 
       <div className={cn("min-h-0 flex-1 overflow-y-auto", collapsed ? "p-2" : "p-2")}>
-        <SortableList
-          items={documents}
-          getId={(document) => document.id}
-          onMove={onReorder}
-          disabled={collapsed}
-          className="flex flex-col gap-2"
-          handleLabel="Reorder CV"
-          renderItem={({ item: document, dragHandle }) => (
-            <CvDocumentCard
-              document={document}
-              selected={document.id === activeDocumentId}
-              collapsed={collapsed}
-              cloudActionsEnabled={cloudActionsEnabled}
-              dragHandle={dragHandle}
-              onSelect={() => onSelect(document.id)}
-              onRename={() => onRename(document.id)}
-              onDuplicate={() => onDuplicate(document.id)}
-              onExport={() => onExport(document.id)}
-              onMoveToCloud={() => onMoveToCloud(document.id)}
-              onEnableEncryption={() => onEnableEncryption(document.id)}
-              onDelete={() => onDelete(document.id)}
-            />
-          )}
-        />
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[({ transform }) => ({ ...transform, x: 0 })]}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={documents.map((d) => d.id)}
+            strategy={verticalListSortingStrategy}
+            disabled={collapsed}
+          >
+            <div className="flex flex-col gap-2">
+              {documents.map((document) => (
+                <SortableCard key={document.id} id={document.id} disabled={collapsed}>
+                  {() => (
+                    <CvDocumentCard
+                      document={document}
+                      selected={document.id === activeDocumentId}
+                      collapsed={collapsed}
+                      cloudActionsEnabled={cloudActionsEnabled}
+                      onSelect={() => onSelect(document.id)}
+                      onRename={() => onRename(document.id)}
+                      onDuplicate={() => onDuplicate(document.id)}
+                      onExport={() => onExport(document.id)}
+                      onMoveToCloud={() => onMoveToCloud(document.id)}
+                      onEnableEncryption={() => onEnableEncryption(document.id)}
+                      onDelete={() => onDelete(document.id)}
+                    />
+                  )}
+                </SortableCard>
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       </div>
     </aside>
   );
