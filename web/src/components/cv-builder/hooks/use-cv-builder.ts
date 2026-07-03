@@ -63,7 +63,11 @@ type EncryptionModalState = {
 export function useCvBuilder() {
   const [svg, setSvg] = useState<string | null>(null);
   const [status, setStatus] = useState<PreviewStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [importExportError, setImportExportError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
   const [activeDocumentId, setActiveDocumentIdRaw] = useState<string | null>(null);
   const activeDocumentIdRef = useRef<string | null>(null);
@@ -184,7 +188,8 @@ export function useCvBuilder() {
     form.reset(data);
     setSvg(null);
     setStatus("idle");
-    setError(null);
+    setPreviewError(null);
+    setLibraryError(null);
     setIsDirty(false);
   }
 
@@ -271,8 +276,7 @@ export function useCvBuilder() {
       setCloudStatus("ready");
     } catch (cloudError) {
       setCloudStatus("error");
-      setStatus("error");
-      setError(errorMessage(cloudError));
+      setLibraryError(errorMessage(cloudError));
     }
   }
 
@@ -342,7 +346,7 @@ export function useCvBuilder() {
 
       if (error) {
         setCloudStatus("error");
-        setError(error.message);
+        setLibraryError(error.message);
         return;
       }
 
@@ -387,8 +391,7 @@ export function useCvBuilder() {
 
     const parsed = cvSchema.safeParse(form.getValues());
     if (!parsed.success) {
-      setStatus("error");
-      setError("The current form data does not match the CV schema.");
+      setLibraryError("The current form data does not match the CV schema.");
       return false;
     }
 
@@ -431,8 +434,7 @@ export function useCvBuilder() {
         upsertDocumentSummary(updated);
       }
     } catch (saveError) {
-      setStatus("error");
-      setError(errorMessage(saveError));
+      setLibraryError(errorMessage(saveError));
       return false;
     } finally {
       setSaving(false);
@@ -470,8 +472,7 @@ export function useCvBuilder() {
         loadDataIntoForm(document.id, decryptedData);
       }
     } catch (discardError) {
-      setStatus("error");
-      setError(errorMessage(discardError));
+      setLibraryError(errorMessage(discardError));
     }
   }
 
@@ -489,7 +490,7 @@ export function useCvBuilder() {
       const parsed = cvSchema.safeParse(form.getValues());
       if (!parsed.success) {
         setStatus("error");
-        setError("The current form data does not match the CV schema.");
+        setPreviewError("The current form data does not match the CV schema.");
         return;
       }
 
@@ -514,7 +515,7 @@ export function useCvBuilder() {
       const nextRenderId = renderId.current + 1;
       renderId.current = nextRenderId;
       setStatus("rendering");
-      setError(null);
+      setPreviewError(null);
 
       try {
         const document = buildTypstDocument(parsed.data);
@@ -526,7 +527,7 @@ export function useCvBuilder() {
       } catch (renderError) {
         if (renderId.current === nextRenderId) {
           setStatus("error");
-          setError(errorMessage(renderError));
+          setPreviewError(errorMessage(renderError));
         }
       }
     }, 500);
@@ -540,14 +541,12 @@ export function useCvBuilder() {
 
   async function signIn() {
     if (!supabase) {
-      setStatus("error");
-      setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      setAuthError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
       return;
     }
 
     if (!authEmail || !authPassword) {
-      setStatus("error");
-      setError("Enter email and password before signing in.");
+      setAuthError("Enter email and password before signing in.");
       return;
     }
 
@@ -557,9 +556,9 @@ export function useCvBuilder() {
     });
 
     if (signInError) {
-      setStatus("error");
-      setError(signInError.message);
+      setAuthError(signInError.message);
     } else {
+      setAuthError(null);
       setAuthPassword("");
       setAuthModalMode(null);
       setAccountMenuOpen(false);
@@ -568,14 +567,12 @@ export function useCvBuilder() {
 
   async function signUp() {
     if (!supabase) {
-      setStatus("error");
-      setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      setAuthError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
       return;
     }
 
     if (!authEmail || !authPassword) {
-      setStatus("error");
-      setError("Enter email and password before creating an account.");
+      setAuthError("Enter email and password before creating an account.");
       return;
     }
 
@@ -588,15 +585,15 @@ export function useCvBuilder() {
     });
 
     if (signUpError) {
-      setStatus("error");
-      setError(signUpError.message);
+      setAuthError(signUpError.message);
       return;
     }
 
     if (!data.session) {
-      setStatus("error");
-      setError("Account created. Check your email before signing in.");
+      setAuthError(null);
+      setSuccessMessage("Account created. Check your email before signing in.");
     } else {
+      setAuthError(null);
       setAuthPassword("");
       setAuthModalMode(null);
       setAccountMenuOpen(false);
@@ -605,8 +602,7 @@ export function useCvBuilder() {
 
   async function signInWithGithub() {
     if (!supabase) {
-      setStatus("error");
-      setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      setAuthError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
       return;
     }
 
@@ -618,8 +614,7 @@ export function useCvBuilder() {
     });
 
     if (oauthError) {
-      setStatus("error");
-      setError(oauthError.message);
+      setAuthError(oauthError.message);
     }
   }
 
@@ -630,8 +625,7 @@ export function useCvBuilder() {
 
     const { error: signOutError } = await supabase.auth.signOut();
     if (signOutError) {
-      setStatus("error");
-      setError(signOutError.message);
+      setAuthError(signOutError.message);
       return;
     }
 
@@ -673,8 +667,7 @@ export function useCvBuilder() {
 
     const documentSummary = documents.find((document) => document.id === id);
     if (!documentSummary) {
-      setStatus("error");
-      setError("The selected CV could not be loaded.");
+      setLibraryError("The selected CV could not be loaded.");
       return;
     }
 
@@ -718,8 +711,7 @@ export function useCvBuilder() {
         loadDataIntoForm(document.id, decryptedData);
       }
     } catch (loadError) {
-      setStatus("error");
-      setError(errorMessage(loadError));
+      setLibraryError(errorMessage(loadError));
     }
   }
 
@@ -771,8 +763,7 @@ export function useCvBuilder() {
         upsertDocumentSummary(updated);
       }
     } catch (renameError) {
-      setStatus("error");
-      setError(errorMessage(renameError));
+      setLibraryError(errorMessage(renameError));
     }
   }
 
@@ -821,8 +812,7 @@ export function useCvBuilder() {
       replaceLocalDocumentSummary(document);
       loadDataIntoForm(document.id, document.data);
     } catch (duplicateError) {
-      setStatus("error");
-      setError(errorMessage(duplicateError));
+      setLibraryError(errorMessage(duplicateError));
     }
   }
 
@@ -857,12 +847,12 @@ export function useCvBuilder() {
         form.reset(createEmptyCvData());
         setSvg(null);
         setStatus("idle");
-        setError(null);
+        setPreviewError(null);
+        setLibraryError(null);
         setIsDirty(false);
       }
     } catch (deleteError) {
-      setStatus("error");
-      setError(errorMessage(deleteError));
+      setLibraryError(errorMessage(deleteError));
     }
   }
 
@@ -879,8 +869,7 @@ export function useCvBuilder() {
     if (!current) return;
 
     if (!supabase || !session) {
-      setStatus("error");
-      setError("Sign in before moving a CV to cloud storage.");
+      setLibraryError("Sign in before moving a CV to cloud storage.");
       return;
     }
 
@@ -910,8 +899,7 @@ export function useCvBuilder() {
       loadDataIntoForm(cloudDocument.id, cloudDocument.data);
       setCloudStatus("ready");
     } catch (moveError) {
-      setStatus("error");
-      setError(errorMessage(moveError));
+      setLibraryError(errorMessage(moveError));
     }
   }
 
@@ -920,14 +908,12 @@ export function useCvBuilder() {
     if (!current) return;
 
     if (!supabase || !session) {
-      setStatus("error");
-      setError("Sign in before enabling encrypted cloud storage.");
+      setLibraryError("Sign in before enabling encrypted cloud storage.");
       return;
     }
 
     if (!encryptionPassword) {
-      setStatus("error");
-      setError("Enter an encryption password before enabling encryption.");
+      setLibraryError("Enter an encryption password before enabling encryption.");
       return;
     }
 
@@ -978,8 +964,7 @@ export function useCvBuilder() {
       setEncryptionPassword("");
       setCloudStatus("ready");
     } catch (encryptionError) {
-      setStatus("error");
-      setError(errorMessage(encryptionError));
+      setLibraryError(errorMessage(encryptionError));
     }
   }
 
@@ -1097,8 +1082,7 @@ export function useCvBuilder() {
         downloadJsonData(data, document.title);
       }
     } catch (exportError) {
-      setStatus("error");
-      setError(errorMessage(exportError));
+      setImportExportError(errorMessage(exportError));
     }
   }
 
@@ -1110,8 +1094,7 @@ export function useCvBuilder() {
     try {
       const parsed = cvSchema.safeParse(JSON.parse(await file.text()));
       if (!parsed.success) {
-        setStatus("error");
-        setError("Imported JSON does not match schemaVersion 5.");
+        setImportExportError("Imported JSON does not match schemaVersion 5.");
         return;
       }
 
@@ -1119,8 +1102,7 @@ export function useCvBuilder() {
       replaceLocalDocumentSummary(document);
       loadDataIntoForm(document.id, document.data);
     } catch (importError) {
-      setStatus("error");
-      setError(errorMessage(importError));
+      setImportExportError(errorMessage(importError));
     } finally {
       if (importInputRef.current) {
         importInputRef.current.value = "";
@@ -1134,7 +1116,11 @@ export function useCvBuilder() {
     // state
     svg,
     status,
-    error,
+    previewError,
+    authError,
+    libraryError,
+    importExportError,
+    successMessage,
     documents,
     activeDocumentId,
     activeDocument,
@@ -1165,6 +1151,10 @@ export function useCvBuilder() {
     setEncryptionModalError,
     setTrustEncryptionDevice,
     setEncryptionModal,
+    setAuthError,
+    setLibraryError,
+    setImportExportError,
+    setSuccessMessage,
 
     // actions
     signIn,

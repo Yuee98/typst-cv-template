@@ -9,6 +9,7 @@ import { CvEditor } from "@/components/cv-builder/editors";
 import { CvToolbar } from "@/components/cv-builder/toolbar";
 import { AuthModal } from "@/components/cv-builder/modals/auth-modal";
 import { EncryptionModal } from "@/components/cv-builder/modals/encryption-modal";
+import { ImportExportErrorModal } from "@/components/cv-builder/modals/import-export-error-modal";
 import { CvLibrarySidebar } from "@/components/cv-builder/sidebar/cv-library-sidebar";
 import { PreviewPane } from "@/components/cv-builder/preview-pane";
 import { useCvBuilder } from "@/components/cv-builder/hooks/use-cv-builder";
@@ -42,6 +43,7 @@ export function CvBuilder() {
               activeDocumentId={h.activeDocumentId}
               collapsed={h.libraryCollapsed}
               cloudActionsEnabled={h.cloudActionsEnabled}
+              error={h.libraryError}
               onToggleCollapsed={h.toggleLibraryCollapsed}
               onCreateEmpty={() => void h.createEmptyDocument()}
               onCreateSample={() => void h.createSampleDocument()}
@@ -58,6 +60,7 @@ export function CvBuilder() {
                 h.setEncryptionPassword("");
                 h.setEncryptionModalError(null);
               }}
+              onDismissError={() => h.setLibraryError(null)}
             />
           }
           editor={
@@ -96,7 +99,7 @@ export function CvBuilder() {
             <PreviewPane
               svg={h.activeDocumentId ? h.svg : null}
               status={h.activeDocumentId ? h.status : "idle"}
-              error={h.activeDocumentId ? h.error : null}
+              error={h.activeDocumentId ? h.previewError : null}
               actions={
                 <Button type="button" variant="secondary" size="icon" onClick={() => window.print()} title="Print">
                   <Printer />
@@ -110,12 +113,26 @@ export function CvBuilder() {
             mode={h.authModalMode}
             email={h.authEmail}
             password={h.authPassword}
-            onEmailChange={h.setAuthEmail}
-            onPasswordChange={h.setAuthPassword}
+            error={h.authError}
+            successMessage={h.successMessage}
+            onEmailChange={(value) => {
+              h.setAuthEmail(value);
+              h.setAuthError(null);
+              h.setSuccessMessage(null);
+            }}
+            onPasswordChange={(value) => {
+              h.setAuthPassword(value);
+              h.setAuthError(null);
+              h.setSuccessMessage(null);
+            }}
             onSignIn={() => void h.signIn()}
             onSignUp={() => void h.signUp()}
             onGithubSignIn={() => void h.signInWithGithub()}
-            onClose={() => h.setAuthModalMode(null)}
+            onClose={() => {
+              h.setAuthModalMode(null);
+              h.setAuthError(null);
+              h.setSuccessMessage(null);
+            }}
           />
         )}
         {h.encryptionModal && (
@@ -131,6 +148,12 @@ export function CvBuilder() {
             onTrustDeviceChange={h.setTrustEncryptionDevice}
             onSubmit={() => void h.submitEncryptionModal()}
             onClose={h.closeEncryptionModal}
+          />
+        )}
+        {h.importExportError && (
+          <ImportExportErrorModal
+            error={h.importExportError}
+            onClose={() => h.setImportExportError(null)}
           />
         )}
       </AppShell>

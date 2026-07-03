@@ -22,6 +22,7 @@ export function CvLibrarySidebar({
   activeDocumentId,
   collapsed,
   cloudActionsEnabled,
+  error,
   onToggleCollapsed,
   onCreateEmpty,
   onCreateSample,
@@ -34,11 +35,13 @@ export function CvLibrarySidebar({
   onDelete,
   onMoveToCloud,
   onEnableEncryption,
+  onDismissError,
 }: {
   documents: CvDocumentSummary[];
   activeDocumentId: string | null;
   collapsed: boolean;
   cloudActionsEnabled: boolean;
+  error: string | null;
   onToggleCollapsed: () => void;
   onCreateEmpty: () => void;
   onCreateSample: () => void;
@@ -51,6 +54,7 @@ export function CvLibrarySidebar({
   onDelete: (id: string) => void;
   onMoveToCloud: (id: string) => void;
   onEnableEncryption: (id: string) => void;
+  onDismissError: () => void;
 }) {
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
@@ -157,6 +161,22 @@ export function CvLibrarySidebar({
           </div>
         )}
       </div>
+
+      {error && !collapsed && (
+        <div className="border-b border-rose-200 bg-rose-50 px-3 py-2">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs text-rose-800">{error}</p>
+            <button
+              type="button"
+              onClick={onDismissError}
+              className="shrink-0 text-rose-600 hover:text-rose-800"
+            >
+              <span className="sr-only">Dismiss</span>
+              <span aria-hidden="true">&times;</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className={cn("min-h-0 flex-1 overflow-y-auto", collapsed ? "p-2" : "p-2")}>
         <SortableList
