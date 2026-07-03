@@ -43,8 +43,8 @@ async function getOrCreateInstance() {
     getModule: () => "/typst/wasm/typst_ts_renderer_bg.wasm",
   });
 
-  // Load text fonts from CDN
-  instance.use(mod.TypstSnippet.preloadFontAssets({ assets: ["text"] }));
+  // Disable default CDN font assets (we use bundled fonts instead)
+  instance.use(mod.TypstSnippet.disableDefaultFontAssets());
 
   // Load bundled fonts
   const bundledData = await fetchBundledFonts();
