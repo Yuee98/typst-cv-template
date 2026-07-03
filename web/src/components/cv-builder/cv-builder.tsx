@@ -185,10 +185,11 @@ function clearSessionEncryptionPasswords() {
 
 function loadRememberEncryptionSession() {
   if (typeof window === "undefined") {
-    return false;
+    return true;
   }
 
-  return window.sessionStorage.getItem(ENCRYPTION_SESSION_REMEMBER_KEY) === "true";
+  const stored = window.sessionStorage.getItem(ENCRYPTION_SESSION_REMEMBER_KEY);
+  return stored === null ? true : stored === "true";
 }
 
 function storeRememberEncryptionSession(remember: boolean) {
@@ -280,6 +281,23 @@ export function CvBuilder() {
       cancelled = true;
     };
   }, [form]);
+
+  const previousActiveIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previousId = previousActiveIdRef.current;
+    previousActiveIdRef.current = activeDocumentId;
+
+    if (!previousId || previousId === activeDocumentId) {
+      return;
+    }
+
+    const previousDoc = documents.find((document) => document.id === previousId);
+    if (previousDoc?.storageKind !== "encrypted" || rememberEncryptionSession) {
+      return;
+    }
+
+    delete encryptedPasswordsRef.current[previousId];
+  }, [activeDocumentId, documents, rememberEncryptionSession]);
 
   function upsertDocumentSummary(summary: CvDocumentSummary) {
     setDocuments((current) =>
@@ -1381,30 +1399,32 @@ export function CvBuilder() {
                   {encryptionModalError}
                 </p>
               )}
-              <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={rememberEncryptionSession}
-                  onChange={(event) => {
-                    setRememberEncryptionSession(event.target.checked);
-                    storeRememberEncryptionSession(event.target.checked);
-                    if (!event.target.checked) {
-                      clearSessionEncryptionPasswords();
-                    }
-                  }}
-                  className="size-3.5 accent-emerald-600"
-                />
-                Remember session
-              </label>
-              <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={trustEncryptionDevice}
-                  onChange={(event) => setTrustEncryptionDevice(event.target.checked)}
-                  className="size-3.5 accent-emerald-600"
-                />
-                Trust this device
-              </label>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={rememberEncryptionSession}
+                    onChange={(event) => {
+                      setRememberEncryptionSession(event.target.checked);
+                      storeRememberEncryptionSession(event.target.checked);
+                      if (!event.target.checked) {
+                        clearSessionEncryptionPasswords();
+                      }
+                    }}
+                    className="size-3.5 accent-emerald-600"
+                  />
+                  Remember until refresh
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={trustEncryptionDevice}
+                    onChange={(event) => setTrustEncryptionDevice(event.target.checked)}
+                    className="size-3.5 accent-emerald-600"
+                  />
+                  Trust this device
+                </label>
+              </div>
             </div>
           </Modal>
         )}
