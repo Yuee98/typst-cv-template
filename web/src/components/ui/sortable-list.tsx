@@ -18,8 +18,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import type { ReactNode } from "react";
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 
+import { Accordion } from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
 
 type SortableRenderArgs<T> = {
@@ -37,8 +38,11 @@ export function SortableList<T>({
   renderContainer,
   className,
   itemClassName,
+  handleClassName,
   handleLabel = "Drag to reorder",
   disabled = false,
+  onSortStart,
+  onSortEnd,
 }: {
   items: T[];
   getId: (item: T) => string;
@@ -47,8 +51,11 @@ export function SortableList<T>({
   renderContainer?: (children: ReactNode, className?: string) => ReactNode;
   className?: string;
   itemClassName?: string;
+  handleClassName?: string;
   handleLabel?: string;
   disabled?: boolean;
+  onSortStart?: () => void;
+  onSortEnd?: () => void;
 }) {
   const ids = useMemo(() => items.map(getId), [getId, items]);
   const sensors = useSensors(
@@ -77,6 +84,7 @@ export function SortableList<T>({
         key={getId(item)}
         id={getId(item)}
         className={itemClassName}
+        handleClassName={handleClassName}
         handleLabel={handleLabel}
       >
         {({ dragHandle, isDragging }) =>
@@ -90,19 +98,30 @@ export function SortableList<T>({
     return renderContainer ? renderContainer(children, className) : <div className={className}>{children}</div>;
   }
 
+  function handleDragStart() {
+    onSortStart?.();
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) {
+      onSortEnd?.();
       return;
     }
 
     const fromIndex = ids.indexOf(String(active.id));
     const toIndex = ids.indexOf(String(over.id));
     if (fromIndex === -1 || toIndex === -1) {
+      onSortEnd?.();
       return;
     }
 
     onMove(fromIndex, toIndex);
+    onSortEnd?.();
+  }
+
+  function handleDragCancel() {
+    onSortEnd?.();
   }
 
   if (dragDisabled) {
@@ -110,7 +129,13 @@ export function SortableList<T>({
   }
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
       <SortableContext items={ids} strategy={verticalListSortingStrategy}>
         {renderListContainer(renderSortableItems())}
       </SortableContext>
@@ -122,11 +147,13 @@ function SortableListItem({
   id,
   children,
   className,
+  handleClassName,
   handleLabel,
 }: {
   id: string;
   children: (args: { dragHandle: ReactNode; isDragging: boolean }) => ReactNode;
   className?: string;
+  handleClassName?: string;
   handleLabel: string;
 }) {
   const {
@@ -149,7 +176,10 @@ function SortableListItem({
     <button
       ref={setActivatorNodeRef}
       type="button"
-      className="flex size-8 shrink-0 touch-none items-center justify-center rounded-md border border-transparent text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950"
+      className={cn(
+        "flex size-8 shrink-0 touch-none items-center justify-center rounded-md border border-transparent text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950",
+        handleClassName,
+      )}
       aria-label={handleLabel}
       title={handleLabel}
       {...attributes}
@@ -167,5 +197,60 @@ function SortableListItem({
     >
       {children({ dragHandle, isDragging })}
     </div>
+  );
+}
+
+export function SortableAccordionList<T>({
+  items,
+  getId,
+  onMove,
+  renderItem,
+  className,
+  itemClassName,
+  handleClassName,
+  handleLabel = "Drag to reorder",
+  disabled = false,
+}: {
+  items: T[];
+  getId: (item: T) => string;
+  onMove: (fromIndex: number, toIndex: number) => void;
+  renderItem: (args: SortableRenderArgs<T>) => ReactNode;
+  className?: string;
+  itemClassName?: string;
+  handleClassName?: string;
+  handleLabel?: string;
+  disabled?: boolean;
+}) {
+  const [openValues, setOpenValues] = useState<string[]>([]);
+  const [sorting, setSorting] = useState(false);
+
+  return (
+    <SortableList
+      items={items}
+      getId={getId}
+      onMove={onMove}
+      className={className}
+      itemClassName={itemClassName}
+      handleClassName={cn("-ml-2", handleClassName)}
+      handleLabel={handleLabel}
+      disabled={disabled}
+      onSortStart={() => {
+        setSorting(true);
+        setOpenValues([]);
+      }}
+      onSortEnd={() => setSorting(false)}
+      renderContainer={(children, containerClassName) => (
+        <Accordion
+          type="multiple"
+          value={openValues}
+          onValueChange={setOpenValues}
+          sorting={sorting}
+          className={containerClassName}
+        >
+          {children}
+        </Accordion>
+      )}
+      renderItem={renderItem}
+    />
   );
 }

@@ -6,7 +6,20 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-export const Accordion = AccordionPrimitive.Root;
+const AccordionSortingContext = React.createContext(false);
+
+export function Accordion({
+  sorting = false,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Root> & {
+  sorting?: boolean;
+}) {
+  return (
+    <AccordionSortingContext.Provider value={sorting}>
+      <AccordionPrimitive.Root {...props} />
+    </AccordionSortingContext.Provider>
+  );
+}
 
 export const AccordionItem = React.forwardRef<
   React.ElementRef<typeof AccordionPrimitive.Item>,
@@ -43,13 +56,20 @@ AccordionTrigger.displayName = AccordionPrimitive.Trigger.displayName;
 export const AccordionContent = React.forwardRef<
   React.ElementRef<typeof AccordionPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <AccordionPrimitive.Content
-    ref={ref}
-    className="overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down"
-    {...props}
-  >
-    <div className={cn("pb-4", className)}>{children}</div>
-  </AccordionPrimitive.Content>
-));
+>(({ className, children, ...props }, ref) => {
+  const sorting = React.useContext(AccordionSortingContext);
+
+  return (
+    <AccordionPrimitive.Content
+      ref={ref}
+      className={cn(
+        "overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down",
+        sorting && "data-[state=closed]:animate-none data-[state=open]:animate-none",
+      )}
+      {...props}
+    >
+      <div className={cn("pb-4", className)}>{children}</div>
+    </AccordionPrimitive.Content>
+  );
+});
 AccordionContent.displayName = AccordionPrimitive.Content.displayName;

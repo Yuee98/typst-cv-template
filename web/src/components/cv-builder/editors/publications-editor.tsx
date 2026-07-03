@@ -4,7 +4,6 @@ import { Plus, Trash2 } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 
 import {
-  Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
@@ -12,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Field, FieldGrid } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { SortableList } from "@/components/ui/sortable-list";
+import { SortableAccordionList } from "@/components/ui/sortable-list";
 import type { CvData } from "@/lib/cv/schema";
 
 import { fieldPath, publicationItem, useCvFieldArray, WatchedTitle } from "./shared";
@@ -23,17 +22,12 @@ export function PublicationsEditor({ name }: { name: string }) {
 
   return (
     <div className="space-y-3">
-      <SortableList
+      <SortableAccordionList
         items={fields}
         getId={(field) => field.id}
         onMove={move}
         className="rounded-md border border-slate-200 px-3"
         handleLabel="Reorder publication"
-        renderContainer={(children, className) => (
-          <Accordion type="multiple" className={className}>
-            {children}
-          </Accordion>
-        )}
         renderItem={({ item: field, index, dragHandle }) => (
           <AccordionItem value={field.id}>
             <div className="flex items-center gap-1">
