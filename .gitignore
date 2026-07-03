@@ -8,3 +8,4 @@ out/
 !.env.example
 web/.env*
 !web/.env.example
+.vercel
