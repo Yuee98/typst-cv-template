@@ -5,11 +5,11 @@ import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
-import { AuthModal } from "@/components/cv-builder/auth-modal";
 import { CvEditor } from "@/components/cv-builder/editors";
-import { EncryptionModal } from "@/components/cv-builder/encryption-modal";
-import { CvLibrarySidebar } from "@/components/cv-builder/cv-library-sidebar";
-import { CvToolbar } from "@/components/cv-builder/cv-toolbar";
+import { CvToolbar } from "@/components/cv-builder/toolbar";
+import { AuthModal } from "@/components/cv-builder/modals/auth-modal";
+import { EncryptionModal } from "@/components/cv-builder/modals/encryption-modal";
+import { CvLibrarySidebar } from "@/components/cv-builder/sidebar/cv-library-sidebar";
 import { PreviewPane } from "@/components/cv-builder/preview-pane";
 import { useCvBuilder } from "@/components/cv-builder/hooks/use-cv-builder";
 

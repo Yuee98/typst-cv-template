@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
-import type { EncryptionModalMode } from "@/components/cv-builder/encryption-modal";
+import type { EncryptionModalMode } from "@/components/cv-builder/modals/encryption-modal";
 import type { PreviewStatus } from "@/components/cv-builder/preview-pane";
 import {
   createCloudCvDocument,
