@@ -582,6 +582,9 @@ export function useCvBuilder() {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: authEmail,
       password: authPassword,
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
     });
 
     if (signUpError) {
