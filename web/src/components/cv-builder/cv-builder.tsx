@@ -11,7 +11,7 @@ import { EncryptionModal } from "@/components/cv-builder/encryption-modal";
 import { CvLibrarySidebar } from "@/components/cv-builder/cv-library-sidebar";
 import { CvToolbar } from "@/components/cv-builder/cv-toolbar";
 import { PreviewPane } from "@/components/cv-builder/preview-pane";
-import { useCvBuilder } from "@/components/cv-builder/use-cv-builder";
+import { useCvBuilder } from "@/components/cv-builder/hooks/use-cv-builder";
 
 export function CvBuilder() {
   const h = useCvBuilder();
