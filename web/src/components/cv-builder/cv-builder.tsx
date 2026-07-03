@@ -50,6 +50,7 @@ export function CvBuilder() {
               onRename={(id) => void h.renameDocument(id)}
               onDuplicate={(id) => void h.duplicateDocument(id)}
               onExport={(id) => void h.exportDocument(id)}
+              onReorder={h.reorderDocuments}
               onDelete={(id) => void h.deleteDocument(id)}
               onMoveToCloud={(id) => void h.moveToCloud(id)}
               onEnableEncryption={(id) => {

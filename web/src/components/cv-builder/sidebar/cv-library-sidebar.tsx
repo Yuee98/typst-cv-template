@@ -10,6 +10,7 @@ import {
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { SortableList } from "@/components/ui/sortable-list";
 import { cn } from "@/lib/utils";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 import { useClickOutside } from "@/hooks/use-click-outside";
@@ -29,6 +30,7 @@ export function CvLibrarySidebar({
   onRename,
   onDuplicate,
   onExport,
+  onReorder,
   onDelete,
   onMoveToCloud,
   onEnableEncryption,
@@ -45,6 +47,7 @@ export function CvLibrarySidebar({
   onRename: (id: string) => void;
   onDuplicate: (id: string) => void;
   onExport: (id: string) => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
   onDelete: (id: string) => void;
   onMoveToCloud: (id: string) => void;
   onEnableEncryption: (id: string) => void;
@@ -156,14 +159,20 @@ export function CvLibrarySidebar({
       </div>
 
       <div className={cn("min-h-0 flex-1 overflow-y-auto", collapsed ? "p-2" : "p-2")}>
-        <div className="flex flex-col gap-2">
-          {documents.map((document) => (
+        <SortableList
+          items={documents}
+          getId={(document) => document.id}
+          onMove={onReorder}
+          disabled={collapsed}
+          className="flex flex-col gap-2"
+          handleLabel="Reorder CV"
+          renderItem={({ item: document, dragHandle }) => (
             <CvDocumentCard
-              key={document.id}
               document={document}
               selected={document.id === activeDocumentId}
               collapsed={collapsed}
               cloudActionsEnabled={cloudActionsEnabled}
+              dragHandle={dragHandle}
               onSelect={() => onSelect(document.id)}
               onRename={() => onRename(document.id)}
               onDuplicate={() => onDuplicate(document.id)}
@@ -172,8 +181,8 @@ export function CvLibrarySidebar({
               onEnableEncryption={() => onEnableEncryption(document.id)}
               onDelete={() => onDelete(document.id)}
             />
-          ))}
-        </div>
+          )}
+        />
       </div>
     </aside>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { CloudUpload, Copy, Download, LockKeyhole, Pencil, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ export function CvDocumentCard({
   selected,
   collapsed,
   cloudActionsEnabled,
+  dragHandle,
   onSelect,
   onRename,
   onDuplicate,
@@ -25,6 +27,7 @@ export function CvDocumentCard({
   selected: boolean;
   collapsed: boolean;
   cloudActionsEnabled: boolean;
+  dragHandle?: ReactNode;
   onSelect: () => void;
   onRename: () => void;
   onDuplicate: () => void;
@@ -79,6 +82,7 @@ export function CvDocumentCard({
       </button>
 
       <div className="mt-2 flex items-center gap-1">
+        {dragHandle}
         <Button type="button" variant="ghost" size="icon" onClick={onRename} title="Rename">
           <Pencil />
         </Button>

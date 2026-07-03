@@ -6,6 +6,7 @@ const LEGACY_CV_STORAGE_KEY = "typst-cv-builder:data";
 const DOCUMENT_INDEX_KEY = "typst-cv-builder:documents:index";
 const ACTIVE_DOCUMENT_KEY = "typst-cv-builder:documents:active";
 const LIBRARY_COLLAPSED_KEY = "typst-cv-builder:ui:library-collapsed";
+const DOCUMENT_ORDER_KEY = "typst-cv-builder:documents:order";
 const DOCUMENT_KEY_PREFIX = "typst-cv-builder:documents:";
 
 const documentStorageKindSchema = z.enum(["local", "cloud", "encrypted"]);
@@ -22,6 +23,8 @@ const documentIndexSchema = z.object({
   version: z.literal(1),
   documents: z.array(documentSummarySchema),
 });
+
+const documentOrderSchema = z.array(z.string());
 
 const localDocumentSchema = documentSummarySchema.extend({
   storageKind: z.literal("local"),
@@ -43,6 +46,10 @@ function canUseBrowserStorage() {
 
 function documentKey(id: string) {
   return `${DOCUMENT_KEY_PREFIX}${id}`;
+}
+
+function documentOrderKey(document: CvDocumentSummary) {
+  return `${document.storageKind === "local" ? "local" : "remote"}:${document.id}`;
 }
 
 function createDocumentId() {
@@ -89,6 +96,14 @@ function readExistingDocumentIndex() {
   }
 
   return parseJson(window.localStorage.getItem(DOCUMENT_INDEX_KEY), documentIndexSchema);
+}
+
+function readDocumentOrder() {
+  if (!canUseBrowserStorage()) {
+    return [];
+  }
+
+  return parseJson(window.localStorage.getItem(DOCUMENT_ORDER_KEY), documentOrderSchema) ?? [];
 }
 
 function writeDocumentIndex(documents: CvDocumentSummary[]) {
@@ -156,6 +171,43 @@ export function saveActiveCvDocumentId(id: string | null) {
   } else {
     window.localStorage.removeItem(ACTIVE_DOCUMENT_KEY);
   }
+}
+
+export function sortCvDocumentSummariesByStoredOrder(documents: CvDocumentSummary[]) {
+  const order = readDocumentOrder();
+  if (order.length === 0) {
+    return documents;
+  }
+
+  const orderIndexByKey = new Map(order.map((key, index) => [key, index]));
+  return documents
+    .map((document, index) => ({
+      document,
+      index,
+      orderIndex: orderIndexByKey.get(documentOrderKey(document)),
+    }))
+    .sort((a, b) => {
+      if (a.orderIndex == null && b.orderIndex == null) {
+        return a.index - b.index;
+      }
+      if (a.orderIndex == null) {
+        return -1;
+      }
+      if (b.orderIndex == null) {
+        return 1;
+      }
+
+      return a.orderIndex - b.orderIndex || a.index - b.index;
+    })
+    .map(({ document }) => document);
+}
+
+export function storeCvDocumentOrder(documents: CvDocumentSummary[]) {
+  if (!canUseBrowserStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(DOCUMENT_ORDER_KEY, JSON.stringify(documents.map(documentOrderKey)));
 }
 
 export function initializeCvDocumentLibrary(defaultData: CvData): CvDocumentLibrary {

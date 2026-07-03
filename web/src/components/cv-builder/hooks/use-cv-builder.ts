@@ -42,6 +42,8 @@ import {
   removeCvDocument,
   renameCvDocument,
   saveActiveCvDocumentId,
+  sortCvDocumentSummariesByStoredOrder,
+  storeCvDocumentOrder,
   storeCvLibraryCollapsed,
   type CvDocumentSummary,
   type LocalCvDocument,
@@ -105,8 +107,31 @@ export function useCvBuilder() {
 
   // ── helpers ──────────────────────────────────────────────────────
 
+  function setOrderedDocuments(
+    nextDocuments: CvDocumentSummary[] | ((current: CvDocumentSummary[]) => CvDocumentSummary[]),
+  ) {
+    setDocuments((current) => {
+      const next = typeof nextDocuments === "function" ? nextDocuments(current) : nextDocuments;
+      return sortCvDocumentSummariesByStoredOrder(next);
+    });
+  }
+
+  function reorderDocuments(fromIndex: number, toIndex: number) {
+    setDocuments((current) => {
+      const next = [...current];
+      const [moved] = next.splice(fromIndex, 1);
+      if (!moved) {
+        return current;
+      }
+
+      next.splice(toIndex, 0, moved);
+      storeCvDocumentOrder(next);
+      return next;
+    });
+  }
+
   function upsertDocumentSummary(summary: CvDocumentSummary) {
-    setDocuments((current) =>
+    setOrderedDocuments((current) =>
       current.some((item) => item.id === summary.id)
         ? current.map((item) => (item.id === summary.id ? summary : item))
         : [summary, ...current],
@@ -118,14 +143,14 @@ export function useCvBuilder() {
   }
 
   function replaceCloudSummaries(cloudDocuments: CvDocumentSummary[]) {
-    setDocuments((current) => [
+    setOrderedDocuments((current) => [
       ...cloudDocuments,
       ...current.filter((document) => document.storageKind === "local"),
     ]);
   }
 
   function removeCloudSummaries() {
-    setDocuments((current) => current.filter((document) => document.storageKind === "local"));
+    setOrderedDocuments((current) => current.filter((document) => document.storageKind === "local"));
   }
 
   function getEncryptionPassphrase(id: string) {
@@ -162,6 +187,14 @@ export function useCvBuilder() {
     setError(null);
     setIsDirty(false);
   }
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      return;
+    }
+
+    storeCvDocumentOrder(documents);
+  }, [documents]);
 
   // ── cloud draft ──────────────────────────────────────────────────
 
@@ -259,7 +292,7 @@ export function useCvBuilder() {
       const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
 
       if (!initialDocument && library.documents.length === 0) {
-        setDocuments([]);
+        setOrderedDocuments([]);
         setActiveDocumentId(null);
         setLibraryCollapsed(loadCvLibraryCollapsed());
         initializedRef.current = true;
@@ -268,7 +301,7 @@ export function useCvBuilder() {
 
       // Cloud/encrypted CV: keep the ID, let refreshCloudDocuments load it later
       if (!initialDocument && isCloudActive && library.activeDocumentId) {
-        setDocuments(library.documents);
+        setOrderedDocuments(library.documents);
         setActiveDocumentId(library.activeDocumentId);
         setLibraryCollapsed(loadCvLibraryCollapsed());
         initializedRef.current = true;
@@ -280,7 +313,7 @@ export function useCvBuilder() {
         ? library.documents
         : [summarizeLocalDocument(documentToLoad), ...library.documents];
 
-      setDocuments(nextDocuments);
+      setOrderedDocuments(nextDocuments);
       setActiveDocumentId(documentToLoad.id);
       saveActiveCvDocumentId(documentToLoad.id);
       setLibraryCollapsed(loadCvLibraryCollapsed());
@@ -614,10 +647,10 @@ export function useCvBuilder() {
       const fallbackData = parsed.success ? parsed.data : cloneCvData(sampleCvData);
       const fallbackTitle = activeDocument?.title ?? titleFromImportedData(fallbackData);
       const localDocument = createLocalCvDocument(fallbackData, fallbackTitle);
-      setDocuments([summarizeLocalDocument(localDocument), ...localDocuments]);
+      setOrderedDocuments([summarizeLocalDocument(localDocument), ...localDocuments]);
       loadDataIntoForm(localDocument.id, localDocument.data);
     } else {
-      setDocuments(localDocuments);
+      setOrderedDocuments(localDocuments);
     }
   }
 
@@ -687,51 +720,6 @@ export function useCvBuilder() {
     }
   }
 
-  async function openDocumentWithoutSaving(documentSummary: CvDocumentSummary) {
-    try {
-      if (documentSummary.storageKind === "local") {
-        const document = loadCvDocument(documentSummary.id);
-        if (!document) {
-          throw new Error("The selected local CV could not be loaded.");
-        }
-
-        loadDataIntoForm(document.id, document.data);
-      } else if (documentSummary.storageKind === "cloud") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before opening this cloud CV.");
-        }
-
-        const document = await loadCloudCvDocument(supabase, documentSummary.id);
-        upsertDocumentSummary(document);
-        const draft = loadDraft(documentSummary.id);
-        loadDataIntoForm(document.id, draft ?? document.data);
-        if (draft) {
-          setIsDirty(true);
-        }
-      } else {
-        if (!supabase || !session) {
-          throw new Error("Sign in before opening this encrypted CV.");
-        }
-
-        if (!hasKnownEncryptionPassphrase(documentSummary.id)) {
-          setEncryptionModal({ mode: "unlock", documentId: documentSummary.id });
-          setEncryptionPassword("");
-          setEncryptionModalError(null);
-          return;
-        }
-
-        const passphrase = getEncryptionPassphrase(documentSummary.id);
-        const document = await loadEncryptedCloudCvDocument(supabase, documentSummary.id);
-        const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
-        upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, decryptedData);
-      }
-    } catch (loadError) {
-      setStatus("error");
-      setError(errorMessage(loadError));
-    }
-  }
-
   async function createDocumentFromData(data: CvData, title: string) {
     if (activeDocumentId) {
       await saveCurrentDocument({ silent: true });
@@ -763,7 +751,7 @@ export function useCvBuilder() {
 
     try {
       if (current.storageKind === "local") {
-        setDocuments((existing) => {
+        setOrderedDocuments((existing) => {
           const updatedLocalDocuments = renameCvDocument(id, nextTitle);
           const updatedLocal = updatedLocalDocuments.find((document) => document.id === id);
 
@@ -857,7 +845,7 @@ export function useCvBuilder() {
       }
 
       const nextDocuments = documents.filter((document) => document.id !== id);
-      setDocuments(nextDocuments);
+      setOrderedDocuments(nextDocuments);
 
       if (id === activeDocumentId) {
         setActiveDocumentId(null);
@@ -912,7 +900,7 @@ export function useCvBuilder() {
         data: localDocument.data,
       });
       removeCvDocument(id);
-      setDocuments((currentDocuments) => [
+      setOrderedDocuments((currentDocuments) => [
         cloudDocument,
         ...currentDocuments.filter((document) => document.id !== id),
       ]);
@@ -970,7 +958,7 @@ export function useCvBuilder() {
         if (session?.user.id) {
           storeEncryptionPassword(session.user.id, encryptedDocument.id, encryptionPassword, trustEncryptionDevice);
         }
-        setDocuments((currentDocuments) => [
+        setOrderedDocuments((currentDocuments) => [
           encryptedDocument,
           ...currentDocuments.filter((document) => document.id !== id),
         ]);
@@ -1188,6 +1176,7 @@ export function useCvBuilder() {
     renameDocument,
     duplicateDocument,
     deleteDocument,
+    reorderDocuments,
     toggleLibraryCollapsed,
     moveToCloud,
     refreshCloudDocuments,

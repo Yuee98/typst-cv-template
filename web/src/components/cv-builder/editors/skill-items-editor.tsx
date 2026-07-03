@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SortableList } from "@/components/ui/sortable-list";
 import { Textarea } from "@/components/ui/textarea";
 import type { CvData } from "@/lib/cv/schema";
 
@@ -25,16 +26,29 @@ export function SkillItemsEditor({
   addLabel: string;
 }) {
   const { register } = useFormContext<CvData>();
-  const { fields, append, remove } = useCvFieldArray(name);
+  const { fields, append, remove, move } = useCvFieldArray(name);
 
   return (
     <div className="space-y-3">
-      <Accordion type="multiple" className="rounded-md border border-slate-200 px-3">
-        {fields.map((field, index) => (
-          <AccordionItem key={field.id} value={field.id}>
-            <AccordionTrigger>
-              <WatchedTitle name={`${name}.${index}.label`} fallback={`Skill ${index + 1}`} />
-            </AccordionTrigger>
+      <SortableList
+        items={fields}
+        getId={(field) => field.id}
+        onMove={move}
+        className="rounded-md border border-slate-200 px-3"
+        handleLabel="Reorder skill"
+        renderContainer={(children, className) => (
+          <Accordion type="multiple" className={className}>
+            {children}
+          </Accordion>
+        )}
+        renderItem={({ item: field, index, dragHandle }) => (
+          <AccordionItem value={field.id}>
+            <div className="flex items-center gap-1">
+              {dragHandle}
+              <AccordionTrigger>
+                <WatchedTitle name={`${name}.${index}.label`} fallback={`Skill ${index + 1}`} />
+              </AccordionTrigger>
+            </div>
             <AccordionContent>
               <div className="space-y-3">
                 <Field label="Label">
@@ -55,8 +69,8 @@ export function SkillItemsEditor({
               </div>
             </AccordionContent>
           </AccordionItem>
-        ))}
-      </Accordion>
+        )}
+      />
       <Button type="button" variant="secondary" onClick={() => append(skillItem() as never)}>
         <Plus />
         {addLabel}
