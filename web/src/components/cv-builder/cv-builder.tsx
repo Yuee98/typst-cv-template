@@ -10,6 +10,7 @@ import { CvToolbar } from "@/components/cv-builder/toolbar";
 import { AuthModal } from "@/components/cv-builder/modals/auth-modal";
 import { EncryptionModal } from "@/components/cv-builder/modals/encryption-modal";
 import { ImportExportErrorModal } from "@/components/cv-builder/modals/import-export-error-modal";
+import { TermsAcceptanceModal } from "@/components/cv-builder/modals/terms-acceptance-modal";
 import { CvLibrarySidebar } from "@/components/cv-builder/sidebar/cv-library-sidebar";
 import { PreviewPane } from "@/components/cv-builder/preview-pane";
 import { useCvBuilder } from "@/components/cv-builder/hooks/use-cv-builder";
@@ -23,17 +24,20 @@ export function CvBuilder() {
         <CvToolbar
           session={h.session}
           cloudStatus={h.cloudStatus}
+          termsStatus={h.termsStatus}
           accountMenuOpen={h.accountMenuOpen}
           supabaseConfigured={h.supabaseConfigured}
           importInputRef={h.importInputRef}
           onToggleAccountMenu={() => h.setAccountMenuOpen((open) => !open)}
           onOpenAuthModal={(mode) => {
             h.setAuthModalMode(mode);
+            h.setSignupTermsAccepted(false);
+            h.setAuthError(null);
+            h.setSuccessMessage(null);
             h.setAccountMenuOpen(false);
           }}
           onSyncCloud={() => void h.refreshCloudDocuments()}
           onSignOut={() => void h.signOut()}
-          onGithubSignIn={() => void h.signInWithGithub()}
           onImportFile={(file) => void h.importJson(file)}
         />
         <Workspace
@@ -55,11 +59,7 @@ export function CvBuilder() {
               onReorder={h.reorderDocuments}
               onDelete={(id) => void h.deleteDocument(id)}
               onMoveToCloud={(id) => void h.moveToCloud(id)}
-              onEnableEncryption={(id) => {
-                h.setEncryptionModal({ mode: "enable", documentId: id });
-                h.setEncryptionPassword("");
-                h.setEncryptionModalError(null);
-              }}
+              onEnableEncryption={(id) => void h.openEnableEncryptionModal(id)}
               onDismissError={() => h.setLibraryError(null)}
             />
           }
@@ -115,6 +115,7 @@ export function CvBuilder() {
             password={h.authPassword}
             error={h.authError}
             successMessage={h.successMessage}
+            termsAccepted={h.signupTermsAccepted}
             onEmailChange={(value) => {
               h.setAuthEmail(value);
               h.setAuthError(null);
@@ -125,6 +126,10 @@ export function CvBuilder() {
               h.setAuthError(null);
               h.setSuccessMessage(null);
             }}
+            onTermsAcceptedChange={(value) => {
+              h.setSignupTermsAccepted(value);
+              h.setAuthError(null);
+            }}
             onSignIn={() => void h.signIn()}
             onSignUp={() => void h.signUp()}
             onGithubSignIn={() => void h.signInWithGithub()}
@@ -132,6 +137,7 @@ export function CvBuilder() {
               h.setAuthModalMode(null);
               h.setAuthError(null);
               h.setSuccessMessage(null);
+              h.setSignupTermsAccepted(false);
             }}
           />
         )}
@@ -154,6 +160,23 @@ export function CvBuilder() {
           <ImportExportErrorModal
             error={h.importExportError}
             onClose={() => h.setImportExportError(null)}
+          />
+        )}
+        {h.termsModalOpen && (
+          <TermsAcceptanceModal
+            checked={h.termsModalChecked}
+            error={h.termsModalError}
+            accepting={h.termsAccepting}
+            onCheckedChange={(value) => {
+              h.setTermsModalChecked(value);
+              h.setTermsModalError(null);
+            }}
+            onAccept={() => void h.acceptTerms()}
+            onClose={() => {
+              h.setTermsModalOpen(false);
+              h.setTermsModalChecked(false);
+              h.setTermsModalError(null);
+            }}
           />
         )}
       </AppShell>

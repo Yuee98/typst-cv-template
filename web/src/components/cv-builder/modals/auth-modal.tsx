@@ -13,8 +13,10 @@ export function AuthModal({
   password,
   error,
   successMessage,
+  termsAccepted,
   onEmailChange,
   onPasswordChange,
+  onTermsAcceptedChange,
   onSignIn,
   onSignUp,
   onGithubSignIn,
@@ -25,8 +27,10 @@ export function AuthModal({
   password: string;
   error: string | null;
   successMessage: string | null;
+  termsAccepted: boolean;
   onEmailChange: (email: string) => void;
   onPasswordChange: (password: string) => void;
+  onTermsAcceptedChange: (accepted: boolean) => void;
   onSignIn: () => void;
   onSignUp: () => void;
   onGithubSignIn: () => void;
@@ -70,9 +74,35 @@ export function AuthModal({
           onChange={(event) => onPasswordChange(event.target.value)}
           placeholder="password"
         />
+        {mode === "signUp" && (
+          <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-700">
+            <input
+              type="checkbox"
+              className="mt-1 size-4 rounded border-slate-300"
+              checked={termsAccepted}
+              onChange={(event) => onTermsAcceptedChange(event.target.checked)}
+            />
+            <span>
+              I agree to the{" "}
+              <a className="font-medium text-emerald-700 hover:text-emerald-600" href="/terms" target="_blank" rel="noreferrer">
+                Terms of Use
+              </a>{" "}
+              and acknowledge the{" "}
+              <a className="font-medium text-emerald-700 hover:text-emerald-600" href="/privacy" target="_blank" rel="noreferrer">
+                Privacy Policy
+              </a>
+              .
+            </span>
+          </label>
+        )}
+        <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
+          <div className="h-px flex-1 bg-slate-200" />
+          <span>or</span>
+          <div className="h-px flex-1 bg-slate-200" />
+        </div>
         <Button type="button" variant="secondary" className="w-full" onClick={onGithubSignIn}>
           <GithubIcon className="!size-4" />
-          GitHub SSO
+          Continue with GitHub
         </Button>
       </div>
     </Modal>

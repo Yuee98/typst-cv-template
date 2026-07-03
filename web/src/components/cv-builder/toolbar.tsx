@@ -12,10 +12,12 @@ import { MenuContainer, MenuDivider, MenuItem } from "@/components/ui/menu-item"
 import { useClickOutside } from "@/hooks/use-click-outside";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
+type TermsStatus = "unknown" | "accepted" | "required";
 
 export function CvToolbar({
   session,
   cloudStatus,
+  termsStatus,
   accountMenuOpen,
   supabaseConfigured,
   importInputRef,
@@ -23,11 +25,11 @@ export function CvToolbar({
   onOpenAuthModal,
   onSyncCloud,
   onSignOut,
-  onGithubSignIn,
   onImportFile,
 }: {
   session: Session | null;
   cloudStatus: CloudStatus;
+  termsStatus: TermsStatus;
   accountMenuOpen: boolean;
   supabaseConfigured: boolean;
   importInputRef: RefObject<HTMLInputElement | null>;
@@ -35,11 +37,18 @@ export function CvToolbar({
   onOpenAuthModal: (mode: "signIn" | "signUp") => void;
   onSyncCloud: () => void;
   onSignOut: () => void;
-  onGithubSignIn: () => void;
   onImportFile: (file: File | undefined) => void;
 }) {
   const accountMenuRef = useRef<HTMLDivElement>(null);
   useClickOutside(accountMenuRef, onToggleAccountMenu, accountMenuOpen);
+  const cloudLabel =
+    termsStatus === "required"
+      ? "Terms required"
+      : cloudStatus === "loading"
+        ? "Syncing"
+        : cloudStatus === "error"
+          ? "Cloud issue"
+          : "Cloud ready";
 
   return (
     <Toolbar>
@@ -72,7 +81,7 @@ export function CvToolbar({
                     <div className="truncate text-sm font-medium text-slate-950">{session.user.email}</div>
                     <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
                       <Cloud className="size-3.5" />
-                      {cloudStatus === "loading" ? "Syncing" : "Cloud ready"}
+                      {cloudLabel}
                     </div>
                   </MenuDivider>
                   <MenuItem icon={<Cloud className="size-4" />} onClick={onSyncCloud}>
@@ -102,13 +111,6 @@ export function CvToolbar({
                     onClick={() => onOpenAuthModal("signUp")}
                   >
                     Sign up
-                  </MenuItem>
-                  <MenuItem
-                    icon={<GithubIcon className="!size-4" />}
-                    disabled={!supabaseConfigured}
-                    onClick={onGithubSignIn}
-                  >
-                    GitHub SSO
                   </MenuItem>
                 </>
               )}

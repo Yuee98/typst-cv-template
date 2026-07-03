@@ -17,6 +17,7 @@ import {
   updateCloudCvDocumentData,
   updateEncryptedCloudCvDocumentData,
 } from "@/lib/cv/cloud-storage";
+import { TERMS_VERSION } from "@/content/legal";
 import {
   cloneCvData,
   createEmptyCvData,
@@ -50,11 +51,13 @@ import {
   updateLocalCvDocumentData,
 } from "@/lib/cv/storage";
 import { buildTypstDocument } from "@/lib/cv/typst";
+import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { renderTypstSvg } from "@/lib/typst/render";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
 type AuthModalMode = "signIn" | "signUp";
+type TermsStatus = "unknown" | "accepted" | "required";
 type EncryptionModalState = {
   mode: EncryptionModalMode;
   documentId: string;
@@ -84,6 +87,12 @@ export function useCvBuilder() {
   const [authModalMode, setAuthModalMode] = useState<AuthModalMode | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [signupTermsAccepted, setSignupTermsAccepted] = useState(false);
+  const [termsStatus, setTermsStatus] = useState<TermsStatus>("unknown");
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
+  const [termsModalChecked, setTermsModalChecked] = useState(false);
+  const [termsModalError, setTermsModalError] = useState<string | null>(null);
+  const [termsAccepting, setTermsAccepting] = useState(false);
   const [encryptionPassword, setEncryptionPassword] = useState("");
   const [encryptionModalError, setEncryptionModalError] = useState<string | null>(null);
   const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
@@ -94,6 +103,7 @@ export function useCvBuilder() {
   const initializedRef = useRef(false);
   const isResettingRef = useRef(false);
   const renderId = useRef(0);
+  const pendingTermsAcceptanceKey = `typst-cv-builder:pending-terms-acceptance`;
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
@@ -239,10 +249,110 @@ export function useCvBuilder() {
     window.localStorage.removeItem(draftKey(userId, cvId));
   }
 
+  // ── terms ────────────────────────────────────────────────────────
+
+  function promptForTermsAcceptance() {
+    setTermsStatus("required");
+    setTermsModalOpen(true);
+    setTermsModalChecked(false);
+    setTermsModalError(null);
+  }
+
+  function markPendingTermsAcceptance() {
+    window.sessionStorage.setItem(pendingTermsAcceptanceKey, TERMS_VERSION);
+  }
+
+  function consumePendingTermsAcceptance() {
+    if (window.sessionStorage.getItem(pendingTermsAcceptanceKey) !== TERMS_VERSION) {
+      return false;
+    }
+
+    window.sessionStorage.removeItem(pendingTermsAcceptanceKey);
+    return true;
+  }
+
+  function clearPendingTermsAcceptance() {
+    window.sessionStorage.removeItem(pendingTermsAcceptanceKey);
+  }
+
+  async function refreshTermsAcceptance(
+    client: SupabaseClient,
+    { showModal = true }: { showModal?: boolean } = {},
+  ) {
+    try {
+      let accepted = await hasAcceptedCurrentTerms(client);
+      if (!accepted && consumePendingTermsAcceptance()) {
+        await acceptCurrentTerms(client);
+        accepted = true;
+      }
+
+      setTermsStatus(accepted ? "accepted" : "required");
+      if (!accepted && showModal) {
+        promptForTermsAcceptance();
+      }
+      return accepted;
+    } catch (termsError) {
+      setTermsStatus("unknown");
+      setLibraryError(errorMessage(termsError));
+      return false;
+    }
+  }
+
+  async function ensureTermsAccepted(client: SupabaseClient | null = supabase) {
+    if (!client || !session) {
+      return false;
+    }
+
+    if (termsStatus === "accepted") {
+      return true;
+    }
+
+    const accepted = await refreshTermsAcceptance(client);
+    if (!accepted) {
+      promptForTermsAcceptance();
+    }
+    return accepted;
+  }
+
+  async function acceptTerms() {
+    if (!supabase || !session) {
+      setTermsModalError("Sign in before accepting the Terms and Privacy Notice.");
+      return;
+    }
+
+    if (!termsModalChecked) {
+      setTermsModalError("Check the box before accepting.");
+      return;
+    }
+
+    setTermsAccepting(true);
+    setTermsModalError(null);
+
+    try {
+      await acceptCurrentTerms(supabase);
+      setTermsStatus("accepted");
+      setTermsModalOpen(false);
+      setTermsModalChecked(false);
+      await refreshCloudDocuments(supabase, { skipTermsCheck: true });
+    } catch (termsError) {
+      setTermsModalError(errorMessage(termsError));
+    } finally {
+      setTermsAccepting(false);
+    }
+  }
+
   // ── cloud sync ───────────────────────────────────────────────────
 
-  async function refreshCloudDocuments(client: SupabaseClient | null = supabase) {
+  async function refreshCloudDocuments(
+    client: SupabaseClient | null = supabase,
+    { skipTermsCheck = false }: { skipTermsCheck?: boolean } = {},
+  ) {
     if (!client) {
+      return;
+    }
+
+    if (!skipTermsCheck && !(await ensureTermsAccepted(client))) {
+      setCloudStatus("idle");
       return;
     }
 
@@ -353,7 +463,13 @@ export function useCvBuilder() {
       setSession(data.session);
       if (data.session) {
         setTrustEncryptionDevice(loadTrustDevice(data.session.user.id));
-        await refreshCloudDocuments(client);
+        const accepted = await refreshTermsAcceptance(client);
+        if (accepted) {
+          await refreshCloudDocuments(client, { skipTermsCheck: true });
+        } else {
+          removeCloudSummaries();
+          setCloudStatus("idle");
+        }
       }
     }
 
@@ -365,9 +481,22 @@ export function useCvBuilder() {
       setSession(nextSession);
       if (nextSession) {
         setTrustEncryptionDevice(loadTrustDevice(nextSession.user.id));
-        void refreshCloudDocuments(client);
+        void (async () => {
+          const accepted = await refreshTermsAcceptance(client);
+          if (accepted) {
+            await refreshCloudDocuments(client, { skipTermsCheck: true });
+          } else {
+            removeCloudSummaries();
+            setCloudStatus("idle");
+          }
+        })();
       } else {
         removeCloudSummaries();
+        setTermsStatus("unknown");
+        setTermsModalOpen(false);
+        setTermsModalChecked(false);
+        setTermsModalError(null);
+        setSignupTermsAccepted(false);
         setCloudStatus("idle");
       }
     });
@@ -411,11 +540,19 @@ export function useCvBuilder() {
           throw new Error("Sign in before saving this cloud CV.");
         }
 
+        if (!(await ensureTermsAccepted())) {
+          return false;
+        }
+
         const updated = await updateCloudCvDocumentData(supabase, activeDocumentId, parsed.data);
         upsertDocumentSummary(updated);
       } else {
         if (!supabase || !session) {
           throw new Error("Sign in before saving this encrypted CV.");
+        }
+
+        if (!(await ensureTermsAccepted())) {
+          return false;
         }
 
         if (!hasKnownEncryptionPassphrase(activeDocumentId)) {
@@ -458,12 +595,20 @@ export function useCvBuilder() {
           throw new Error("Sign in before discarding changes.");
         }
 
+        if (!(await ensureTermsAccepted())) {
+          return;
+        }
+
         clearDraft(activeDocumentId);
         const document = await loadCloudCvDocument(supabase, activeDocumentId);
         loadDataIntoForm(document.id, document.data);
       } else if (activeDocument.storageKind === "encrypted") {
         if (!supabase || !session) {
           throw new Error("Sign in before discarding changes.");
+        }
+
+        if (!(await ensureTermsAccepted())) {
+          return;
         }
 
         const passphrase = getEncryptionPassphrase(activeDocumentId);
@@ -576,6 +721,13 @@ export function useCvBuilder() {
       return;
     }
 
+    if (!signupTermsAccepted) {
+      setAuthError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
+      return;
+    }
+
+    markPendingTermsAcceptance();
+
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: authEmail,
       password: authPassword,
@@ -585,6 +737,7 @@ export function useCvBuilder() {
     });
 
     if (signUpError) {
+      clearPendingTermsAcceptance();
       setAuthError(signUpError.message);
       return;
     }
@@ -593,8 +746,18 @@ export function useCvBuilder() {
       setAuthError(null);
       setSuccessMessage("Account created. Check your email before signing in.");
     } else {
+      try {
+        await acceptCurrentTerms(supabase);
+        setTermsStatus("accepted");
+        clearPendingTermsAcceptance();
+      } catch (termsError) {
+        setAuthError(errorMessage(termsError));
+        return;
+      }
+
       setAuthError(null);
       setAuthPassword("");
+      setSignupTermsAccepted(false);
       setAuthModalMode(null);
       setAccountMenuOpen(false);
     }
@@ -606,6 +769,15 @@ export function useCvBuilder() {
       return;
     }
 
+    if (authModalMode === "signUp") {
+      if (!signupTermsAccepted) {
+        setAuthError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
+        return;
+      }
+
+      markPendingTermsAcceptance();
+    }
+
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "github",
       options: {
@@ -614,6 +786,9 @@ export function useCvBuilder() {
     });
 
     if (oauthError) {
+      if (authModalMode === "signUp") {
+        clearPendingTermsAcceptance();
+      }
       setAuthError(oauthError.message);
     }
   }
@@ -684,6 +859,10 @@ export function useCvBuilder() {
           throw new Error("Sign in before opening this cloud CV.");
         }
 
+        if (!(await ensureTermsAccepted())) {
+          return;
+        }
+
         const document = await loadCloudCvDocument(supabase, id);
         upsertDocumentSummary(document);
         // Check for local draft first
@@ -695,6 +874,10 @@ export function useCvBuilder() {
       } else {
         if (!supabase || !session) {
           throw new Error("Sign in before opening this encrypted CV.");
+        }
+
+        if (!(await ensureTermsAccepted())) {
+          return;
         }
 
         if (!hasKnownEncryptionPassphrase(id)) {
@@ -739,13 +922,13 @@ export function useCvBuilder() {
       return;
     }
 
-    const nextTitle = window.prompt("Rename CV", current.title);
-    if (!nextTitle) {
-      return;
-    }
-
     try {
       if (current.storageKind === "local") {
+        const nextTitle = window.prompt("Rename CV", current.title);
+        if (!nextTitle) {
+          return;
+        }
+
         setOrderedDocuments((existing) => {
           const updatedLocalDocuments = renameCvDocument(id, nextTitle);
           const updatedLocal = updatedLocalDocuments.find((document) => document.id === id);
@@ -757,6 +940,15 @@ export function useCvBuilder() {
       } else if (current.storageKind === "cloud" || current.storageKind === "encrypted") {
         if (!supabase || !session) {
           throw new Error("Sign in before renaming this cloud CV.");
+        }
+
+        if (!(await ensureTermsAccepted())) {
+          return;
+        }
+
+        const nextTitle = window.prompt("Rename CV", current.title);
+        if (!nextTitle) {
+          return;
         }
 
         const updated = await renameCloudCvDocument(supabase, id, nextTitle);
@@ -787,12 +979,20 @@ export function useCvBuilder() {
           throw new Error("Sign in before duplicating this cloud CV.");
         }
 
+        if (!(await ensureTermsAccepted())) {
+          return;
+        }
+
         const source = await loadCloudCvDocument(supabase, id);
         data = source.data;
         title = `${source.title} Copy`;
       } else {
         if (!supabase || !session) {
           throw new Error("Sign in before duplicating this encrypted CV.");
+        }
+
+        if (!(await ensureTermsAccepted())) {
+          return;
         }
 
         if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
@@ -873,6 +1073,10 @@ export function useCvBuilder() {
       return;
     }
 
+    if (!(await ensureTermsAccepted())) {
+      return;
+    }
+
     if (current.storageKind !== "local") {
       return;
     }
@@ -909,6 +1113,10 @@ export function useCvBuilder() {
 
     if (!supabase || !session) {
       setLibraryError("Sign in before enabling encrypted cloud storage.");
+      return;
+    }
+
+    if (!(await ensureTermsAccepted())) {
       return;
     }
 
@@ -970,6 +1178,26 @@ export function useCvBuilder() {
 
   // ── encryption modal ─────────────────────────────────────────────
 
+  async function openEnableEncryptionModal(id: string) {
+    const current = documents.find((document) => document.id === id);
+    if (!current || current.storageKind === "encrypted") {
+      return;
+    }
+
+    if (!supabase || !session) {
+      setLibraryError("Sign in before enabling encrypted cloud storage.");
+      return;
+    }
+
+    if (!(await ensureTermsAccepted())) {
+      return;
+    }
+
+    setEncryptionModal({ mode: "enable", documentId: id });
+    setEncryptionPassword("");
+    setEncryptionModalError(null);
+  }
+
   function closeEncryptionModal() {
     setEncryptionModal(null);
     setEncryptionPassword("");
@@ -979,6 +1207,10 @@ export function useCvBuilder() {
   async function unlockEncryptedDocument(id: string) {
     if (!supabase || !session) {
       throw new Error("Sign in before opening this encrypted CV.");
+    }
+
+    if (!(await ensureTermsAccepted())) {
+      return;
     }
 
     const document = await loadEncryptedCloudCvDocument(supabase, id);
@@ -1041,6 +1273,11 @@ export function useCvBuilder() {
     }
 
     try {
+      const isCloudBacked = current.storageKind === "cloud" || current.storageKind === "encrypted";
+      if (isCloudBacked && !(await ensureTermsAccepted())) {
+        return;
+      }
+
       if (id === activeDocumentId) {
         const parsed = cvSchema.safeParse(form.getValues());
         if (!parsed.success) {
@@ -1135,6 +1372,12 @@ export function useCvBuilder() {
     authModalMode,
     authEmail,
     authPassword,
+    signupTermsAccepted,
+    termsStatus,
+    termsModalOpen,
+    termsModalChecked,
+    termsModalError,
+    termsAccepting,
     encryptionPassword,
     encryptionModalError,
     trustEncryptionDevice,
@@ -1147,6 +1390,10 @@ export function useCvBuilder() {
     setAuthModalMode,
     setAuthEmail,
     setAuthPassword,
+    setSignupTermsAccepted,
+    setTermsModalOpen,
+    setTermsModalChecked,
+    setTermsModalError,
     setEncryptionPassword,
     setEncryptionModalError,
     setTrustEncryptionDevice,
@@ -1160,6 +1407,7 @@ export function useCvBuilder() {
     signIn,
     signUp,
     signInWithGithub,
+    acceptTerms,
     signOut,
     saveCurrentDocument,
     discardChanges,
@@ -1172,6 +1420,7 @@ export function useCvBuilder() {
     reorderDocuments,
     toggleLibraryCollapsed,
     moveToCloud,
+    openEnableEncryptionModal,
     refreshCloudDocuments,
     submitEncryptionModal,
     closeEncryptionModal,
