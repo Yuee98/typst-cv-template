@@ -19,7 +19,7 @@ export function ToolbarSeparator() {
 export function ToolbarTitle() {
   return (
     <div>
-      <h1 className="text-base font-semibold text-slate-950">Typst CV Builder</h1>
+      <h1 className="text-base font-semibold text-slate-950">cv maker</h1>
       <p className="text-xs text-slate-500">Edit structured data, preview Typst SVG, print to PDF.</p>
     </div>
   );

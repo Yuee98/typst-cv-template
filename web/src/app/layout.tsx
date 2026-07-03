@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Typst CV Builder",
-  description: "Static CV builder for the typst-cv-template project.",
+  title: "cv maker",
+  description: "Create, preview, export, and optionally sync CV documents.",
 };
 
 export default function RootLayout({
