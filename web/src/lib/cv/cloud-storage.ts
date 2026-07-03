@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { EncryptedPayload } from "./encryption";
 import { cvSchema, type CvData } from "./schema";
 import type { CvDocumentSummary } from "./storage";
 
@@ -17,6 +18,11 @@ type CvDocumentRow = {
 export type CloudCvDocument = CvDocumentSummary & {
   storageKind: "cloud";
   data: CvData;
+};
+
+export type EncryptedCloudCvDocument = CvDocumentSummary & {
+  storageKind: "encrypted";
+  encryptedPayload: EncryptedPayload;
 };
 
 const cloudDocumentColumns =
@@ -50,6 +56,18 @@ function plainDocumentFromRow(row: CvDocumentRow): CloudCvDocument {
     ...summaryFromCloudRow(row),
     storageKind: "cloud",
     data: parsed.data,
+  };
+}
+
+function encryptedDocumentFromRow(row: CvDocumentRow): EncryptedCloudCvDocument {
+  if (row.storage_mode !== "encrypted") {
+    throw new Error("This cloud CV is not encrypted.");
+  }
+
+  return {
+    ...summaryFromCloudRow(row),
+    storageKind: "encrypted",
+    encryptedPayload: row.encrypted_payload as EncryptedPayload,
   };
 }
 
@@ -91,6 +109,23 @@ export async function loadCloudCvDocument(
   return plainDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
 }
 
+export async function loadEncryptedCloudCvDocument(
+  supabase: SupabaseClient,
+  id: string,
+): Promise<EncryptedCloudCvDocument> {
+  const { data, error } = await supabase
+    .from("cv_documents")
+    .select(cloudDocumentColumns)
+    .eq("id", id)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
+}
+
 export async function createCloudCvDocument(
   supabase: SupabaseClient,
   { title, data }: { title: string; data: CvData },
@@ -111,6 +146,28 @@ export async function createCloudCvDocument(
   }
 
   return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null));
+}
+
+export async function createEncryptedCloudCvDocument(
+  supabase: SupabaseClient,
+  { title, encryptedPayload, schemaVersion }: { title: string; encryptedPayload: EncryptedPayload; schemaVersion: number },
+): Promise<EncryptedCloudCvDocument> {
+  const { data, error } = await supabase
+    .from("cv_documents")
+    .insert({
+      encrypted_payload: encryptedPayload,
+      schema_version: schemaVersion,
+      storage_mode: "encrypted",
+      title,
+    })
+    .select(cloudDocumentColumns)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
 }
 
 export async function updateCloudCvDocumentData(
@@ -134,6 +191,54 @@ export async function updateCloudCvDocumentData(
   }
 
   return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null));
+}
+
+export async function updateEncryptedCloudCvDocumentData(
+  supabase: SupabaseClient,
+  id: string,
+  { encryptedPayload, schemaVersion }: { encryptedPayload: EncryptedPayload; schemaVersion: number },
+): Promise<EncryptedCloudCvDocument> {
+  const { data, error } = await supabase
+    .from("cv_documents")
+    .update({
+      encrypted_payload: encryptedPayload,
+      schema_version: schemaVersion,
+    })
+    .eq("id", id)
+    .eq("storage_mode", "encrypted")
+    .select(cloudDocumentColumns)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
+}
+
+export async function encryptExistingCloudCvDocument(
+  supabase: SupabaseClient,
+  id: string,
+  { encryptedPayload, schemaVersion }: { encryptedPayload: EncryptedPayload; schemaVersion: number },
+): Promise<EncryptedCloudCvDocument> {
+  const { data, error } = await supabase
+    .from("cv_documents")
+    .update({
+      data: null,
+      encrypted_payload: encryptedPayload,
+      schema_version: schemaVersion,
+      storage_mode: "encrypted",
+    })
+    .eq("id", id)
+    .eq("storage_mode", "plain")
+    .select(cloudDocumentColumns)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
 }
 
 export async function renameCloudCvDocument(

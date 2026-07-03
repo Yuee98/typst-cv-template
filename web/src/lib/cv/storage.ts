@@ -83,6 +83,14 @@ function readDocumentIndex() {
   );
 }
 
+function readExistingDocumentIndex() {
+  if (!canUseBrowserStorage()) {
+    return null;
+  }
+
+  return parseJson(window.localStorage.getItem(DOCUMENT_INDEX_KEY), documentIndexSchema);
+}
+
 function writeDocumentIndex(documents: CvDocumentSummary[]) {
   window.localStorage.setItem(
     DOCUMENT_INDEX_KEY,
@@ -155,20 +163,20 @@ export function initializeCvDocumentLibrary(defaultData: CvData): CvDocumentLibr
     return { documents: [], activeDocumentId: null };
   }
 
-  const index = readDocumentIndex();
-  let documents = index.documents;
+  const index = readExistingDocumentIndex();
 
-  if (documents.length === 0) {
+  if (!index) {
     const initialData = readLegacyCvData() ?? defaultData;
     const initialDocument = createLocalDocumentRecord(initialData, titleFromData(initialData, "Local CV"));
     writeLocalDocument(initialDocument);
-    documents = [summaryFromDocument(initialDocument)];
+    const documents = [summaryFromDocument(initialDocument)];
     writeDocumentIndex(documents);
     saveActiveCvDocumentId(initialDocument.id);
 
     return { documents, activeDocumentId: initialDocument.id };
   }
 
+  const documents = index.documents;
   const storedActiveId = window.localStorage.getItem(ACTIVE_DOCUMENT_KEY);
   const activeDocumentId = documents.some((document) => document.id === storedActiveId)
     ? storedActiveId
