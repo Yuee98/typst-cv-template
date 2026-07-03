@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { cvSchema, type CvData } from "./schema";
+import { persistedCvSchema, type CvData } from "./schema";
 
 const LEGACY_CV_STORAGE_KEY = "typst-cv-builder:data";
 const DOCUMENT_INDEX_KEY = "typst-cv-builder:documents:index";
@@ -28,7 +28,7 @@ const documentOrderSchema = z.array(z.string());
 
 const localDocumentSchema = documentSummarySchema.extend({
   storageKind: z.literal("local"),
-  data: cvSchema,
+  data: persistedCvSchema,
 });
 
 export type CvStorageKind = z.infer<typeof documentStorageKindSchema>;
@@ -118,7 +118,7 @@ function readLegacyCvData() {
     return null;
   }
 
-  return parseJson(window.localStorage.getItem(LEGACY_CV_STORAGE_KEY), cvSchema);
+  return parseJson(window.localStorage.getItem(LEGACY_CV_STORAGE_KEY), persistedCvSchema);
 }
 
 function writeLocalDocument(document: LocalCvDocument) {

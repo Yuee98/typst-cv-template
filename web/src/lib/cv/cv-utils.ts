@@ -1,4 +1,4 @@
-import type { CvData } from "./schema";
+import { CV_SCHEMA_VERSION, DEFAULT_SECTION_ORDER, type CvData } from "./schema";
 import { sampleCvData } from "./sample-data";
 import type { CvDocumentSummary, LocalCvDocument } from "./storage";
 
@@ -31,9 +31,10 @@ export function titleFromImportedData(data: CvData) {
 
 export function createEmptyCvData(): CvData {
   return {
-    schemaVersion: 5,
+    schemaVersion: CV_SCHEMA_VERSION,
     typstLang: sampleCvData.typstLang,
     bodyFont: sampleCvData.bodyFont,
+    sectionOrder: [...DEFAULT_SECTION_ORDER],
     header: {
       name: "",
       subtitle: "",

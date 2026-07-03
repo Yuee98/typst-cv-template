@@ -33,7 +33,7 @@ import {
   storeEncryptionPassword,
   storeTrustDevice,
 } from "@/lib/cv/encryption-storage";
-import { cvSchema, type CvData } from "@/lib/cv/schema";
+import { cvSchema, persistedCvSchema, type CvData } from "@/lib/cv/schema";
 import { sampleCvData } from "@/lib/cv/sample-data";
 import {
   createLocalCvDocument,
@@ -235,7 +235,7 @@ export function useCvBuilder() {
     try {
       const raw = window.localStorage.getItem(draftKey(userId, cvId));
       if (!raw) return null;
-      const parsed = cvSchema.safeParse(JSON.parse(raw));
+      const parsed = persistedCvSchema.safeParse(JSON.parse(raw));
       return parsed.success ? parsed.data : null;
     } catch {
       return null;
@@ -1329,9 +1329,9 @@ export function useCvBuilder() {
     }
 
     try {
-      const parsed = cvSchema.safeParse(JSON.parse(await file.text()));
+      const parsed = persistedCvSchema.safeParse(JSON.parse(await file.text()));
       if (!parsed.success) {
-        setImportExportError("Imported JSON does not match schemaVersion 5.");
+        setImportExportError("Imported JSON does not match a supported CV schema.");
         return;
       }
 

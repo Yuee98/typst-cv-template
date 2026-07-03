@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { cvSchema, type CvData } from "./schema";
+import { persistedCvSchema, type CvData } from "./schema";
 
 const encryptedPayloadSchema = z.object({
   version: z.literal(1),
@@ -119,7 +119,7 @@ export async function decryptCvData(payload: unknown, passphrase: string): Promi
       key,
       toArrayBuffer(ciphertext),
     );
-    const parsedData = cvSchema.safeParse(JSON.parse(decoder.decode(plaintext)));
+    const parsedData = persistedCvSchema.safeParse(JSON.parse(decoder.decode(plaintext)));
 
     if (!parsedData.success) {
       throw new Error("Decrypted CV data does not match the current CV schema.");

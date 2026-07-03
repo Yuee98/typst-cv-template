@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { EncryptedPayload } from "./encryption";
-import { cvSchema, type CvData } from "./schema";
+import { persistedCvSchema, type CvData } from "./schema";
 import type { CvDocumentSummary } from "./storage";
 
 type CvDocumentRow = {
@@ -47,7 +47,7 @@ function plainDocumentFromRow(row: CvDocumentRow): CloudCvDocument {
     throw new Error("Encrypted CVs need to be unlocked before editing.");
   }
 
-  const parsed = cvSchema.safeParse(row.data);
+  const parsed = persistedCvSchema.safeParse(row.data);
   if (!parsed.success) {
     throw new Error("Cloud CV data does not match the current CV schema.");
   }

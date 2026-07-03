@@ -1,5 +1,43 @@
 import { z } from "zod";
 
+export const CV_SCHEMA_VERSION = 6 as const;
+
+export const ORDERED_SECTION_IDS = [
+  "profile",
+  "skills",
+  "experience",
+  "education",
+  "research",
+  "publications",
+  "additional",
+] as const;
+
+export type CvSectionId = (typeof ORDERED_SECTION_IDS)[number];
+
+export const DEFAULT_SECTION_ORDER: CvSectionId[] = [...ORDERED_SECTION_IDS];
+
+const cvSectionIdSchema = z.enum(ORDERED_SECTION_IDS);
+
+export function normalizeSectionOrder(value: readonly CvSectionId[] | null | undefined) {
+  const seen = new Set<CvSectionId>();
+  const normalized: CvSectionId[] = [];
+
+  for (const sectionId of value ?? []) {
+    if (!seen.has(sectionId)) {
+      seen.add(sectionId);
+      normalized.push(sectionId);
+    }
+  }
+
+  for (const sectionId of DEFAULT_SECTION_ORDER) {
+    if (!seen.has(sectionId)) {
+      normalized.push(sectionId);
+    }
+  }
+
+  return normalized;
+}
+
 const textItemSchema = z.object({
   body: z.string(),
 });
@@ -67,8 +105,7 @@ const headerSchema = z.object({
   selfName: z.string(),
 });
 
-export const cvSchema = z.object({
-  schemaVersion: z.literal(5),
+const cvDataShape = {
   typstLang: z.enum(["zh", "en"]),
   bodyFont: z.string().optional(),
   header: headerSchema,
@@ -80,7 +117,24 @@ export const cvSchema = z.object({
   research: z.array(oneLineEntrySchema),
   publications: z.array(publicationSchema),
   additional: z.array(skillItemSchema),
+};
+
+const cvSchemaV5 = z.object({
+  schemaVersion: z.literal(5),
+  ...cvDataShape,
 });
+
+export const cvSchema = z.object({
+  schemaVersion: z.literal(CV_SCHEMA_VERSION),
+  sectionOrder: z.array(cvSectionIdSchema),
+  ...cvDataShape,
+});
+
+export const persistedCvSchema = z.union([cvSchema, cvSchemaV5]).transform((data) => ({
+  ...data,
+  schemaVersion: CV_SCHEMA_VERSION,
+  sectionOrder: normalizeSectionOrder("sectionOrder" in data ? data.sectionOrder : undefined),
+}));
 
 export type CvData = z.infer<typeof cvSchema>;
 export type TextItem = z.infer<typeof textItemSchema>;

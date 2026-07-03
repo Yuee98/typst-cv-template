@@ -1,4 +1,12 @@
-import type { Company, CvData, Project, Publication, ResumeEntry } from "./schema";
+import {
+  normalizeSectionOrder,
+  type Company,
+  type CvData,
+  type CvSectionId,
+  type Project,
+  type Publication,
+  type ResumeEntry,
+} from "./schema";
 
 function typstString(value: string) {
   return JSON.stringify(value);
@@ -96,49 +104,60 @@ function renderPublication(pub: Publication, selfName: string): string {
 }
 
 function renderContent(data: CvData) {
-  const sections = [
-    [
+  const header = [
       "#resume-header(",
       `  ${typstString(data.header.name)},`,
       `  ${typstString(data.header.subtitle)},`,
       `  ${typstString(data.header.email)},`,
       `  ${typstString(data.header.phone)},`,
       ")",
-    ].join("\n"),
-    renderSection(
-      data.sectionTitles.profile,
-      data.profile.map((item) => `#plain-item(${typstString(item.body)})`),
-    ),
-    renderSection(
-      data.sectionTitles.skills,
-      data.skills.map(
-        (item) => `#skill-item(${typstString(item.label)}, ${typstString(item.body)})`,
+    ].join("\n");
+
+  const sectionRenderers: Record<CvSectionId, () => string> = {
+    profile: () =>
+      renderSection(
+        data.sectionTitles.profile,
+        data.profile.map((item) => `#plain-item(${typstString(item.body)})`),
       ),
-    ),
-    renderSection(data.sectionTitles.experience, data.experience.map(renderCompany)),
-    renderSection(data.sectionTitles.education, data.education.map(renderResumeEntry)),
-    renderSection(
-      data.sectionTitles.research,
-      data.research.map((entry) =>
-        [
-          "#one-line-entry(",
-          `  ${typstString(entry.title)},`,
-          `  ${typstString(entry.date)},`,
-          `  ${typstTuple(entry.bullets.map((bullet) => typstString(bullet.body)))},`,
-          ")",
-        ].join("\n"),
+    skills: () =>
+      renderSection(
+        data.sectionTitles.skills,
+        data.skills.map(
+          (item) => `#skill-item(${typstString(item.label)}, ${typstString(item.body)})`,
+        ),
       ),
-    ),
-    renderSection(
-      data.sectionTitles.publications,
-      data.publications.map((item) => renderPublication(item, data.header.selfName)),
-    ),
-    renderSection(
-      data.sectionTitles.additional,
-      data.additional.map(
-        (item) => `#skill-item(${typstString(item.label)}, ${typstString(item.body)})`,
+    experience: () => renderSection(data.sectionTitles.experience, data.experience.map(renderCompany)),
+    education: () => renderSection(data.sectionTitles.education, data.education.map(renderResumeEntry)),
+    research: () =>
+      renderSection(
+        data.sectionTitles.research,
+        data.research.map((entry) =>
+          [
+            "#one-line-entry(",
+            `  ${typstString(entry.title)},`,
+            `  ${typstString(entry.date)},`,
+            `  ${typstTuple(entry.bullets.map((bullet) => typstString(bullet.body)))},`,
+            ")",
+          ].join("\n"),
+        ),
       ),
-    ),
+    publications: () =>
+      renderSection(
+        data.sectionTitles.publications,
+        data.publications.map((item) => renderPublication(item, data.header.selfName)),
+      ),
+    additional: () =>
+      renderSection(
+        data.sectionTitles.additional,
+        data.additional.map(
+          (item) => `#skill-item(${typstString(item.label)}, ${typstString(item.body)})`,
+        ),
+      ),
+  };
+
+  const sections = [
+    header,
+    ...normalizeSectionOrder(data.sectionOrder).map((sectionId) => sectionRenderers[sectionId]()),
   ];
 
   return sections.filter(Boolean).join("\n\n");

@@ -1,8 +1,9 @@
-import type { CvData } from "./schema";
+import { CV_SCHEMA_VERSION, DEFAULT_SECTION_ORDER, type CvData } from "./schema";
 
 export const sampleCvData: CvData = {
-  schemaVersion: 5,
+  schemaVersion: CV_SCHEMA_VERSION,
   typstLang: "zh",
+  sectionOrder: [...DEFAULT_SECTION_ORDER],
   header: {
     name: "周林",
     subtitle: "Senior Full-Stack Engineer | Platform Engineering | AI Products",
