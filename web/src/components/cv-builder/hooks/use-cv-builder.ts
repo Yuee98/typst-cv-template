@@ -258,12 +258,9 @@ export function useCvBuilder() {
       const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
 
       if (!initialDocument && library.documents.length === 0) {
-        const document = createLocalCvDocument(createEmptyCvData(), "Untitled CV");
-        setDocuments([summarizeLocalDocument(document)]);
-        setActiveDocumentId(document.id);
-        saveActiveCvDocumentId(document.id);
+        setDocuments([]);
+        setActiveDocumentId(null);
         setLibraryCollapsed(loadCvLibraryCollapsed());
-        form.reset(document.data);
         initializedRef.current = true;
         return;
       }
