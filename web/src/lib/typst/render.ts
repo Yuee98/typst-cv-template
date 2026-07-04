@@ -190,7 +190,7 @@ export function addFontFromData(fontData: Uint8Array) {
   return true;
 }
 
-async function fetchStyleSource() {
+export async function fetchStyleSource() {
   const response = await fetch("/typst/style.typ");
   if (!response.ok) {
     throw new Error(`Unable to load style.typ (${response.status})`);

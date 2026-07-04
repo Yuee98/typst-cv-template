@@ -1,11 +1,12 @@
 "use client";
 
-import { Circle, Download, FileJson, FilePlus2, Loader2, RotateCcw, Save } from "lucide-react";
+import { Circle, FilePlus2, Loader2, RotateCcw, Save } from "lucide-react";
 import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
 import { CvEditor } from "@/components/cv-builder/editors";
+import { ExportMenu } from "@/components/cv-builder/export-menu";
 import { CvToolbar } from "@/components/cv-builder/toolbar";
 import { AuthModal } from "@/components/cv-builder/modals/auth-modal";
 import { EncryptionModal } from "@/components/cv-builder/modals/encryption-modal";
@@ -101,30 +102,14 @@ export function CvBuilder() {
               percent={h.activeDocumentId ? h.percent : null}
               error={h.activeDocumentId ? h.previewError : null}
               actions={
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="icon"
-                    disabled={!h.activeDocumentId}
-                    onClick={() => void h.exportDocument()}
-                    title="Export JSON"
-                    aria-label="Export JSON"
-                  >
-                    <FileJson />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="icon"
-                    disabled={!h.activeDocumentId || h.downloadingPdf}
-                    onClick={() => void h.downloadPdf()}
-                    title={h.downloadingPdf ? "Generating PDF" : "Download PDF"}
-                    aria-label={h.downloadingPdf ? "Generating PDF" : "Download PDF"}
-                  >
-                    {h.downloadingPdf ? <Loader2 className="animate-spin" /> : <Download />}
-                  </Button>
-                </div>
+                <ExportMenu
+                  disabled={!h.activeDocumentId}
+                  exportingFormat={h.exportingFormat}
+                  onDownloadPdf={() => void h.downloadPdf()}
+                  onExportTypstPackage={() => void h.exportTypstPackage()}
+                  onExportTypstSource={() => void h.exportTypstSource()}
+                  onExportJson={() => void h.exportDocument()}
+                />
               }
             />
           }

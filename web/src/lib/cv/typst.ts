@@ -185,6 +185,7 @@ function renderShowRule(data: CvData) {
   return `#show: resume-style.with(${args.join(", ")})`;
 }
 
-export function buildTypstDocument(data: CvData) {
-  return ['#import "/style.typ": *', renderShowRule(data), renderContent(data)].join("\n\n");
+export function buildTypstDocument(data: CvData, options: { styleImportPath?: string } = {}) {
+  const styleImportPath = options.styleImportPath ?? "/style.typ";
+  return [`#import ${typstString(styleImportPath)}: *`, renderShowRule(data), renderContent(data)].join("\n\n");
 }

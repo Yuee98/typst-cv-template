@@ -54,11 +54,13 @@ import { buildTypstDocument } from "@/lib/cv/typst";
 import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { loadLocalFontData } from "@/lib/typst/font-access";
-import { addFontFromData, renderTypstPdf, renderTypstSvg } from "@/lib/typst/render";
+import { addFontFromData, fetchStyleSource, renderTypstPdf, renderTypstSvg } from "@/lib/typst/render";
+import { createZip } from "@/lib/zip";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
 type AuthModalMode = "signIn" | "signUp";
 type TermsStatus = "unknown" | "accepted" | "required";
+type ExportFormat = "pdf" | "typst-package" | "typst-source" | "json";
 type EncryptionModalState = {
   mode: EncryptionModalMode;
   documentId: string;
@@ -84,6 +86,12 @@ function downloadBlob(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function toArrayBuffer(data: Uint8Array) {
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  return buffer;
+}
+
 function safeDownloadName(title: string, extension: string) {
   const baseName = title
     .trim()
@@ -92,6 +100,23 @@ function safeDownloadName(title: string, extension: string) {
     .replace(/^-+|-+$/g, "");
 
   return `${baseName || "resume"}.${extension}`;
+}
+
+function buildTypstPackageReadme() {
+  return [
+    "Typst CV package",
+    "",
+    "Files:",
+    "- resume.typ: generated Typst source",
+    "- style.typ: template style used by the web preview",
+    "- data.json: structured CV data backup",
+    "",
+    "Compile locally:",
+    "typst compile resume.typ resume.pdf",
+    "",
+    "If this CV uses custom local fonts, install fonts with matching family names before compiling locally.",
+    "",
+  ].join("\n");
 }
 
 export function useCvBuilder() {
@@ -131,7 +156,7 @@ export function useCvBuilder() {
   const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
   const isResettingRef = useRef(false);
@@ -1310,33 +1335,40 @@ export function useCvBuilder() {
     }
   }
 
+  function getCurrentCvData() {
+    const parsed = cvSchema.safeParse(form.getValues());
+    if (!parsed.success) {
+      throw new Error("The current form data does not match the CV schema.");
+    }
+
+    return parsed.data;
+  }
+
+  function currentDownloadTitle(data: CvData) {
+    return activeDocument?.title || titleFromImportedData(data);
+  }
+
   async function downloadPdf() {
     if (!activeDocumentId || !activeDocument) {
       return;
     }
 
-    setDownloadingPdf(true);
+    setExportingFormat("pdf");
     setPreviewError(null);
 
     try {
-      const parsed = cvSchema.safeParse(form.getValues());
-      if (!parsed.success) {
-        throw new Error("The current form data does not match the CV schema.");
-      }
-
-      await ensureLocalFontsForData(parsed.data);
-      const document = buildTypstDocument(parsed.data);
+      const data = getCurrentCvData();
+      await ensureLocalFontsForData(data);
+      const document = buildTypstDocument(data);
       const pdf = await renderTypstPdf(document);
-      const pdfBuffer = new ArrayBuffer(pdf.byteLength);
-      new Uint8Array(pdfBuffer).set(pdf);
       downloadBlob(
-        new Blob([pdfBuffer], { type: "application/pdf" }),
-        safeDownloadName(activeDocument.title || titleFromImportedData(parsed.data), "pdf"),
+        new Blob([toArrayBuffer(pdf)], { type: "application/pdf" }),
+        safeDownloadName(currentDownloadTitle(data), "pdf"),
       );
     } catch (pdfError) {
       setPreviewError(errorMessage(pdfError));
     } finally {
-      setDownloadingPdf(false);
+      setExportingFormat(null);
     }
   }
 
@@ -1345,15 +1377,65 @@ export function useCvBuilder() {
       return;
     }
 
-    try {
-      const parsed = cvSchema.safeParse(form.getValues());
-      if (!parsed.success) {
-        throw new Error("The current form data does not match the CV schema.");
-      }
+    setExportingFormat("json");
 
-      downloadJsonData(parsed.data, activeDocument.title);
+    try {
+      const data = getCurrentCvData();
+      downloadJsonData(data, currentDownloadTitle(data));
     } catch (exportError) {
       setImportExportError(errorMessage(exportError));
+    } finally {
+      setExportingFormat(null);
+    }
+  }
+
+  async function exportTypstSource() {
+    if (!activeDocumentId || !activeDocument) {
+      return;
+    }
+
+    setExportingFormat("typst-source");
+
+    try {
+      const data = getCurrentCvData();
+      const source = buildTypstDocument(data, { styleImportPath: "style.typ" });
+      downloadBlob(
+        new Blob([source], { type: "text/plain;charset=utf-8" }),
+        safeDownloadName(currentDownloadTitle(data), "typ"),
+      );
+    } catch (exportError) {
+      setImportExportError(errorMessage(exportError));
+    } finally {
+      setExportingFormat(null);
+    }
+  }
+
+  async function exportTypstPackage() {
+    if (!activeDocumentId || !activeDocument) {
+      return;
+    }
+
+    setExportingFormat("typst-package");
+
+    try {
+      const data = getCurrentCvData();
+      const styleSource = await fetchStyleSource();
+      const source = buildTypstDocument(data, { styleImportPath: "style.typ" });
+      const zip = createZip({
+        "resume.typ": source,
+        "style.typ": styleSource,
+        "data.json": JSON.stringify(data, null, 2),
+        "README.txt": buildTypstPackageReadme(),
+      });
+
+      downloadBlob(
+        new Blob([toArrayBuffer(zip)], { type: "application/zip" }),
+        safeDownloadName(`${currentDownloadTitle(data)} typst package`, "zip"),
+      );
+    } catch (exportError) {
+      setImportExportError(errorMessage(exportError));
+    } finally {
+      setExportingFormat(null);
     }
   }
 
@@ -1398,7 +1480,7 @@ export function useCvBuilder() {
     activeDocument,
     isDirty,
     saving,
-    downloadingPdf,
+    exportingFormat,
     libraryCollapsed,
     session,
     cloudStatus,
@@ -1462,6 +1544,8 @@ export function useCvBuilder() {
     closeEncryptionModal,
     importJson,
     downloadPdf,
+    exportTypstPackage,
+    exportTypstSource,
     exportDocument,
   };
 }
