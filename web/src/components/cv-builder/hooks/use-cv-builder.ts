@@ -1,10 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
+import { useCvCloudSync } from "@/components/cv-builder/hooks/use-cv-cloud-sync";
 import { useCvDocumentActions } from "@/components/cv-builder/hooks/use-cv-document-actions";
 import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
@@ -16,7 +16,6 @@ import {
   createCloudCvDocument,
   createEncryptedCloudCvDocument,
   encryptExistingCloudCvDocument,
-  listCloudCvDocuments,
   loadCloudCvDocument,
   loadEncryptedCloudCvDocument,
 } from "@/lib/cv/cloud-storage";
@@ -31,7 +30,6 @@ import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
 import {
   clearEncryptionPasswords,
   loadEncryptionPassword,
-  loadTrustDevice,
   storeEncryptionPassword,
   storeTrustDevice,
 } from "@/lib/cv/encryption-storage";
@@ -78,7 +76,7 @@ export function useCvBuilder() {
   const termsGate = useTermsGate({
     hasSession: Boolean(session),
     onAccepted: async (client) => {
-      await refreshCloudDocuments(client, { skipTermsCheck: true });
+      await cloudSync.refreshCloudDocuments(client, { skipTermsCheck: true });
     },
     onError: setLibraryError,
     supabase,
@@ -146,6 +144,23 @@ export function useCvBuilder() {
     storageAdapters,
     upsertDocumentSummary,
   });
+  const cloudSync = useCvCloudSync({
+    activeDocumentIdRef,
+    loadDataIntoForm,
+    loadDraft,
+    onDirtyChange: setIsDirty,
+    onError: setLibraryError,
+    removeCloudSummaries,
+    replaceCloudSummaries,
+    session,
+    sessionInitialized,
+    setCloudStatus,
+    setTermsAccepted: authModal.setTermsAccepted,
+    setTrustDevice: encryptionModal.setTrustDevice,
+    supabase,
+    termsGate,
+    upsertDocumentSummary,
+  });
 
   // ── helpers ──────────────────────────────────────────────────────
 
@@ -206,55 +221,6 @@ export function useCvBuilder() {
     setIsDirty(false);
   }
 
-  // ── cloud sync ───────────────────────────────────────────────────
-
-  async function refreshCloudDocuments(
-    client: SupabaseClient | null = supabase,
-    { skipTermsCheck = false }: { skipTermsCheck?: boolean } = {},
-  ) {
-    if (!client) {
-      return;
-    }
-
-    if (!skipTermsCheck && !(await termsGate.ensure(client))) {
-      setCloudStatus("idle");
-      return;
-    }
-
-    setCloudStatus("loading");
-
-    try {
-      const cloudDocuments = await listCloudCvDocuments(client);
-      replaceCloudSummaries(cloudDocuments);
-
-      const currentActiveId = activeDocumentIdRef.current;
-      const activeIsCloud = cloudDocuments.some((d) => d.id === currentActiveId && d.storageKind === "cloud");
-      const activeIsEncrypted = cloudDocuments.some((d) => d.id === currentActiveId && d.storageKind === "encrypted");
-
-      if (activeIsCloud && currentActiveId) {
-        const document = await loadCloudCvDocument(client, currentActiveId);
-        upsertDocumentSummary(document);
-        const draft = loadDraft(currentActiveId);
-        loadDataIntoForm(document.id, draft ?? document.data);
-        if (draft) {
-          setIsDirty(true);
-        }
-      } else if (activeIsEncrypted && currentActiveId) {
-        // Encrypted CV needs password to load — don't auto-load here
-        // User will click to unlock via selectDocument
-      } else if (!currentActiveId && cloudDocuments[0]?.storageKind === "cloud") {
-        const document = await loadCloudCvDocument(client, cloudDocuments[0].id);
-        upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, document.data);
-      }
-
-      setCloudStatus("ready");
-    } catch (cloudError) {
-      setCloudStatus("error");
-      setLibraryError(errorMessage(cloudError));
-    }
-  }
-
   // ── effects ──────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -306,44 +272,6 @@ export function useCvBuilder() {
     // This is a one-time local library bootstrap; helper dependencies would retrigger storage hydration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
-
-  useEffect(() => {
-    if (!sessionInitialized || !supabase) {
-      return;
-    }
-
-    const client = supabase;
-    let cancelled = false;
-
-    if (!session) {
-      removeCloudSummaries();
-      termsGate.reset();
-      authModal.setTermsAccepted(false);
-      setCloudStatus("idle");
-      return;
-    }
-
-    encryptionModal.setTrustDevice(loadTrustDevice(session.user.id));
-    void (async () => {
-      const accepted = await termsGate.refresh(client);
-      if (cancelled) {
-        return;
-      }
-
-      if (accepted) {
-        await refreshCloudDocuments(client, { skipTermsCheck: true });
-      } else {
-        removeCloudSummaries();
-        setCloudStatus("idle");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // refreshCloudDocuments is intentionally not a dependency; this reacts only to auth session changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionInitialized, session, supabase]);
 
   // ── auth ─────────────────────────────────────────────────────────
 
@@ -731,7 +659,7 @@ export function useCvBuilder() {
     toggleLibraryCollapsed,
     moveToCloud,
     openEnableEncryptionModal,
-    refreshCloudDocuments,
+    refreshCloudDocuments: cloudSync.refreshCloudDocuments,
     handleEncryptionSubmit,
     importJson,
     downloadPdf: cvExport.downloadPdf,
