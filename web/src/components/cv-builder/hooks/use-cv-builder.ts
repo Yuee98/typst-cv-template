@@ -13,14 +13,10 @@ import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import {
   createCloudCvDocument,
   createEncryptedCloudCvDocument,
-  deleteCloudCvDocument,
   encryptExistingCloudCvDocument,
   listCloudCvDocuments,
   loadCloudCvDocument,
   loadEncryptedCloudCvDocument,
-  renameCloudCvDocument,
-  updateCloudCvDocumentData,
-  updateEncryptedCloudCvDocumentData,
 } from "@/lib/cv/cloud-storage";
 import {
   cloneCvData,
@@ -41,13 +37,17 @@ import {
 import { cvSchema, persistedCvSchema, type CvData } from "@/lib/cv/schema";
 import { sampleCvData } from "@/lib/cv/sample-data";
 import {
+  createCvStorageAdapters,
+  isMissingPassphraseError,
+  isTermsNotAcceptedError,
+  TermsNotAcceptedError,
+} from "@/lib/cv/storage-adapters";
+import {
   createLocalCvDocument,
   initializeCvDocumentLibrary,
   loadCvDocument,
   removeCvDocument,
-  renameCvDocument,
   saveActiveCvDocumentId,
-  updateLocalCvDocumentData,
 } from "@/lib/cv/storage";
 
 export function useCvBuilder() {
@@ -112,30 +112,41 @@ export function useCvBuilder() {
     onImportExportError: setImportExportError,
     onPreviewError: preview.setError,
   });
+  const storageAdapters = createCvStorageAdapters({
+    getEncryptionPassphrase: getKnownEncryptionPassphrase,
+    requireCloudAccess,
+  });
 
   // ── helpers ──────────────────────────────────────────────────────
 
-  function getEncryptionPassphrase(id: string) {
+  function getKnownEncryptionPassphrase(id: string) {
     const userId = session?.user.id;
-    if (!userId) {
-      throw new Error("Enter the encryption password to unlock this CV.");
-    }
-
-    const passphrase = loadEncryptionPassword(userId, id);
-    if (!passphrase) {
-      throw new Error("Enter the encryption password to unlock this CV.");
-    }
-
-    return passphrase;
+    return userId ? loadEncryptionPassword(userId, id) : null;
   }
 
-  function hasKnownEncryptionPassphrase(id: string) {
-    const userId = session?.user.id;
-    if (!userId) {
-      return false;
+  async function requireCloudAccess(action: string) {
+    if (!supabase || !session) {
+      throw new Error(`Sign in before ${action}.`);
     }
 
-    return Boolean(loadEncryptionPassword(userId, id));
+    if (!(await termsGate.ensure())) {
+      throw new TermsNotAcceptedError();
+    }
+
+    return supabase;
+  }
+
+  function handleStorageDeferredError(error: unknown, mode: "unlock" | "duplicate") {
+    if (isTermsNotAcceptedError(error)) {
+      return true;
+    }
+
+    if (isMissingPassphraseError(error)) {
+      encryptionModal.openModal(mode, error.documentId);
+      return true;
+    }
+
+    return false;
   }
 
   function loadDataIntoForm(id: string, data: CvData) {
@@ -317,47 +328,13 @@ export function useCvBuilder() {
 
     setSaving(true);
     try {
-      if (activeDocument.storageKind === "local") {
-        const updated = updateLocalCvDocumentData(activeDocumentId, parsed.data);
-        if (!updated) {
-          throw new Error("The active CV could not be saved.");
-        }
-
-        replaceLocalDocumentSummary(updated);
-      } else if (activeDocument.storageKind === "cloud") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before saving this cloud CV.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return false;
-        }
-
-        const updated = await updateCloudCvDocumentData(supabase, activeDocumentId, parsed.data);
-        upsertDocumentSummary(updated);
-      } else {
-        if (!supabase || !session) {
-          throw new Error("Sign in before saving this encrypted CV.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return false;
-        }
-
-        if (!hasKnownEncryptionPassphrase(activeDocumentId)) {
-          encryptionModal.openModal("unlock", activeDocumentId);
-          return false;
-        }
-
-        const passphrase = getEncryptionPassphrase(activeDocumentId);
-        const encryptedPayload = await encryptCvData(parsed.data, passphrase);
-        const updated = await updateEncryptedCloudCvDocumentData(supabase, activeDocumentId, {
-          encryptedPayload,
-          schemaVersion: parsed.data.schemaVersion,
-        });
-        upsertDocumentSummary(updated);
-      }
+      const updated = await storageAdapters[activeDocument.storageKind].save(activeDocument, parsed.data);
+      upsertDocumentSummary(updated);
     } catch (saveError) {
+      if (handleStorageDeferredError(saveError, "unlock")) {
+        return false;
+      }
+
       setLibraryError(errorMessage(saveError));
       return false;
     } finally {
@@ -378,32 +355,18 @@ export function useCvBuilder() {
 
     try {
       if (activeDocument.storageKind === "cloud") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before discarding changes.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return;
-        }
-
         clearDraft(activeDocumentId);
-        const document = await loadCloudCvDocument(supabase, activeDocumentId);
-        loadDataIntoForm(document.id, document.data);
-      } else if (activeDocument.storageKind === "encrypted") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before discarding changes.");
-        }
+      }
 
-        if (!(await termsGate.ensure())) {
-          return;
-        }
-
-        const passphrase = getEncryptionPassphrase(activeDocumentId);
-        const document = await loadEncryptedCloudCvDocument(supabase, activeDocumentId);
-        const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
-        loadDataIntoForm(document.id, decryptedData);
+      if (activeDocument.storageKind === "cloud" || activeDocument.storageKind === "encrypted") {
+        const document = await storageAdapters[activeDocument.storageKind].load(activeDocument);
+        loadDataIntoForm(document.summary.id, document.data);
       }
     } catch (discardError) {
+      if (handleStorageDeferredError(discardError, "unlock")) {
+        return;
+      }
+
       setLibraryError(errorMessage(discardError));
     }
   }
@@ -562,51 +525,19 @@ export function useCvBuilder() {
     }
 
     try {
-      if (documentSummary.storageKind === "local") {
-        const document = loadCvDocument(id);
-        if (!document) {
-          throw new Error("The selected local CV could not be loaded.");
-        }
+      const document = await storageAdapters[documentSummary.storageKind].load(documentSummary);
+      upsertDocumentSummary(document.summary);
 
-        loadDataIntoForm(document.id, document.data);
-      } else if (documentSummary.storageKind === "cloud") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before opening this cloud CV.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return;
-        }
-
-        const document = await loadCloudCvDocument(supabase, id);
-        upsertDocumentSummary(document);
-        // Check for local draft first
-        const draft = loadDraft(id);
-        loadDataIntoForm(document.id, draft ?? document.data);
-        if (draft) {
-          setIsDirty(true);
-        }
-      } else {
-        if (!supabase || !session) {
-          throw new Error("Sign in before opening this encrypted CV.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return;
-        }
-
-        if (!hasKnownEncryptionPassphrase(id)) {
-          encryptionModal.openModal("unlock", id);
-          return;
-        }
-
-        const passphrase = getEncryptionPassphrase(id);
-        const document = await loadEncryptedCloudCvDocument(supabase, id);
-        const decryptedData = await decryptCvData(document.encryptedPayload, passphrase);
-        upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, decryptedData);
+      const draft = documentSummary.storageKind === "cloud" ? loadDraft(id) : null;
+      loadDataIntoForm(document.summary.id, draft ?? document.data);
+      if (draft) {
+        setIsDirty(true);
       }
     } catch (loadError) {
+      if (handleStorageDeferredError(loadError, "unlock")) {
+        return;
+      }
+
       setLibraryError(errorMessage(loadError));
     }
   }
@@ -635,39 +566,19 @@ export function useCvBuilder() {
       return;
     }
 
+    const nextTitle = window.prompt("Rename CV", current.title);
+    if (!nextTitle) {
+      return;
+    }
+
     try {
-      if (current.storageKind === "local") {
-        const nextTitle = window.prompt("Rename CV", current.title);
-        if (!nextTitle) {
-          return;
-        }
-
-        setOrderedDocuments((existing) => {
-          const updatedLocalDocuments = renameCvDocument(id, nextTitle);
-          const updatedLocal = updatedLocalDocuments.find((document) => document.id === id);
-
-          return existing.map((document) =>
-            document.id === id && updatedLocal ? updatedLocal : document,
-          );
-        });
-      } else if (current.storageKind === "cloud" || current.storageKind === "encrypted") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before renaming this cloud CV.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return;
-        }
-
-        const nextTitle = window.prompt("Rename CV", current.title);
-        if (!nextTitle) {
-          return;
-        }
-
-        const updated = await renameCloudCvDocument(supabase, id, nextTitle);
-        upsertDocumentSummary(updated);
-      }
+      const updated = await storageAdapters[current.storageKind].rename(current, nextTitle);
+      upsertDocumentSummary(updated);
     } catch (renameError) {
+      if (handleStorageDeferredError(renameError, "unlock")) {
+        return;
+      }
+
       setLibraryError(errorMessage(renameError));
     }
   }
@@ -677,52 +588,15 @@ export function useCvBuilder() {
     if (!current) return;
 
     try {
-      let data: CvData;
-      let title: string | undefined;
-
-      if (current.storageKind === "local") {
-        const source = loadCvDocument(id);
-        if (!source) {
-          throw new Error("The selected CV could not be duplicated.");
-        }
-        data = source.data;
-        title = `${source.title} Copy`;
-      } else if (current.storageKind === "cloud") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before duplicating this cloud CV.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return;
-        }
-
-        const source = await loadCloudCvDocument(supabase, id);
-        data = source.data;
-        title = `${source.title} Copy`;
-      } else {
-        if (!supabase || !session) {
-          throw new Error("Sign in before duplicating this encrypted CV.");
-        }
-
-        if (!(await termsGate.ensure())) {
-          return;
-        }
-
-        if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
-          encryptionModal.openModal("duplicate", id);
-          return;
-        }
-
-        const passphrase = passphraseOverride ?? getEncryptionPassphrase(id);
-        const source = await loadEncryptedCloudCvDocument(supabase, id);
-        data = await decryptCvData(source.encryptedPayload, passphrase);
-        title = `${source.title} Copy`;
-      }
-
-      const document = createLocalCvDocument(data, title);
+      const source = await storageAdapters[current.storageKind].load(current, { passphraseOverride });
+      const document = createLocalCvDocument(source.data, `${source.summary.title} Copy`);
       replaceLocalDocumentSummary(document);
       loadDataIntoForm(document.id, document.data);
     } catch (duplicateError) {
+      if (handleStorageDeferredError(duplicateError, "duplicate")) {
+        return;
+      }
+
       setLibraryError(errorMessage(duplicateError));
     }
   }
@@ -738,15 +612,7 @@ export function useCvBuilder() {
     }
 
     try {
-      if (current.storageKind === "local") {
-        removeCvDocument(id);
-      } else if (current.storageKind === "cloud" || current.storageKind === "encrypted") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before deleting this cloud CV.");
-        }
-
-        await deleteCloudCvDocument(supabase, id);
-      }
+      await storageAdapters[current.storageKind].delete(current);
 
       const nextDocuments = documents.filter((document) => document.id !== id);
       setOrderedDocuments(nextDocuments);
@@ -760,6 +626,10 @@ export function useCvBuilder() {
         setIsDirty(false);
       }
     } catch (deleteError) {
+      if (handleStorageDeferredError(deleteError, "unlock")) {
+        return;
+      }
+
       setLibraryError(errorMessage(deleteError));
     }
   }
