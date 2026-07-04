@@ -47,11 +47,13 @@ For Vercel, keep the project root at the repository root:
 
 ## Content Helpers
 
-- `resume-entry(...)`: one company or role with a single project or scope.
+- `resume-entry(...)`: one company or role with a single project or scope. Pass `keep: true` for short entries such as education records that should stay on one page.
 - `company-entry(org, date)[...]`: one company or role block.
 - `project-entry(title, detail, bullets, date: none)`: one project or scope inside a company block. Use `title` for the role or position, and `detail` for the project, team, or product line.
 
 `project-entry` keeps the role title on the left and project metadata on the right. If `date` is provided, it is rendered inline as `date · detail`; the date stays upright and the detail is italicized.
+
+Section headings stick to their following content, while bullet items and publications are kept together where possible. Longer sections can still break between entries or bullets.
 
 ## Using This Template Privately
 

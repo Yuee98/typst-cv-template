@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CV_SCHEMA_VERSION = 6 as const;
+export const CV_SCHEMA_VERSION = 7 as const;
 
 export const ORDERED_SECTION_IDS = [
   "profile",
@@ -82,20 +82,29 @@ const publicationSchema = z.object({
   url: z.string(),
 });
 
-const sectionTitleSchema = z.object({
+const legacySectionTitleSchema = z.object({
   title: z.string(),
   isDisplay: z.boolean(),
 });
 
-const sectionTitlesSchema = z.object({
-  profile: sectionTitleSchema,
-  skills: sectionTitleSchema,
-  experience: sectionTitleSchema,
-  education: sectionTitleSchema,
-  research: sectionTitleSchema,
-  publications: sectionTitleSchema,
-  additional: sectionTitleSchema,
+const sectionTitleSchema = legacySectionTitleSchema.extend({
+  pageBreakBefore: z.boolean(),
 });
+
+function sectionTitlesSchemaFor<T extends z.ZodType>(sectionSchema: T) {
+  return z.object({
+    profile: sectionSchema,
+    skills: sectionSchema,
+    experience: sectionSchema,
+    education: sectionSchema,
+    research: sectionSchema,
+    publications: sectionSchema,
+    additional: sectionSchema,
+  });
+}
+
+const legacySectionTitlesSchema = sectionTitlesSchemaFor(legacySectionTitleSchema);
+const sectionTitlesSchema = sectionTitlesSchemaFor(sectionTitleSchema);
 
 const headerSchema = z.object({
   name: z.string(),
@@ -119,9 +128,20 @@ const cvDataShape = {
   additional: z.array(skillItemSchema),
 };
 
+const legacyCvDataShape = {
+  ...cvDataShape,
+  sectionTitles: legacySectionTitlesSchema,
+};
+
 const cvSchemaV5 = z.object({
   schemaVersion: z.literal(5),
-  ...cvDataShape,
+  ...legacyCvDataShape,
+});
+
+const cvSchemaV6 = z.object({
+  schemaVersion: z.literal(6),
+  sectionOrder: z.array(cvSectionIdSchema),
+  ...legacyCvDataShape,
 });
 
 export const cvSchema = z.object({
@@ -130,10 +150,29 @@ export const cvSchema = z.object({
   ...cvDataShape,
 });
 
-export const persistedCvSchema = z.union([cvSchema, cvSchemaV5]).transform((data) => ({
+type LegacySectionTitles = z.infer<typeof legacySectionTitlesSchema>;
+type CurrentSectionTitles = z.infer<typeof sectionTitlesSchema>;
+
+function normalizeSectionTitles(sectionTitles: LegacySectionTitles | CurrentSectionTitles): CurrentSectionTitles {
+  return Object.fromEntries(
+    ORDERED_SECTION_IDS.map((sectionId) => {
+      const section = sectionTitles[sectionId];
+      return [
+        sectionId,
+        {
+          ...section,
+          pageBreakBefore: "pageBreakBefore" in section ? section.pageBreakBefore : false,
+        },
+      ];
+    }),
+  ) as CurrentSectionTitles;
+}
+
+export const persistedCvSchema = z.union([cvSchema, cvSchemaV6, cvSchemaV5]).transform((data) => ({
   ...data,
   schemaVersion: CV_SCHEMA_VERSION,
   sectionOrder: normalizeSectionOrder("sectionOrder" in data ? data.sectionOrder : undefined),
+  sectionTitles: normalizeSectionTitles(data.sectionTitles),
 }));
 
 export type CvData = z.infer<typeof cvSchema>;

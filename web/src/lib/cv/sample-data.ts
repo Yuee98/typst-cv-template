@@ -12,13 +12,13 @@ export const sampleCvData: CvData = {
     selfName: "Lin Zhou",
   },
   sectionTitles: {
-    profile: { title: "个人简介", isDisplay: true },
-    skills: { title: "技术能力", isDisplay: true },
-    experience: { title: "工作经历", isDisplay: true },
-    education: { title: "教育背景", isDisplay: true },
-    research: { title: "研究经历", isDisplay: true },
-    publications: { title: "发表成果", isDisplay: true },
-    additional: { title: "其他", isDisplay: true },
+    profile: { title: "个人简介", isDisplay: true, pageBreakBefore: false },
+    skills: { title: "技术能力", isDisplay: true, pageBreakBefore: false },
+    experience: { title: "工作经历", isDisplay: true, pageBreakBefore: false },
+    education: { title: "教育背景", isDisplay: true, pageBreakBefore: false },
+    research: { title: "研究经历", isDisplay: true, pageBreakBefore: false },
+    publications: { title: "发表成果", isDisplay: true, pageBreakBefore: false },
+    additional: { title: "其他", isDisplay: true, pageBreakBefore: false },
   },
   profile: [
     {

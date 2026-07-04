@@ -13,19 +13,26 @@ export function SectionHeader({ name }: { name: string }) {
   const basePath = `sectionTitles.${name}` as const;
 
   return (
-    <div className="space-y-1.5">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Section</div>
-      <div className="grid grid-cols-2 items-center gap-3">
+    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+      <Field label="Section title">
         <Input {...register(fieldPath(`${basePath}.title`))} />
-        <label className="flex items-center gap-1.5 text-sm">
-          <input
-            type="checkbox"
-            {...register(fieldPath(`${basePath}.isDisplay`))}
-            className="accent-slate-900"
-          />
-          Show in preview
-        </label>
-      </div>
+      </Field>
+      <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-slate-700">
+        <input
+          type="checkbox"
+          {...register(fieldPath(`${basePath}.isDisplay`))}
+          className="accent-slate-900"
+        />
+        Show
+      </label>
+      <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-slate-700">
+        <input
+          type="checkbox"
+          {...register(fieldPath(`${basePath}.pageBreakBefore`))}
+          className="accent-slate-900"
+        />
+        Start on new page
+      </label>
     </div>
   );
 }

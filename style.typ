@@ -71,21 +71,28 @@
 
 #let resume-section(title) = {
   v(section-before-gap)
-  text(size: 12.2pt, weight: "bold")[#title]
-  v(section-title-rule-gap)
-  rect(width: 100%, height: rule-stroke, fill: black, stroke: none)
-  v(section-content-gap)
+  block(width: 100%, sticky: true)[
+    #text(size: 12.2pt, weight: "bold")[#title]
+    #v(section-title-rule-gap)
+    #rect(width: 100%, height: rule-stroke, fill: black, stroke: none)
+    #v(section-content-gap)
+  ]
 }
 
-#let bullet(body, level: 1) = {
+#let bullet(body, level: 1, keep: true) = {
   let mark = if level == 1 { "•" } else { "-" }
   let mark-size = if level == 1 { 9.2pt } else { 9.6pt }
-  grid(
+  let item = grid(
     columns: (0.72em, 1fr),
     column-gutter: 0.22em,
     align(top)[#text(size: mark-size)[#mark]],
     body,
   )
+  if keep {
+    block(width: 100%, breakable: false)[#item]
+  } else {
+    item
+  }
   v(if level == 1 { top-item-gap } else { sub-item-gap })
 }
 
@@ -97,7 +104,7 @@
 
 #let sub-item(body) = bullet(body, level: 2)
 
-#let entry-heading(org, date) = block(width: 100%)[
+#let entry-heading(org, date) = block(width: 100%, sticky: true)[
   #grid(
     columns: (1fr, auto),
     column-gutter: 1em,
@@ -106,7 +113,7 @@
   )
 ]
 
-#let entry-detail-row(title, detail) = block(width: 100%)[
+#let entry-detail-row(title, detail) = block(width: 100%, sticky: true)[
   #grid(
     columns: (1fr, 1.25fr),
     column-gutter: 1em,
@@ -142,9 +149,16 @@
   v(entry-after-gap)
 }
 
-#let resume-entry(org, title, detail, date, bullets) = company-entry(org, date)[
-  #project-entry(title, detail, bullets)
-]
+#let resume-entry(org, title, detail, date, bullets, keep: false) = {
+  let entry = company-entry(org, date)[
+    #project-entry(title, detail, bullets)
+  ]
+  if keep {
+    block(width: 100%, breakable: false)[#entry]
+  } else {
+    entry
+  }
+}
 
 #let one-line-entry(title, date, bullets) = {
   entry-heading(title, date)
@@ -159,16 +173,18 @@
 
 #let publication(authors, title, venue, year) = {
   publication-counter.step()
-  grid(
-    columns: (1.65em, 1fr),
-    column-gutter: 0.08em,
-    context { [[#{publication-counter.get().first()}]] },
-    {
-      authors
-      [. ]
-      title
-      [. #emph[#venue], #year.]
-    },
-  )
+  block(width: 100%, breakable: false)[
+    #grid(
+      columns: (1.65em, 1fr),
+      column-gutter: 0.08em,
+      context { [[#{publication-counter.get().first()}]] },
+      {
+        authors
+        [. ]
+        title
+        [. #emph[#venue], #year.]
+      },
+    )
+  ]
   v(publication-gap)
 }

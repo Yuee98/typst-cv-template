@@ -26,14 +26,20 @@ function typstTuple(items: string[]) {
 }
 
 function renderSection(
-  section: { title: string; isDisplay: boolean },
+  section: { title: string; isDisplay: boolean; pageBreakBefore?: boolean },
   body: string[],
+  options: { allowPageBreakBefore?: boolean } = {},
 ) {
   if (!section.isDisplay) return "";
   const nonEmptyBody = body.filter(Boolean);
   if (nonEmptyBody.length === 0) return "";
 
-  return [`#resume-section(${typstString(section.title)})`, ...nonEmptyBody].join("\n");
+  const sectionBody = [`#resume-section(${typstString(section.title)})`, ...nonEmptyBody];
+  if (section.pageBreakBefore && options.allowPageBreakBefore) {
+    sectionBody.unshift("#pagebreak()");
+  }
+
+  return sectionBody.join("\n");
 }
 
 function renderProject(project: Project) {
@@ -73,6 +79,7 @@ function renderResumeEntry(entry: ResumeEntry) {
     `  ${typstString(entry.detail)},`,
     `  ${typstString(entry.date)},`,
     `  ${bullets},`,
+    "  keep: true,",
     ")",
   ].join("\n");
 }
@@ -113,22 +120,30 @@ function renderContent(data: CvData) {
       ")",
     ].join("\n");
 
-  const sectionRenderers: Record<CvSectionId, () => string> = {
-    profile: () =>
+  const sectionRenderers: Record<CvSectionId, (allowPageBreakBefore: boolean) => string> = {
+    profile: (allowPageBreakBefore) =>
       renderSection(
         data.sectionTitles.profile,
         data.profile.map((item) => `#plain-item(${typstString(item.body)})`),
+        { allowPageBreakBefore },
       ),
-    skills: () =>
+    skills: (allowPageBreakBefore) =>
       renderSection(
         data.sectionTitles.skills,
         data.skills.map(
           (item) => `#skill-item(${typstString(item.label)}, ${typstString(item.body)})`,
         ),
+        { allowPageBreakBefore },
       ),
-    experience: () => renderSection(data.sectionTitles.experience, data.experience.map(renderCompany)),
-    education: () => renderSection(data.sectionTitles.education, data.education.map(renderResumeEntry)),
-    research: () =>
+    experience: (allowPageBreakBefore) =>
+      renderSection(data.sectionTitles.experience, data.experience.map(renderCompany), {
+        allowPageBreakBefore,
+      }),
+    education: (allowPageBreakBefore) =>
+      renderSection(data.sectionTitles.education, data.education.map(renderResumeEntry), {
+        allowPageBreakBefore,
+      }),
+    research: (allowPageBreakBefore) =>
       renderSection(
         data.sectionTitles.research,
         data.research.map((entry) =>
@@ -140,25 +155,33 @@ function renderContent(data: CvData) {
             ")",
           ].join("\n"),
         ),
+        { allowPageBreakBefore },
       ),
-    publications: () =>
+    publications: (allowPageBreakBefore) =>
       renderSection(
         data.sectionTitles.publications,
         data.publications.map((item) => renderPublication(item, data.header.selfName)),
+        { allowPageBreakBefore },
       ),
-    additional: () =>
+    additional: (allowPageBreakBefore) =>
       renderSection(
         data.sectionTitles.additional,
         data.additional.map(
           (item) => `#skill-item(${typstString(item.label)}, ${typstString(item.body)})`,
         ),
+        { allowPageBreakBefore },
       ),
   };
 
-  const sections = [
-    header,
-    ...normalizeSectionOrder(data.sectionOrder).map((sectionId) => sectionRenderers[sectionId]()),
-  ];
+  const renderedSections: string[] = [];
+  for (const sectionId of normalizeSectionOrder(data.sectionOrder)) {
+    const rendered = sectionRenderers[sectionId](renderedSections.length > 0);
+    if (rendered) {
+      renderedSections.push(rendered);
+    }
+  }
+
+  const sections = [header, ...renderedSections];
 
   return sections.filter(Boolean).join("\n\n");
 }
