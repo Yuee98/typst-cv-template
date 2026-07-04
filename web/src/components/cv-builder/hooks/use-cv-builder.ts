@@ -1,9 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
+import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal, type EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
@@ -42,15 +43,9 @@ import {
   createLocalCvDocument,
   initializeCvDocumentLibrary,
   loadCvDocument,
-  loadCvLibraryCollapsed,
   removeCvDocument,
   renameCvDocument,
   saveActiveCvDocumentId,
-  sortCvDocumentSummariesByStoredOrder,
-  storeCvDocumentOrder,
-  storeCvLibraryCollapsed,
-  type CvDocumentSummary,
-  type LocalCvDocument,
   updateLocalCvDocumentData,
 } from "@/lib/cv/storage";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -60,15 +55,23 @@ type CloudStatus = "idle" | "loading" | "ready" | "error";
 export function useCvBuilder() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [importExportError, setImportExportError] = useState<string | null>(null);
-  const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
-  const [activeDocumentId, setActiveDocumentIdRaw] = useState<string | null>(null);
-  const activeDocumentIdRef = useRef<string | null>(null);
-
-  function setActiveDocumentId(id: string | null) {
-    activeDocumentIdRef.current = id;
-    setActiveDocumentIdRaw(id);
-  }
-  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const initializedRef = useRef(false);
+  const {
+    activeDocument,
+    activeDocumentId,
+    activeDocumentIdRef,
+    documents,
+    libraryCollapsed,
+    loadCollapsedPreference,
+    removeCloudSummaries,
+    reorderDocuments,
+    replaceCloudSummaries,
+    replaceLocalDocumentSummary,
+    setActiveDocumentId,
+    setOrderedDocuments,
+    toggleLibraryCollapsed,
+    upsertDocumentSummary,
+  } = useCvDocuments({ initializedRef });
   const [supabase] = useState(() => getSupabaseBrowserClient());
   const [session, setSession] = useState<import("@supabase/supabase-js").Session | null>(null);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("idle");
@@ -84,7 +87,6 @@ export function useCvBuilder() {
   const encryptionModal = useEncryptionModal();
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const initializedRef = useRef(false);
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
@@ -93,10 +95,6 @@ export function useCvBuilder() {
   });
 
   const watchedData = useWatch({ control: form.control });
-  const activeDocument = useMemo(
-    () => documents.find((document) => document.id === activeDocumentId) ?? null,
-    [activeDocumentId, documents],
-  );
   const supabaseConfigured = Boolean(supabase);
   const cloudActionsEnabled = Boolean(supabase && session);
   const preview = useCvPreview({
@@ -118,52 +116,6 @@ export function useCvBuilder() {
   });
 
   // ── helpers ──────────────────────────────────────────────────────
-
-  function setOrderedDocuments(
-    nextDocuments: CvDocumentSummary[] | ((current: CvDocumentSummary[]) => CvDocumentSummary[]),
-  ) {
-    setDocuments((current) => {
-      const next = typeof nextDocuments === "function" ? nextDocuments(current) : nextDocuments;
-      return sortCvDocumentSummariesByStoredOrder(next);
-    });
-  }
-
-  function reorderDocuments(fromIndex: number, toIndex: number) {
-    setDocuments((current) => {
-      const next = [...current];
-      const [moved] = next.splice(fromIndex, 1);
-      if (!moved) {
-        return current;
-      }
-
-      next.splice(toIndex, 0, moved);
-      storeCvDocumentOrder(next);
-      return next;
-    });
-  }
-
-  function upsertDocumentSummary(summary: CvDocumentSummary) {
-    setOrderedDocuments((current) =>
-      current.some((item) => item.id === summary.id)
-        ? current.map((item) => (item.id === summary.id ? summary : item))
-        : [summary, ...current],
-    );
-  }
-
-  function replaceLocalDocumentSummary(document: LocalCvDocument) {
-    upsertDocumentSummary(summarizeLocalDocument(document));
-  }
-
-  function replaceCloudSummaries(cloudDocuments: CvDocumentSummary[]) {
-    setOrderedDocuments((current) => [
-      ...cloudDocuments,
-      ...current.filter((document) => document.storageKind === "local"),
-    ]);
-  }
-
-  function removeCloudSummaries() {
-    setOrderedDocuments((current) => current.filter((document) => document.storageKind === "local"));
-  }
 
   function getEncryptionPassphrase(id: string) {
     const userId = session?.user.id;
@@ -196,14 +148,6 @@ export function useCvBuilder() {
     setLibraryError(null);
     setIsDirty(false);
   }
-
-  useEffect(() => {
-    if (!initializedRef.current) {
-      return;
-    }
-
-    storeCvDocumentOrder(documents);
-  }, [documents]);
 
   function saveDraft(cvId: string, data: CvData) {
     saveCvDraft(session?.user.id, cvId, data);
@@ -284,7 +228,7 @@ export function useCvBuilder() {
       if (!initialDocument && library.documents.length === 0) {
         setOrderedDocuments([]);
         setActiveDocumentId(null);
-        setLibraryCollapsed(loadCvLibraryCollapsed());
+        loadCollapsedPreference();
         initializedRef.current = true;
         return;
       }
@@ -293,7 +237,7 @@ export function useCvBuilder() {
       if (!initialDocument && isCloudActive && library.activeDocumentId) {
         setOrderedDocuments(library.documents);
         setActiveDocumentId(library.activeDocumentId);
-        setLibraryCollapsed(loadCvLibraryCollapsed());
+        loadCollapsedPreference();
         initializedRef.current = true;
         return;
       }
@@ -306,7 +250,7 @@ export function useCvBuilder() {
       setOrderedDocuments(nextDocuments);
       setActiveDocumentId(documentToLoad.id);
       saveActiveCvDocumentId(documentToLoad.id);
-      setLibraryCollapsed(loadCvLibraryCollapsed());
+      loadCollapsedPreference();
       form.reset(documentToLoad.data);
       initializedRef.current = true;
     });
@@ -314,6 +258,8 @@ export function useCvBuilder() {
     return () => {
       cancelled = true;
     };
+    // This is a one-time local library bootstrap; helper dependencies would retrigger storage hydration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
 
   useEffect(() => {
@@ -846,12 +792,6 @@ export function useCvBuilder() {
     } catch (deleteError) {
       setLibraryError(errorMessage(deleteError));
     }
-  }
-
-  function toggleLibraryCollapsed() {
-    const nextCollapsed = !libraryCollapsed;
-    setLibraryCollapsed(nextCollapsed);
-    storeCvLibraryCollapsed(nextCollapsed);
   }
 
   // ── cloud operations ─────────────────────────────────────────────
