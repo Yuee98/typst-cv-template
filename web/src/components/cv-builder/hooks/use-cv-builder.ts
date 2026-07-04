@@ -5,6 +5,7 @@ import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
+import { useCvDocumentActions } from "@/components/cv-builder/hooks/use-cv-document-actions";
 import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
 import { useCvPersistence } from "@/components/cv-builder/hooks/use-cv-persistence";
@@ -21,7 +22,6 @@ import {
 } from "@/lib/cv/cloud-storage";
 import {
   cloneCvData,
-  createEmptyCvData,
   errorMessage,
   summarizeLocalDocument,
   titleFromImportedData,
@@ -128,6 +128,24 @@ export function useCvBuilder() {
     onImportExportError: setImportExportError,
     onPreviewError: preview.setError,
   });
+  const documentActions = useCvDocumentActions({
+    activeDocument,
+    activeDocumentId,
+    documents,
+    form,
+    handleStorageDeferredError,
+    loadDataIntoForm,
+    loadDraft,
+    onDirtyChange: setIsDirty,
+    onError: setLibraryError,
+    replaceLocalDocumentSummary,
+    resetActiveDocument,
+    saveCurrentDocument: persistence.saveCurrentDocument,
+    setActiveDocumentId,
+    setOrderedDocuments,
+    storageAdapters,
+    upsertDocumentSummary,
+  });
 
   // ── helpers ──────────────────────────────────────────────────────
 
@@ -180,6 +198,12 @@ export function useCvBuilder() {
 
   function clearDraft(cvId: string) {
     clearCvDraft(session?.user.id, cvId);
+  }
+
+  function resetActiveDocument() {
+    preview.reset();
+    setLibraryError(null);
+    setIsDirty(false);
   }
 
   // ── cloud sync ───────────────────────────────────────────────────
@@ -454,136 +478,6 @@ export function useCvBuilder() {
     }
   }
 
-  // ── document CRUD ────────────────────────────────────────────────
-
-  async function selectDocument(id: string) {
-    if (id === activeDocumentId) {
-      return;
-    }
-
-    // Auto-save only for local CVs when switching away
-    if (activeDocumentId && activeDocument?.storageKind === "local") {
-      if (!(await persistence.saveCurrentDocument({ silent: true }))) {
-        return;
-      }
-    }
-
-    const documentSummary = documents.find((document) => document.id === id);
-    if (!documentSummary) {
-      setLibraryError("The selected CV could not be loaded.");
-      return;
-    }
-
-    try {
-      const document = await storageAdapters[documentSummary.storageKind].load(documentSummary);
-      upsertDocumentSummary(document.summary);
-
-      const draft = documentSummary.storageKind === "cloud" ? loadDraft(id) : null;
-      loadDataIntoForm(document.summary.id, draft ?? document.data);
-      if (draft) {
-        setIsDirty(true);
-      }
-    } catch (loadError) {
-      if (handleStorageDeferredError(loadError, "unlock")) {
-        return;
-      }
-
-      setLibraryError(errorMessage(loadError));
-    }
-  }
-
-  async function createDocumentFromData(data: CvData, title: string) {
-    if (activeDocumentId) {
-      await persistence.saveCurrentDocument({ silent: true });
-    }
-
-    const document = createLocalCvDocument(data, title);
-    replaceLocalDocumentSummary(document);
-    loadDataIntoForm(document.id, document.data);
-  }
-
-  async function createSampleDocument() {
-    await createDocumentFromData(cloneCvData(sampleCvData), "Sample CV");
-  }
-
-  async function createEmptyDocument() {
-    await createDocumentFromData(createEmptyCvData(), "Untitled CV");
-  }
-
-  async function renameDocument(id: string) {
-    const current = documents.find((document) => document.id === id);
-    if (!current) {
-      return;
-    }
-
-    const nextTitle = window.prompt("Rename CV", current.title);
-    if (!nextTitle) {
-      return;
-    }
-
-    try {
-      const updated = await storageAdapters[current.storageKind].rename(current, nextTitle);
-      upsertDocumentSummary(updated);
-    } catch (renameError) {
-      if (handleStorageDeferredError(renameError, "unlock")) {
-        return;
-      }
-
-      setLibraryError(errorMessage(renameError));
-    }
-  }
-
-  async function duplicateDocument(id: string, passphraseOverride?: string) {
-    const current = documents.find((document) => document.id === id);
-    if (!current) return;
-
-    try {
-      const source = await storageAdapters[current.storageKind].load(current, { passphraseOverride });
-      const document = createLocalCvDocument(source.data, `${source.summary.title} Copy`);
-      replaceLocalDocumentSummary(document);
-      loadDataIntoForm(document.id, document.data);
-    } catch (duplicateError) {
-      if (handleStorageDeferredError(duplicateError, "duplicate")) {
-        return;
-      }
-
-      setLibraryError(errorMessage(duplicateError));
-    }
-  }
-
-  async function deleteDocument(id: string) {
-    const current = documents.find((document) => document.id === id);
-    if (!current) {
-      return;
-    }
-
-    if (!window.confirm(`Delete "${current.title}"?`)) {
-      return;
-    }
-
-    try {
-      await storageAdapters[current.storageKind].delete(current);
-
-      const nextDocuments = documents.filter((document) => document.id !== id);
-      setOrderedDocuments(nextDocuments);
-
-      if (id === activeDocumentId) {
-        setActiveDocumentId(null);
-        saveActiveCvDocumentId(null);
-        form.reset(createEmptyCvData());
-        preview.reset();
-        setLibraryError(null);
-        setIsDirty(false);
-      }
-    } catch (deleteError) {
-      if (handleStorageDeferredError(deleteError, "unlock")) {
-        return;
-      }
-
-      setLibraryError(errorMessage(deleteError));
-    }
-  }
-
   // ── cloud operations ─────────────────────────────────────────────
 
   async function moveToCloud(id: string) {
@@ -747,7 +641,7 @@ export function useCvBuilder() {
       } else if (mode === "unlock") {
         await unlockEncryptedDocument(documentId, password);
       } else {
-        await duplicateDocument(documentId, password);
+        await documentActions.duplicateDocument(documentId, password);
       }
 
       encryptionModal.closeModal();
@@ -783,9 +677,7 @@ export function useCvBuilder() {
         return;
       }
 
-      const document = createLocalCvDocument(parsed.data, titleFromImportedData(parsed.data));
-      replaceLocalDocumentSummary(document);
-      loadDataIntoForm(document.id, document.data);
+      await documentActions.createDocumentFromData(parsed.data, titleFromImportedData(parsed.data));
     } catch (importError) {
       setImportExportError(errorMessage(importError));
     }
@@ -829,12 +721,12 @@ export function useCvBuilder() {
     signOut,
     saveCurrentDocument: persistence.saveCurrentDocument,
     discardChanges: persistence.discardChanges,
-    selectDocument,
-    createSampleDocument,
-    createEmptyDocument,
-    renameDocument,
-    duplicateDocument,
-    deleteDocument,
+    selectDocument: documentActions.selectDocument,
+    createSampleDocument: documentActions.createSampleDocument,
+    createEmptyDocument: documentActions.createEmptyDocument,
+    renameDocument: documentActions.renameDocument,
+    duplicateDocument: documentActions.duplicateDocument,
+    deleteDocument: documentActions.deleteDocument,
     reorderDocuments,
     toggleLibraryCollapsed,
     moveToCloud,
