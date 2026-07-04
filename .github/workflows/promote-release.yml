@@ -1,0 +1,180 @@
+name: Promote Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch, tag, or commit SHA to promote from main history.
+        required: false
+        default: main
+        type: string
+      create_tag:
+        description: Create an annotated production tag.
+        required: false
+        default: true
+        type: boolean
+      tag_name:
+        description: Optional tag name. Defaults to prod-YYYYMMDD-HHMMSS-shortsha.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote to release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release target
+        id: resolve
+        env:
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+          INPUT_CREATE_TAG: ${{ inputs.create_tag }}
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          source_ref="${INPUT_SOURCE_REF:-main}"
+          create_tag="${INPUT_CREATE_TAG:-true}"
+          tag_name="${INPUT_TAG_NAME:-}"
+
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+
+          origin_candidate="origin/${source_ref}^{commit}"
+          source_candidate="${source_ref}^{commit}"
+          source_commit_file="${RUNNER_TEMP}/source-commit"
+          release_commit_file="${RUNNER_TEMP}/release-commit"
+          resolved_ref=""
+
+          if git rev-parse --verify "${origin_candidate}" > "${source_commit_file}" 2>/dev/null; then
+            read -r source_commit < "${source_commit_file}"
+            resolved_ref="origin/${source_ref}"
+          fi
+
+          if [ -z "${resolved_ref}" ] && git rev-parse --verify "${source_candidate}" > "${source_commit_file}" 2>/dev/null; then
+            read -r source_commit < "${source_commit_file}"
+            resolved_ref="${source_ref}"
+          fi
+
+          if [ -z "${resolved_ref}" ]; then
+            echo "::error::Could not resolve source_ref '${source_ref}' to a commit."
+            exit 1
+          fi
+
+          main_commit="$(git rev-parse --verify origin/main^{commit})"
+          if git rev-parse --verify origin/release^{commit} > "${release_commit_file}" 2>/dev/null; then
+            read -r release_commit < "${release_commit_file}"
+          else
+            release_commit=""
+          fi
+          short_sha="$(git rev-parse --short=7 "${source_commit}")"
+
+          if ! git merge-base --is-ancestor "${source_commit}" "${main_commit}"; then
+            echo "::error::Source commit ${source_commit} is not reachable from origin/main."
+            exit 1
+          fi
+
+          if [ -n "${release_commit}" ] && ! git merge-base --is-ancestor "${release_commit}" "${source_commit}"; then
+            echo "::error::Promoting ${source_commit} would move release backward or sideways from ${release_commit}."
+            echo "::error::Use a dedicated rollback workflow if a non-fast-forward release move is intended."
+            exit 1
+          fi
+
+          if [ "${create_tag}" = "true" ]; then
+            if [ -z "${tag_name}" ]; then
+              timestamp="$(TZ=Asia/Shanghai date +'%Y%m%d-%H%M%S')"
+              tag_name="prod-${timestamp}-${short_sha}"
+            fi
+
+            if ! git check-ref-format "refs/tags/${tag_name}"; then
+              echo "::error::Invalid tag_name '${tag_name}'."
+              exit 1
+            fi
+
+            if git rev-parse --verify "refs/tags/${tag_name}" >/dev/null 2>&1; then
+              echo "::error::Tag '${tag_name}' already exists."
+              exit 1
+            fi
+          fi
+
+          git checkout --detach "${source_commit}"
+
+          echo "source_ref=${source_ref}" >> "${GITHUB_OUTPUT}"
+          echo "resolved_ref=${resolved_ref}" >> "${GITHUB_OUTPUT}"
+          echo "source_commit=${source_commit}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${short_sha}" >> "${GITHUB_OUTPUT}"
+          echo "release_commit=${release_commit}" >> "${GITHUB_OUTPUT}"
+          echo "create_tag=${create_tag}" >> "${GITHUB_OUTPUT}"
+          echo "tag_name=${tag_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Promote release branch and tag
+        env:
+          SOURCE_COMMIT: ${{ steps.resolve.outputs.source_commit }}
+          SHORT_SHA: ${{ steps.resolve.outputs.short_sha }}
+          RELEASE_COMMIT: ${{ steps.resolve.outputs.release_commit }}
+          CREATE_TAG: ${{ steps.resolve.outputs.create_tag }}
+          TAG_NAME: ${{ steps.resolve.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git branch --force release-promotion "${SOURCE_COMMIT}"
+
+          push_refs=("release-promotion:refs/heads/release")
+          if [ "${CREATE_TAG}" = "true" ]; then
+            git tag -a "${TAG_NAME}" "${SOURCE_COMMIT}" -m "Promote ${SHORT_SHA} to release"
+            push_refs+=("refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}")
+          fi
+
+          git push --atomic origin "${push_refs[@]}"
+
+          echo "### Release promotion" >> "${GITHUB_STEP_SUMMARY}"
+          echo >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Source commit: \`${SOURCE_COMMIT}\`" >> "${GITHUB_STEP_SUMMARY}"
+          if [ -n "${RELEASE_COMMIT}" ]; then
+            echo "- Release branch: \`${RELEASE_COMMIT}\` -> \`${SOURCE_COMMIT}\`" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "- Release branch: created at \`${SOURCE_COMMIT}\`" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if [ "${CREATE_TAG}" = "true" ]; then
+            echo "- Tag: \`${TAG_NAME}\`" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "- Tag: skipped" >> "${GITHUB_STEP_SUMMARY}"
+          fi
