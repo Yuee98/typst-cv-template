@@ -35,12 +35,10 @@ function clearPendingTermsAcceptance() {
 
 export function useTermsGate({
   hasSession,
-  onAccepted,
   onError,
   supabase,
 }: {
   hasSession: boolean;
-  onAccepted: (client: SupabaseClient) => Promise<void>;
   onError: (message: string) => void;
   supabase: SupabaseClient | null;
 }) {
@@ -106,12 +104,12 @@ export function useTermsGate({
   async function accept() {
     if (!supabase || !hasSession) {
       setModalError("Sign in before accepting the Terms and Privacy Notice.");
-      return;
+      return false;
     }
 
     if (!modalChecked) {
       setModalError("Check the box before accepting.");
-      return;
+      return false;
     }
 
     setAccepting(true);
@@ -122,9 +120,10 @@ export function useTermsGate({
       setStatus("accepted");
       setModalOpen(false);
       setModalChecked(false);
-      await onAccepted(supabase);
+      return true;
     } catch (termsError) {
       setModalError(errorMessage(termsError));
+      return false;
     } finally {
       setAccepting(false);
     }

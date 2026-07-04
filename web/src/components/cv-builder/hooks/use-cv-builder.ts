@@ -58,9 +58,6 @@ export function useCvBuilder() {
   const authModal = useAuthModal();
   const termsGate = useTermsGate({
     hasSession: Boolean(session),
-    onAccepted: async (client) => {
-      await cloudSync.refreshCloudDocuments(client, { skipTermsCheck: true });
-    },
     onError: setLibraryError,
     supabase,
   });
@@ -239,6 +236,12 @@ export function useCvBuilder() {
     setIsDirty(false);
   }
 
+  async function acceptTerms() {
+    if (await termsGate.accept()) {
+      await cloudSync.refreshCloudDocuments(supabase, { skipTermsCheck: true });
+    }
+  }
+
   // ── export / import ──────────────────────────────────────────────
 
   function getCurrentCvData() {
@@ -306,7 +309,7 @@ export function useCvBuilder() {
     signIn: authActions.signIn,
     signUp: authActions.signUp,
     signInWithGithub: authActions.signInWithGithub,
-    acceptTerms: termsGate.accept,
+    acceptTerms,
     signOut: authActions.signOut,
     saveCurrentDocument: persistence.saveCurrentDocument,
     discardChanges: persistence.discardChanges,
