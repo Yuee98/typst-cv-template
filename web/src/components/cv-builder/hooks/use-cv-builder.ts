@@ -3,9 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
-import type { LoadStage } from "@/lib/typst/render";
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
+import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal, type EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import {
@@ -53,17 +53,11 @@ import {
   type LocalCvDocument,
   updateLocalCvDocumentData,
 } from "@/lib/cv/storage";
-import { buildTypstDocument } from "@/lib/cv/typst";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { renderTypstSvg } from "@/lib/typst/render";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
 
 export function useCvBuilder() {
-  const [svg, setSvg] = useState<string | null>(null);
-  const [status, setStatus] = useState<LoadStage>("idle");
-  const [percent, setPercent] = useState<number | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [importExportError, setImportExportError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
@@ -91,8 +85,6 @@ export function useCvBuilder() {
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const initializedRef = useRef(false);
-  const isResettingRef = useRef(false);
-  const renderId = useRef(0);
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
@@ -107,12 +99,22 @@ export function useCvBuilder() {
   );
   const supabaseConfigured = Boolean(supabase);
   const cloudActionsEnabled = Boolean(supabase && session);
+  const preview = useCvPreview({
+    activeDocument,
+    activeDocumentId,
+    form,
+    initializedRef,
+    onDirtyChange: setIsDirty,
+    saveCurrentDocument,
+    saveDraft,
+    watchedData,
+  });
   const cvExport = useCvExport({
     canExport: () => Boolean(activeDocumentId && activeDocument),
     getCurrentData: getCurrentCvData,
     getDownloadTitle: currentDownloadTitle,
     onImportExportError: setImportExportError,
-    onPreviewError: setPreviewError,
+    onPreviewError: preview.setError,
   });
 
   // ── helpers ──────────────────────────────────────────────────────
@@ -187,14 +189,10 @@ export function useCvBuilder() {
   }
 
   function loadDataIntoForm(id: string, data: CvData) {
-    renderId.current += 1;
-    isResettingRef.current = true;
     setActiveDocumentId(id);
     saveActiveCvDocumentId(id);
     form.reset(data);
-    setSvg(null);
-    setStatus("idle");
-    setPreviewError(null);
+    preview.resetForFormLoad();
     setLibraryError(null);
     setIsDirty(false);
   }
@@ -493,75 +491,6 @@ export function useCvBuilder() {
       setLibraryError(errorMessage(discardError));
     }
   }
-
-  useEffect(() => {
-    if (!initializedRef.current || !activeDocumentId) {
-      return;
-    }
-
-    const timer = window.setTimeout(async () => {
-      const isResetting = isResettingRef.current;
-      if (isResetting) {
-        isResettingRef.current = false;
-      }
-
-      const parsed = cvSchema.safeParse(form.getValues());
-      if (!parsed.success) {
-        setStatus("error");
-        setPreviewError("The current form data does not match the CV schema.");
-        return;
-      }
-
-      // Auto-save: only for local CVs (skip during reset)
-      if (!isResetting) {
-        if (activeDocument?.storageKind === "local") {
-          const saved = await saveCurrentDocument({ silent: true });
-          if (!saved) {
-            return;
-          }
-        } else if (activeDocument?.storageKind === "cloud") {
-          // Cloud CVs: save draft to localStorage as safety net
-          saveDraft(activeDocumentId, parsed.data);
-          setIsDirty(true);
-        } else {
-          // Encrypted CVs: no auto-save, no draft
-          setIsDirty(true);
-        }
-      }
-
-      // Always render preview
-      const nextRenderId = renderId.current + 1;
-      renderId.current = nextRenderId;
-      setStatus("loading-assets");
-      setPercent(0);
-      setPreviewError(null);
-
-      try {
-        const document = buildTypstDocument(parsed.data);
-        const nextSvg = await renderTypstSvg(document, (progress) => {
-          if (renderId.current === nextRenderId) {
-            setStatus(progress.stage);
-            setPercent(progress.percent);
-          }
-        });
-        if (renderId.current === nextRenderId) {
-          setSvg(nextSvg);
-          setStatus("ready");
-          setPercent(null);
-        }
-      } catch (renderError) {
-        if (renderId.current === nextRenderId) {
-          setStatus("error");
-          setPercent(null);
-          setPreviewError(errorMessage(renderError));
-        }
-      }
-    }, 500);
-
-    return () => window.clearTimeout(timer);
-    // saveCurrentDocument updates document summaries, so depending on it would retrigger saves.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchedData, form, activeDocumentId, activeDocument?.storageKind]);
 
   // ── auth ─────────────────────────────────────────────────────────
 
@@ -909,11 +838,8 @@ export function useCvBuilder() {
       if (id === activeDocumentId) {
         setActiveDocumentId(null);
         saveActiveCvDocumentId(null);
-        renderId.current += 1;
         form.reset(createEmptyCvData());
-        setSvg(null);
-        setStatus("idle");
-        setPreviewError(null);
+        preview.reset();
         setLibraryError(null);
         setIsDirty(false);
       }
@@ -1139,10 +1065,10 @@ export function useCvBuilder() {
 
   return {
     // state
-    svg,
-    status,
-    percent,
-    previewError,
+    svg: preview.svg,
+    status: preview.status,
+    percent: preview.percent,
+    previewError: preview.error,
     libraryError,
     importExportError,
     documents,
