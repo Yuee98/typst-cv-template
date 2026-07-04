@@ -1,5 +1,5 @@
 import type { MutableRefObject } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { summarizeLocalDocument } from "@/lib/cv/cv-utils";
 import {
@@ -15,7 +15,6 @@ export function useCvDocuments({ initializedRef }: { initializedRef: MutableRefO
   const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
   const [activeDocumentId, setActiveDocumentIdRaw] = useState<string | null>(null);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
-  const activeDocumentIdRef = useRef<string | null>(null);
 
   const activeDocument = useMemo(
     () => documents.find((document) => document.id === activeDocumentId) ?? null,
@@ -23,7 +22,6 @@ export function useCvDocuments({ initializedRef }: { initializedRef: MutableRefO
   );
 
   function setActiveDocumentId(id: string | null) {
-    activeDocumentIdRef.current = id;
     setActiveDocumentIdRaw(id);
   }
 
@@ -94,7 +92,6 @@ export function useCvDocuments({ initializedRef }: { initializedRef: MutableRefO
   return {
     activeDocument,
     activeDocumentId,
-    activeDocumentIdRef,
     documents,
     libraryCollapsed,
     loadCollapsedPreference,

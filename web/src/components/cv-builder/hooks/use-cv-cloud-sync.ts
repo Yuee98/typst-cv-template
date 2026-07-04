@@ -1,10 +1,10 @@
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useEffect, type Dispatch, type SetStateAction } from "react";
 
 import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
+import { useCvCloudActiveDocumentQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { loadTrustDevice } from "@/lib/cv/encryption-storage";
-import type { CloudCvDocument } from "@/lib/cv/cloud-storage";
 import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 
@@ -15,13 +15,13 @@ type CloudSyncTermsGate = {
 };
 
 export function useCvCloudSync({
-  activeDocumentIdRef,
-  fetchCloudDocument,
-  fetchCloudDocuments,
+  activeDocumentId,
+  documentsData,
   loadDataIntoForm,
   loadDraft,
   onDirtyChange,
   onError,
+  refetchDocuments,
   removeCloudSummaries,
   replaceCloudSummaries,
   session,
@@ -33,13 +33,13 @@ export function useCvCloudSync({
   termsGate,
   upsertDocumentSummary,
 }: {
-  activeDocumentIdRef: MutableRefObject<string | null>;
-  fetchCloudDocument: (client: SupabaseClient, id: string) => Promise<CloudCvDocument>;
-  fetchCloudDocuments: (client?: SupabaseClient | null) => Promise<CvDocumentSummary[]>;
+  activeDocumentId: string | null;
+  documentsData: CvDocumentSummary[] | undefined;
   loadDataIntoForm: (id: string, data: CvData) => void;
   loadDraft: (cvId: string) => CvData | null;
   onDirtyChange: (dirty: boolean) => void;
   onError: (message: string) => void;
+  refetchDocuments: () => Promise<unknown>;
   removeCloudSummaries: () => void;
   replaceCloudSummaries: (cloudDocuments: CvDocumentSummary[]) => void;
   session: Session | null;
@@ -51,15 +51,21 @@ export function useCvCloudSync({
   termsGate: CloudSyncTermsGate;
   upsertDocumentSummary: (summary: CvDocumentSummary) => void;
 }) {
+  const { data: activeCloudDocument, error: activeDocumentError } = useCvCloudActiveDocumentQuery({
+    activeDocumentId,
+    documentsData: documentsData ?? [],
+    session,
+    supabase,
+  });
+
   async function refreshCloudDocuments(
-    client: SupabaseClient | null = supabase,
     { skipTermsCheck = false }: { skipTermsCheck?: boolean } = {},
   ) {
-    if (!client) {
+    if (!supabase) {
       return;
     }
 
-    if (!skipTermsCheck && !(await termsGate.ensure(client))) {
+    if (!skipTermsCheck && !(await termsGate.ensure(supabase))) {
       setCloudStatus("idle");
       return;
     }
@@ -67,37 +73,50 @@ export function useCvCloudSync({
     setCloudStatus("loading");
 
     try {
-      const cloudDocuments = await fetchCloudDocuments(client);
-      replaceCloudSummaries(cloudDocuments);
-
-      const currentActiveId = activeDocumentIdRef.current;
-      const activeIsCloud = cloudDocuments.some((document) => (
-        document.id === currentActiveId && document.storageKind === "cloud"
-      ));
-      const activeIsEncrypted = cloudDocuments.some((document) => (
-        document.id === currentActiveId && document.storageKind === "encrypted"
-      ));
-
-      if (activeIsCloud && currentActiveId) {
-        const document = await fetchCloudDocument(client, currentActiveId);
-        upsertDocumentSummary(document);
-        const draft = loadDraft(currentActiveId);
-        loadDataIntoForm(document.id, draft ?? document.data);
-        if (draft) {
-          onDirtyChange(true);
-        }
-      } else if (!activeIsEncrypted && !currentActiveId && cloudDocuments[0]?.storageKind === "cloud") {
-        const document = await fetchCloudDocument(client, cloudDocuments[0].id);
-        upsertDocumentSummary(document);
-        loadDataIntoForm(document.id, document.data);
-      }
-
+      await refetchDocuments();
       setCloudStatus("ready");
     } catch (cloudError) {
       setCloudStatus("error");
       onError(errorMessage(cloudError));
     }
   }
+
+  // Sync cloud summaries when list data changes.
+  // documentsData is undefined before the first fetch; null check distinguishes
+  // "not loaded yet" from "server returned empty list".
+  useEffect(() => {
+    if (documentsData == null) {
+      return;
+    }
+
+    replaceCloudSummaries(documentsData);
+    // replaceCloudSummaries is stable within a session
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentsData]);
+
+  // Load active cloud document into form when query data arrives.
+  // Skipped when activeDocumentId already matches (selectDocument already loaded it).
+  useEffect(() => {
+    if (!activeCloudDocument || activeCloudDocument.id === activeDocumentId) {
+      return;
+    }
+
+    upsertDocumentSummary(activeCloudDocument);
+    const draft = loadDraft(activeCloudDocument.id);
+    loadDataIntoForm(activeCloudDocument.id, draft ?? activeCloudDocument.data);
+    if (draft) {
+      onDirtyChange(true);
+    }
+    // loadDataIntoForm, loadDraft, etc. are stable within a session
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCloudDocument, activeDocumentId]);
+
+  // Surface active document query errors to the user.
+  useEffect(() => {
+    if (activeDocumentError) {
+      onError(errorMessage(activeDocumentError));
+    }
+  }, [activeDocumentError, onError]);
 
   useEffect(() => {
     if (!sessionInitialized || !supabase) {
@@ -123,7 +142,7 @@ export function useCvCloudSync({
       }
 
       if (accepted) {
-        await refreshCloudDocuments(client, { skipTermsCheck: true });
+        await refreshCloudDocuments({ skipTermsCheck: true });
       } else {
         removeCloudSummaries();
         setCloudStatus("idle");

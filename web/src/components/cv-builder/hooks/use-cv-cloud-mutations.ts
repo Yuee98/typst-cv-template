@@ -15,10 +15,8 @@ import {
 import type { EncryptedPayload } from "@/lib/cv/encryption";
 import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
-import {
-  cvCloudDocumentQueryKey,
-  cvCloudDocumentsQueryKey,
-} from "@/components/cv-builder/hooks/use-cv-cloud-documents-query";
+import { cvCloudDocumentListQueryKey } from "@/components/cv-builder/hooks/use-cv-cloud-document-list-query";
+import { cvCloudDocumentQueryKey } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
 
 type CloudMutationContext = {
   client: SupabaseClient;
@@ -39,7 +37,7 @@ export function useCvCloudMutations({ userId }: { userId: string | undefined }) 
     }
 
     queryClient.setQueryData<CvDocumentSummary[]>(
-      cvCloudDocumentsQueryKey(userId),
+      cvCloudDocumentListQueryKey(userId),
       (current) => updater(current ?? []),
     );
   }

@@ -6,7 +6,8 @@ import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
 import { useCvAuthActions } from "@/components/cv-builder/hooks/use-cv-auth-actions";
 import { useCvCloudDocumentActions } from "@/components/cv-builder/hooks/use-cv-cloud-document-actions";
-import { useCvCloudDocumentsQuery } from "@/components/cv-builder/hooks/use-cv-cloud-documents-query";
+import { useCvCloudDocumentListQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-list-query";
+import { useCvCloudDocumentQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
 import { useCvCloudMutations } from "@/components/cv-builder/hooks/use-cv-cloud-mutations";
 import { useCvCloudSync } from "@/components/cv-builder/hooks/use-cv-cloud-sync";
 import { useCvDocumentActions } from "@/components/cv-builder/hooks/use-cv-document-actions";
@@ -38,10 +39,10 @@ export function useCvBuilder() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [importExportError, setImportExportError] = useState<string | null>(null);
   const initializedRef = useRef(false);
+
   const {
     activeDocument,
     activeDocumentId,
-    activeDocumentIdRef,
     documents,
     libraryCollapsed,
     loadCollapsedPreference,
@@ -54,15 +55,19 @@ export function useCvBuilder() {
     toggleLibraryCollapsed,
     upsertDocumentSummary,
   } = useCvDocuments({ initializedRef });
+
   const { cloudStatus, session, sessionInitialized, setCloudStatus, supabase } = useCloudSession({
     onError: setLibraryError,
   });
+
   const authModal = useAuthModal();
+
   const termsGate = useTermsGate({
     hasSession: Boolean(session),
     onError: setLibraryError,
     supabase,
   });
+
   const encryptionModal = useEncryptionModal();
   const [isDirty, setIsDirty] = useState(false);
 
@@ -75,17 +80,20 @@ export function useCvBuilder() {
   const watchedData = useWatch({ control: form.control });
   const supabaseConfigured = Boolean(supabase);
   const cloudActionsEnabled = Boolean(supabase && session);
-  const cloudDocumentsQuery = useCvCloudDocumentsQuery({
+  const { data: documentsData, refetch: refetchDocuments } = useCvCloudDocumentListQuery({
+    enabled: termsGate.status === "accepted",
     session,
     supabase,
   });
+  const { fetchCloudDocument } = useCvCloudDocumentQuery({ session });
   const cloudMutations = useCvCloudMutations({ userId: session?.user.id });
+
   const storageAdapters = createCvStorageAdapters({
     cloudStorage: {
       deleteCloudDocument: async (client, id) => {
         await cloudMutations.deleteCloudDocument.mutateAsync({ client, id });
       },
-      loadCloudDocument: cloudDocumentsQuery.fetchCloudDocument,
+      loadCloudDocument: fetchCloudDocument,
       renameCloudDocument: (client, id, title) =>
         cloudMutations.renameCloudDocument.mutateAsync({ client, id, title }),
       updateCloudDocumentData: (client, id, data) =>
@@ -96,6 +104,7 @@ export function useCvBuilder() {
     getEncryptionPassphrase: getKnownEncryptionPassphrase,
     requireCloudAccess,
   });
+
   const persistence = useCvPersistence({
     activeDocument,
     activeDocumentId,
@@ -108,6 +117,7 @@ export function useCvBuilder() {
     storageAdapters,
     upsertDocumentSummary,
   });
+
   const preview = useCvPreview({
     activeDocument,
     activeDocumentId,
@@ -118,6 +128,7 @@ export function useCvBuilder() {
     saveDraft,
     watchedData,
   });
+
   const cvExport = useCvExport({
     canExport: () => Boolean(activeDocumentId && activeDocument),
     getCurrentData: getCurrentCvData,
@@ -125,6 +136,7 @@ export function useCvBuilder() {
     onImportExportError: setImportExportError,
     onPreviewError: preview.setError,
   });
+
   const documentActions = useCvDocumentActions({
     activeDocument,
     activeDocumentId,
@@ -143,14 +155,15 @@ export function useCvBuilder() {
     storageAdapters,
     upsertDocumentSummary,
   });
+
   const cloudSync = useCvCloudSync({
-    activeDocumentIdRef,
-    fetchCloudDocument: cloudDocumentsQuery.fetchCloudDocument,
-    fetchCloudDocuments: cloudDocumentsQuery.fetchCloudDocuments,
+    activeDocumentId,
+    documentsData,
     loadDataIntoForm,
     loadDraft,
     onDirtyChange: setIsDirty,
     onError: setLibraryError,
+    refetchDocuments,
     removeCloudSummaries,
     replaceCloudSummaries,
     session,
@@ -162,6 +175,7 @@ export function useCvBuilder() {
     termsGate,
     upsertDocumentSummary,
   });
+
   const cloudDocumentActions = useCvCloudDocumentActions({
     activeDocumentId,
     closeEncryptionModal: encryptionModal.closeModal,
@@ -170,7 +184,7 @@ export function useCvBuilder() {
     documents,
     duplicateDocument: documentActions.duplicateDocument,
     encryptExistingCloudDocument: cloudMutations.encryptExistingCloudDocument.mutateAsync,
-    fetchCloudDocument: cloudDocumentsQuery.fetchCloudDocument,
+    fetchCloudDocument: fetchCloudDocument,
     loadDataIntoForm,
     onError: setLibraryError,
     openEnableEncryptionModal: (documentId) => encryptionModal.openModal("enable", documentId),
@@ -182,6 +196,7 @@ export function useCvBuilder() {
     termsGate,
     upsertDocumentSummary,
   });
+  
   const authActions = useCvAuthActions({
     activeDocument,
     authModal,
@@ -263,7 +278,7 @@ export function useCvBuilder() {
 
   async function acceptTerms() {
     if (await termsGate.accept()) {
-      await cloudSync.refreshCloudDocuments(supabase, { skipTermsCheck: true });
+      await cloudSync.refreshCloudDocuments({ skipTermsCheck: true });
     }
   }
 
