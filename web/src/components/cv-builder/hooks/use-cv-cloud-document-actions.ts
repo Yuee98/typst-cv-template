@@ -77,8 +77,8 @@ export function useCvCloudDocumentActions({
     }
 
     try {
-      if (id === activeDocumentId) {
-        await saveCurrentDocument({ silent: true });
+      if (id === activeDocumentId && !(await saveCurrentDocument({ silent: true }))) {
+        return;
       }
 
       const localDocument = loadCvDocument(id);
@@ -125,8 +125,8 @@ export function useCvCloudDocumentActions({
     }
 
     try {
-      if (id === activeDocumentId) {
-        await saveCurrentDocument({ silent: true });
+      if (id === activeDocumentId && !(await saveCurrentDocument({ silent: true }))) {
+        return;
       }
 
       const sourceData =

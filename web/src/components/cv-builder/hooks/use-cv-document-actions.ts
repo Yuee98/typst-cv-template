@@ -82,8 +82,8 @@ export function useCvDocumentActions({
   }
 
   async function createDocumentFromData(data: CvData, title: string) {
-    if (activeDocumentId) {
-      await saveCurrentDocument({ silent: true });
+    if (activeDocumentId && !(await saveCurrentDocument({ silent: true }))) {
+      return;
     }
 
     const document = createLocalCvDocument(data, title);
