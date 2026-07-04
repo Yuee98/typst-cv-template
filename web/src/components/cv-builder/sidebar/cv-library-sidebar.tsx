@@ -192,7 +192,7 @@ export function CvLibrarySidebar({
   return (
     <aside
       className={cn(
-        "library-sidebar relative flex h-full min-h-[720px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[width] print:hidden",
+        "library-sidebar relative flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[width] print:hidden",
         collapsed ? "w-14" : "w-full lg:w-72",
       )}
     >

@@ -175,7 +175,7 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
   }
 
   return (
-    <Panel title="Editor" actions={actions} className="editor-pane h-full min-h-[720px] overflow-hidden">
+    <Panel title="Editor" actions={actions} className="editor-pane h-full overflow-hidden">
       <Tabs
         value={activeTab}
         onValueChange={(value) => setActiveTab(value as EditorTabId)}

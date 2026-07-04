@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <main className="min-h-screen bg-slate-100 text-slate-950">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1800px] flex-col gap-4 px-4 pb-4">{children}</div>
+    <main className="h-full bg-slate-100 text-slate-950">
+      <div className="mx-auto flex h-full w-full max-w-[1800px] flex-col gap-4 overflow-hidden px-4 pb-4">{children}</div>
     </main>
   );
 }

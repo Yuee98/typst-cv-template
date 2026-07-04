@@ -74,7 +74,7 @@ export function PreviewPane({
           {actions}
         </div>
       }
-      className="preview-pane flex h-full min-h-[720px] flex-col overflow-hidden"
+      className="preview-pane flex h-full flex-col overflow-hidden"
     >
       {error && (
         <div className="preview-error border-b border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-800 print:hidden">
