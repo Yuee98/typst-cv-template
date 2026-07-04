@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
+import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
 import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
@@ -48,9 +49,6 @@ import {
   saveActiveCvDocumentId,
   updateLocalCvDocumentData,
 } from "@/lib/cv/storage";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-
-type CloudStatus = "idle" | "loading" | "ready" | "error";
 
 export function useCvBuilder() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
@@ -72,9 +70,9 @@ export function useCvBuilder() {
     toggleLibraryCollapsed,
     upsertDocumentSummary,
   } = useCvDocuments({ initializedRef });
-  const [supabase] = useState(() => getSupabaseBrowserClient());
-  const [session, setSession] = useState<import("@supabase/supabase-js").Session | null>(null);
-  const [cloudStatus, setCloudStatus] = useState<CloudStatus>("idle");
+  const { cloudStatus, session, sessionInitialized, setCloudStatus, supabase } = useCloudSession({
+    onError: setLibraryError,
+  });
   const authModal = useAuthModal();
   const termsGate = useTermsGate({
     hasSession: Boolean(session),
@@ -263,70 +261,42 @@ export function useCvBuilder() {
   }, [form]);
 
   useEffect(() => {
-    if (!supabase) {
+    if (!sessionInitialized || !supabase) {
       return;
     }
 
     const client = supabase;
     let cancelled = false;
 
-    async function loadInitialSession() {
-      const { data, error } = await client.auth.getSession();
+    if (!session) {
+      removeCloudSummaries();
+      termsGate.reset();
+      authModal.setTermsAccepted(false);
+      setCloudStatus("idle");
+      return;
+    }
+
+    encryptionModal.setTrustDevice(loadTrustDevice(session.user.id));
+    void (async () => {
+      const accepted = await termsGate.refresh(client);
       if (cancelled) {
         return;
       }
 
-      if (error) {
-        setCloudStatus("error");
-        setLibraryError(error.message);
-        return;
-      }
-
-      setSession(data.session);
-      if (data.session) {
-        encryptionModal.setTrustDevice(loadTrustDevice(data.session.user.id));
-        const accepted = await termsGate.refresh(client);
-        if (accepted) {
-          await refreshCloudDocuments(client, { skipTermsCheck: true });
-        } else {
-          removeCloudSummaries();
-          setCloudStatus("idle");
-        }
-      }
-    }
-
-    void loadInitialSession();
-
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      if (nextSession) {
-        encryptionModal.setTrustDevice(loadTrustDevice(nextSession.user.id));
-        void (async () => {
-          const accepted = await termsGate.refresh(client);
-          if (accepted) {
-            await refreshCloudDocuments(client, { skipTermsCheck: true });
-          } else {
-            removeCloudSummaries();
-            setCloudStatus("idle");
-          }
-        })();
+      if (accepted) {
+        await refreshCloudDocuments(client, { skipTermsCheck: true });
       } else {
         removeCloudSummaries();
-        termsGate.reset();
-        authModal.setTermsAccepted(false);
         setCloudStatus("idle");
       }
-    });
+    })();
 
     return () => {
       cancelled = true;
-      subscription.unsubscribe();
     };
-    // refreshCloudDocuments is intentionally not a dependency; this subscription is bound to the client.
+    // refreshCloudDocuments is intentionally not a dependency; this reacts only to auth session changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase]);
+  }, [sessionInitialized, session, supabase]);
 
   async function saveCurrentDocument({ silent = false }: { silent?: boolean } = {}) {
     if (!activeDocumentId || !activeDocument) {
