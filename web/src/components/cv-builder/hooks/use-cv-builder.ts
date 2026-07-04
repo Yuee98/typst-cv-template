@@ -3,8 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
-import type { EncryptionModalMode } from "@/components/cv-builder/modals/encryption-modal";
 import type { LoadStage } from "@/lib/typst/render";
+import { useEncryptionModal, type EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
 import {
   createCloudCvDocument,
   createEncryptedCloudCvDocument,
@@ -61,10 +61,6 @@ type CloudStatus = "idle" | "loading" | "ready" | "error";
 type AuthModalMode = "signIn" | "signUp";
 type TermsStatus = "unknown" | "accepted" | "required";
 type ExportFormat = "pdf" | "typst-package" | "typst-source" | "json";
-type EncryptionModalState = {
-  mode: EncryptionModalMode;
-  documentId: string;
-};
 
 const CUSTOM_FONT_SENTINEL = "__custom__";
 
@@ -150,10 +146,7 @@ export function useCvBuilder() {
   const [termsModalChecked, setTermsModalChecked] = useState(false);
   const [termsModalError, setTermsModalError] = useState<string | null>(null);
   const [termsAccepting, setTermsAccepting] = useState(false);
-  const [encryptionPassword, setEncryptionPassword] = useState("");
-  const [encryptionModalError, setEncryptionModalError] = useState<string | null>(null);
-  const [trustEncryptionDevice, setTrustEncryptionDevice] = useState(false);
-  const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
+  const encryptionModal = useEncryptionModal();
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
@@ -520,7 +513,7 @@ export function useCvBuilder() {
 
       setSession(data.session);
       if (data.session) {
-        setTrustEncryptionDevice(loadTrustDevice(data.session.user.id));
+        encryptionModal.setTrustDevice(loadTrustDevice(data.session.user.id));
         const accepted = await refreshTermsAcceptance(client);
         if (accepted) {
           await refreshCloudDocuments(client, { skipTermsCheck: true });
@@ -538,7 +531,7 @@ export function useCvBuilder() {
     } = client.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       if (nextSession) {
-        setTrustEncryptionDevice(loadTrustDevice(nextSession.user.id));
+        encryptionModal.setTrustDevice(loadTrustDevice(nextSession.user.id));
         void (async () => {
           const accepted = await refreshTermsAcceptance(client);
           if (accepted) {
@@ -614,9 +607,7 @@ export function useCvBuilder() {
         }
 
         if (!hasKnownEncryptionPassphrase(activeDocumentId)) {
-          setEncryptionModal({ mode: "unlock", documentId: activeDocumentId });
-          setEncryptionPassword("");
-          setEncryptionModalError(null);
+          encryptionModal.openModal("unlock", activeDocumentId);
           return false;
         }
 
@@ -874,8 +865,7 @@ export function useCvBuilder() {
       clearEncryptionPasswords(window.sessionStorage, session.user.id);
       clearEncryptionPasswords(window.localStorage, session.user.id);
     }
-    setTrustEncryptionDevice(false);
-    setEncryptionPassword("");
+    encryptionModal.closeModal();
     setAccountMenuOpen(false);
 
     const localDocuments = documents.filter((document) => document.storageKind === "local");
@@ -947,9 +937,7 @@ export function useCvBuilder() {
         }
 
         if (!hasKnownEncryptionPassphrase(id)) {
-          setEncryptionModal({ mode: "unlock", documentId: id });
-          setEncryptionPassword("");
-          setEncryptionModalError(null);
+          encryptionModal.openModal("unlock", id);
           return;
         }
 
@@ -1062,9 +1050,7 @@ export function useCvBuilder() {
         }
 
         if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
-          setEncryptionModal({ mode: "duplicate", documentId: id });
-          setEncryptionPassword("");
-          setEncryptionModalError(null);
+          encryptionModal.openModal("duplicate", id);
           return;
         }
 
@@ -1173,7 +1159,7 @@ export function useCvBuilder() {
     }
   }
 
-  async function enableEncryption(id: string) {
+  async function enableEncryption(id: string, password: string, trustDevice: boolean) {
     const current = documents.find((document) => document.id === id);
     if (!current) return;
 
@@ -1186,7 +1172,7 @@ export function useCvBuilder() {
       return;
     }
 
-    if (!encryptionPassword) {
+    if (!password) {
       setLibraryError("Enter an encryption password before enabling encryption.");
       return;
     }
@@ -1209,7 +1195,7 @@ export function useCvBuilder() {
         throw new Error("The selected CV could not be loaded before encryption.");
       }
 
-      const encryptedPayload = await encryptCvData(sourceData, encryptionPassword);
+      const encryptedPayload = await encryptCvData(sourceData, password);
 
       if (current.storageKind === "local") {
         const encryptedDocument = await createEncryptedCloudCvDocument(supabase, {
@@ -1219,7 +1205,7 @@ export function useCvBuilder() {
         });
         removeCvDocument(id);
         if (session?.user.id) {
-          storeEncryptionPassword(session.user.id, encryptedDocument.id, encryptionPassword, trustEncryptionDevice);
+          storeEncryptionPassword(session.user.id, encryptedDocument.id, password, trustDevice);
         }
         setOrderedDocuments((currentDocuments) => [
           encryptedDocument,
@@ -1235,7 +1221,6 @@ export function useCvBuilder() {
         loadDataIntoForm(id, sourceData);
       }
 
-      setEncryptionPassword("");
       setCloudStatus("ready");
     } catch (encryptionError) {
       setLibraryError(errorMessage(encryptionError));
@@ -1243,6 +1228,21 @@ export function useCvBuilder() {
   }
 
   // ── encryption modal ─────────────────────────────────────────────
+
+  async function unlockEncryptedDocument(id: string, password: string) {
+    if (!supabase || !session) {
+      throw new Error("Sign in before opening this encrypted CV.");
+    }
+
+    if (!(await ensureTermsAccepted())) {
+      return;
+    }
+
+    const document = await loadEncryptedCloudCvDocument(supabase, id);
+    const decryptedData = await decryptCvData(document.encryptedPayload, password);
+    upsertDocumentSummary(document);
+    loadDataIntoForm(document.id, decryptedData);
+  }
 
   async function openEnableEncryptionModal(id: string) {
     const current = documents.find((document) => document.id === id);
@@ -1259,62 +1259,30 @@ export function useCvBuilder() {
       return;
     }
 
-    setEncryptionModal({ mode: "enable", documentId: id });
-    setEncryptionPassword("");
-    setEncryptionModalError(null);
+    encryptionModal.openModal("enable", id);
   }
 
-  function closeEncryptionModal() {
-    setEncryptionModal(null);
-    setEncryptionPassword("");
-    setEncryptionModalError(null);
-  }
-
-  async function unlockEncryptedDocument(id: string) {
-    if (!supabase || !session) {
-      throw new Error("Sign in before opening this encrypted CV.");
-    }
-
-    if (!(await ensureTermsAccepted())) {
-      return;
-    }
-
-    const document = await loadEncryptedCloudCvDocument(supabase, id);
-    const decryptedData = await decryptCvData(document.encryptedPayload, encryptionPassword);
-    upsertDocumentSummary(document);
-    loadDataIntoForm(document.id, decryptedData);
-  }
-
-  async function submitEncryptionModal() {
-    if (!encryptionModal) {
-      return;
-    }
-
-    if (!encryptionPassword) {
-      setEncryptionModalError("Enter the encryption password first.");
-      return;
-    }
+  async function handleEncryptionSubmit(payload: EncryptionSubmitPayload) {
+    const { mode, documentId, password, trustDevice } = payload;
 
     try {
-      setEncryptionModalError(null);
-
       const userId = session?.user.id;
       if (userId) {
-        storeEncryptionPassword(userId, encryptionModal.documentId, encryptionPassword, trustEncryptionDevice);
-        storeTrustDevice(userId, trustEncryptionDevice);
+        storeEncryptionPassword(userId, documentId, password, trustDevice);
+        storeTrustDevice(userId, trustDevice);
       }
 
-      if (encryptionModal.mode === "enable") {
-        await enableEncryption(encryptionModal.documentId);
-      } else if (encryptionModal.mode === "unlock") {
-        await unlockEncryptedDocument(encryptionModal.documentId);
+      if (mode === "enable") {
+        await enableEncryption(documentId, password, trustDevice);
+      } else if (mode === "unlock") {
+        await unlockEncryptedDocument(documentId, password);
       } else {
-        await duplicateDocument(encryptionModal.documentId, encryptionPassword);
+        await duplicateDocument(documentId, password);
       }
 
-      closeEncryptionModal();
+      encryptionModal.closeModal();
     } catch (modalError) {
-      setEncryptionModalError(errorMessage(modalError));
+      return { error: errorMessage(modalError) };
     }
   }
 
@@ -1496,9 +1464,6 @@ export function useCvBuilder() {
     termsModalChecked,
     termsModalError,
     termsAccepting,
-    encryptionPassword,
-    encryptionModalError,
-    trustEncryptionDevice,
     encryptionModal,
     importInputRef,
     form,
@@ -1512,10 +1477,6 @@ export function useCvBuilder() {
     setTermsModalOpen,
     setTermsModalChecked,
     setTermsModalError,
-    setEncryptionPassword,
-    setEncryptionModalError,
-    setTrustEncryptionDevice,
-    setEncryptionModal,
     setAuthError,
     setLibraryError,
     setImportExportError,
@@ -1540,8 +1501,7 @@ export function useCvBuilder() {
     moveToCloud,
     openEnableEncryptionModal,
     refreshCloudDocuments,
-    submitEncryptionModal,
-    closeEncryptionModal,
+    handleEncryptionSubmit,
     importJson,
     downloadPdf,
     exportTypstPackage,

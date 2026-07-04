@@ -147,19 +147,16 @@ export function CvBuilder() {
             }}
           />
         )}
-        {h.encryptionModal && (
+        {h.encryptionModal.modalState && (
           <EncryptionModal
-            mode={h.encryptionModal.mode}
-            password={h.encryptionPassword}
-            error={h.encryptionModalError}
-            trustDevice={h.trustEncryptionDevice}
-            onPasswordChange={(value) => {
-              h.setEncryptionPassword(value);
-              h.setEncryptionModalError(null);
-            }}
-            onTrustDeviceChange={h.setTrustEncryptionDevice}
-            onSubmit={() => void h.submitEncryptionModal()}
-            onClose={h.closeEncryptionModal}
+            mode={h.encryptionModal.modalState.mode}
+            password={h.encryptionModal.password}
+            error={h.encryptionModal.error}
+            trustDevice={h.encryptionModal.trustDevice}
+            onPasswordChange={h.encryptionModal.setPassword}
+            onTrustDeviceChange={h.encryptionModal.setTrustDevice}
+            onSubmit={() => void h.encryptionModal.submit(h.handleEncryptionSubmit)}
+            onClose={h.encryptionModal.closeModal}
           />
         )}
         {h.importExportError && (
