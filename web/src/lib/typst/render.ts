@@ -23,6 +23,7 @@ let renderQueue = Promise.resolve();
 
 // Fonts added by user (accumulated across instances)
 const userFontData: Uint8Array[] = [];
+const userFontKeys = new Set<string>();
 
 const BUNDLED_FONT_URLS = [
   "/typst/fonts/LiberationSerif-Regular.ttf",
@@ -168,10 +169,25 @@ function loadTypst(onProgress?: ProgressCallback) {
   return instanceReady;
 }
 
+function fontDataKey(fontData: Uint8Array) {
+  let hash = 2166136261;
+  for (const byte of fontData) {
+    hash ^= byte;
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return `${fontData.byteLength}:${hash >>> 0}`;
+}
+
 export function addFontFromData(fontData: Uint8Array) {
+  const key = fontDataKey(fontData);
+  if (userFontKeys.has(key)) return false;
+
+  userFontKeys.add(key);
   userFontData.push(fontData);
   // Invalidate current instance so next render creates a new one with the new font
   instanceReady = null;
+  return true;
 }
 
 async function fetchStyleSource() {
@@ -199,6 +215,29 @@ export function renderTypstSvg(mainContent: string, onProgress?: ProgressCallbac
         js: true,
       },
     });
+  });
+
+  renderQueue = nextRender.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  return nextRender;
+}
+
+export function renderTypstPdf(mainContent: string, onProgress?: ProgressCallback) {
+  const nextRender = renderQueue.then(async () => {
+    onProgress?.({ stage: "loading-assets", percent: 0 });
+    const [$typst, styleSource] = await Promise.all([loadTypst(onProgress), fetchStyleSource()]);
+    onProgress?.({ stage: "compiling", percent: null });
+    await $typst.resetShadow();
+    await $typst.addSource("/style.typ", styleSource);
+    const pdf = await $typst.pdf({ mainContent });
+    if (!pdf) {
+      throw new Error("Typst did not return a PDF.");
+    }
+
+    return pdf;
   });
 
   renderQueue = nextRender.then(

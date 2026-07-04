@@ -53,7 +53,8 @@ import {
 import { buildTypstDocument } from "@/lib/cv/typst";
 import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { renderTypstSvg } from "@/lib/typst/render";
+import { loadLocalFontData } from "@/lib/typst/font-access";
+import { addFontFromData, renderTypstPdf, renderTypstSvg } from "@/lib/typst/render";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
 type AuthModalMode = "signIn" | "signUp";
@@ -62,6 +63,36 @@ type EncryptionModalState = {
   mode: EncryptionModalMode;
   documentId: string;
 };
+
+const CUSTOM_FONT_SENTINEL = "__custom__";
+
+function selectedFontFamilies(data: CvData) {
+  if (!data.bodyFont || data.bodyFont === CUSTOM_FONT_SENTINEL) return [];
+
+  return data.bodyFont
+    .split(",")
+    .map((font) => font.trim())
+    .filter(Boolean);
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function safeDownloadName(title: string, extension: string) {
+  const baseName = title
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `${baseName || "resume"}.${extension}`;
+}
 
 export function useCvBuilder() {
   const [svg, setSvg] = useState<string | null>(null);
@@ -100,6 +131,7 @@ export function useCvBuilder() {
   const [encryptionModal, setEncryptionModal] = useState<EncryptionModalState | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
   const isResettingRef = useRef(false);
@@ -1251,10 +1283,8 @@ export function useCvBuilder() {
         await enableEncryption(encryptionModal.documentId);
       } else if (encryptionModal.mode === "unlock") {
         await unlockEncryptedDocument(encryptionModal.documentId);
-      } else if (encryptionModal.mode === "duplicate") {
-        await duplicateDocument(encryptionModal.documentId, encryptionPassword);
       } else {
-        await exportDocument(encryptionModal.documentId, encryptionPassword);
+        await duplicateDocument(encryptionModal.documentId, encryptionPassword);
       }
 
       closeEncryptionModal();
@@ -1267,66 +1297,61 @@ export function useCvBuilder() {
 
   function downloadJsonData(data: CvData, title: string) {
     const payload = JSON.stringify(data, null, 2);
-    const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${title || "cv-data"}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([payload], { type: "application/json" }), safeDownloadName(title || "cv-data", "json"));
   }
 
-  async function exportDocument(id: string, passphraseOverride?: string) {
-    const current = documents.find((document) => document.id === id);
-    if (!current) {
+  async function ensureLocalFontsForData(data: CvData) {
+    const families = selectedFontFamilies(data);
+    if (families.length === 0) return;
+
+    const fontData = await loadLocalFontData(families);
+    for (const data of fontData) {
+      addFontFromData(data);
+    }
+  }
+
+  async function downloadPdf() {
+    if (!activeDocumentId || !activeDocument) {
+      return;
+    }
+
+    setDownloadingPdf(true);
+    setPreviewError(null);
+
+    try {
+      const parsed = cvSchema.safeParse(form.getValues());
+      if (!parsed.success) {
+        throw new Error("The current form data does not match the CV schema.");
+      }
+
+      await ensureLocalFontsForData(parsed.data);
+      const document = buildTypstDocument(parsed.data);
+      const pdf = await renderTypstPdf(document);
+      const pdfBuffer = new ArrayBuffer(pdf.byteLength);
+      new Uint8Array(pdfBuffer).set(pdf);
+      downloadBlob(
+        new Blob([pdfBuffer], { type: "application/pdf" }),
+        safeDownloadName(activeDocument.title || titleFromImportedData(parsed.data), "pdf"),
+      );
+    } catch (pdfError) {
+      setPreviewError(errorMessage(pdfError));
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
+  async function exportDocument() {
+    if (!activeDocumentId || !activeDocument) {
       return;
     }
 
     try {
-      const isCloudBacked = current.storageKind === "cloud" || current.storageKind === "encrypted";
-      if (isCloudBacked && !(await ensureTermsAccepted())) {
-        return;
+      const parsed = cvSchema.safeParse(form.getValues());
+      if (!parsed.success) {
+        throw new Error("The current form data does not match the CV schema.");
       }
 
-      if (id === activeDocumentId) {
-        const parsed = cvSchema.safeParse(form.getValues());
-        if (!parsed.success) {
-          throw new Error("The current form data does not match the CV schema.");
-        }
-
-        downloadJsonData(parsed.data, current.title);
-        return;
-      }
-
-      if (current.storageKind === "local") {
-        const document = loadCvDocument(id);
-        if (!document) {
-          throw new Error("The selected local CV could not be loaded.");
-        }
-
-        downloadJsonData(document.data, document.title);
-      } else if (current.storageKind === "cloud") {
-        if (!supabase || !session) {
-          throw new Error("Sign in before exporting this cloud CV.");
-        }
-
-        const document = await loadCloudCvDocument(supabase, id);
-        downloadJsonData(document.data, document.title);
-      } else {
-        if (!supabase || !session) {
-          throw new Error("Sign in before exporting this encrypted CV.");
-        }
-
-        if (!passphraseOverride && !hasKnownEncryptionPassphrase(id)) {
-          setEncryptionModal({ mode: "export", documentId: id });
-          setEncryptionPassword("");
-          setEncryptionModalError(null);
-          return;
-        }
-
-        const document = await loadEncryptedCloudCvDocument(supabase, id);
-        const data = await decryptCvData(document.encryptedPayload, passphraseOverride ?? getEncryptionPassphrase(id));
-        downloadJsonData(data, document.title);
-      }
+      downloadJsonData(parsed.data, activeDocument.title);
     } catch (exportError) {
       setImportExportError(errorMessage(exportError));
     }
@@ -1373,6 +1398,7 @@ export function useCvBuilder() {
     activeDocument,
     isDirty,
     saving,
+    downloadingPdf,
     libraryCollapsed,
     session,
     cloudStatus,
@@ -1435,6 +1461,7 @@ export function useCvBuilder() {
     submitEncryptionModal,
     closeEncryptionModal,
     importJson,
+    downloadPdf,
     exportDocument,
   };
 }

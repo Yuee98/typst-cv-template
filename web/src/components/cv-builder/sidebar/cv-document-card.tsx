@@ -1,6 +1,6 @@
 "use client";
 
-import { CloudUpload, Copy, Download, LockKeyhole, Pencil, Trash2 } from "lucide-react";
+import { CloudUpload, Copy, LockKeyhole, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
@@ -15,7 +15,6 @@ export function CvDocumentCard({
   onSelect,
   onRename,
   onDuplicate,
-  onExport,
   onMoveToCloud,
   onEnableEncryption,
   onDelete,
@@ -27,7 +26,6 @@ export function CvDocumentCard({
   onSelect: () => void;
   onRename: () => void;
   onDuplicate: () => void;
-  onExport: () => void;
   onMoveToCloud: () => void;
   onEnableEncryption: () => void;
   onDelete: () => void;
@@ -83,9 +81,6 @@ export function CvDocumentCard({
         </Button>
         <Button type="button" variant="ghost" size="icon" onClick={onDuplicate} title="Duplicate">
           <Copy />
-        </Button>
-        <Button type="button" variant="ghost" size="icon" onClick={onExport} title="Export JSON">
-          <Download />
         </Button>
         {document.storageKind === "local" && cloudActionsEnabled && (
           <Button type="button" variant="ghost" size="icon" onClick={onMoveToCloud} title="Move to cloud">

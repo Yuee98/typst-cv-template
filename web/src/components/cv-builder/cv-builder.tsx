@@ -1,6 +1,6 @@
 "use client";
 
-import { Circle, FilePlus2, Loader2, Printer, RotateCcw, Save } from "lucide-react";
+import { Circle, Download, FileJson, FilePlus2, Loader2, RotateCcw, Save } from "lucide-react";
 import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
@@ -55,7 +55,6 @@ export function CvBuilder() {
               onSelect={(id) => void h.selectDocument(id)}
               onRename={(id) => void h.renameDocument(id)}
               onDuplicate={(id) => void h.duplicateDocument(id)}
-              onExport={(id) => void h.exportDocument(id)}
               onReorder={h.reorderDocuments}
               onDelete={(id) => void h.deleteDocument(id)}
               onMoveToCloud={(id) => void h.moveToCloud(id)}
@@ -102,9 +101,30 @@ export function CvBuilder() {
               percent={h.activeDocumentId ? h.percent : null}
               error={h.activeDocumentId ? h.previewError : null}
               actions={
-                <Button type="button" variant="secondary" size="icon" onClick={() => window.print()} title="Print">
-                  <Printer />
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    disabled={!h.activeDocumentId}
+                    onClick={() => void h.exportDocument()}
+                    title="Export JSON"
+                    aria-label="Export JSON"
+                  >
+                    <FileJson />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    disabled={!h.activeDocumentId || h.downloadingPdf}
+                    onClick={() => void h.downloadPdf()}
+                    title={h.downloadingPdf ? "Generating PDF" : "Download PDF"}
+                    aria-label={h.downloadingPdf ? "Generating PDF" : "Download PDF"}
+                  >
+                    {h.downloadingPdf ? <Loader2 className="animate-spin" /> : <Download />}
+                  </Button>
+                </div>
               }
             />
           }

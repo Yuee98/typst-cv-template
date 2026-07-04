@@ -82,7 +82,6 @@ export function CvLibrarySidebar({
   onSelect,
   onRename,
   onDuplicate,
-  onExport,
   onReorder,
   onDelete,
   onMoveToCloud,
@@ -101,7 +100,6 @@ export function CvLibrarySidebar({
   onSelect: (id: string) => void;
   onRename: (id: string) => void;
   onDuplicate: (id: string) => void;
-  onExport: (id: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onDelete: (id: string) => void;
   onMoveToCloud: (id: string) => void;
@@ -277,7 +275,6 @@ export function CvLibrarySidebar({
                       onSelect={() => onSelect(document.id)}
                       onRename={() => onRename(document.id)}
                       onDuplicate={() => onDuplicate(document.id)}
-                      onExport={() => onExport(document.id)}
                       onMoveToCloud={() => onMoveToCloud(document.id)}
                       onEnableEncryption={() => onEnableEncryption(document.id)}
                       onDelete={() => onDelete(document.id)}

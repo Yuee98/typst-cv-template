@@ -7,13 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 
-export type EncryptionModalMode = "enable" | "unlock" | "export" | "duplicate";
+export type EncryptionModalMode = "enable" | "unlock" | "duplicate";
 
 const modeTitles: Record<EncryptionModalMode, string> = {
   enable: "Enable encryption",
   unlock: "Unlock encrypted CV",
   duplicate: "Duplicate encrypted CV",
-  export: "Export encrypted CV",
 };
 
 export function EncryptionModal({
