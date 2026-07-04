@@ -25,14 +25,9 @@ export function CvBuilder() {
         <CvToolbar
           session={h.session}
           cloudStatus={h.cloudStatus}
-          termsStatus={h.termsStatus}
+          termsStatus={h.termsGate.status}
           supabaseConfigured={h.supabaseConfigured}
-          onOpenAuthModal={(mode) => {
-            h.setAuthModalMode(mode);
-            h.setSignupTermsAccepted(false);
-            h.setAuthError(null);
-            h.setSuccessMessage(null);
-          }}
+          onOpenAuthModal={h.authModal.openModal}
           onSyncCloud={() => void h.refreshCloudDocuments()}
           onSignOut={() => void h.signOut()}
         />
@@ -109,37 +104,21 @@ export function CvBuilder() {
             />
           }
         />
-        {h.authModalMode && (
+        {h.authModal.mode && (
           <AuthModal
-            mode={h.authModalMode}
-            email={h.authEmail}
-            password={h.authPassword}
-            error={h.authError}
-            successMessage={h.successMessage}
-            termsAccepted={h.signupTermsAccepted}
-            onEmailChange={(value) => {
-              h.setAuthEmail(value);
-              h.setAuthError(null);
-              h.setSuccessMessage(null);
-            }}
-            onPasswordChange={(value) => {
-              h.setAuthPassword(value);
-              h.setAuthError(null);
-              h.setSuccessMessage(null);
-            }}
-            onTermsAcceptedChange={(value) => {
-              h.setSignupTermsAccepted(value);
-              h.setAuthError(null);
-            }}
+            mode={h.authModal.mode}
+            email={h.authModal.email}
+            password={h.authModal.password}
+            error={h.authModal.error}
+            successMessage={h.authModal.successMessage}
+            termsAccepted={h.authModal.termsAccepted}
+            onEmailChange={h.authModal.setEmail}
+            onPasswordChange={h.authModal.setPassword}
+            onTermsAcceptedChange={h.authModal.setTermsAccepted}
             onSignIn={() => void h.signIn()}
             onSignUp={() => void h.signUp()}
             onGithubSignIn={() => void h.signInWithGithub()}
-            onClose={() => {
-              h.setAuthModalMode(null);
-              h.setAuthError(null);
-              h.setSuccessMessage(null);
-              h.setSignupTermsAccepted(false);
-            }}
+            onClose={h.authModal.closeModal}
           />
         )}
         {h.encryptionModal.modalState && (
@@ -160,20 +139,20 @@ export function CvBuilder() {
             onClose={() => h.setImportExportError(null)}
           />
         )}
-        {h.termsModalOpen && (
+        {h.termsGate.modalOpen && (
           <TermsAcceptanceModal
-            checked={h.termsModalChecked}
-            error={h.termsModalError}
-            accepting={h.termsAccepting}
+            checked={h.termsGate.modalChecked}
+            error={h.termsGate.modalError}
+            accepting={h.termsGate.accepting}
             onCheckedChange={(value) => {
-              h.setTermsModalChecked(value);
-              h.setTermsModalError(null);
+              h.termsGate.setModalChecked(value);
+              h.termsGate.setModalError(null);
             }}
             onAccept={() => void h.acceptTerms()}
             onClose={() => {
-              h.setTermsModalOpen(false);
-              h.setTermsModalChecked(false);
-              h.setTermsModalError(null);
+              h.termsGate.setModalOpen(false);
+              h.termsGate.setModalChecked(false);
+              h.termsGate.setModalError(null);
             }}
           />
         )}

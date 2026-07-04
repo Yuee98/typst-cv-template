@@ -5,7 +5,7 @@ import { GithubIcon } from "@/components/ui/github-icon";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 
-type AuthModalMode = "signIn" | "signUp";
+export type AuthModalMode = "signIn" | "signUp";
 
 export function AuthModal({
   mode,

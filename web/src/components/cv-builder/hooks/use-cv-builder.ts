@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import type { LoadStage } from "@/lib/typst/render";
+import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
 import { useEncryptionModal, type EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
+import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import {
   createCloudCvDocument,
   createEncryptedCloudCvDocument,
@@ -18,7 +20,6 @@ import {
   updateCloudCvDocumentData,
   updateEncryptedCloudCvDocumentData,
 } from "@/lib/cv/cloud-storage";
-import { TERMS_VERSION } from "@/content/legal";
 import {
   cloneCvData,
   createEmptyCvData,
@@ -53,23 +54,18 @@ import {
   updateLocalCvDocumentData,
 } from "@/lib/cv/storage";
 import { buildTypstDocument } from "@/lib/cv/typst";
-import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { renderTypstSvg } from "@/lib/typst/render";
 
 type CloudStatus = "idle" | "loading" | "ready" | "error";
-type AuthModalMode = "signIn" | "signUp";
-type TermsStatus = "unknown" | "accepted" | "required";
 
 export function useCvBuilder() {
   const [svg, setSvg] = useState<string | null>(null);
   const [status, setStatus] = useState<LoadStage>("idle");
   const [percent, setPercent] = useState<number | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [importExportError, setImportExportError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
   const [activeDocumentId, setActiveDocumentIdRaw] = useState<string | null>(null);
   const activeDocumentIdRef = useRef<string | null>(null);
@@ -82,22 +78,21 @@ export function useCvBuilder() {
   const [supabase] = useState(() => getSupabaseBrowserClient());
   const [session, setSession] = useState<import("@supabase/supabase-js").Session | null>(null);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("idle");
-  const [authModalMode, setAuthModalMode] = useState<AuthModalMode | null>(null);
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [signupTermsAccepted, setSignupTermsAccepted] = useState(false);
-  const [termsStatus, setTermsStatus] = useState<TermsStatus>("unknown");
-  const [termsModalOpen, setTermsModalOpen] = useState(false);
-  const [termsModalChecked, setTermsModalChecked] = useState(false);
-  const [termsModalError, setTermsModalError] = useState<string | null>(null);
-  const [termsAccepting, setTermsAccepting] = useState(false);
+  const authModal = useAuthModal();
+  const termsGate = useTermsGate({
+    hasSession: Boolean(session),
+    onAccepted: async (client) => {
+      await refreshCloudDocuments(client, { skipTermsCheck: true });
+    },
+    onError: setLibraryError,
+    supabase,
+  });
   const encryptionModal = useEncryptionModal();
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const initializedRef = useRef(false);
   const isResettingRef = useRef(false);
   const renderId = useRef(0);
-  const pendingTermsAcceptanceKey = `typst-cv-builder:pending-terms-acceptance`;
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
@@ -224,98 +219,6 @@ export function useCvBuilder() {
     clearCvDraft(session?.user.id, cvId);
   }
 
-  // ── terms ────────────────────────────────────────────────────────
-
-  function promptForTermsAcceptance() {
-    setTermsStatus("required");
-    setTermsModalOpen(true);
-    setTermsModalChecked(false);
-    setTermsModalError(null);
-  }
-
-  function markPendingTermsAcceptance() {
-    window.sessionStorage.setItem(pendingTermsAcceptanceKey, TERMS_VERSION);
-  }
-
-  function consumePendingTermsAcceptance() {
-    if (window.sessionStorage.getItem(pendingTermsAcceptanceKey) !== TERMS_VERSION) {
-      return false;
-    }
-
-    window.sessionStorage.removeItem(pendingTermsAcceptanceKey);
-    return true;
-  }
-
-  function clearPendingTermsAcceptance() {
-    window.sessionStorage.removeItem(pendingTermsAcceptanceKey);
-  }
-
-  async function refreshTermsAcceptance(
-    client: SupabaseClient,
-    { showModal = true }: { showModal?: boolean } = {},
-  ) {
-    try {
-      let accepted = await hasAcceptedCurrentTerms(client);
-      if (!accepted && consumePendingTermsAcceptance()) {
-        await acceptCurrentTerms(client);
-        accepted = true;
-      }
-
-      setTermsStatus(accepted ? "accepted" : "required");
-      if (!accepted && showModal) {
-        promptForTermsAcceptance();
-      }
-      return accepted;
-    } catch (termsError) {
-      setTermsStatus("unknown");
-      setLibraryError(errorMessage(termsError));
-      return false;
-    }
-  }
-
-  async function ensureTermsAccepted(client: SupabaseClient | null = supabase) {
-    if (!client || !session) {
-      return false;
-    }
-
-    if (termsStatus === "accepted") {
-      return true;
-    }
-
-    const accepted = await refreshTermsAcceptance(client);
-    if (!accepted) {
-      promptForTermsAcceptance();
-    }
-    return accepted;
-  }
-
-  async function acceptTerms() {
-    if (!supabase || !session) {
-      setTermsModalError("Sign in before accepting the Terms and Privacy Notice.");
-      return;
-    }
-
-    if (!termsModalChecked) {
-      setTermsModalError("Check the box before accepting.");
-      return;
-    }
-
-    setTermsAccepting(true);
-    setTermsModalError(null);
-
-    try {
-      await acceptCurrentTerms(supabase);
-      setTermsStatus("accepted");
-      setTermsModalOpen(false);
-      setTermsModalChecked(false);
-      await refreshCloudDocuments(supabase, { skipTermsCheck: true });
-    } catch (termsError) {
-      setTermsModalError(errorMessage(termsError));
-    } finally {
-      setTermsAccepting(false);
-    }
-  }
-
   // ── cloud sync ───────────────────────────────────────────────────
 
   async function refreshCloudDocuments(
@@ -326,7 +229,7 @@ export function useCvBuilder() {
       return;
     }
 
-    if (!skipTermsCheck && !(await ensureTermsAccepted(client))) {
+    if (!skipTermsCheck && !(await termsGate.ensure(client))) {
       setCloudStatus("idle");
       return;
     }
@@ -438,7 +341,7 @@ export function useCvBuilder() {
       setSession(data.session);
       if (data.session) {
         encryptionModal.setTrustDevice(loadTrustDevice(data.session.user.id));
-        const accepted = await refreshTermsAcceptance(client);
+        const accepted = await termsGate.refresh(client);
         if (accepted) {
           await refreshCloudDocuments(client, { skipTermsCheck: true });
         } else {
@@ -457,7 +360,7 @@ export function useCvBuilder() {
       if (nextSession) {
         encryptionModal.setTrustDevice(loadTrustDevice(nextSession.user.id));
         void (async () => {
-          const accepted = await refreshTermsAcceptance(client);
+          const accepted = await termsGate.refresh(client);
           if (accepted) {
             await refreshCloudDocuments(client, { skipTermsCheck: true });
           } else {
@@ -467,11 +370,8 @@ export function useCvBuilder() {
         })();
       } else {
         removeCloudSummaries();
-        setTermsStatus("unknown");
-        setTermsModalOpen(false);
-        setTermsModalChecked(false);
-        setTermsModalError(null);
-        setSignupTermsAccepted(false);
+        termsGate.reset();
+        authModal.setTermsAccepted(false);
         setCloudStatus("idle");
       }
     });
@@ -515,7 +415,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before saving this cloud CV.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return false;
         }
 
@@ -526,7 +426,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before saving this encrypted CV.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return false;
         }
 
@@ -568,7 +468,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before discarding changes.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return;
         }
 
@@ -580,7 +480,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before discarding changes.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return;
         }
 
@@ -667,94 +567,87 @@ export function useCvBuilder() {
 
   async function signIn() {
     if (!supabase) {
-      setAuthError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
       return;
     }
 
-    if (!authEmail || !authPassword) {
-      setAuthError("Enter email and password before signing in.");
+    if (!authModal.email || !authModal.password) {
+      authModal.setError("Enter email and password before signing in.");
       return;
     }
 
     const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: authEmail,
-      password: authPassword,
+      email: authModal.email,
+      password: authModal.password,
     });
 
     if (signInError) {
-      setAuthError(signInError.message);
+      authModal.setError(signInError.message);
     } else {
-      setAuthError(null);
-      setAuthPassword("");
-      setAuthModalMode(null);
+      authModal.closeAfterAuth();
     }
   }
 
   async function signUp() {
     if (!supabase) {
-      setAuthError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
       return;
     }
 
-    if (!authEmail || !authPassword) {
-      setAuthError("Enter email and password before creating an account.");
+    if (!authModal.email || !authModal.password) {
+      authModal.setError("Enter email and password before creating an account.");
       return;
     }
 
-    if (!signupTermsAccepted) {
-      setAuthError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
+    if (!authModal.termsAccepted) {
+      authModal.setError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
       return;
     }
 
-    markPendingTermsAcceptance();
+    termsGate.markPendingAcceptance();
 
     const { data, error: signUpError } = await supabase.auth.signUp({
-      email: authEmail,
-      password: authPassword,
+      email: authModal.email,
+      password: authModal.password,
       options: {
         emailRedirectTo: window.location.origin,
       },
     });
 
     if (signUpError) {
-      clearPendingTermsAcceptance();
-      setAuthError(signUpError.message);
+      termsGate.clearPendingAcceptance();
+      authModal.setError(signUpError.message);
       return;
     }
 
     if (!data.session) {
-      setAuthError(null);
-      setSuccessMessage("Account created. Check your email before signing in.");
+      authModal.setError(null);
+      authModal.setSuccessMessage("Account created. Check your email before signing in.");
     } else {
       try {
-        await acceptCurrentTerms(supabase);
-        setTermsStatus("accepted");
-        clearPendingTermsAcceptance();
+        await termsGate.recordAccepted(supabase);
       } catch (termsError) {
-        setAuthError(errorMessage(termsError));
+        authModal.setError(errorMessage(termsError));
         return;
       }
 
-      setAuthError(null);
-      setAuthPassword("");
-      setSignupTermsAccepted(false);
-      setAuthModalMode(null);
+      authModal.closeAfterAuth();
     }
   }
 
   async function signInWithGithub() {
     if (!supabase) {
-      setAuthError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
       return;
     }
 
-    if (authModalMode === "signUp") {
-      if (!signupTermsAccepted) {
-        setAuthError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
+    if (authModal.mode === "signUp") {
+      if (!authModal.termsAccepted) {
+        authModal.setError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
         return;
       }
 
-      markPendingTermsAcceptance();
+      termsGate.markPendingAcceptance();
     }
 
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
@@ -765,10 +658,10 @@ export function useCvBuilder() {
     });
 
     if (oauthError) {
-      if (authModalMode === "signUp") {
-        clearPendingTermsAcceptance();
+      if (authModal.mode === "signUp") {
+        termsGate.clearPendingAcceptance();
       }
-      setAuthError(oauthError.message);
+      authModal.setError(oauthError.message);
     }
   }
 
@@ -779,7 +672,7 @@ export function useCvBuilder() {
 
     const { error: signOutError } = await supabase.auth.signOut();
     if (signOutError) {
-      setAuthError(signOutError.message);
+      authModal.setError(signOutError.message);
       return;
     }
 
@@ -836,7 +729,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before opening this cloud CV.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return;
         }
 
@@ -853,7 +746,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before opening this encrypted CV.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return;
         }
 
@@ -917,7 +810,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before renaming this cloud CV.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return;
         }
 
@@ -954,7 +847,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before duplicating this cloud CV.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return;
         }
 
@@ -966,7 +859,7 @@ export function useCvBuilder() {
           throw new Error("Sign in before duplicating this encrypted CV.");
         }
 
-        if (!(await ensureTermsAccepted())) {
+        if (!(await termsGate.ensure())) {
           return;
         }
 
@@ -1046,7 +939,7 @@ export function useCvBuilder() {
       return;
     }
 
-    if (!(await ensureTermsAccepted())) {
+    if (!(await termsGate.ensure())) {
       return;
     }
 
@@ -1089,7 +982,7 @@ export function useCvBuilder() {
       return;
     }
 
-    if (!(await ensureTermsAccepted())) {
+    if (!(await termsGate.ensure())) {
       return;
     }
 
@@ -1155,7 +1048,7 @@ export function useCvBuilder() {
       throw new Error("Sign in before opening this encrypted CV.");
     }
 
-    if (!(await ensureTermsAccepted())) {
+    if (!(await termsGate.ensure())) {
       return;
     }
 
@@ -1176,7 +1069,7 @@ export function useCvBuilder() {
       return;
     }
 
-    if (!(await ensureTermsAccepted())) {
+    if (!(await termsGate.ensure())) {
       return;
     }
 
@@ -1250,10 +1143,8 @@ export function useCvBuilder() {
     status,
     percent,
     previewError,
-    authError,
     libraryError,
     importExportError,
-    successMessage,
     documents,
     activeDocumentId,
     activeDocument,
@@ -1265,36 +1156,20 @@ export function useCvBuilder() {
     cloudStatus,
     supabaseConfigured,
     cloudActionsEnabled,
-    authModalMode,
-    authEmail,
-    authPassword,
-    signupTermsAccepted,
-    termsStatus,
-    termsModalOpen,
-    termsModalChecked,
-    termsModalError,
-    termsAccepting,
+    authModal,
+    termsGate,
     encryptionModal,
     form,
 
     // setters
-    setAuthModalMode,
-    setAuthEmail,
-    setAuthPassword,
-    setSignupTermsAccepted,
-    setTermsModalOpen,
-    setTermsModalChecked,
-    setTermsModalError,
-    setAuthError,
     setLibraryError,
     setImportExportError,
-    setSuccessMessage,
 
     // actions
     signIn,
     signUp,
     signInWithGithub,
-    acceptTerms,
+    acceptTerms: termsGate.accept,
     signOut,
     saveCurrentDocument,
     discardChanges,
