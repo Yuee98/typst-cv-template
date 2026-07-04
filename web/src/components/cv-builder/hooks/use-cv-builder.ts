@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import type { EncryptionModalMode } from "@/components/cv-builder/modals/encryption-modal";
-import type { PreviewStatus } from "@/components/cv-builder/preview-pane";
+import type { LoadStage } from "@/lib/typst/render";
 import {
   createCloudCvDocument,
   createEncryptedCloudCvDocument,
@@ -65,7 +65,8 @@ type EncryptionModalState = {
 
 export function useCvBuilder() {
   const [svg, setSvg] = useState<string | null>(null);
-  const [status, setStatus] = useState<PreviewStatus>("idle");
+  const [status, setStatus] = useState<LoadStage>("idle");
+  const [percent, setPercent] = useState<number | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [libraryError, setLibraryError] = useState<string | null>(null);
@@ -659,19 +660,27 @@ export function useCvBuilder() {
       // Always render preview
       const nextRenderId = renderId.current + 1;
       renderId.current = nextRenderId;
-      setStatus("rendering");
+      setStatus("loading-assets");
+      setPercent(0);
       setPreviewError(null);
 
       try {
         const document = buildTypstDocument(parsed.data);
-        const nextSvg = await renderTypstSvg(document);
+        const nextSvg = await renderTypstSvg(document, (progress) => {
+          if (renderId.current === nextRenderId) {
+            setStatus(progress.stage);
+            setPercent(progress.percent);
+          }
+        });
         if (renderId.current === nextRenderId) {
           setSvg(nextSvg);
           setStatus("ready");
+          setPercent(null);
         }
       } catch (renderError) {
         if (renderId.current === nextRenderId) {
           setStatus("error");
+          setPercent(null);
           setPreviewError(errorMessage(renderError));
         }
       }
@@ -1353,6 +1362,7 @@ export function useCvBuilder() {
     // state
     svg,
     status,
+    percent,
     previewError,
     authError,
     libraryError,

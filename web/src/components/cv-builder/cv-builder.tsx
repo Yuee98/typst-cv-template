@@ -99,6 +99,7 @@ export function CvBuilder() {
             <PreviewPane
               svg={h.activeDocumentId ? h.svg : null}
               status={h.activeDocumentId ? h.status : "idle"}
+              percent={h.activeDocumentId ? h.percent : null}
               error={h.activeDocumentId ? h.previewError : null}
               actions={
                 <Button type="button" variant="secondary" size="icon" onClick={() => window.print()} title="Print">

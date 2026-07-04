@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -50,3 +50,21 @@ await copyPackageAsset(
   "pkg/typst_ts_renderer_bg.wasm",
   "typst_ts_renderer_bg.wasm",
 );
+
+// Generate asset sizes manifest for progress tracking
+const manifest = {
+  compilerWasm: (await stat(join(wasmDir, "typst_ts_web_compiler_bg.wasm"))).size,
+  rendererWasm: (await stat(join(wasmDir, "typst_ts_renderer_bg.wasm"))).size,
+  fonts: Object.fromEntries(
+    await Promise.all(
+      (await readdir(publicFontsDir))
+        .filter((f) => f.endsWith(".ttf") || f.endsWith(".otf"))
+        .map(async (f) => [f, (await stat(join(publicFontsDir, f))).size]),
+    ),
+  ),
+};
+await writeFile(
+  join(publicTypstDir, "asset-sizes.json"),
+  JSON.stringify(manifest, null, 2) + "\n",
+);
+console.log("Generated asset-sizes.json:", manifest);

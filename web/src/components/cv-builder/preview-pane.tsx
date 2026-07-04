@@ -6,19 +6,23 @@ import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
 import { Panel } from "@/components/ui/panel";
 import { cn } from "@/lib/utils";
+import type { LoadStage } from "@/lib/typst/render";
 import { splitTypstSvg } from "@/lib/typst/typst-svg-utils";
 
-export type PreviewStatus = "idle" | "rendering" | "ready" | "error";
+export type PreviewStatus = LoadStage;
 
-function StatusBadge({ status }: { status: PreviewStatus }) {
-  const label = {
-    idle: "Waiting",
-    rendering: "Rendering",
-    ready: "Ready",
-    error: "Error",
-  }[status];
+const STATUS_LABELS: Record<LoadStage, string> = {
+  idle: "Waiting",
+  "loading-assets": "Loading assets",
+  compiling: "Compiling",
+  ready: "Ready",
+  error: "Error",
+};
 
-  const Icon = status === "rendering" ? Loader2 : status === "error" ? AlertTriangle : CheckCircle2;
+function StatusBadge({ status, percent }: { status: PreviewStatus; percent: number | null }) {
+  const label = STATUS_LABELS[status];
+  const isActive = status === "loading-assets" || status === "compiling";
+  const Icon = isActive ? Loader2 : status === "error" ? AlertTriangle : CheckCircle2;
 
   return (
     <span
@@ -29,8 +33,19 @@ function StatusBadge({ status }: { status: PreviewStatus }) {
           : "border-emerald-200 bg-emerald-50 text-emerald-700",
       )}
     >
-      <Icon className={cn("size-4", status === "rendering" && "animate-spin")} />
+      <Icon className={cn("size-4", isActive && "animate-spin")} />
       {label}
+      {percent != null && (
+        <span className="inline-flex w-20 items-center gap-1.5">
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-emerald-200">
+            <span
+              className="block h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+              style={{ width: `${percent}%` }}
+            />
+          </span>
+          <span className="tabular-nums">{percent}%</span>
+        </span>
+      )}
     </span>
   );
 }
@@ -38,11 +53,13 @@ function StatusBadge({ status }: { status: PreviewStatus }) {
 export function PreviewPane({
   svg,
   status,
+  percent,
   error,
   actions,
 }: {
   svg: string | null;
   status: PreviewStatus;
+  percent: number | null;
   error: string | null;
   actions?: ReactNode;
 }) {
@@ -53,7 +70,7 @@ export function PreviewPane({
       title="Preview"
       actions={
         <div className="flex items-center gap-2">
-          <StatusBadge status={status} />
+          <StatusBadge status={status} percent={percent} />
           {actions}
         </div>
       }
