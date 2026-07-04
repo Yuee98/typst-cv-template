@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  type CloudCvDocument,
   deleteCloudCvDocument,
   loadCloudCvDocument,
   loadEncryptedCloudCvDocument,
@@ -9,7 +10,7 @@ import {
   updateEncryptedCloudCvDocumentData,
 } from "@/lib/cv/cloud-storage";
 import { summarizeLocalDocument } from "@/lib/cv/cv-utils";
-import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
+import { decryptCvData, encryptCvData, type EncryptedPayload } from "@/lib/cv/encryption";
 import type { CvData } from "@/lib/cv/schema";
 import {
   loadCvDocument,
@@ -60,10 +61,37 @@ type CvStorageAdapter = {
 
 export type CvStorageAdapters = Record<CvStorageKind, CvStorageAdapter>;
 
+type EncryptedUpdate = {
+  encryptedPayload: EncryptedPayload;
+  schemaVersion: number;
+};
+
+export type CvCloudStorageOperations = {
+  deleteCloudDocument(client: SupabaseClient, id: string): Promise<void>;
+  loadCloudDocument(client: SupabaseClient, id: string): Promise<CloudCvDocument>;
+  renameCloudDocument(client: SupabaseClient, id: string, title: string): Promise<CvDocumentSummary>;
+  updateCloudDocumentData(client: SupabaseClient, id: string, data: CvData): Promise<CvDocumentSummary>;
+  updateEncryptedCloudDocumentData(
+    client: SupabaseClient,
+    id: string,
+    update: EncryptedUpdate,
+  ): Promise<CvDocumentSummary>;
+};
+
+const defaultCloudStorage: CvCloudStorageOperations = {
+  deleteCloudDocument: deleteCloudCvDocument,
+  loadCloudDocument: loadCloudCvDocument,
+  renameCloudDocument: renameCloudCvDocument,
+  updateCloudDocumentData: updateCloudCvDocumentData,
+  updateEncryptedCloudDocumentData: updateEncryptedCloudCvDocumentData,
+};
+
 export function createCvStorageAdapters({
+  cloudStorage = defaultCloudStorage,
   getEncryptionPassphrase,
   requireCloudAccess,
 }: {
+  cloudStorage?: CvCloudStorageOperations;
   getEncryptionPassphrase: (id: string) => string | null;
   requireCloudAccess: (action: string) => Promise<SupabaseClient>;
 }): CvStorageAdapters {
@@ -113,11 +141,11 @@ export function createCvStorageAdapters({
     cloud: {
       async delete(summary) {
         const client = await requireCloudAccess("deleting this cloud CV");
-        await deleteCloudCvDocument(client, summary.id);
+        await cloudStorage.deleteCloudDocument(client, summary.id);
       },
       async load(summary) {
         const client = await requireCloudAccess("opening this cloud CV");
-        const document = await loadCloudCvDocument(client, summary.id);
+        const document = await cloudStorage.loadCloudDocument(client, summary.id);
         return {
           data: document.data,
           summary: document,
@@ -125,17 +153,17 @@ export function createCvStorageAdapters({
       },
       async rename(summary, title) {
         const client = await requireCloudAccess("renaming this cloud CV");
-        return renameCloudCvDocument(client, summary.id, title);
+        return cloudStorage.renameCloudDocument(client, summary.id, title);
       },
       async save(summary, data) {
         const client = await requireCloudAccess("saving this cloud CV");
-        return updateCloudCvDocumentData(client, summary.id, data);
+        return cloudStorage.updateCloudDocumentData(client, summary.id, data);
       },
     },
     encrypted: {
       async delete(summary) {
         const client = await requireCloudAccess("deleting this cloud CV");
-        await deleteCloudCvDocument(client, summary.id);
+        await cloudStorage.deleteCloudDocument(client, summary.id);
       },
       async load(summary, options) {
         const client = await requireCloudAccess("opening this encrypted CV");
@@ -148,13 +176,13 @@ export function createCvStorageAdapters({
       },
       async rename(summary, title) {
         const client = await requireCloudAccess("renaming this cloud CV");
-        return renameCloudCvDocument(client, summary.id, title);
+        return cloudStorage.renameCloudDocument(client, summary.id, title);
       },
       async save(summary, data) {
         const client = await requireCloudAccess("saving this encrypted CV");
         const passphrase = requirePassphrase(summary.id);
         const encryptedPayload = await encryptCvData(data, passphrase);
-        return updateEncryptedCloudCvDocumentData(client, summary.id, {
+        return cloudStorage.updateEncryptedCloudDocumentData(client, summary.id, {
           encryptedPayload,
           schemaVersion: data.schemaVersion,
         });

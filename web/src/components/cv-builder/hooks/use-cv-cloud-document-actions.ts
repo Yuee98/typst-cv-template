@@ -2,15 +2,10 @@ import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
 
 import type { EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
-import {
-  createCloudCvDocument,
-  createEncryptedCloudCvDocument,
-  encryptExistingCloudCvDocument,
-  loadCloudCvDocument,
-  loadEncryptedCloudCvDocument,
-} from "@/lib/cv/cloud-storage";
+import { loadEncryptedCloudCvDocument, type CloudCvDocument, type EncryptedCloudCvDocument } from "@/lib/cv/cloud-storage";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
+import type { EncryptedPayload } from "@/lib/cv/encryption";
 import { storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
 import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
 import type { CvData } from "@/lib/cv/schema";
@@ -31,8 +26,12 @@ type SetOrderedDocuments = (
 export function useCvCloudDocumentActions({
   activeDocumentId,
   closeEncryptionModal,
+  createCloudDocument,
+  createEncryptedCloudDocument,
   documents,
   duplicateDocument,
+  encryptExistingCloudDocument,
+  fetchCloudDocument,
   loadDataIntoForm,
   onError,
   openEnableEncryptionModal,
@@ -46,8 +45,26 @@ export function useCvCloudDocumentActions({
 }: {
   activeDocumentId: string | null;
   closeEncryptionModal: () => void;
+  createCloudDocument: (input: {
+    client: SupabaseClient;
+    data: CvData;
+    title: string;
+  }) => Promise<CloudCvDocument>;
+  createEncryptedCloudDocument: (input: {
+    client: SupabaseClient;
+    encryptedPayload: EncryptedPayload;
+    schemaVersion: number;
+    title: string;
+  }) => Promise<EncryptedCloudCvDocument>;
   documents: CvDocumentSummary[];
   duplicateDocument: (id: string, passphraseOverride?: string) => Promise<void>;
+  encryptExistingCloudDocument: (input: {
+    client: SupabaseClient;
+    encryptedPayload: EncryptedPayload;
+    id: string;
+    schemaVersion: number;
+  }) => Promise<EncryptedCloudCvDocument>;
+  fetchCloudDocument: (client: SupabaseClient, id: string) => Promise<CloudCvDocument>;
   loadDataIntoForm: (id: string, data: CvData) => void;
   onError: (message: string) => void;
   openEnableEncryptionModal: (documentId: string) => void;
@@ -86,7 +103,8 @@ export function useCvCloudDocumentActions({
         throw new Error("The selected local CV could not be loaded.");
       }
 
-      const cloudDocument = await createCloudCvDocument(supabase, {
+      const cloudDocument = await createCloudDocument({
+        client: supabase,
         title: localDocument.title,
         data: localDocument.data,
       });
@@ -132,7 +150,7 @@ export function useCvCloudDocumentActions({
       const sourceData =
         current.storageKind === "local"
           ? loadCvDocument(id)?.data
-          : (await loadCloudCvDocument(supabase, id)).data;
+          : (await fetchCloudDocument(supabase, id)).data;
 
       if (!sourceData) {
         throw new Error("The selected CV could not be loaded before encryption.");
@@ -141,7 +159,8 @@ export function useCvCloudDocumentActions({
       const encryptedPayload = await encryptCvData(sourceData, password);
 
       if (current.storageKind === "local") {
-        const encryptedDocument = await createEncryptedCloudCvDocument(supabase, {
+        const encryptedDocument = await createEncryptedCloudDocument({
+          client: supabase,
           title: current.title,
           encryptedPayload,
           schemaVersion: sourceData.schemaVersion,
@@ -156,7 +175,9 @@ export function useCvCloudDocumentActions({
         ]);
         loadDataIntoForm(encryptedDocument.id, sourceData);
       } else {
-        const encryptedDocument = await encryptExistingCloudCvDocument(supabase, id, {
+        const encryptedDocument = await encryptExistingCloudDocument({
+          client: supabase,
+          id,
           encryptedPayload,
           schemaVersion: sourceData.schemaVersion,
         });

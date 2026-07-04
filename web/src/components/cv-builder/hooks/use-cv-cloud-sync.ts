@@ -4,7 +4,7 @@ import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } 
 import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { loadTrustDevice } from "@/lib/cv/encryption-storage";
-import { listCloudCvDocuments, loadCloudCvDocument } from "@/lib/cv/cloud-storage";
+import type { CloudCvDocument } from "@/lib/cv/cloud-storage";
 import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 
@@ -16,6 +16,8 @@ type CloudSyncTermsGate = {
 
 export function useCvCloudSync({
   activeDocumentIdRef,
+  fetchCloudDocument,
+  fetchCloudDocuments,
   loadDataIntoForm,
   loadDraft,
   onDirtyChange,
@@ -32,6 +34,8 @@ export function useCvCloudSync({
   upsertDocumentSummary,
 }: {
   activeDocumentIdRef: MutableRefObject<string | null>;
+  fetchCloudDocument: (client: SupabaseClient, id: string) => Promise<CloudCvDocument>;
+  fetchCloudDocuments: (client?: SupabaseClient | null) => Promise<CvDocumentSummary[]>;
   loadDataIntoForm: (id: string, data: CvData) => void;
   loadDraft: (cvId: string) => CvData | null;
   onDirtyChange: (dirty: boolean) => void;
@@ -63,7 +67,7 @@ export function useCvCloudSync({
     setCloudStatus("loading");
 
     try {
-      const cloudDocuments = await listCloudCvDocuments(client);
+      const cloudDocuments = await fetchCloudDocuments(client);
       replaceCloudSummaries(cloudDocuments);
 
       const currentActiveId = activeDocumentIdRef.current;
@@ -75,7 +79,7 @@ export function useCvCloudSync({
       ));
 
       if (activeIsCloud && currentActiveId) {
-        const document = await loadCloudCvDocument(client, currentActiveId);
+        const document = await fetchCloudDocument(client, currentActiveId);
         upsertDocumentSummary(document);
         const draft = loadDraft(currentActiveId);
         loadDataIntoForm(document.id, draft ?? document.data);
@@ -83,7 +87,7 @@ export function useCvCloudSync({
           onDirtyChange(true);
         }
       } else if (!activeIsEncrypted && !currentActiveId && cloudDocuments[0]?.storageKind === "cloud") {
-        const document = await loadCloudCvDocument(client, cloudDocuments[0].id);
+        const document = await fetchCloudDocument(client, cloudDocuments[0].id);
         upsertDocumentSummary(document);
         loadDataIntoForm(document.id, document.data);
       }

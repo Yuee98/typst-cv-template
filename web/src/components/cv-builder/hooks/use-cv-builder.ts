@@ -6,6 +6,8 @@ import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
 import { useCvAuthActions } from "@/components/cv-builder/hooks/use-cv-auth-actions";
 import { useCvCloudDocumentActions } from "@/components/cv-builder/hooks/use-cv-cloud-document-actions";
+import { useCvCloudDocumentsQuery } from "@/components/cv-builder/hooks/use-cv-cloud-documents-query";
+import { useCvCloudMutations } from "@/components/cv-builder/hooks/use-cv-cloud-mutations";
 import { useCvCloudSync } from "@/components/cv-builder/hooks/use-cv-cloud-sync";
 import { useCvDocumentActions } from "@/components/cv-builder/hooks/use-cv-document-actions";
 import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
@@ -73,7 +75,24 @@ export function useCvBuilder() {
   const watchedData = useWatch({ control: form.control });
   const supabaseConfigured = Boolean(supabase);
   const cloudActionsEnabled = Boolean(supabase && session);
+  const cloudDocumentsQuery = useCvCloudDocumentsQuery({
+    session,
+    supabase,
+  });
+  const cloudMutations = useCvCloudMutations({ userId: session?.user.id });
   const storageAdapters = createCvStorageAdapters({
+    cloudStorage: {
+      deleteCloudDocument: async (client, id) => {
+        await cloudMutations.deleteCloudDocument.mutateAsync({ client, id });
+      },
+      loadCloudDocument: cloudDocumentsQuery.fetchCloudDocument,
+      renameCloudDocument: (client, id, title) =>
+        cloudMutations.renameCloudDocument.mutateAsync({ client, id, title }),
+      updateCloudDocumentData: (client, id, data) =>
+        cloudMutations.updateCloudDocumentData.mutateAsync({ client, data, id }),
+      updateEncryptedCloudDocumentData: (client, id, update) =>
+        cloudMutations.updateEncryptedCloudDocumentData.mutateAsync({ client, id, ...update }),
+    },
     getEncryptionPassphrase: getKnownEncryptionPassphrase,
     requireCloudAccess,
   });
@@ -126,6 +145,8 @@ export function useCvBuilder() {
   });
   const cloudSync = useCvCloudSync({
     activeDocumentIdRef,
+    fetchCloudDocument: cloudDocumentsQuery.fetchCloudDocument,
+    fetchCloudDocuments: cloudDocumentsQuery.fetchCloudDocuments,
     loadDataIntoForm,
     loadDraft,
     onDirtyChange: setIsDirty,
@@ -144,8 +165,12 @@ export function useCvBuilder() {
   const cloudDocumentActions = useCvCloudDocumentActions({
     activeDocumentId,
     closeEncryptionModal: encryptionModal.closeModal,
+    createCloudDocument: cloudMutations.createCloudDocument.mutateAsync,
+    createEncryptedCloudDocument: cloudMutations.createEncryptedCloudDocument.mutateAsync,
     documents,
     duplicateDocument: documentActions.duplicateDocument,
+    encryptExistingCloudDocument: cloudMutations.encryptExistingCloudDocument.mutateAsync,
+    fetchCloudDocument: cloudDocumentsQuery.fetchCloudDocument,
     loadDataIntoForm,
     onError: setLibraryError,
     openEnableEncryptionModal: (documentId) => encryptionModal.openModal("enable", documentId),
