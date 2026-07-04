@@ -7,6 +7,7 @@ import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
 import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
+import { useCvPersistence } from "@/components/cv-builder/hooks/use-cv-persistence";
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal, type EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
@@ -84,7 +85,6 @@ export function useCvBuilder() {
   });
   const encryptionModal = useEncryptionModal();
   const [isDirty, setIsDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
@@ -95,13 +95,29 @@ export function useCvBuilder() {
   const watchedData = useWatch({ control: form.control });
   const supabaseConfigured = Boolean(supabase);
   const cloudActionsEnabled = Boolean(supabase && session);
+  const storageAdapters = createCvStorageAdapters({
+    getEncryptionPassphrase: getKnownEncryptionPassphrase,
+    requireCloudAccess,
+  });
+  const persistence = useCvPersistence({
+    activeDocument,
+    activeDocumentId,
+    clearDraft,
+    form,
+    handleStorageDeferredError,
+    loadDataIntoForm,
+    onDirtyChange: setIsDirty,
+    onError: setLibraryError,
+    storageAdapters,
+    upsertDocumentSummary,
+  });
   const preview = useCvPreview({
     activeDocument,
     activeDocumentId,
     form,
     initializedRef,
     onDirtyChange: setIsDirty,
-    saveCurrentDocument,
+    saveCurrentDocument: persistence.saveCurrentDocument,
     saveDraft,
     watchedData,
   });
@@ -111,10 +127,6 @@ export function useCvBuilder() {
     getDownloadTitle: currentDownloadTitle,
     onImportExportError: setImportExportError,
     onPreviewError: preview.setError,
-  });
-  const storageAdapters = createCvStorageAdapters({
-    getEncryptionPassphrase: getKnownEncryptionPassphrase,
-    requireCloudAccess,
   });
 
   // ── helpers ──────────────────────────────────────────────────────
@@ -309,68 +321,6 @@ export function useCvBuilder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionInitialized, session, supabase]);
 
-  async function saveCurrentDocument({ silent = false }: { silent?: boolean } = {}) {
-    if (!activeDocumentId || !activeDocument) {
-      return false;
-    }
-
-    if (saving) {
-      return false;
-    }
-
-    const parsed = cvSchema.safeParse(form.getValues());
-    if (!parsed.success) {
-      setLibraryError("The current form data does not match the CV schema.");
-      return false;
-    }
-
-    void silent;
-
-    setSaving(true);
-    try {
-      const updated = await storageAdapters[activeDocument.storageKind].save(activeDocument, parsed.data);
-      upsertDocumentSummary(updated);
-    } catch (saveError) {
-      if (handleStorageDeferredError(saveError, "unlock")) {
-        return false;
-      }
-
-      setLibraryError(errorMessage(saveError));
-      return false;
-    } finally {
-      setSaving(false);
-    }
-
-    setIsDirty(false);
-    if (activeDocument.storageKind === "cloud") {
-      clearDraft(activeDocumentId);
-    }
-    return true;
-  }
-
-  async function discardChanges() {
-    if (!activeDocumentId || !activeDocument) {
-      return;
-    }
-
-    try {
-      if (activeDocument.storageKind === "cloud") {
-        clearDraft(activeDocumentId);
-      }
-
-      if (activeDocument.storageKind === "cloud" || activeDocument.storageKind === "encrypted") {
-        const document = await storageAdapters[activeDocument.storageKind].load(activeDocument);
-        loadDataIntoForm(document.summary.id, document.data);
-      }
-    } catch (discardError) {
-      if (handleStorageDeferredError(discardError, "unlock")) {
-        return;
-      }
-
-      setLibraryError(errorMessage(discardError));
-    }
-  }
-
   // ── auth ─────────────────────────────────────────────────────────
 
   async function signIn() {
@@ -513,7 +463,7 @@ export function useCvBuilder() {
 
     // Auto-save only for local CVs when switching away
     if (activeDocumentId && activeDocument?.storageKind === "local") {
-      if (!(await saveCurrentDocument({ silent: true }))) {
+      if (!(await persistence.saveCurrentDocument({ silent: true }))) {
         return;
       }
     }
@@ -544,7 +494,7 @@ export function useCvBuilder() {
 
   async function createDocumentFromData(data: CvData, title: string) {
     if (activeDocumentId) {
-      await saveCurrentDocument({ silent: true });
+      await persistence.saveCurrentDocument({ silent: true });
     }
 
     const document = createLocalCvDocument(data, title);
@@ -655,7 +605,7 @@ export function useCvBuilder() {
 
     try {
       if (id === activeDocumentId) {
-        await saveCurrentDocument({ silent: true });
+        await persistence.saveCurrentDocument({ silent: true });
       }
 
       const localDocument = loadCvDocument(id);
@@ -703,7 +653,7 @@ export function useCvBuilder() {
 
     try {
       if (id === activeDocumentId) {
-        await saveCurrentDocument({ silent: true });
+        await persistence.saveCurrentDocument({ silent: true });
       }
 
       const sourceData =
@@ -855,7 +805,7 @@ export function useCvBuilder() {
     activeDocumentId,
     activeDocument,
     isDirty,
-    saving,
+    saving: persistence.saving,
     exportingFormat: cvExport.exportingFormat,
     libraryCollapsed,
     session,
@@ -877,8 +827,8 @@ export function useCvBuilder() {
     signInWithGithub,
     acceptTerms: termsGate.accept,
     signOut,
-    saveCurrentDocument,
-    discardChanges,
+    saveCurrentDocument: persistence.saveCurrentDocument,
+    discardChanges: persistence.discardChanges,
     selectDocument,
     createSampleDocument,
     createEmptyDocument,
