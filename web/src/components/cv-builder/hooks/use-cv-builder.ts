@@ -1,14 +1,16 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
+import { useCvAuthActions } from "@/components/cv-builder/hooks/use-cv-auth-actions";
 import { useCvCloudDocumentActions } from "@/components/cv-builder/hooks/use-cv-cloud-document-actions";
 import { useCvCloudSync } from "@/components/cv-builder/hooks/use-cv-cloud-sync";
 import { useCvDocumentActions } from "@/components/cv-builder/hooks/use-cv-document-actions";
 import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
+import { useCvLibraryBootstrap } from "@/components/cv-builder/hooks/use-cv-library-bootstrap";
 import { useCvPersistence } from "@/components/cv-builder/hooks/use-cv-persistence";
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal } from "@/components/cv-builder/hooks/use-encryption-modal";
@@ -16,14 +18,10 @@ import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import {
   cloneCvData,
   errorMessage,
-  summarizeLocalDocument,
   titleFromImportedData,
 } from "@/lib/cv/cv-utils";
 import { clearCvDraft, loadCvDraft, saveCvDraft } from "@/lib/cv/draft-storage";
-import {
-  clearEncryptionPasswords,
-  loadEncryptionPassword,
-} from "@/lib/cv/encryption-storage";
+import { loadEncryptionPassword } from "@/lib/cv/encryption-storage";
 import { cvSchema, persistedCvSchema, type CvData } from "@/lib/cv/schema";
 import { sampleCvData } from "@/lib/cv/sample-data";
 import {
@@ -32,12 +30,7 @@ import {
   isTermsNotAcceptedError,
   TermsNotAcceptedError,
 } from "@/lib/cv/storage-adapters";
-import {
-  createLocalCvDocument,
-  initializeCvDocumentLibrary,
-  loadCvDocument,
-  saveActiveCvDocumentId,
-} from "@/lib/cv/storage";
+import { saveActiveCvDocumentId } from "@/lib/cv/storage";
 
 export function useCvBuilder() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
@@ -167,6 +160,25 @@ export function useCvBuilder() {
     termsGate,
     upsertDocumentSummary,
   });
+  const authActions = useCvAuthActions({
+    activeDocument,
+    authModal,
+    closeEncryptionModal: encryptionModal.closeModal,
+    documents,
+    form,
+    loadDataIntoForm,
+    session,
+    setOrderedDocuments,
+    supabase,
+    termsGate,
+  });
+  useCvLibraryBootstrap({
+    form,
+    initializedRef,
+    loadCollapsedPreference,
+    setActiveDocumentId,
+    setOrderedDocuments,
+  });
 
   // ── helpers ──────────────────────────────────────────────────────
 
@@ -225,191 +237,6 @@ export function useCvBuilder() {
     preview.reset();
     setLibraryError(null);
     setIsDirty(false);
-  }
-
-  // ── effects ──────────────────────────────────────────────────────
-
-  useEffect(() => {
-    let cancelled = false;
-
-    queueMicrotask(() => {
-      if (cancelled) {
-        return;
-      }
-
-      const library = initializeCvDocumentLibrary(cloneCvData(sampleCvData));
-      const activeSummary = library.documents.find((d) => d.id === library.activeDocumentId);
-      const isCloudActive = activeSummary?.storageKind === "cloud" || activeSummary?.storageKind === "encrypted";
-      const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
-
-      if (!initialDocument && library.documents.length === 0) {
-        setOrderedDocuments([]);
-        setActiveDocumentId(null);
-        loadCollapsedPreference();
-        initializedRef.current = true;
-        return;
-      }
-
-      // Cloud/encrypted CV: keep the ID, let refreshCloudDocuments load it later
-      if (!initialDocument && isCloudActive && library.activeDocumentId) {
-        setOrderedDocuments(library.documents);
-        setActiveDocumentId(library.activeDocumentId);
-        loadCollapsedPreference();
-        initializedRef.current = true;
-        return;
-      }
-
-      const documentToLoad = initialDocument ?? createLocalCvDocument(cloneCvData(sampleCvData), "Untitled CV");
-      const nextDocuments = initialDocument
-        ? library.documents
-        : [summarizeLocalDocument(documentToLoad), ...library.documents];
-
-      setOrderedDocuments(nextDocuments);
-      setActiveDocumentId(documentToLoad.id);
-      saveActiveCvDocumentId(documentToLoad.id);
-      loadCollapsedPreference();
-      form.reset(documentToLoad.data);
-      initializedRef.current = true;
-    });
-
-    return () => {
-      cancelled = true;
-    };
-    // This is a one-time local library bootstrap; helper dependencies would retrigger storage hydration.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form]);
-
-  // ── auth ─────────────────────────────────────────────────────────
-
-  async function signIn() {
-    if (!supabase) {
-      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
-      return;
-    }
-
-    if (!authModal.email || !authModal.password) {
-      authModal.setError("Enter email and password before signing in.");
-      return;
-    }
-
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: authModal.email,
-      password: authModal.password,
-    });
-
-    if (signInError) {
-      authModal.setError(signInError.message);
-    } else {
-      authModal.closeAfterAuth();
-    }
-  }
-
-  async function signUp() {
-    if (!supabase) {
-      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
-      return;
-    }
-
-    if (!authModal.email || !authModal.password) {
-      authModal.setError("Enter email and password before creating an account.");
-      return;
-    }
-
-    if (!authModal.termsAccepted) {
-      authModal.setError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
-      return;
-    }
-
-    termsGate.markPendingAcceptance();
-
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: authModal.email,
-      password: authModal.password,
-      options: {
-        emailRedirectTo: window.location.origin,
-      },
-    });
-
-    if (signUpError) {
-      termsGate.clearPendingAcceptance();
-      authModal.setError(signUpError.message);
-      return;
-    }
-
-    if (!data.session) {
-      authModal.setError(null);
-      authModal.setSuccessMessage("Account created. Check your email before signing in.");
-    } else {
-      try {
-        await termsGate.recordAccepted(supabase);
-      } catch (termsError) {
-        authModal.setError(errorMessage(termsError));
-        return;
-      }
-
-      authModal.closeAfterAuth();
-    }
-  }
-
-  async function signInWithGithub() {
-    if (!supabase) {
-      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
-      return;
-    }
-
-    if (authModal.mode === "signUp") {
-      if (!authModal.termsAccepted) {
-        authModal.setError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
-        return;
-      }
-
-      termsGate.markPendingAcceptance();
-    }
-
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: "github",
-      options: {
-        redirectTo: window.location.origin,
-      },
-    });
-
-    if (oauthError) {
-      if (authModal.mode === "signUp") {
-        termsGate.clearPendingAcceptance();
-      }
-      authModal.setError(oauthError.message);
-    }
-  }
-
-  async function signOut() {
-    if (!supabase) {
-      return;
-    }
-
-    const { error: signOutError } = await supabase.auth.signOut();
-    if (signOutError) {
-      authModal.setError(signOutError.message);
-      return;
-    }
-
-    if (session?.user.id) {
-      clearEncryptionPasswords(window.sessionStorage, session.user.id);
-      clearEncryptionPasswords(window.localStorage, session.user.id);
-    }
-    encryptionModal.closeModal();
-
-    const localDocuments = documents.filter((document) => document.storageKind === "local");
-    const activeIsCloudBacked = activeDocument?.storageKind === "cloud" || activeDocument?.storageKind === "encrypted";
-    if (activeIsCloudBacked || localDocuments.length === 0) {
-      const parsed = cvSchema.safeParse(form.getValues());
-      const fallbackData = parsed.success ? parsed.data : cloneCvData(sampleCvData);
-      const fallbackTitle = activeDocument?.title ?? titleFromImportedData(fallbackData);
-      const localDocument = createLocalCvDocument(fallbackData, fallbackTitle);
-      setOrderedDocuments([summarizeLocalDocument(localDocument), ...localDocuments]);
-      loadDataIntoForm(localDocument.id, localDocument.data);
-    } else {
-      setOrderedDocuments(localDocuments);
-    }
   }
 
   // ── export / import ──────────────────────────────────────────────
@@ -476,11 +303,11 @@ export function useCvBuilder() {
     setImportExportError,
 
     // actions
-    signIn,
-    signUp,
-    signInWithGithub,
+    signIn: authActions.signIn,
+    signUp: authActions.signUp,
+    signInWithGithub: authActions.signInWithGithub,
     acceptTerms: termsGate.accept,
-    signOut,
+    signOut: authActions.signOut,
     saveCurrentDocument: persistence.saveCurrentDocument,
     discardChanges: persistence.discardChanges,
     selectDocument: documentActions.selectDocument,
