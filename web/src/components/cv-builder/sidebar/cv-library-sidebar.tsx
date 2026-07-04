@@ -35,10 +35,14 @@ import { CvDocumentCard } from "./cv-document-card";
 function SortableCard({
   id,
   disabled,
+  selected,
+  onClick,
   children,
 }: {
   id: string;
   disabled: boolean;
+  selected: boolean;
+  onClick?: () => void;
   children: (args: { isDragging: boolean }) => ReactNode;
 }) {
   const {
@@ -57,15 +61,21 @@ function SortableCard({
   };
 
   return (
-    <div
+    <button
+      type="button"
       ref={setNodeRef}
       style={style}
-      className={isDragging ? "opacity-70" : undefined}
+      aria-current={selected ? "true" : undefined}
+      className={cn(
+        "w-full cursor-pointer text-left",
+        isDragging && "opacity-70",
+      )}
       {...attributes}
       {...listeners}
+      onClick={onClick}
     >
       {children({ isDragging })}
-    </div>
+    </button>
   );
 }
 
@@ -280,14 +290,19 @@ export function CvLibrarySidebar({
           >
             <div className="flex flex-col gap-2">
               {documents.map((document) => (
-                <SortableCard key={document.id} id={document.id} disabled={collapsed}>
+                <SortableCard
+                  key={document.id}
+                  id={document.id}
+                  disabled={collapsed}
+                  selected={document.id === activeDocumentId}
+                  onClick={() => onSelect(document.id)}
+                >
                   {() => (
                     <CvDocumentCard
                       document={document}
                       selected={document.id === activeDocumentId}
                       collapsed={collapsed}
                       cloudActionsEnabled={cloudActionsEnabled}
-                      onSelect={() => onSelect(document.id)}
                       onRename={() => onRename(document.id)}
                       onDuplicate={() => onDuplicate(document.id)}
                       onMoveToCloud={() => onMoveToCloud(document.id)}

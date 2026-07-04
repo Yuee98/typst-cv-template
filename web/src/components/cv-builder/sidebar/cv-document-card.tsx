@@ -12,7 +12,6 @@ export function CvDocumentCard({
   selected,
   collapsed,
   cloudActionsEnabled,
-  onSelect,
   onRename,
   onDuplicate,
   onMoveToCloud,
@@ -23,7 +22,6 @@ export function CvDocumentCard({
   selected: boolean;
   collapsed: boolean;
   cloudActionsEnabled: boolean;
-  onSelect: () => void;
   onRename: () => void;
   onDuplicate: () => void;
   onMoveToCloud: () => void;
@@ -32,12 +30,10 @@ export function CvDocumentCard({
 }) {
   if (collapsed) {
     return (
-      <button
-        type="button"
+      <div
         title={`${document.title} (${storageLabel(document.storageKind)})`}
-        onClick={onSelect}
         className={cn(
-          "relative flex size-9 items-center justify-center rounded-md border text-slate-600 transition-colors hover:bg-slate-50",
+          "pointer-events-none relative flex size-9 items-center justify-center rounded-md border text-slate-600 transition-colors hover:bg-slate-50",
           selected
             ? "border-emerald-300 bg-emerald-50 text-emerald-700"
             : "border-slate-200 bg-white",
@@ -45,7 +41,7 @@ export function CvDocumentCard({
       >
         <span className="text-sm font-semibold">{document.title.trim().charAt(0).toUpperCase() || "C"}</span>
         <CompactStorageMark storageKind={document.storageKind} />
-      </button>
+      </div>
     );
   }
 
@@ -56,11 +52,7 @@ export function CvDocumentCard({
         selected ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50",
       )}
     >
-      <button
-        type="button"
-        onClick={onSelect}
-        className="flex w-full min-w-0 items-start justify-between gap-2 text-left"
-      >
+      <div className="flex w-full min-w-0 items-start justify-between gap-2 text-left">
         <span className="min-w-0">
           <span className="block truncate text-sm font-medium text-slate-950">{document.title}</span>
           <span className="mt-1 block text-xs text-slate-500">
@@ -73,22 +65,22 @@ export function CvDocumentCard({
           </span>
         </span>
         <StorageBadge storageKind={document.storageKind} />
-      </button>
+      </div>
 
       <div className="mt-2 flex items-center gap-1">
-        <Button type="button" variant="ghost" size="icon" onClick={onRename} title="Rename">
+        <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onRename(); }} title="Rename">
           <Pencil />
         </Button>
-        <Button type="button" variant="ghost" size="icon" onClick={onDuplicate} title="Duplicate">
+        <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title="Duplicate">
           <Copy />
         </Button>
         {document.storageKind === "local" && cloudActionsEnabled && (
-          <Button type="button" variant="ghost" size="icon" onClick={onMoveToCloud} title="Move to cloud">
+          <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onMoveToCloud(); }} title="Move to cloud">
             <CloudUpload />
           </Button>
         )}
         {document.storageKind !== "encrypted" && cloudActionsEnabled && (
-          <Button type="button" variant="ghost" size="icon" onClick={onEnableEncryption} title="Enable encryption">
+          <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onEnableEncryption(); }} title="Enable encryption">
             <LockKeyhole />
           </Button>
         )}
@@ -96,7 +88,7 @@ export function CvDocumentCard({
           type="button"
           variant="ghost"
           size="icon"
-          onClick={onDelete}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="Delete"
           className="ml-auto text-rose-700 hover:bg-rose-50"
         >
