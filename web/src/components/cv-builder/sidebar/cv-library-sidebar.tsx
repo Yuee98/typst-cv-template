@@ -23,7 +23,7 @@ import {
   FilePlus2,
   Plus,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -78,7 +78,7 @@ export function CvLibrarySidebar({
   onToggleCollapsed,
   onCreateEmpty,
   onCreateSample,
-  onImportJson,
+  onImportFile,
   onSelect,
   onRename,
   onDuplicate,
@@ -96,7 +96,7 @@ export function CvLibrarySidebar({
   onToggleCollapsed: () => void;
   onCreateEmpty: () => void;
   onCreateSample: () => void;
-  onImportJson: () => void;
+  onImportFile: (file: File | undefined) => void;
   onSelect: (id: string) => void;
   onRename: (id: string) => void;
   onDuplicate: (id: string) => void;
@@ -108,6 +108,7 @@ export function CvLibrarySidebar({
 }) {
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   useClickOutside(createMenuRef, () => setCreateMenuOpen(false), createMenuOpen);
 
   const sensors = useSensors(
@@ -138,6 +139,12 @@ export function CvLibrarySidebar({
     action();
   }
 
+  function handleImportFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    onImportFile(file);
+  }
+
   const createMenu = createMenuOpen && (
     <div
       className={cn(
@@ -164,7 +171,7 @@ export function CvLibrarySidebar({
       <button
         type="button"
         className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-        onClick={() => runCreateAction(onImportJson)}
+        onClick={() => runCreateAction(() => importInputRef.current?.click())}
       >
         <FileJson className="size-4" />
         Import JSON
@@ -250,6 +257,14 @@ export function CvLibrarySidebar({
           </div>
         </div>
       )}
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={handleImportFileChange}
+      />
 
       <div className={cn("min-h-0 flex-1 overflow-y-auto", collapsed ? "p-2" : "p-2")}>
         <DndContext

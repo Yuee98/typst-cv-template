@@ -26,20 +26,15 @@ export function CvBuilder() {
           session={h.session}
           cloudStatus={h.cloudStatus}
           termsStatus={h.termsStatus}
-          accountMenuOpen={h.accountMenuOpen}
           supabaseConfigured={h.supabaseConfigured}
-          importInputRef={h.importInputRef}
-          onToggleAccountMenu={() => h.setAccountMenuOpen((open) => !open)}
           onOpenAuthModal={(mode) => {
             h.setAuthModalMode(mode);
             h.setSignupTermsAccepted(false);
             h.setAuthError(null);
             h.setSuccessMessage(null);
-            h.setAccountMenuOpen(false);
           }}
           onSyncCloud={() => void h.refreshCloudDocuments()}
           onSignOut={() => void h.signOut()}
-          onImportFile={(file) => void h.importJson(file)}
         />
         <Workspace
           library={
@@ -52,7 +47,7 @@ export function CvBuilder() {
               onToggleCollapsed={h.toggleLibraryCollapsed}
               onCreateEmpty={() => void h.createEmptyDocument()}
               onCreateSample={() => void h.createSampleDocument()}
-              onImportJson={() => h.importInputRef.current?.click()}
+              onImportFile={(file) => void h.importJson(file)}
               onSelect={(id) => void h.selectDocument(id)}
               onRename={(id) => void h.renameDocument(id)}
               onDuplicate={(id) => void h.duplicateDocument(id)}

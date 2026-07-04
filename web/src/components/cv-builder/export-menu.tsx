@@ -15,8 +15,7 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MenuContainer, MenuItem } from "@/components/ui/menu-item";
 import { useClickOutside } from "@/hooks/use-click-outside";
-
-type ExportFormat = "pdf" | "typst-package" | "typst-source" | "json";
+import type { CvExportFormat } from "@/lib/cv/export-utils";
 
 export function ExportMenu({
   disabled,
@@ -27,7 +26,7 @@ export function ExportMenu({
   onExportJson,
 }: {
   disabled: boolean;
-  exportingFormat: ExportFormat | null;
+  exportingFormat: CvExportFormat | null;
   onDownloadPdf: () => void;
   onExportTypstPackage: () => void;
   onExportTypstSource: () => void;
@@ -43,7 +42,7 @@ export function ExportMenu({
     action();
   }
 
-  function itemIcon(format: ExportFormat, icon: ReactNode) {
+  function itemIcon(format: CvExportFormat, icon: ReactNode) {
     return exportingFormat === format ? <Loader2 className="size-4 animate-spin" /> : icon;
   }
 

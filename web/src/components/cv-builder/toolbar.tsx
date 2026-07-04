@@ -2,8 +2,7 @@
 
 import { Cloud, LogIn, LogOut, UserPlus, UserRound, UserRoundCheck } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
-import type { RefObject } from "react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { Toolbar, ToolbarGroup, ToolbarTitle } from "@/components/layout/toolbar";
 import { Button } from "@/components/ui/button";
@@ -18,29 +17,22 @@ export function CvToolbar({
   session,
   cloudStatus,
   termsStatus,
-  accountMenuOpen,
   supabaseConfigured,
-  importInputRef,
-  onToggleAccountMenu,
   onOpenAuthModal,
   onSyncCloud,
   onSignOut,
-  onImportFile,
 }: {
   session: Session | null;
   cloudStatus: CloudStatus;
   termsStatus: TermsStatus;
-  accountMenuOpen: boolean;
   supabaseConfigured: boolean;
-  importInputRef: RefObject<HTMLInputElement | null>;
-  onToggleAccountMenu: () => void;
   onOpenAuthModal: (mode: "signIn" | "signUp") => void;
   onSyncCloud: () => void;
   onSignOut: () => void;
-  onImportFile: (file: File | undefined) => void;
 }) {
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
-  useClickOutside(accountMenuRef, onToggleAccountMenu, accountMenuOpen);
+  useClickOutside(accountMenuRef, () => setAccountMenuOpen(false), accountMenuOpen);
   const cloudLabel =
     termsStatus === "required"
       ? "Terms required"
@@ -68,7 +60,7 @@ export function CvToolbar({
             type="button"
             variant="secondary"
             size="icon"
-            onClick={onToggleAccountMenu}
+            onClick={() => setAccountMenuOpen((open) => !open)}
             title={session ? "Signed in account" : "Account"}
             aria-label={session ? "Signed in account" : "Account"}
           >
@@ -85,10 +77,22 @@ export function CvToolbar({
                       {cloudLabel}
                     </div>
                   </MenuDivider>
-                  <MenuItem icon={<Cloud className="size-4" />} onClick={onSyncCloud}>
+                  <MenuItem
+                    icon={<Cloud className="size-4" />}
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      onSyncCloud();
+                    }}
+                  >
                     Sync cloud
                   </MenuItem>
-                  <MenuItem icon={<LogOut className="size-4" />} onClick={onSignOut}>
+                  <MenuItem
+                    icon={<LogOut className="size-4" />}
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      onSignOut();
+                    }}
+                  >
                     Log out
                   </MenuItem>
                 </>
@@ -102,14 +106,20 @@ export function CvToolbar({
                   <MenuItem
                     icon={<LogIn className="size-4" />}
                     disabled={!supabaseConfigured}
-                    onClick={() => onOpenAuthModal("signIn")}
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      onOpenAuthModal("signIn");
+                    }}
                   >
                     Log in
                   </MenuItem>
                   <MenuItem
                     icon={<UserPlus className="size-4" />}
                     disabled={!supabaseConfigured}
-                    onClick={() => onOpenAuthModal("signUp")}
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      onOpenAuthModal("signUp");
+                    }}
                   >
                     Sign up
                   </MenuItem>
@@ -118,13 +128,6 @@ export function CvToolbar({
             </MenuContainer>
           )}
         </div>
-        <input
-          ref={importInputRef}
-          type="file"
-          accept="application/json,.json"
-          className="hidden"
-          onChange={(event) => onImportFile(event.target.files?.[0])}
-        />
       </ToolbarGroup>
     </Toolbar>
   );
