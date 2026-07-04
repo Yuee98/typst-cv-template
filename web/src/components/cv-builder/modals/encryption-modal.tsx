@@ -95,7 +95,7 @@ export function EncryptionModal({
               type="checkbox"
               checked={trustDevice}
               onChange={(event) => onTrustDeviceChange(event.target.checked)}
-              className="size-3.5 accent-emerald-600"
+              className="size-3.5 accent-slate-900"
             />
             Remember this device
           </label>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Cloud, LogIn, LogOut, UserPlus, UserRound } from "lucide-react";
+import { Cloud, LogIn, LogOut, UserPlus, UserRound, UserRoundCheck } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import type { RefObject } from "react";
 import { useRef } from "react";
@@ -66,12 +66,13 @@ export function CvToolbar({
         <div className="relative" ref={accountMenuRef}>
           <Button
             type="button"
-            variant={session ? "default" : "secondary"}
+            variant="secondary"
             size="icon"
             onClick={onToggleAccountMenu}
-            title="Account"
+            title={session ? "Signed in account" : "Account"}
+            aria-label={session ? "Signed in account" : "Account"}
           >
-            <UserRound />
+            {session ? <UserRoundCheck /> : <UserRound />}
           </Button>
           {accountMenuOpen && (
             <MenuContainer>
