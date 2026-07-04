@@ -4,21 +4,15 @@ import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
+import { useCvCloudDocumentActions } from "@/components/cv-builder/hooks/use-cv-cloud-document-actions";
 import { useCvCloudSync } from "@/components/cv-builder/hooks/use-cv-cloud-sync";
 import { useCvDocumentActions } from "@/components/cv-builder/hooks/use-cv-document-actions";
 import { useCvDocuments } from "@/components/cv-builder/hooks/use-cv-documents";
 import { useCvExport } from "@/components/cv-builder/hooks/use-cv-export";
 import { useCvPersistence } from "@/components/cv-builder/hooks/use-cv-persistence";
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
-import { useEncryptionModal, type EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
+import { useEncryptionModal } from "@/components/cv-builder/hooks/use-encryption-modal";
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
-import {
-  createCloudCvDocument,
-  createEncryptedCloudCvDocument,
-  encryptExistingCloudCvDocument,
-  loadCloudCvDocument,
-  loadEncryptedCloudCvDocument,
-} from "@/lib/cv/cloud-storage";
 import {
   cloneCvData,
   errorMessage,
@@ -26,12 +20,9 @@ import {
   titleFromImportedData,
 } from "@/lib/cv/cv-utils";
 import { clearCvDraft, loadCvDraft, saveCvDraft } from "@/lib/cv/draft-storage";
-import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
 import {
   clearEncryptionPasswords,
   loadEncryptionPassword,
-  storeEncryptionPassword,
-  storeTrustDevice,
 } from "@/lib/cv/encryption-storage";
 import { cvSchema, persistedCvSchema, type CvData } from "@/lib/cv/schema";
 import { sampleCvData } from "@/lib/cv/sample-data";
@@ -45,7 +36,6 @@ import {
   createLocalCvDocument,
   initializeCvDocumentLibrary,
   loadCvDocument,
-  removeCvDocument,
   saveActiveCvDocumentId,
 } from "@/lib/cv/storage";
 
@@ -157,6 +147,22 @@ export function useCvBuilder() {
     setCloudStatus,
     setTermsAccepted: authModal.setTermsAccepted,
     setTrustDevice: encryptionModal.setTrustDevice,
+    supabase,
+    termsGate,
+    upsertDocumentSummary,
+  });
+  const cloudDocumentActions = useCvCloudDocumentActions({
+    activeDocumentId,
+    closeEncryptionModal: encryptionModal.closeModal,
+    documents,
+    duplicateDocument: documentActions.duplicateDocument,
+    loadDataIntoForm,
+    onError: setLibraryError,
+    openEnableEncryptionModal: (documentId) => encryptionModal.openModal("enable", documentId),
+    saveCurrentDocument: persistence.saveCurrentDocument,
+    session,
+    setCloudStatus,
+    setOrderedDocuments,
     supabase,
     termsGate,
     upsertDocumentSummary,
@@ -406,178 +412,6 @@ export function useCvBuilder() {
     }
   }
 
-  // ── cloud operations ─────────────────────────────────────────────
-
-  async function moveToCloud(id: string) {
-    const current = documents.find((document) => document.id === id);
-    if (!current) return;
-
-    if (!supabase || !session) {
-      setLibraryError("Sign in before moving a CV to cloud storage.");
-      return;
-    }
-
-    if (!(await termsGate.ensure())) {
-      return;
-    }
-
-    if (current.storageKind !== "local") {
-      return;
-    }
-
-    try {
-      if (id === activeDocumentId) {
-        await persistence.saveCurrentDocument({ silent: true });
-      }
-
-      const localDocument = loadCvDocument(id);
-      if (!localDocument) {
-        throw new Error("The selected local CV could not be loaded.");
-      }
-
-      const cloudDocument = await createCloudCvDocument(supabase, {
-        title: localDocument.title,
-        data: localDocument.data,
-      });
-      removeCvDocument(id);
-      setOrderedDocuments((currentDocuments) => [
-        cloudDocument,
-        ...currentDocuments.filter((document) => document.id !== id),
-      ]);
-      loadDataIntoForm(cloudDocument.id, cloudDocument.data);
-      setCloudStatus("ready");
-    } catch (moveError) {
-      setLibraryError(errorMessage(moveError));
-    }
-  }
-
-  async function enableEncryption(id: string, password: string, trustDevice: boolean) {
-    const current = documents.find((document) => document.id === id);
-    if (!current) return;
-
-    if (!supabase || !session) {
-      setLibraryError("Sign in before enabling encrypted cloud storage.");
-      return;
-    }
-
-    if (!(await termsGate.ensure())) {
-      return;
-    }
-
-    if (!password) {
-      setLibraryError("Enter an encryption password before enabling encryption.");
-      return;
-    }
-
-    if (current.storageKind === "encrypted") {
-      return;
-    }
-
-    try {
-      if (id === activeDocumentId) {
-        await persistence.saveCurrentDocument({ silent: true });
-      }
-
-      const sourceData =
-        current.storageKind === "local"
-          ? loadCvDocument(id)?.data
-          : (await loadCloudCvDocument(supabase, id)).data;
-
-      if (!sourceData) {
-        throw new Error("The selected CV could not be loaded before encryption.");
-      }
-
-      const encryptedPayload = await encryptCvData(sourceData, password);
-
-      if (current.storageKind === "local") {
-        const encryptedDocument = await createEncryptedCloudCvDocument(supabase, {
-          title: current.title,
-          encryptedPayload,
-          schemaVersion: sourceData.schemaVersion,
-        });
-        removeCvDocument(id);
-        if (session?.user.id) {
-          storeEncryptionPassword(session.user.id, encryptedDocument.id, password, trustDevice);
-        }
-        setOrderedDocuments((currentDocuments) => [
-          encryptedDocument,
-          ...currentDocuments.filter((document) => document.id !== id),
-        ]);
-        loadDataIntoForm(encryptedDocument.id, sourceData);
-      } else {
-        const encryptedDocument = await encryptExistingCloudCvDocument(supabase, id, {
-          encryptedPayload,
-          schemaVersion: sourceData.schemaVersion,
-        });
-        upsertDocumentSummary(encryptedDocument);
-        loadDataIntoForm(id, sourceData);
-      }
-
-      setCloudStatus("ready");
-    } catch (encryptionError) {
-      setLibraryError(errorMessage(encryptionError));
-    }
-  }
-
-  // ── encryption modal ─────────────────────────────────────────────
-
-  async function unlockEncryptedDocument(id: string, password: string) {
-    if (!supabase || !session) {
-      throw new Error("Sign in before opening this encrypted CV.");
-    }
-
-    if (!(await termsGate.ensure())) {
-      return;
-    }
-
-    const document = await loadEncryptedCloudCvDocument(supabase, id);
-    const decryptedData = await decryptCvData(document.encryptedPayload, password);
-    upsertDocumentSummary(document);
-    loadDataIntoForm(document.id, decryptedData);
-  }
-
-  async function openEnableEncryptionModal(id: string) {
-    const current = documents.find((document) => document.id === id);
-    if (!current || current.storageKind === "encrypted") {
-      return;
-    }
-
-    if (!supabase || !session) {
-      setLibraryError("Sign in before enabling encrypted cloud storage.");
-      return;
-    }
-
-    if (!(await termsGate.ensure())) {
-      return;
-    }
-
-    encryptionModal.openModal("enable", id);
-  }
-
-  async function handleEncryptionSubmit(payload: EncryptionSubmitPayload) {
-    const { mode, documentId, password, trustDevice } = payload;
-
-    try {
-      const userId = session?.user.id;
-      if (userId) {
-        storeEncryptionPassword(userId, documentId, password, trustDevice);
-        storeTrustDevice(userId, trustDevice);
-      }
-
-      if (mode === "enable") {
-        await enableEncryption(documentId, password, trustDevice);
-      } else if (mode === "unlock") {
-        await unlockEncryptedDocument(documentId, password);
-      } else {
-        await documentActions.duplicateDocument(documentId, password);
-      }
-
-      encryptionModal.closeModal();
-    } catch (modalError) {
-      return { error: errorMessage(modalError) };
-    }
-  }
-
   // ── export / import ──────────────────────────────────────────────
 
   function getCurrentCvData() {
@@ -657,10 +491,10 @@ export function useCvBuilder() {
     deleteDocument: documentActions.deleteDocument,
     reorderDocuments,
     toggleLibraryCollapsed,
-    moveToCloud,
-    openEnableEncryptionModal,
+    moveToCloud: cloudDocumentActions.moveToCloud,
+    openEnableEncryptionModal: cloudDocumentActions.openEnableEncryption,
     refreshCloudDocuments: cloudSync.refreshCloudDocuments,
-    handleEncryptionSubmit,
+    handleEncryptionSubmit: cloudDocumentActions.handleEncryptionSubmit,
     importJson,
     downloadPdf: cvExport.downloadPdf,
     exportTypstPackage: cvExport.exportTypstPackage,

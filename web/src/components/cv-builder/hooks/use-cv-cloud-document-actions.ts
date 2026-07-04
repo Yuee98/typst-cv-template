@@ -1,0 +1,235 @@
+import type { Session, SupabaseClient } from "@supabase/supabase-js";
+import type { Dispatch, SetStateAction } from "react";
+
+import type { EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
+import {
+  createCloudCvDocument,
+  createEncryptedCloudCvDocument,
+  encryptExistingCloudCvDocument,
+  loadCloudCvDocument,
+  loadEncryptedCloudCvDocument,
+} from "@/lib/cv/cloud-storage";
+import { errorMessage } from "@/lib/cv/cv-utils";
+import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
+import { storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
+import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
+import type { CvData } from "@/lib/cv/schema";
+import {
+  loadCvDocument,
+  removeCvDocument,
+  type CvDocumentSummary,
+} from "@/lib/cv/storage";
+
+type CloudActionTermsGate = {
+  ensure: (client?: SupabaseClient | null) => Promise<boolean>;
+};
+
+type SetOrderedDocuments = (
+  documents: CvDocumentSummary[] | ((current: CvDocumentSummary[]) => CvDocumentSummary[]),
+) => void;
+
+export function useCvCloudDocumentActions({
+  activeDocumentId,
+  closeEncryptionModal,
+  documents,
+  duplicateDocument,
+  loadDataIntoForm,
+  onError,
+  openEnableEncryptionModal,
+  saveCurrentDocument,
+  session,
+  setCloudStatus,
+  setOrderedDocuments,
+  supabase,
+  termsGate,
+  upsertDocumentSummary,
+}: {
+  activeDocumentId: string | null;
+  closeEncryptionModal: () => void;
+  documents: CvDocumentSummary[];
+  duplicateDocument: (id: string, passphraseOverride?: string) => Promise<void>;
+  loadDataIntoForm: (id: string, data: CvData) => void;
+  onError: (message: string) => void;
+  openEnableEncryptionModal: (documentId: string) => void;
+  saveCurrentDocument: (options?: { silent?: boolean }) => Promise<boolean>;
+  session: Session | null;
+  setCloudStatus: Dispatch<SetStateAction<CloudStatus>>;
+  setOrderedDocuments: SetOrderedDocuments;
+  supabase: SupabaseClient | null;
+  termsGate: CloudActionTermsGate;
+  upsertDocumentSummary: (summary: CvDocumentSummary) => void;
+}) {
+  async function moveToCloud(id: string) {
+    const current = documents.find((document) => document.id === id);
+    if (!current) return;
+
+    if (!supabase || !session) {
+      onError("Sign in before moving a CV to cloud storage.");
+      return;
+    }
+
+    if (!(await termsGate.ensure())) {
+      return;
+    }
+
+    if (current.storageKind !== "local") {
+      return;
+    }
+
+    try {
+      if (id === activeDocumentId) {
+        await saveCurrentDocument({ silent: true });
+      }
+
+      const localDocument = loadCvDocument(id);
+      if (!localDocument) {
+        throw new Error("The selected local CV could not be loaded.");
+      }
+
+      const cloudDocument = await createCloudCvDocument(supabase, {
+        title: localDocument.title,
+        data: localDocument.data,
+      });
+      removeCvDocument(id);
+      setOrderedDocuments((currentDocuments) => [
+        cloudDocument,
+        ...currentDocuments.filter((document) => document.id !== id),
+      ]);
+      loadDataIntoForm(cloudDocument.id, cloudDocument.data);
+      setCloudStatus("ready");
+    } catch (moveError) {
+      onError(errorMessage(moveError));
+    }
+  }
+
+  async function enableEncryption(id: string, password: string, trustDevice: boolean) {
+    const current = documents.find((document) => document.id === id);
+    if (!current) return;
+
+    if (!supabase || !session) {
+      onError("Sign in before enabling encrypted cloud storage.");
+      return;
+    }
+
+    if (!(await termsGate.ensure())) {
+      return;
+    }
+
+    if (!password) {
+      onError("Enter an encryption password before enabling encryption.");
+      return;
+    }
+
+    if (current.storageKind === "encrypted") {
+      return;
+    }
+
+    try {
+      if (id === activeDocumentId) {
+        await saveCurrentDocument({ silent: true });
+      }
+
+      const sourceData =
+        current.storageKind === "local"
+          ? loadCvDocument(id)?.data
+          : (await loadCloudCvDocument(supabase, id)).data;
+
+      if (!sourceData) {
+        throw new Error("The selected CV could not be loaded before encryption.");
+      }
+
+      const encryptedPayload = await encryptCvData(sourceData, password);
+
+      if (current.storageKind === "local") {
+        const encryptedDocument = await createEncryptedCloudCvDocument(supabase, {
+          title: current.title,
+          encryptedPayload,
+          schemaVersion: sourceData.schemaVersion,
+        });
+        removeCvDocument(id);
+        if (session.user.id) {
+          storeEncryptionPassword(session.user.id, encryptedDocument.id, password, trustDevice);
+        }
+        setOrderedDocuments((currentDocuments) => [
+          encryptedDocument,
+          ...currentDocuments.filter((document) => document.id !== id),
+        ]);
+        loadDataIntoForm(encryptedDocument.id, sourceData);
+      } else {
+        const encryptedDocument = await encryptExistingCloudCvDocument(supabase, id, {
+          encryptedPayload,
+          schemaVersion: sourceData.schemaVersion,
+        });
+        upsertDocumentSummary(encryptedDocument);
+        loadDataIntoForm(id, sourceData);
+      }
+
+      setCloudStatus("ready");
+    } catch (encryptionError) {
+      onError(errorMessage(encryptionError));
+    }
+  }
+
+  async function unlockEncryptedDocument(id: string, password: string) {
+    if (!supabase || !session) {
+      throw new Error("Sign in before opening this encrypted CV.");
+    }
+
+    if (!(await termsGate.ensure())) {
+      return;
+    }
+
+    const document = await loadEncryptedCloudCvDocument(supabase, id);
+    const decryptedData = await decryptCvData(document.encryptedPayload, password);
+    upsertDocumentSummary(document);
+    loadDataIntoForm(document.id, decryptedData);
+  }
+
+  async function openEnableEncryption(id: string) {
+    const current = documents.find((document) => document.id === id);
+    if (!current || current.storageKind === "encrypted") {
+      return;
+    }
+
+    if (!supabase || !session) {
+      onError("Sign in before enabling encrypted cloud storage.");
+      return;
+    }
+
+    if (!(await termsGate.ensure())) {
+      return;
+    }
+
+    openEnableEncryptionModal(id);
+  }
+
+  async function handleEncryptionSubmit(payload: EncryptionSubmitPayload) {
+    const { mode, documentId, password, trustDevice } = payload;
+
+    try {
+      const userId = session?.user.id;
+      if (userId) {
+        storeEncryptionPassword(userId, documentId, password, trustDevice);
+        storeTrustDevice(userId, trustDevice);
+      }
+
+      if (mode === "enable") {
+        await enableEncryption(documentId, password, trustDevice);
+      } else if (mode === "unlock") {
+        await unlockEncryptedDocument(documentId, password);
+      } else {
+        await duplicateDocument(documentId, password);
+      }
+
+      closeEncryptionModal();
+    } catch (modalError) {
+      return { error: errorMessage(modalError) };
+    }
+  }
+
+  return {
+    handleEncryptionSubmit,
+    moveToCloud,
+    openEnableEncryption,
+  };
+}
