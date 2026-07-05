@@ -8,6 +8,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -15,7 +16,7 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
 
 import { Panel } from "@/components/ui/panel";
@@ -121,6 +122,7 @@ const sectionTabs: SectionTab[] = [
 ];
 
 const sectionTabById = new Map(sectionTabs.map((tab) => [tab.id, tab]));
+const tabNavigationKeysDuringDrag = new Set(["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
 
 export function CvEditor({ actions }: { actions?: ReactNode }) {
   const { control, setValue } = useFormContext<CvData>();
@@ -133,6 +135,7 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
     .map((sectionId) => sectionTabById.get(sectionId))
     .filter((tab): tab is SectionTab => Boolean(tab));
   const [activeTab, setActiveTab] = useState<EditorTabId>("header");
+  const [draggingSectionTabId, setDraggingSectionTabId] = useState<CvSectionId | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -159,7 +162,16 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
     });
   }
 
+  function handleDragStart(event: DragStartEvent) {
+    const activeId = String(event.active.id) as CvSectionId;
+    if (sectionOrder.includes(activeId)) {
+      setDraggingSectionTabId(activeId);
+    }
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setDraggingSectionTabId(null);
+
     const { active, over } = event;
     if (!over || active.id === over.id) {
       return;
@@ -174,6 +186,10 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
     moveSectionTab(fromIndex, toIndex);
   }
 
+  function handleDragCancel() {
+    setDraggingSectionTabId(null);
+  }
+
   return (
     <Panel title="Editor" actions={actions} className="editor-pane h-full overflow-hidden">
       <Tabs
@@ -183,10 +199,21 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       >
         <TabsList>
           <TabsTrigger value="header">Header</TabsTrigger>
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+          >
             <SortableContext items={sectionOrder} strategy={horizontalListSortingStrategy}>
               {orderedSectionTabs.map((tab) => (
-                <SortableSectionTab key={tab.id} id={tab.id} label={tab.label} />
+                <SortableSectionTab
+                  key={tab.id}
+                  id={tab.id}
+                  label={tab.label}
+                  keyboardDragActive={draggingSectionTabId === tab.id}
+                />
               ))}
             </SortableContext>
           </DndContext>
@@ -210,7 +237,15 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
   );
 }
 
-function SortableSectionTab({ id, label }: { id: CvSectionId; label: string }) {
+function SortableSectionTab({
+  id,
+  label,
+  keyboardDragActive,
+}: {
+  id: CvSectionId;
+  label: string;
+  keyboardDragActive: boolean;
+}) {
   const {
     attributes,
     isDragging,
@@ -220,6 +255,7 @@ function SortableSectionTab({ id, label }: { id: CvSectionId; label: string }) {
     transform,
     transition,
   } = useSortable({ id });
+  const { onKeyDown, ...dragListeners } = listeners ?? {};
   const setRefs = useCallback(
     (node: HTMLButtonElement | null) => {
       setNodeRef(node);
@@ -236,6 +272,16 @@ function SortableSectionTab({ id, label }: { id: CvSectionId; label: string }) {
     transition,
     zIndex: isDragging ? 20 : undefined,
   };
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      onKeyDown?.(event);
+
+      if (keyboardDragActive && tabNavigationKeysDuringDrag.has(event.key)) {
+        event.preventDefault();
+      }
+    },
+    [keyboardDragActive, onKeyDown],
+  );
 
   return (
     <TabsTrigger
@@ -246,7 +292,8 @@ function SortableSectionTab({ id, label }: { id: CvSectionId; label: string }) {
       title="Drag to reorder section"
       {...dragAttributes}
       aria-label={`${label}. Drag to reorder section.`}
-      {...listeners}
+      {...dragListeners}
+      onKeyDown={handleKeyDown}
     >
       {label}
     </TabsTrigger>
