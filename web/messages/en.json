@@ -71,8 +71,18 @@
     "emptyTitle": "Untitled CV",
     "localTitle": "Local CV",
     "renamePrompt": "Rename CV",
+    "renameTitle": "Rename CV",
+    "renamePlaceholder": "New title",
+    "renameSubmit": "Rename",
     "copyTitle": "{title} Copy",
-    "deleteConfirm": "Delete \"{title}\"?"
+    "duplicateTitle": "Duplicate CV",
+    "duplicatePlaceholder": "New title",
+    "duplicateSubmit": "Duplicate",
+    "deleteTitle": "Delete CV",
+    "deleteDescription": "Are you sure you want to delete \"{title}\"? This action cannot be undone.",
+    "deleteConfirm": "Delete",
+    "cancel": "Cancel",
+    "close": "Close"
   },
   "CvAuthActions": {
     "supabaseNotConfigured": "Supabase is not configured. Add web/.env.local to enable cloud storage.",

@@ -17,7 +17,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { CSS as DndCSS } from "@dnd-kit/utilities";
 import {
   ChevronLeft,
   ChevronRight,
@@ -60,7 +60,7 @@ function SortableCard({
   } = useSortable({ id, disabled });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: DndCSS.Transform.toString(transform),
     transition,
     zIndex: isDragging ? 20 : undefined,
   };
@@ -102,6 +102,7 @@ export function CvLibrarySidebar({
   onMoveToCloud,
   onEnableEncryption,
   onDismissError,
+  restoreFocusRef,
 }: {
   documents: CvDocumentSummary[];
   activeDocumentId: string | null;
@@ -120,11 +121,14 @@ export function CvLibrarySidebar({
   onMoveToCloud: (id: string) => void;
   onEnableEncryption: (id: string) => void;
   onDismissError: () => void;
+  restoreFocusRef?: React.RefObject<HTMLElement | null>;
 }) {
   const t = useTranslations("CvLibrary");
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const newCvButtonRef = useRef<HTMLButtonElement>(null);
+  const cardListRef = useRef<HTMLDivElement>(null);
   useClickOutside(createMenuRef, () => setCreateMenuOpen(false), createMenuOpen);
 
   const sensors = useSensors(
@@ -138,6 +142,18 @@ export function CvLibrarySidebar({
       },
     }),
   );
+
+  function setDeleteRestoreFocus(id: string) {
+    if (!restoreFocusRef) return;
+    const index = documents.findIndex((document) => document.id === id);
+    const nextId = documents[index + 1]?.id ?? documents[index - 1]?.id ?? null;
+    const target = nextId
+      ? (cardListRef.current?.querySelector(
+          `[data-cv-card-select="${CSS.escape(nextId)}"]`,
+        ) as HTMLElement | null)
+      : newCvButtonRef.current;
+    restoreFocusRef.current = target ?? null;
+  }
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -220,6 +236,7 @@ export function CvLibrarySidebar({
               </div>
               <div className="relative flex items-center gap-1">
                 <Button
+                  ref={newCvButtonRef}
                   type="button"
                   variant="ghost"
                   size="icon"
@@ -246,6 +263,7 @@ export function CvLibrarySidebar({
         {collapsed && (
           <div className="border-b border-slate-200 p-2">
             <Button
+              ref={newCvButtonRef}
               type="button"
               variant="secondary"
               size="icon"
@@ -294,7 +312,7 @@ export function CvLibrarySidebar({
             strategy={verticalListSortingStrategy}
             disabled={collapsed}
           >
-            <div className="flex flex-col gap-2">
+            <div ref={cardListRef} className="flex flex-col gap-2">
               {documents.map((document) => (
                 <SortableCard
                   key={document.id}
@@ -315,7 +333,10 @@ export function CvLibrarySidebar({
                       onDuplicate={() => onDuplicate(document.id)}
                       onMoveToCloud={() => onMoveToCloud(document.id)}
                       onEnableEncryption={() => onEnableEncryption(document.id)}
-                      onDelete={() => onDelete(document.id)}
+                      onDelete={() => {
+                        setDeleteRestoreFocus(document.id);
+                        onDelete(document.id);
+                      }}
                     />
                   )}
                 </SortableCard>

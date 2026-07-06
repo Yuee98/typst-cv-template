@@ -366,6 +366,20 @@ export function useCvBuilder() {
     setLibraryError,
     setImportExportError,
 
+    // dialogs
+    renameDialog: documentActions.renameDialog,
+    duplicateDialog: documentActions.duplicateDialog,
+    deleteDialog: documentActions.deleteDialog,
+    openRenameDialog: documentActions.openRenameDialog,
+    closeRenameDialog: documentActions.closeRenameDialog,
+    submitRenameDialog: documentActions.submitRenameDialog,
+    openDuplicateDialog: documentActions.openDuplicateDialog,
+    closeDuplicateDialog: documentActions.closeDuplicateDialog,
+    submitDuplicateDialog: documentActions.submitDuplicateDialog,
+    openDeleteDialog: documentActions.openDeleteDialog,
+    closeDeleteDialog: documentActions.closeDeleteDialog,
+    confirmDeleteDialog: documentActions.confirmDeleteDialog,
+
     // actions
     signIn: authActions.signIn,
     signUp: authActions.signUp,

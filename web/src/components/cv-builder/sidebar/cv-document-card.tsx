@@ -48,6 +48,7 @@ export function CvDocumentCard({
       <button
         type="button"
         ref={activatorRef}
+        data-cv-card-select={document.id}
         onClick={onSelect}
         aria-current={selected ? "true" : undefined}
         title={`${document.title} (${tStorage(document.storageKind)})`}
@@ -76,6 +77,7 @@ export function CvDocumentCard({
       <button
         type="button"
         ref={activatorRef}
+        data-cv-card-select={document.id}
         onClick={onSelect}
         aria-current={selected ? "true" : undefined}
         {...dragAttributes}

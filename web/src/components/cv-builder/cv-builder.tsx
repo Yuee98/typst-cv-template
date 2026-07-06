@@ -2,6 +2,7 @@
 
 import { Circle, FilePlus2, Loader2, RotateCcw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { useRef } from "react";
 import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
@@ -13,12 +14,14 @@ import { AuthModal } from "@/components/cv-builder/modals/auth-modal";
 import { EncryptionModal } from "@/components/cv-builder/modals/encryption-modal";
 import { ImportExportErrorModal } from "@/components/cv-builder/modals/import-export-error-modal";
 import { TermsAcceptanceModal } from "@/components/cv-builder/modals/terms-acceptance-modal";
+import { DocumentActionDialogs } from "@/components/cv-builder/document-action-dialogs";
 import { CvLibrarySidebar } from "@/components/cv-builder/sidebar/cv-library-sidebar";
 import { PreviewPane } from "@/components/cv-builder/preview-pane";
 import { useCvBuilder } from "@/components/cv-builder/hooks/use-cv-builder";
 
 export function CvBuilder() {
   const t = useTranslations("CvBuilder");
+  const deleteRestoreFocusRef = useRef<HTMLElement | null>(null);
   const h = useCvBuilder();
 
   return (
@@ -46,13 +49,14 @@ export function CvBuilder() {
               onCreateSample={() => void h.createSampleDocument()}
               onImportFile={(file) => void h.importJson(file)}
               onSelect={(id) => void h.selectDocument(id)}
-              onRename={(id) => void h.renameDocument(id)}
-              onDuplicate={(id) => void h.duplicateDocument(id)}
+              onRename={(id) => void h.openRenameDialog(id)}
+              onDuplicate={(id) => void h.openDuplicateDialog(id)}
               onReorder={h.reorderDocuments}
-              onDelete={(id) => void h.deleteDocument(id)}
+              onDelete={(id) => void h.openDeleteDialog(id)}
               onMoveToCloud={(id) => void h.moveToCloud(id)}
               onEnableEncryption={(id) => void h.openEnableEncryptionModal(id)}
               onDismissError={() => h.setLibraryError(null)}
+              restoreFocusRef={deleteRestoreFocusRef}
             />
           }
           editor={
@@ -156,6 +160,18 @@ export function CvBuilder() {
             h.termsGate.setModalChecked(false);
             h.termsGate.setModalError(null);
           }}
+        />
+        <DocumentActionDialogs
+          renameDialog={h.renameDialog}
+          duplicateDialog={h.duplicateDialog}
+          deleteDialog={h.deleteDialog}
+          onCloseRenameDialog={h.closeRenameDialog}
+          onSubmitRenameDialog={(nextTitle) => void h.submitRenameDialog(nextTitle)}
+          onCloseDuplicateDialog={h.closeDuplicateDialog}
+          onSubmitDuplicateDialog={(nextTitle) => void h.submitDuplicateDialog(nextTitle)}
+          onCloseDeleteDialog={h.closeDeleteDialog}
+          onConfirmDeleteDialog={() => void h.confirmDeleteDialog()}
+          deleteRestoreFocusRef={deleteRestoreFocusRef}
         />
       </AppShell>
     </FormProvider>

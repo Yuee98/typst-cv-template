@@ -71,8 +71,18 @@
     "emptyTitle": "未命名简历",
     "localTitle": "本地简历",
     "renamePrompt": "重命名简历",
+    "renameTitle": "重命名简历",
+    "renamePlaceholder": "新标题",
+    "renameSubmit": "重命名",
     "copyTitle": "{title} 副本",
-    "deleteConfirm": "删除「{title}」？"
+    "duplicateTitle": "复制简历",
+    "duplicatePlaceholder": "新标题",
+    "duplicateSubmit": "复制",
+    "deleteTitle": "删除简历",
+    "deleteDescription": "确定要删除「{title}」吗？此操作无法撤销。",
+    "deleteConfirm": "删除",
+    "cancel": "取消",
+    "close": "关闭"
   },
   "CvAuthActions": {
     "supabaseNotConfigured": "Supabase 未配置。添加 web/.env.local 后可启用云端存储。",

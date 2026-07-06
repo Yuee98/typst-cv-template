@@ -25,6 +25,7 @@ export function ModalDialog({
   onClose,
   className,
   closeLabel = "Close",
+  initialFocusRef,
   restoreFocusRef,
 }: {
   open: boolean;
@@ -35,6 +36,7 @@ export function ModalDialog({
   onClose: () => void;
   className?: string;
   closeLabel?: string;
+  initialFocusRef?: RefObject<HTMLElement | null>;
   restoreFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -47,8 +49,12 @@ export function ModalDialog({
         <Overlay className="fixed inset-0 z-50 bg-slate-950/35 print:hidden" />
         <Content
           aria-modal="true"
-          onOpenAutoFocus={() => {
+          onOpenAutoFocus={(event) => {
             triggerRef.current = document.activeElement as HTMLElement;
+            if (initialFocusRef?.current?.isConnected) {
+              event.preventDefault();
+              initialFocusRef.current.focus();
+            }
           }}
           onCloseAutoFocus={(event) => {
             const target = restoreFocusRef?.current ?? triggerRef.current;

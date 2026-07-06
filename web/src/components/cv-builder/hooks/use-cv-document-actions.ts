@@ -1,6 +1,8 @@
 import type { UseFormReturn } from "react-hook-form";
 import { useLocale, useTranslations } from "next-intl";
 
+import { useDocumentActionDialogs } from "@/components/cv-builder/hooks/use-document-action-dialogs";
+
 import { cloneCvData, createEmptyCvData, errorMessage } from "@/lib/cv/cv-utils";
 import { getSampleCvData } from "@/lib/cv/sample-data";
 import type { Locale } from "@/i18n/routing";
@@ -104,14 +106,9 @@ export function useCvDocumentActions({
     await createDocumentFromData(createEmptyCvData(locale), t("emptyTitle"));
   }
 
-  async function renameDocument(id: string) {
+  async function renameDocument(id: string, nextTitle: string) {
     const current = documents.find((document) => document.id === id);
     if (!current) {
-      return;
-    }
-
-    const nextTitle = window.prompt(t("renamePrompt"), current.title);
-    if (!nextTitle) {
       return;
     }
 
@@ -127,13 +124,21 @@ export function useCvDocumentActions({
     }
   }
 
-  async function duplicateDocument(id: string, passphraseOverride?: string) {
+  async function duplicateDocument(
+    id: string,
+    options?: { passphraseOverride?: string; title?: string },
+  ) {
     const current = documents.find((document) => document.id === id);
     if (!current) return;
 
     try {
-      const source = await storageAdapters[current.storageKind].load(current, { passphraseOverride });
-      const document = createLocalCvDocument(source.data, t("copyTitle", { title: source.summary.title }));
+      const source = await storageAdapters[current.storageKind].load(current, {
+        passphraseOverride: options?.passphraseOverride,
+      });
+      const document = createLocalCvDocument(
+        source.data,
+        options?.title ?? t("copyTitle", { title: source.summary.title }),
+      );
       replaceLocalDocumentSummary(document);
       loadDataIntoForm(document.id, document.data);
     } catch (duplicateError) {
@@ -148,10 +153,6 @@ export function useCvDocumentActions({
   async function deleteDocument(id: string) {
     const current = documents.find((document) => document.id === id);
     if (!current) {
-      return;
-    }
-
-    if (!window.confirm(t("deleteConfirm", { title: current.title }))) {
       return;
     }
 
@@ -176,6 +177,19 @@ export function useCvDocumentActions({
     }
   }
 
+  const documentActionDialogs = useDocumentActionDialogs({
+    documents,
+    onRename: renameDocument,
+    onDuplicate: duplicateDocument,
+    onDelete: deleteDocument,
+  });
+
+  function openDuplicateDialog(id: string) {
+    const current = documents.find((document) => document.id === id);
+    if (!current) return;
+    documentActionDialogs.openDuplicateDialog(id, t("copyTitle", { title: current.title }));
+  }
+
   return {
     createDocumentFromData,
     createEmptyDocument,
@@ -184,5 +198,7 @@ export function useCvDocumentActions({
     duplicateDocument,
     renameDocument,
     selectDocument,
+    ...documentActionDialogs,
+    openDuplicateDialog,
   };
 }

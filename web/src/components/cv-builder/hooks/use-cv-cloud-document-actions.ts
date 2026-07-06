@@ -63,7 +63,7 @@ export function useCvCloudDocumentActions({
     title: string;
   }) => Promise<EncryptedCloudCvDocument>;
   documents: CvDocumentSummary[];
-  duplicateDocument: (id: string, passphraseOverride?: string) => Promise<void>;
+  duplicateDocument: (id: string, options?: { passphraseOverride?: string; title?: string }) => Promise<void>;
   encryptExistingCloudDocument: (input: {
     client: SupabaseClient;
     encryptedPayload: EncryptedPayload;
@@ -245,7 +245,7 @@ export function useCvCloudDocumentActions({
       } else if (mode === "unlock") {
         await unlockEncryptedDocument(documentId, password);
       } else {
-        await duplicateDocument(documentId, password);
+        await duplicateDocument(documentId, { passphraseOverride: password });
       }
 
       closeEncryptionModal();
