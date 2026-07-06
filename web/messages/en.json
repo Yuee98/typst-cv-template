@@ -111,7 +111,8 @@
       "privacyPolicy": "Privacy Policy"
     },
     "divider": "or",
-    "continueWithGithub": "Continue with GitHub"
+    "continueWithGithub": "Continue with GitHub",
+    "close": "Close"
   },
   "EncryptionModal": {
     "title": {
@@ -134,12 +135,14 @@
     "rememberThisDevice": "Remember this device",
     "error": {
       "passwordRequired": "Enter the encryption password first."
-    }
+    },
+    "close": "Close"
   },
   "ImportExportErrorModal": {
     "title": "Import/Export Error",
     "ok": "OK",
-    "description": "Please check the file format and try again. If the problem persists, ensure the file is a valid CV JSON export."
+    "description": "Please check the file format and try again. If the problem persists, ensure the file is a valid CV JSON export.",
+    "close": "Close"
   },
   "TermsAcceptanceModal": {
     "title": "Terms and Privacy Notice",
@@ -153,7 +156,8 @@
       "termsOfUse": "Terms of Use",
       "andAcknowledge": "and acknowledge the",
       "privacyPolicy": "Privacy Policy"
-    }
+    },
+    "close": "Close"
   },
   "TermsGate": {
     "signInRequired": "Sign in before accepting the Terms and Privacy Notice.",

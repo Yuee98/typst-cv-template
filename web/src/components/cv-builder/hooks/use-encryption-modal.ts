@@ -24,6 +24,7 @@ export interface UseEncryptionModalReturn {
   error: string | null;
   password: string;
   trustDevice: boolean;
+  confirming: boolean;
   openModal: (mode: EncryptionModalMode, documentId: string) => void;
   closeModal: () => void;
   submit: (
@@ -31,6 +32,8 @@ export interface UseEncryptionModalReturn {
   ) => void;
   setPassword: (password: string) => void;
   setTrustDevice: (trust: boolean) => void;
+  setError: (error: string | null) => void;
+  setConfirming: (confirming: boolean) => void;
 }
 
 // ── hook ─────────────────────────────────────────────────────────────────
@@ -42,17 +45,20 @@ export function useEncryptionModal(
   const [error, setError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [trustDevice, setTrustDevice] = useState(() => false);
+  const [confirming, setConfirming] = useState(false);
 
   function openModal(mode: EncryptionModalMode, documentId: string) {
     setModalState({ mode, documentId });
     setError(null);
     setPassword("");
+    setConfirming(false);
   }
 
   function closeModal() {
     setModalState(null);
     setError(null);
     setPassword("");
+    setConfirming(false);
   }
 
   function handleSetPassword(value: string) {
@@ -87,10 +93,13 @@ export function useEncryptionModal(
     error,
     password,
     trustDevice,
+    confirming,
     openModal,
     closeModal,
     submit,
     setPassword: handleSetPassword,
     setTrustDevice,
+    setError,
+    setConfirming,
   };
 }

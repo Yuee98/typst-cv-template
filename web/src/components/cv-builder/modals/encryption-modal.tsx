@@ -1,36 +1,41 @@
 "use client";
 
 import { ShieldCheck, AlertTriangle } from "lucide-react";
-import { useState } from "react";
 import { useTranslations } from "next-intl";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Modal } from "@/components/ui/modal";
+import { ModalDialog } from "@/components/ui/modal-dialog";
 
 export type EncryptionModalMode = "enable" | "unlock" | "duplicate";
 
 export function EncryptionModal({
+  open,
   mode,
   password,
   error,
   trustDevice,
+  confirming,
   onPasswordChange,
   onTrustDeviceChange,
+  onSetError,
+  onSetConfirming,
   onSubmit,
   onClose,
 }: {
+  open: boolean;
   mode: EncryptionModalMode;
   password: string;
   error: string | null;
   trustDevice: boolean;
+  confirming: boolean;
   onPasswordChange: (password: string) => void;
   onTrustDeviceChange: (trust: boolean) => void;
+  onSetError: (error: string | null) => void;
+  onSetConfirming: (confirming: boolean) => void;
   onSubmit: () => void;
   onClose: () => void;
 }) {
   const t = useTranslations("EncryptionModal");
-  const [confirming, setConfirming] = useState(false);
   const modeTitles: Record<EncryptionModalMode, string> = {
     enable: t("title.enable"),
     unlock: t("title.unlock"),
@@ -40,33 +45,39 @@ export function EncryptionModal({
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (mode === "enable" && !confirming) {
-      setConfirming(true);
+      if (!password) {
+        onSetError(t("error.passwordRequired"));
+        return;
+      }
+      onSetConfirming(true);
       return;
     }
     onSubmit();
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <Modal
-        title={modeTitles[mode]}
-        onClose={onClose}
-        footer={
-          <>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={confirming ? () => setConfirming(false) : onClose}
-            >
-              {confirming ? t("back") : t("cancel")}
-            </Button>
-            <Button type="submit" disabled={!!error}>
-              <ShieldCheck />
-              {confirming ? t("confirm") : t("continue")}
-            </Button>
-          </>
-        }
-      >
+    <ModalDialog
+      open={open}
+      title={modeTitles[mode]}
+      closeLabel={t("close")}
+      onClose={onClose}
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={confirming ? () => onSetConfirming(false) : onClose}
+          >
+            {confirming ? t("back") : t("cancel")}
+          </Button>
+          <Button type="submit" form="encryption-form" disabled={!!error}>
+            <ShieldCheck />
+            {confirming ? t("confirm") : t("continue")}
+          </Button>
+        </>
+      }
+    >
+      <form id="encryption-form" onSubmit={handleSubmit}>
         {confirming ? (
           <div className="space-y-3">
             <div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-3">
@@ -104,7 +115,7 @@ export function EncryptionModal({
             </label>
           </div>
         )}
-      </Modal>
-    </form>
+      </form>
+    </ModalDialog>
   );
 }

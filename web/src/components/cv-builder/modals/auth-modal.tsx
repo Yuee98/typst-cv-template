@@ -5,12 +5,13 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { GithubIcon } from "@/components/ui/github-icon";
 import { Input } from "@/components/ui/input";
-import { Modal } from "@/components/ui/modal";
+import { ModalDialog } from "@/components/ui/modal-dialog";
 import { Link } from "@/i18n/navigation";
 
 export type AuthModalMode = "signIn" | "signUp";
 
 export function AuthModal({
+  open,
   mode,
   email,
   password,
@@ -25,6 +26,7 @@ export function AuthModal({
   onGithubSignIn,
   onClose,
 }: {
+  open: boolean;
   mode: AuthModalMode;
   email: string;
   password: string;
@@ -42,8 +44,10 @@ export function AuthModal({
   const t = useTranslations("AuthModal");
 
   return (
-    <Modal
+    <ModalDialog
+      open={open}
       title={mode === "signIn" ? t("title.signIn") : t("title.signUp")}
+      closeLabel={t("close")}
       onClose={onClose}
       footer={
         <>
@@ -110,6 +114,6 @@ export function AuthModal({
           {t("continueWithGithub")}
         </Button>
       </div>
-    </Modal>
+    </ModalDialog>
   );
 }

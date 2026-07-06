@@ -33,6 +33,7 @@ export function ToolbarMenu({
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const floatingMenuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const outsideRefs = useMemo(() => [menuRef, floatingMenuRef], []);
   const close = useCallback(() => {
     setMenuPosition(null);
@@ -44,6 +45,14 @@ export function ToolbarMenu({
   }, []);
 
   useClickOutside(outsideRefs, close, open);
+
+  useLayoutEffect(() => {
+    if (open) {
+      triggerRef.current = document.activeElement as HTMLElement;
+    } else if (triggerRef.current?.isConnected) {
+      triggerRef.current.focus();
+    }
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open) return;

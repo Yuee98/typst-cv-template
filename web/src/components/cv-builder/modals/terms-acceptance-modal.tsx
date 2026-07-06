@@ -3,12 +3,13 @@
 import { useLocale, useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/modal";
+import { ModalDialog } from "@/components/ui/modal-dialog";
 import { TERMS_VERSION, getLegalContent } from "@/content/legal";
 import { Link } from "@/i18n/navigation";
 import type { Locale } from "@/i18n/routing";
 
 export function TermsAcceptanceModal({
+  open,
   checked,
   error,
   accepting,
@@ -16,6 +17,7 @@ export function TermsAcceptanceModal({
   onAccept,
   onClose,
 }: {
+  open: boolean;
   checked: boolean;
   error: string | null;
   accepting: boolean;
@@ -28,9 +30,11 @@ export function TermsAcceptanceModal({
   const legal = getLegalContent(locale);
 
   return (
-    <Modal
+    <ModalDialog
+      open={open}
       title={t("title")}
       description={t("description")}
+      closeLabel={t("close")}
       onClose={onClose}
       footer={
         <>
@@ -79,6 +83,6 @@ export function TermsAcceptanceModal({
           </span>
         </label>
       </div>
-    </Modal>
+    </ModalDialog>
   );
 }

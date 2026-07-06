@@ -3,20 +3,24 @@
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/modal";
+import { ModalDialog } from "@/components/ui/modal-dialog";
 
 export function ImportExportErrorModal({
+  open,
   error,
   onClose,
 }: {
+  open: boolean;
   error: string;
   onClose: () => void;
 }) {
   const t = useTranslations("ImportExportErrorModal");
 
   return (
-    <Modal
+    <ModalDialog
+      open={open}
       title={t("title")}
+      closeLabel={t("close")}
       onClose={onClose}
       footer={
         <Button type="button" onClick={onClose}>
@@ -32,6 +36,6 @@ export function ImportExportErrorModal({
           {t("description")}
         </p>
       </div>
-    </Modal>
+    </ModalDialog>
   );
 }

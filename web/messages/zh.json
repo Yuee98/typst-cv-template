@@ -111,7 +111,8 @@
       "privacyPolicy": "隐私政策"
     },
     "divider": "或",
-    "continueWithGithub": "使用 GitHub 继续"
+    "continueWithGithub": "使用 GitHub 继续",
+    "close": "关闭"
   },
   "EncryptionModal": {
     "title": {
@@ -134,12 +135,14 @@
     "rememberThisDevice": "记住此设备",
     "error": {
       "passwordRequired": "请先输入加密密码。"
-    }
+    },
+    "close": "关闭"
   },
   "ImportExportErrorModal": {
     "title": "导入/导出错误",
     "ok": "确定",
-    "description": "请检查文件格式后重试。如果问题仍然存在，请确保文件是有效的 CV JSON 导出文件。"
+    "description": "请检查文件格式后重试。如果问题仍然存在，请确保文件是有效的 CV JSON 导出文件。",
+    "close": "关闭"
   },
   "TermsAcceptanceModal": {
     "title": "条款与隐私通知",
@@ -153,7 +156,8 @@
       "termsOfUse": "使用条款",
       "andAcknowledge": "并确认",
       "privacyPolicy": "隐私政策"
-    }
+    },
+    "close": "关闭"
   },
   "TermsGate": {
     "signInRequired": "接受条款与隐私通知前请先登录。",

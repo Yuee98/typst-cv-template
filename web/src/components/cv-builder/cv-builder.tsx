@@ -106,58 +106,57 @@ export function CvBuilder() {
             />
           }
         />
-        {h.authModal.mode && (
-          <AuthModal
-            mode={h.authModal.mode}
-            email={h.authModal.email}
-            password={h.authModal.password}
-            error={h.authModal.error}
-            successMessage={h.authModal.successMessage}
-            termsAccepted={h.authModal.termsAccepted}
-            onEmailChange={h.authModal.setEmail}
-            onPasswordChange={h.authModal.setPassword}
-            onTermsAcceptedChange={h.authModal.setTermsAccepted}
-            onSignIn={() => void h.signIn()}
-            onSignUp={() => void h.signUp()}
-            onGithubSignIn={() => void h.signInWithGithub()}
-            onClose={h.authModal.closeModal}
-          />
-        )}
-        {h.encryptionModal.modalState && (
-          <EncryptionModal
-            mode={h.encryptionModal.modalState.mode}
-            password={h.encryptionModal.password}
-            error={h.encryptionModal.error}
-            trustDevice={h.encryptionModal.trustDevice}
-            onPasswordChange={h.encryptionModal.setPassword}
-            onTrustDeviceChange={h.encryptionModal.setTrustDevice}
-            onSubmit={() => void h.encryptionModal.submit(h.handleEncryptionSubmit)}
-            onClose={h.encryptionModal.closeModal}
-          />
-        )}
-        {h.importExportError && (
-          <ImportExportErrorModal
-            error={h.importExportError}
-            onClose={() => h.setImportExportError(null)}
-          />
-        )}
-        {h.termsGate.modalOpen && (
-          <TermsAcceptanceModal
-            checked={h.termsGate.modalChecked}
-            error={h.termsGate.modalError}
-            accepting={h.termsGate.accepting}
-            onCheckedChange={(value) => {
-              h.termsGate.setModalChecked(value);
-              h.termsGate.setModalError(null);
-            }}
-            onAccept={() => void h.acceptTerms()}
-            onClose={() => {
-              h.termsGate.setModalOpen(false);
-              h.termsGate.setModalChecked(false);
-              h.termsGate.setModalError(null);
-            }}
-          />
-        )}
+        <AuthModal
+          open={!!h.authModal.mode}
+          mode={h.authModal.mode ?? "signIn"}
+          email={h.authModal.email}
+          password={h.authModal.password}
+          error={h.authModal.error}
+          successMessage={h.authModal.successMessage}
+          termsAccepted={h.authModal.termsAccepted}
+          onEmailChange={h.authModal.setEmail}
+          onPasswordChange={h.authModal.setPassword}
+          onTermsAcceptedChange={h.authModal.setTermsAccepted}
+          onSignIn={() => void h.signIn()}
+          onSignUp={() => void h.signUp()}
+          onGithubSignIn={() => void h.signInWithGithub()}
+          onClose={h.authModal.closeModal}
+        />
+        <EncryptionModal
+          open={!!h.encryptionModal.modalState}
+          mode={h.encryptionModal.modalState?.mode ?? "unlock"}
+          password={h.encryptionModal.password}
+          error={h.encryptionModal.error}
+          trustDevice={h.encryptionModal.trustDevice}
+          confirming={h.encryptionModal.confirming}
+          onPasswordChange={h.encryptionModal.setPassword}
+          onTrustDeviceChange={h.encryptionModal.setTrustDevice}
+          onSetError={h.encryptionModal.setError}
+          onSetConfirming={h.encryptionModal.setConfirming}
+          onSubmit={() => void h.encryptionModal.submit(h.handleEncryptionSubmit)}
+          onClose={h.encryptionModal.closeModal}
+        />
+        <ImportExportErrorModal
+          open={!!h.importExportError}
+          error={h.importExportError ?? ""}
+          onClose={() => h.setImportExportError(null)}
+        />
+        <TermsAcceptanceModal
+          open={h.termsGate.modalOpen}
+          checked={h.termsGate.modalChecked}
+          error={h.termsGate.modalError}
+          accepting={h.termsGate.accepting}
+          onCheckedChange={(value) => {
+            h.termsGate.setModalChecked(value);
+            h.termsGate.setModalError(null);
+          }}
+          onAccept={() => void h.acceptTerms()}
+          onClose={() => {
+            h.termsGate.setModalOpen(false);
+            h.termsGate.setModalChecked(false);
+            h.termsGate.setModalError(null);
+          }}
+        />
       </AppShell>
     </FormProvider>
   );
