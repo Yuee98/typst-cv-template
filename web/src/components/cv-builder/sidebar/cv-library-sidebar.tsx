@@ -8,6 +8,8 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -36,20 +38,22 @@ import { CvDocumentCard } from "./cv-document-card";
 function SortableCard({
   id,
   disabled,
-  selected,
-  onClick,
   children,
 }: {
   id: string;
   disabled: boolean;
-  selected: boolean;
-  onClick?: () => void;
-  children: (args: { isDragging: boolean }) => ReactNode;
+  children: (args: {
+    isDragging: boolean;
+    activatorRef: (node: HTMLButtonElement | null) => void;
+    attributes: DraggableAttributes;
+    listeners: DraggableSyntheticListeners;
+  }) => ReactNode;
 }) {
   const {
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -62,21 +66,21 @@ function SortableCard({
   };
 
   return (
-    <button
-      type="button"
+    <div
       ref={setNodeRef}
       style={style}
-      aria-current={selected ? "true" : undefined}
       className={cn(
-        "w-full cursor-pointer text-left",
+        "w-full",
         isDragging && "opacity-70",
       )}
-      {...attributes}
-      {...listeners}
-      onClick={onClick}
     >
-      {children({ isDragging })}
-    </button>
+      {children({
+        isDragging,
+        activatorRef: (node) => setActivatorNodeRef(node),
+        attributes,
+        listeners,
+      })}
+    </div>
   );
 }
 
@@ -296,15 +300,17 @@ export function CvLibrarySidebar({
                   key={document.id}
                   id={document.id}
                   disabled={collapsed}
-                  selected={document.id === activeDocumentId}
-                  onClick={() => onSelect(document.id)}
                 >
-                  {() => (
+                  {({ activatorRef, attributes, listeners }) => (
                     <CvDocumentCard
                       document={document}
                       selected={document.id === activeDocumentId}
                       collapsed={collapsed}
                       cloudActionsEnabled={cloudActionsEnabled}
+                      onSelect={() => onSelect(document.id)}
+                      activatorRef={activatorRef}
+                      dragAttributes={attributes}
+                      dragListeners={listeners}
                       onRename={() => onRename(document.id)}
                       onDuplicate={() => onDuplicate(document.id)}
                       onMoveToCloud={() => onMoveToCloud(document.id)}
