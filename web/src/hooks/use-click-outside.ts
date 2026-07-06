@@ -1,7 +1,9 @@
 import { type RefObject, useEffect } from "react";
 
+type OutsideRef = RefObject<HTMLElement | null>;
+
 export function useClickOutside(
-  ref: RefObject<HTMLElement | null>,
+  ref: OutsideRef | OutsideRef[],
   onClose: () => void,
   active: boolean,
 ) {
@@ -11,7 +13,10 @@ export function useClickOutside(
     }
 
     function handleMouseDown(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
+      const refs = Array.isArray(ref) ? ref : [ref];
+      const clickedInside = refs.some((item) => item.current?.contains(event.target as Node));
+
+      if (!clickedInside) {
         onClose();
       }
     }

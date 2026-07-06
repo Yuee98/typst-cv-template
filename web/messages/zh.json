@@ -9,15 +9,17 @@
   },
   "LocaleSwitcher": {
     "label": "界面语言",
-    "switchTo": "切换到{language}",
     "zh": "中文",
-    "en": "EN"
+    "en": "English"
   },
   "CvToolbar": {
     "termsRequired": "需接受条款",
     "syncing": "同步中",
     "cloudIssue": "云端异常",
     "cloudReady": "云端就绪",
+    "github": "GitHub",
+    "githubRepository": "项目主页",
+    "githubIssues": "反馈问题",
     "signedInAccount": "已登录账户",
     "account": "账户",
     "syncCloud": "同步云端",

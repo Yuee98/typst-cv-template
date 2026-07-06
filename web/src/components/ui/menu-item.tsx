@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -36,21 +36,30 @@ export function MenuDivider({ children }: { children: ReactNode }) {
   );
 }
 
-export function MenuContainer({
-  align = "right",
-  children,
-}: {
-  align?: "left" | "right";
+export const MenuContainer = forwardRef<HTMLDivElement, {
+  align?: "left" | "center" | "right";
+  className?: string;
+  style?: CSSProperties;
   children: ReactNode;
-}) {
+}>(function MenuContainer({
+  align = "right",
+  className,
+  style,
+  children,
+}, ref) {
   return (
     <div
+      ref={ref}
+      style={style}
       className={cn(
         "absolute z-30 mt-2 w-64 rounded-md border border-slate-200 bg-white p-2 shadow-lg",
-        align === "right" ? "right-0" : "left-0",
+        align === "right" && "right-0",
+        align === "left" && "left-0",
+        align === "center" && "left-1/2",
+        className,
       )}
     >
       <div className="space-y-1">{children}</div>
     </div>
   );
-}
+});

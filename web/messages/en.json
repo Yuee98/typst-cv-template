@@ -9,15 +9,17 @@
   },
   "LocaleSwitcher": {
     "label": "Interface language",
-    "switchTo": "Switch language to {language}",
     "zh": "中文",
-    "en": "EN"
+    "en": "English"
   },
   "CvToolbar": {
     "termsRequired": "Terms required",
     "syncing": "Syncing",
     "cloudIssue": "Cloud issue",
     "cloudReady": "Cloud ready",
+    "github": "GitHub",
+    "githubRepository": "Repository",
+    "githubIssues": "Issues",
     "signedInAccount": "Signed in account",
     "account": "Account",
     "syncCloud": "Sync cloud",

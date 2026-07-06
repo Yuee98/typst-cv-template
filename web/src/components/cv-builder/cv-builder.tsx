@@ -8,7 +8,7 @@ import { AppShell, Workspace } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
 import { CvEditor } from "@/components/cv-builder/editors";
 import { ExportMenu } from "@/components/cv-builder/export-menu";
-import { CvToolbar } from "@/components/cv-builder/toolbar";
+import { CvToolbar } from "@/components/cv-builder/cv-toolbar";
 import { AuthModal } from "@/components/cv-builder/modals/auth-modal";
 import { EncryptionModal } from "@/components/cv-builder/modals/encryption-modal";
 import { ImportExportErrorModal } from "@/components/cv-builder/modals/import-export-error-modal";
