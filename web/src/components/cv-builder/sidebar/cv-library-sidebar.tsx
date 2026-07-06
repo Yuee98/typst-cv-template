@@ -25,13 +25,18 @@ import {
   FilePlus2,
   Plus,
 } from "lucide-react";
-import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, useRef } from "react";
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
-import { useClickOutside } from "@/hooks/use-click-outside";
 
 import { CvDocumentCard } from "./cv-document-card";
 
@@ -124,12 +129,9 @@ export function CvLibrarySidebar({
   restoreFocusRef?: React.RefObject<HTMLElement | null>;
 }) {
   const t = useTranslations("CvLibrary");
-  const [createMenuOpen, setCreateMenuOpen] = useState(false);
-  const createMenuRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const newCvButtonRef = useRef<HTMLButtonElement>(null);
   const cardListRef = useRef<HTMLDivElement>(null);
-  useClickOutside(createMenuRef, () => setCreateMenuOpen(false), createMenuOpen);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -166,50 +168,11 @@ export function CvLibrarySidebar({
     }
   }
 
-  function runCreateAction(action: () => void) {
-    setCreateMenuOpen(false);
-    action();
-  }
-
   function handleImportFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
     onImportFile(file);
   }
-
-  const createMenu = createMenuOpen && (
-    <div
-      className={cn(
-        "absolute z-20 w-44 rounded-md border border-slate-200 bg-white p-1 shadow-lg",
-        collapsed ? "left-2 top-24" : "right-2 top-11",
-      )}
-    >
-      <button
-        type="button"
-        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-        onClick={() => runCreateAction(onCreateEmpty)}
-      >
-        <FilePlus2 className="size-4" />
-        {t("emptyCv")}
-      </button>
-      <button
-        type="button"
-        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-        onClick={() => runCreateAction(onCreateSample)}
-      >
-        <FilePlus2 className="size-4" />
-        {t("sampleCv")}
-      </button>
-      <button
-        type="button"
-        className="flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-        onClick={() => runCreateAction(() => importInputRef.current?.click())}
-      >
-        <FileJson className="size-4" />
-        {t("importJson")}
-      </button>
-    </div>
-  );
 
   return (
     <aside
@@ -218,7 +181,7 @@ export function CvLibrarySidebar({
         collapsed ? "w-14" : "w-full lg:w-72",
       )}
     >
-      <div ref={createMenuRef}>
+      <>
         <div
           className={cn(
             "flex min-h-12 items-center border-b border-slate-200 px-2",
@@ -235,16 +198,33 @@ export function CvLibrarySidebar({
                 <h2 className="truncate text-sm font-semibold text-slate-950">{t("title")}</h2>
               </div>
               <div className="relative flex items-center gap-1">
-                <Button
-                  ref={newCvButtonRef}
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setCreateMenuOpen((open) => !open)}
-                  title={t("newCv")}
-                >
-                  <Plus />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      ref={newCvButtonRef}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      title={t("newCv")}
+                    >
+                      <Plus />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem icon={<FilePlus2 className="size-4" />} onSelect={onCreateEmpty}>
+                      {t("emptyCv")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem icon={<FilePlus2 className="size-4" />} onSelect={onCreateSample}>
+                      {t("sampleCv")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      icon={<FileJson className="size-4" />}
+                      onSelect={() => importInputRef.current?.click()}
+                    >
+                      {t("importJson")}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   type="button"
                   variant="ghost"
@@ -254,7 +234,6 @@ export function CvLibrarySidebar({
                 >
                   <ChevronLeft />
                 </Button>
-                {createMenu}
               </div>
             </>
           )}
@@ -262,19 +241,36 @@ export function CvLibrarySidebar({
 
         {collapsed && (
           <div className="border-b border-slate-200 p-2">
-            <Button
-              ref={newCvButtonRef}
-              type="button"
-              variant="secondary"
-              size="icon"
-              onClick={() => setCreateMenuOpen((open) => !open)}
-              title={t("newCv")}
-            >
-              <Plus />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  ref={newCvButtonRef}
+                  type="button"
+                  variant="secondary"
+                  size="icon"
+                  title={t("newCv")}
+                >
+                  <Plus />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem icon={<FilePlus2 className="size-4" />} onSelect={onCreateEmpty}>
+                  {t("emptyCv")}
+                </DropdownMenuItem>
+                <DropdownMenuItem icon={<FilePlus2 className="size-4" />} onSelect={onCreateSample}>
+                  {t("sampleCv")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  icon={<FileJson className="size-4" />}
+                  onSelect={() => importInputRef.current?.click()}
+                >
+                  {t("importJson")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
-      </div>
+      </>
 
       {error && !collapsed && (
         <div className="border-b border-rose-200 bg-rose-50 px-3 py-2">
