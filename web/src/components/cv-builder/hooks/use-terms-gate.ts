@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { TERMS_VERSION } from "@/content/legal";
 import { errorMessage } from "@/lib/cv/cv-utils";
@@ -34,10 +35,12 @@ function clearPendingTermsAcceptance() {
 }
 
 export function useTermsGate({
+  tTermsGate,
   hasSession,
   onError,
   supabase,
 }: {
+  tTermsGate: ReturnType<typeof useTranslations<"TermsGate">>;
   hasSession: boolean;
   onError: (message: string) => void;
   supabase: SupabaseClient | null;
@@ -103,12 +106,12 @@ export function useTermsGate({
 
   async function accept() {
     if (!supabase || !hasSession) {
-      setModalError("Sign in before accepting the Terms and Privacy Notice.");
+      setModalError(tTermsGate("signInRequired"));
       return false;
     }
 
     if (!modalChecked) {
-      setModalError("Check the box before accepting.");
+      setModalError(tTermsGate("checkBoxRequired"));
       return false;
     }
 

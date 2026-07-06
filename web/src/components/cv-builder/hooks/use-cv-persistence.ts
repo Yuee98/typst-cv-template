@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
+import { useTranslations } from "next-intl";
 
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
@@ -7,6 +8,7 @@ import type { CvDocumentSummary } from "@/lib/cv/storage";
 import type { CvStorageAdapters } from "@/lib/cv/storage-adapters";
 
 export function useCvPersistence({
+  tPersistence,
   activeDocument,
   activeDocumentId,
   clearDraft,
@@ -18,6 +20,7 @@ export function useCvPersistence({
   storageAdapters,
   upsertDocumentSummary,
 }: {
+  tPersistence: ReturnType<typeof useTranslations<"CvPersistence">>;
   activeDocument: CvDocumentSummary | null;
   activeDocumentId: string | null;
   clearDraft: (cvId: string) => void;
@@ -42,7 +45,7 @@ export function useCvPersistence({
 
     const parsed = cvSchema.safeParse(form.getValues());
     if (!parsed.success) {
-      onError("The current form data does not match the CV schema.");
+      onError(tPersistence("schemaError"));
       return false;
     }
 

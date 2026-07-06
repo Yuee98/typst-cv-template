@@ -1,14 +1,18 @@
 import type { MutableRefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
+import { useTranslations } from "next-intl";
 
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 import { buildTypstDocument } from "@/lib/cv/typst";
+import { defaultLocale, type Locale } from "@/i18n/routing";
 import { renderTypstSvg, type LoadStage } from "@/lib/typst/render";
 
 export function useCvPreview({
+  tImportExport,
+  locale = defaultLocale,
   activeDocument,
   activeDocumentId,
   form,
@@ -18,6 +22,8 @@ export function useCvPreview({
   saveDraft,
   watchedData,
 }: {
+  tImportExport: ReturnType<typeof useTranslations<"ImportExport">>;
+  locale?: Locale;
   activeDocument: CvDocumentSummary | null;
   activeDocumentId: string | null;
   form: UseFormReturn<CvData>;
@@ -61,7 +67,7 @@ export function useCvPreview({
       const parsed = cvSchema.safeParse(form.getValues());
       if (!parsed.success) {
         setStatus("error");
-        setError("The current form data does not match the CV schema.");
+        setError(tImportExport("currentSchemaError"));
         return;
       }
 
@@ -91,12 +97,16 @@ export function useCvPreview({
 
       try {
         const document = buildTypstDocument(parsed.data);
-        const nextSvg = await renderTypstSvg(document, (progress) => {
-          if (renderId.current === nextRenderId) {
-            setStatus(progress.stage);
-            setPercent(progress.percent);
-          }
-        });
+        const nextSvg = await renderTypstSvg(
+          document,
+          (progress) => {
+            if (renderId.current === nextRenderId) {
+              setStatus(progress.stage);
+              setPercent(progress.percent);
+            }
+          },
+          locale,
+        );
         if (renderId.current === nextRenderId) {
           setSvg(nextSvg);
           setStatus("ready");

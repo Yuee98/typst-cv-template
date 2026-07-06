@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useFormContext } from "react-hook-form";
 
 import {
@@ -25,18 +26,19 @@ function ProjectEditor({
   projectIndex: number;
 }) {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors.Experience");
   const base = `experience.${companyIndex}.projects.${projectIndex}`;
 
   return (
     <div className="grid gap-3 rounded-md border border-slate-200 p-3">
       <FieldGrid>
-        <Field label="Title">
+        <Field label={t("projectTitle")}>
           <Input {...register(fieldPath(`${base}.title`))} />
         </Field>
-        <Field label="Detail">
+        <Field label={t("projectDetail")}>
           <Input {...register(fieldPath(`${base}.detail`))} />
         </Field>
-        <Field label="Project date">
+        <Field label={t("projectDate")}>
           <Input {...register(fieldPath(`${base}.date`))} />
         </Field>
       </FieldGrid>
@@ -47,27 +49,28 @@ function ProjectEditor({
 
 function CompanyEditor({ companyIndex }: { companyIndex: number }) {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors.Experience");
   const base = `experience.${companyIndex}`;
   const { fields, append, remove, move } = useCvFieldArray(`${base}.projects`);
 
   return (
     <div className="space-y-4">
       <FieldGrid>
-        <Field label="Company">
+        <Field label={t("company")}>
           <Input {...register(fieldPath(`${base}.org`))} />
         </Field>
-        <Field label="Company date">
+        <Field label={t("companyDate")}>
           <Input {...register(fieldPath(`${base}.date`))} />
         </Field>
       </FieldGrid>
       <div className="space-y-3">
-        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Projects</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{t("projects")}</div>
         <SortableAccordionList
           items={fields}
           getId={(field) => field.id}
           onMove={move}
           className="rounded-md border border-slate-200 px-3"
-          handleLabel="Reorder project"
+          handleLabel={t("reorderProject")}
           renderItem={({ item: field, index: projectIndex, dragHandle }) => (
             <AccordionItem value={field.id}>
               <div className="flex items-center gap-1">
@@ -75,7 +78,7 @@ function CompanyEditor({ companyIndex }: { companyIndex: number }) {
                 <AccordionTrigger>
                   <WatchedTitle
                     name={`${base}.projects.${projectIndex}.detail`}
-                    fallback={`Project ${projectIndex + 1}`}
+                    fallback={t("projectFallback", { index: projectIndex + 1 })}
                   />
                 </AccordionTrigger>
               </div>
@@ -92,7 +95,7 @@ function CompanyEditor({ companyIndex }: { companyIndex: number }) {
                     onClick={() => remove(projectIndex)}
                   >
                     <Trash2 />
-                    Remove project
+                    {t("removeProject")}
                   </Button>
                 </div>
               </AccordionContent>
@@ -101,7 +104,7 @@ function CompanyEditor({ companyIndex }: { companyIndex: number }) {
         />
         <Button type="button" variant="secondary" onClick={() => append(projectItem() as never)}>
           <Plus />
-          Add project
+          {t("addProject")}
         </Button>
       </div>
     </div>
@@ -109,6 +112,7 @@ function CompanyEditor({ companyIndex }: { companyIndex: number }) {
 }
 
 export function ExperienceEditor() {
+  const t = useTranslations("Editors.Experience");
   const name = "experience";
   const { fields, append, remove, move } = useCvFieldArray(name);
 
@@ -119,13 +123,13 @@ export function ExperienceEditor() {
         getId={(field) => field.id}
         onMove={move}
         className="rounded-md border border-slate-200 px-3"
-        handleLabel="Reorder company"
+        handleLabel={t("reorderCompany")}
         renderItem={({ item: field, index, dragHandle }) => (
           <AccordionItem value={field.id}>
             <div className="flex items-center gap-1">
               {dragHandle}
               <AccordionTrigger>
-                <WatchedTitle name={`${name}.${index}.org`} fallback={`Company ${index + 1}`} />
+                <WatchedTitle name={`${name}.${index}.org`} fallback={t("companyFallback", { index: index + 1 })} />
               </AccordionTrigger>
             </div>
             <AccordionContent>
@@ -138,7 +142,7 @@ export function ExperienceEditor() {
                   onClick={() => remove(index)}
                 >
                   <Trash2 />
-                  Remove company
+                  {t("removeCompany")}
                 </Button>
               </div>
             </AccordionContent>
@@ -147,7 +151,7 @@ export function ExperienceEditor() {
       />
       <Button type="button" variant="secondary" onClick={() => append(companyItem() as never)}>
         <Plus />
-        Add company
+        {t("addCompany")}
       </Button>
     </div>
   );

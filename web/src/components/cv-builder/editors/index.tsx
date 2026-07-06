@@ -18,6 +18,7 @@ import {
 } from "@dnd-kit/sortable";
 import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
+import { useTranslations } from "next-intl";
 
 import { Panel } from "@/components/ui/panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -47,84 +48,85 @@ type SectionTab = {
   content: ReactNode;
 };
 
-const sectionTabs: SectionTab[] = [
-  {
-    id: "profile",
-    label: "Profile",
-    content: (
-      <div className="space-y-4">
-        <SectionHeader name="profile" />
-        <TextItemsEditor name="profile" addLabel="Add profile item" />
-      </div>
-    ),
-  },
-  {
-    id: "skills",
-    label: "Skills",
-    content: (
-      <div className="space-y-4">
-        <SectionHeader name="skills" />
-        <SkillItemsEditor name="skills" addLabel="Add skill" />
-      </div>
-    ),
-  },
-  {
-    id: "experience",
-    label: "Experience",
-    content: (
-      <div className="space-y-4">
-        <SectionHeader name="experience" />
-        <ExperienceEditor />
-      </div>
-    ),
-  },
-  {
-    id: "education",
-    label: "Education",
-    content: (
-      <div className="space-y-4">
-        <SectionHeader name="education" />
-        <ResumeEntriesEditor name="education" addLabel="Add education" />
-      </div>
-    ),
-  },
-  {
-    id: "research",
-    label: "Research",
-    content: (
-      <div className="space-y-4">
-        <SectionHeader name="research" />
-        <OneLineEntriesEditor name="research" addLabel="Add research" />
-      </div>
-    ),
-  },
-  {
-    id: "publications",
-    label: "Publications",
-    content: (
-      <div className="space-y-4">
-        <SectionHeader name="publications" />
-        <SelfNameField />
-        <PublicationsEditor name="publications" />
-      </div>
-    ),
-  },
-  {
-    id: "additional",
-    label: "Additional",
-    content: (
-      <div className="space-y-4">
-        <SectionHeader name="additional" />
-        <SkillItemsEditor name="additional" addLabel="Add item" />
-      </div>
-    ),
-  },
-];
-
-const sectionTabById = new Map(sectionTabs.map((tab) => [tab.id, tab]));
 const tabNavigationKeysDuringDrag = new Set(["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
 
 export function CvEditor({ actions }: { actions?: ReactNode }) {
+  const t = useTranslations("Editors");
+  const sectionTabs: SectionTab[] = [
+    {
+      id: "profile",
+      label: t("tabs.profile"),
+      content: (
+        <div className="space-y-4">
+          <SectionHeader name="profile" />
+          <TextItemsEditor name="profile" addLabel={t("TextItems.add")} />
+        </div>
+      ),
+    },
+    {
+      id: "skills",
+      label: t("tabs.skills"),
+      content: (
+        <div className="space-y-4">
+          <SectionHeader name="skills" />
+          <SkillItemsEditor name="skills" addLabel={t("Skills.add")} />
+        </div>
+      ),
+    },
+    {
+      id: "experience",
+      label: t("tabs.experience"),
+      content: (
+        <div className="space-y-4">
+          <SectionHeader name="experience" />
+          <ExperienceEditor />
+        </div>
+      ),
+    },
+    {
+      id: "education",
+      label: t("tabs.education"),
+      content: (
+        <div className="space-y-4">
+          <SectionHeader name="education" />
+          <ResumeEntriesEditor name="education" addLabel={t("Education.add")} />
+        </div>
+      ),
+    },
+    {
+      id: "research",
+      label: t("tabs.research"),
+      content: (
+        <div className="space-y-4">
+          <SectionHeader name="research" />
+          <OneLineEntriesEditor name="research" addLabel={t("Research.add")} />
+        </div>
+      ),
+    },
+    {
+      id: "publications",
+      label: t("tabs.publications"),
+      content: (
+        <div className="space-y-4">
+          <SectionHeader name="publications" />
+          <SelfNameField />
+          <PublicationsEditor name="publications" />
+        </div>
+      ),
+    },
+    {
+      id: "additional",
+      label: t("tabs.additional"),
+      content: (
+        <div className="space-y-4">
+          <SectionHeader name="additional" />
+          <SkillItemsEditor name="additional" addLabel={t("Additional.add")} />
+        </div>
+      ),
+    },
+  ];
+  const sectionTabById = new Map(sectionTabs.map((tab) => [tab.id, tab]));
+
   const { control, setValue } = useFormContext<CvData>();
   const watchedSectionOrder = useWatch({ control, name: "sectionOrder" });
   const sectionOrder = useMemo(
@@ -191,14 +193,14 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
   }
 
   return (
-    <Panel title="Editor" actions={actions} className="editor-pane h-full overflow-hidden">
+    <Panel title={t("title")} actions={actions} className="editor-pane h-full overflow-hidden">
       <Tabs
         value={activeTab}
         onValueChange={(value) => setActiveTab(value as EditorTabId)}
         className="flex h-full min-h-0 flex-col"
       >
         <TabsList>
-          <TabsTrigger value="header">Header</TabsTrigger>
+          <TabsTrigger value="header">{t("tabs.header")}</TabsTrigger>
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -217,7 +219,7 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
               ))}
             </SortableContext>
           </DndContext>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="settings">{t("tabs.settings")}</TabsTrigger>
         </TabsList>
         <div className="min-h-0 flex-1 overflow-auto">
           <TabsContent value="header">
@@ -246,6 +248,7 @@ function SortableSectionTab({
   label: string;
   keyboardDragActive: boolean;
 }) {
+  const t = useTranslations("Editors");
   const {
     attributes,
     isDragging,
@@ -289,9 +292,9 @@ function SortableSectionTab({
       value={id}
       style={style}
       className={cn("touch-none cursor-grab active:cursor-grabbing", isDragging && "opacity-70")}
-      title="Drag to reorder section"
+      title={t("dragTitle")}
       {...dragAttributes}
-      aria-label={`${label}. Drag to reorder section.`}
+      aria-label={t("aria.dragSection", { label })}
       {...dragListeners}
       onKeyDown={handleKeyDown}
     >

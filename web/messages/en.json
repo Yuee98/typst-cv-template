@@ -1,0 +1,294 @@
+{
+  "Metadata": {
+    "title": "Online CV Builder | Typst CV Maker",
+    "description": "Create, preview, export, and optionally sync CV documents."
+  },
+  "ToolbarTitle": {
+    "title": "Typst CV Maker",
+    "subtitle": "Edit structured data, preview Typst SVG, print to PDF."
+  },
+  "LocaleSwitcher": {
+    "label": "Interface language",
+    "switchTo": "Switch language to {language}",
+    "zh": "中文",
+    "en": "EN"
+  },
+  "CvToolbar": {
+    "termsRequired": "Terms required",
+    "syncing": "Syncing",
+    "cloudIssue": "Cloud issue",
+    "cloudReady": "Cloud ready",
+    "signedInAccount": "Signed in account",
+    "account": "Account",
+    "syncCloud": "Sync cloud",
+    "logOut": "Log out",
+    "cloudSignedOut": "Cloud signed out",
+    "cloudNotConfigured": "Cloud not configured",
+    "logIn": "Log in",
+    "signUp": "Sign up"
+  },
+  "CvBuilder": {
+    "discardChanges": "Discard changes",
+    "save": "Save",
+    "emptyState": "Select or create a CV to start editing"
+  },
+  "ExportMenu": {
+    "export": "Export",
+    "exporting": "Exporting",
+    "pdf": "PDF",
+    "typstPackage": "Typst package",
+    "typstSource": "Typst source",
+    "dataJson": "Data JSON"
+  },
+  "CvLibrary": {
+    "title": "CV Library",
+    "expand": "Expand CV library",
+    "collapse": "Collapse CV library",
+    "newCv": "New CV",
+    "emptyCv": "Empty CV",
+    "sampleCv": "Sample CV",
+    "importJson": "Import JSON",
+    "dismiss": "Dismiss"
+  },
+  "CvDocumentCard": {
+    "rename": "Rename",
+    "duplicate": "Duplicate",
+    "moveToCloud": "Move to cloud",
+    "enableEncryption": "Enable encryption",
+    "delete": "Delete",
+    "fallbackInitial": "C"
+  },
+  "StorageIndicator": {
+    "local": "Local",
+    "cloud": "Cloud",
+    "encrypted": "Encrypted"
+  },
+  "CvDocumentActions": {
+    "selectedLoadError": "The selected CV could not be loaded.",
+    "sampleTitle": "Sample CV",
+    "emptyTitle": "Untitled CV",
+    "localTitle": "Local CV",
+    "renamePrompt": "Rename CV",
+    "copyTitle": "{title} Copy",
+    "deleteConfirm": "Delete \"{title}\"?"
+  },
+  "CvAuthActions": {
+    "supabaseNotConfigured": "Supabase is not configured. Add web/.env.local to enable cloud storage.",
+    "signInMissingFields": "Enter email and password before signing in.",
+    "signUpMissingFields": "Enter email and password before creating an account.",
+    "termsRequired": "Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.",
+    "accountCreated": "Account created. Check your email before signing in."
+  },
+  "ImportExport": {
+    "currentSchemaError": "The current form data does not match the CV schema.",
+    "importSchemaError": "Imported JSON does not match a supported CV schema.",
+    "importFallbackTitle": "Imported CV"
+  },
+  "LegalDocumentPage": {
+    "brand": "Typst CV Maker",
+    "effectiveDate": "Effective Date: {date}"
+  },
+  "AuthModal": {
+    "title": {
+      "signIn": "Log in",
+      "signUp": "Sign up"
+    },
+    "cancel": "Cancel",
+    "submit": {
+      "signIn": "Log in",
+      "signUp": "Sign up"
+    },
+    "placeholder": {
+      "email": "email",
+      "password": "password"
+    },
+    "terms": {
+      "agreeTo": "I agree to the",
+      "termsOfUse": "Terms of Use",
+      "andAcknowledge": "and acknowledge the",
+      "privacyPolicy": "Privacy Policy"
+    },
+    "divider": "or",
+    "continueWithGithub": "Continue with GitHub"
+  },
+  "EncryptionModal": {
+    "title": {
+      "enable": "Enable encryption",
+      "unlock": "Unlock encrypted CV",
+      "duplicate": "Duplicate encrypted CV"
+    },
+    "back": "Back",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "continue": "Continue",
+    "warning": {
+      "title": "Before you continue:",
+      "item1": "The server does not store your password. If you forget it, the CV cannot be recovered.",
+      "item2": "After enabling encryption, changes are not saved automatically. You must click Save after editing, or your changes will be lost."
+    },
+    "placeholder": {
+      "password": "encryption password"
+    },
+    "rememberThisDevice": "Remember this device",
+    "error": {
+      "passwordRequired": "Enter the encryption password first."
+    }
+  },
+  "ImportExportErrorModal": {
+    "title": "Import/Export Error",
+    "ok": "OK",
+    "description": "Please check the file format and try again. If the problem persists, ensure the file is a valid CV JSON export."
+  },
+  "TermsAcceptanceModal": {
+    "title": "Terms and Privacy Notice",
+    "description": "Accept the current terms before using cloud storage.",
+    "cancel": "Cancel",
+    "saving": "Saving",
+    "accept": "Accept",
+    "version": "Version {version}",
+    "terms": {
+      "agreeTo": "I agree to the",
+      "termsOfUse": "Terms of Use",
+      "andAcknowledge": "and acknowledge the",
+      "privacyPolicy": "Privacy Policy"
+    }
+  },
+  "TermsGate": {
+    "signInRequired": "Sign in before accepting the Terms and Privacy Notice.",
+    "checkBoxRequired": "Check the box before accepting."
+  },
+  "PreviewPane": {
+    "title": "Preview",
+    "status": {
+      "waiting": "Waiting",
+      "loadingAssets": "Loading assets",
+      "compiling": "Compiling",
+      "ready": "Ready",
+      "error": "Error"
+    },
+    "emptyHint": "Preview will appear here."
+  },
+  "Editors": {
+    "title": "Editor",
+    "tabs": {
+      "header": "Header",
+      "profile": "Profile",
+      "skills": "Skills",
+      "experience": "Experience",
+      "education": "Education",
+      "research": "Research",
+      "publications": "Publications",
+      "additional": "Additional",
+      "settings": "Settings"
+    },
+    "dragTitle": "Drag to reorder section",
+    "aria": {
+      "dragSection": "{label}. Drag to reorder section."
+    },
+    "Header": {
+      "name": "Name",
+      "subtitle": "Subtitle",
+      "email": "Email",
+      "phone": "Phone"
+    },
+    "Settings": {
+      "font": "Font",
+      "customFont": "Custom font",
+      "customHint": "Select fonts from your device. Pick one for Latin + one for CJK.",
+      "apiNotAvailable": "Font Access API not available. Use Chrome for local font selection.",
+      "removeFont": "Remove {family}"
+    },
+    "Shared": {
+      "sectionTitle": "Section title",
+      "show": "Show",
+      "startOnNewPage": "Start on new page"
+    },
+    "Publications": {
+      "selfNameLabel": "Author name in publications",
+      "selfNamePlaceholder": "e.g. Ming Chen, Chen M",
+      "authors": "Authors",
+      "title": "Title",
+      "venue": "Venue",
+      "year": "Year",
+      "url": "URL",
+      "authorsPlaceholder": "Ming Chen, John Doe, Jane Smith",
+      "venuePlaceholder": "IEEE ICWS",
+      "urlPlaceholder": "https://doi.org/...",
+      "reorder": "Reorder publication",
+      "fallback": "Publication {index}",
+      "remove": "Remove publication",
+      "add": "Add publication"
+    },
+    "Experience": {
+      "company": "Company",
+      "companyDate": "Company date",
+      "projectTitle": "Title",
+      "projectDetail": "Detail",
+      "projectDate": "Project date",
+      "projects": "Projects",
+      "reorderProject": "Reorder project",
+      "reorderCompany": "Reorder experience",
+      "projectFallback": "Project {index}",
+      "companyFallback": "Experience {index}",
+      "removeProject": "Remove project",
+      "addProject": "Add project",
+      "removeCompany": "Remove experience",
+      "addCompany": "Add experience"
+    },
+    "Education": {
+      "organization": "Organization",
+      "date": "Date",
+      "title": "Title",
+      "detail": "Detail",
+      "reorder": "Reorder entry",
+      "fallback": "Entry {index}",
+      "remove": "Remove education",
+      "add": "Add education"
+    },
+    "Research": {
+      "title": "Title",
+      "date": "Date",
+      "reorder": "Reorder entry",
+      "fallback": "Entry {index}",
+      "remove": "Remove research",
+      "add": "Add research"
+    },
+    "Skills": {
+      "label": "Label",
+      "body": "Body",
+      "reorder": "Reorder skill",
+      "fallback": "Skill {index}",
+      "remove": "Remove skill",
+      "add": "Add skill"
+    },
+    "Additional": {
+      "add": "Add item"
+    },
+    "TextItems": {
+      "add": "Add profile item",
+      "reorder": "Reorder item",
+      "itemLabel": "Item {index}",
+      "removeAria": "Remove item"
+    },
+    "Bullets": {
+      "add": "Add bullet"
+    }
+  },
+  "CvCloudActions": {
+    "signInRequired": "Sign in first.",
+    "signInBeforeDeleteCloud": "Sign in before deleting this cloud CV.",
+    "signInBeforeOpenCloud": "Sign in before opening this cloud CV.",
+    "signInBeforeRenameCloud": "Sign in before renaming this cloud CV.",
+    "signInBeforeSaveCloud": "Sign in before saving this cloud CV.",
+    "signInBeforeMove": "Sign in before moving a CV to cloud storage.",
+    "localLoadFailed": "The selected local CV could not be loaded.",
+    "signInBeforeEncrypt": "Sign in before enabling encrypted cloud storage.",
+    "passwordRequired": "Enter an encryption password before enabling encryption.",
+    "loadBeforeEncryptFailed": "The selected CV could not be loaded before encryption.",
+    "signInBeforeOpenEncrypted": "Sign in before opening this encrypted CV.",
+    "signInBeforeSaveEncrypted": "Sign in before saving this encrypted CV."
+  },
+  "CvPersistence": {
+    "schemaError": "The current form data does not match the CV schema."
+  }
+}

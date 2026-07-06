@@ -1,4 +1,7 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { useTranslations } from "next-intl";
 
 export function Toolbar({ children }: { children: ReactNode }) {
   return (
@@ -17,10 +20,12 @@ export function ToolbarSeparator() {
 }
 
 export function ToolbarTitle() {
+  const t = useTranslations("ToolbarTitle");
+
   return (
     <div>
-      <h1 className="text-base font-semibold text-slate-950">cv maker</h1>
-      <p className="text-xs text-slate-500">Edit structured data, preview Typst SVG, print to PDF.</p>
+      <h1 className="text-base font-semibold text-slate-950">{t("title")}</h1>
+      <p className="text-xs text-slate-500">{t("subtitle")}</p>
     </div>
   );
 }

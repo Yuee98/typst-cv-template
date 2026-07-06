@@ -1,5 +1,6 @@
 import { CV_SCHEMA_VERSION, DEFAULT_SECTION_ORDER, type CvData } from "./schema";
-import { sampleCvData } from "./sample-data";
+import { defaultLocale, type Locale } from "@/i18n/routing";
+import { getSampleCvData } from "./sample-data";
 import type { CvDocumentSummary, LocalCvDocument } from "./storage";
 
 export function cloneCvData(data: CvData): CvData {
@@ -24,16 +25,18 @@ export function summarizeLocalDocument(document: LocalCvDocument): CvDocumentSum
   };
 }
 
-export function titleFromImportedData(data: CvData) {
+export function titleFromImportedData(data: CvData, fallback = "Imported CV") {
   const name = data.header.name.trim();
-  return name ? `${name} CV` : "Imported CV";
+  return name ? `${name} CV` : fallback;
 }
 
-export function createEmptyCvData(): CvData {
+export function createEmptyCvData(locale: Locale = defaultLocale): CvData {
+  const sample = getSampleCvData(locale);
+
   return {
     schemaVersion: CV_SCHEMA_VERSION,
-    typstLang: sampleCvData.typstLang,
-    bodyFont: sampleCvData.bodyFont,
+    typstLang: sample.typstLang,
+    bodyFont: sample.bodyFont,
     sectionOrder: [...DEFAULT_SECTION_ORDER],
     header: {
       name: "",
@@ -42,7 +45,7 @@ export function createEmptyCvData(): CvData {
       phone: "",
       selfName: "",
     },
-    sectionTitles: cloneCvData(sampleCvData).sectionTitles,
+    sectionTitles: cloneCvData(sample).sectionTitles,
     profile: [],
     skills: [],
     experience: [],

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useFormContext } from "react-hook-form";
 
 import { Field } from "@/components/ui/field";
@@ -10,11 +11,12 @@ import { fieldPath } from "./shared";
 
 export function SectionHeader({ name }: { name: string }) {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors");
   const basePath = `sectionTitles.${name}` as const;
 
   return (
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
-      <Field label="Section title">
+      <Field label={t("Shared.sectionTitle")}>
         <Input {...register(fieldPath(`${basePath}.title`))} />
       </Field>
       <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-slate-700">
@@ -23,7 +25,7 @@ export function SectionHeader({ name }: { name: string }) {
           {...register(fieldPath(`${basePath}.isDisplay`))}
           className="accent-slate-900"
         />
-        Show
+        {t("Shared.show")}
       </label>
       <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-slate-700">
         <input
@@ -31,7 +33,7 @@ export function SectionHeader({ name }: { name: string }) {
           {...register(fieldPath(`${basePath}.pageBreakBefore`))}
           className="accent-slate-900"
         />
-        Start on new page
+        {t("Shared.startOnNewPage")}
       </label>
     </div>
   );
@@ -39,12 +41,13 @@ export function SectionHeader({ name }: { name: string }) {
 
 export function SelfNameField() {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors");
 
   return (
     <div className="max-w-1/2">
-      <Field label="Author name in publications">
+      <Field label={t("Publications.selfNameLabel")}>
         <Input
-          placeholder="e.g. Ming Chen, Chen M"
+          placeholder={t("Publications.selfNamePlaceholder")}
           {...register(fieldPath("header.selfName"))}
         />
       </Field>

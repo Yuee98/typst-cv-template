@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useLocale, useTranslations } from "next-intl";
 import { useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
@@ -18,6 +19,7 @@ import { useCvPersistence } from "@/components/cv-builder/hooks/use-cv-persisten
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal } from "@/components/cv-builder/hooks/use-encryption-modal";
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
+import type { Locale } from "@/i18n/routing";
 import {
   cloneCvData,
   errorMessage,
@@ -26,8 +28,9 @@ import {
 import { clearCvDraft, loadCvDraft, saveCvDraft } from "@/lib/cv/draft-storage";
 import { loadEncryptionPassword } from "@/lib/cv/encryption-storage";
 import { cvSchema, persistedCvSchema, type CvData } from "@/lib/cv/schema";
-import { sampleCvData } from "@/lib/cv/sample-data";
+import { getSampleCvData } from "@/lib/cv/sample-data";
 import {
+  type CvCloudAccessAction,
   createCvStorageAdapters,
   isMissingPassphraseError,
   isTermsNotAcceptedError,
@@ -36,6 +39,13 @@ import {
 import { saveActiveCvDocumentId } from "@/lib/cv/storage";
 
 export function useCvBuilder() {
+  const locale = useLocale() as Locale;
+  const tActions = useTranslations("CvDocumentActions");
+  const tImportExport = useTranslations("ImportExport");
+  const tCloudActions = useTranslations("CvCloudActions");
+  const tPersistence = useTranslations("CvPersistence");
+  const tTermsGate = useTranslations("TermsGate");
+  const tEncryption = useTranslations("EncryptionModal");
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [importExportError, setImportExportError] = useState<string | null>(null);
   const initializedRef = useRef(false);
@@ -63,17 +73,18 @@ export function useCvBuilder() {
   const authModal = useAuthModal();
 
   const termsGate = useTermsGate({
+    tTermsGate,
     hasSession: Boolean(session),
     onError: setLibraryError,
     supabase,
   });
 
-  const encryptionModal = useEncryptionModal();
+  const encryptionModal = useEncryptionModal(tEncryption);
   const [isDirty, setIsDirty] = useState(false);
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
-    defaultValues: cloneCvData(sampleCvData),
+    defaultValues: cloneCvData(getSampleCvData(locale)),
     mode: "onChange",
   });
 
@@ -86,14 +97,15 @@ export function useCvBuilder() {
     supabase,
   });
   const { fetchCloudDocument } = useCvCloudDocumentQuery({ session });
-  const cloudMutations = useCvCloudMutations({ userId: session?.user.id });
+  const cloudMutations = useCvCloudMutations({ userId: session?.user.id, locale });
 
   const storageAdapters = createCvStorageAdapters({
+    locale,
     cloudStorage: {
       deleteCloudDocument: async (client, id) => {
         await cloudMutations.deleteCloudDocument.mutateAsync({ client, id });
       },
-      loadCloudDocument: fetchCloudDocument,
+      loadCloudDocument: (client, id) => fetchCloudDocument(client, id, locale),
       renameCloudDocument: (client, id, title) =>
         cloudMutations.renameCloudDocument.mutateAsync({ client, id, title }),
       updateCloudDocumentData: (client, id, data) =>
@@ -106,6 +118,7 @@ export function useCvBuilder() {
   });
 
   const persistence = useCvPersistence({
+    tPersistence,
     activeDocument,
     activeDocumentId,
     clearDraft,
@@ -119,6 +132,8 @@ export function useCvBuilder() {
   });
 
   const preview = useCvPreview({
+    tImportExport,
+    locale,
     activeDocument,
     activeDocumentId,
     form,
@@ -131,6 +146,7 @@ export function useCvBuilder() {
 
   const cvExport = useCvExport({
     canExport: () => Boolean(activeDocumentId && activeDocument),
+    locale,
     getCurrentData: getCurrentCvData,
     getDownloadTitle: currentDownloadTitle,
     onImportExportError: setImportExportError,
@@ -157,6 +173,7 @@ export function useCvBuilder() {
   });
 
   const cloudSync = useCvCloudSync({
+    locale,
     activeDocumentId,
     documentsData,
     loadDataIntoForm,
@@ -177,6 +194,8 @@ export function useCvBuilder() {
   });
 
   const cloudDocumentActions = useCvCloudDocumentActions({
+    locale,
+    tCloudActions,
     activeDocumentId,
     closeEncryptionModal: encryptionModal.closeModal,
     createCloudDocument: cloudMutations.createCloudDocument.mutateAsync,
@@ -211,8 +230,10 @@ export function useCvBuilder() {
   });
   useCvLibraryBootstrap({
     form,
+    initialData: cloneCvData(getSampleCvData(locale)),
     initializedRef,
     loadCollapsedPreference,
+    localFallbackTitle: tActions("localTitle"),
     setActiveDocumentId,
     setOrderedDocuments,
   });
@@ -224,13 +245,13 @@ export function useCvBuilder() {
     return userId ? loadEncryptionPassword(userId, id) : null;
   }
 
-  async function requireCloudAccess(action: string) {
+  async function requireCloudAccess(action: CvCloudAccessAction) {
     if (!supabase || !session) {
-      throw new Error(`Sign in before ${action}.`);
+      throw new Error(tCloudActions(action));
     }
 
     if (!(await termsGate.ensure())) {
-      throw new TermsNotAcceptedError();
+      throw new TermsNotAcceptedError(locale);
     }
 
     return supabase;
@@ -287,14 +308,14 @@ export function useCvBuilder() {
   function getCurrentCvData() {
     const parsed = cvSchema.safeParse(form.getValues());
     if (!parsed.success) {
-      throw new Error("The current form data does not match the CV schema.");
+      throw new Error(tImportExport("currentSchemaError"));
     }
 
     return parsed.data;
   }
 
   function currentDownloadTitle(data: CvData) {
-    return activeDocument?.title || titleFromImportedData(data);
+    return activeDocument?.title || titleFromImportedData(data, tImportExport("importFallbackTitle"));
   }
 
   async function importJson(file: File | undefined) {
@@ -305,11 +326,11 @@ export function useCvBuilder() {
     try {
       const parsed = persistedCvSchema.safeParse(JSON.parse(await file.text()));
       if (!parsed.success) {
-        setImportExportError("Imported JSON does not match a supported CV schema.");
+        setImportExportError(tImportExport("importSchemaError"));
         return;
       }
 
-      await documentActions.createDocumentFromData(parsed.data, titleFromImportedData(parsed.data));
+      await documentActions.createDocumentFromData(parsed.data, titleFromImportedData(parsed.data, tImportExport("importFallbackTitle")));
     } catch (importError) {
       setImportExportError(errorMessage(importError));
     }

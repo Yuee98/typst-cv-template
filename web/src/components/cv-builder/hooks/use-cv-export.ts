@@ -9,17 +9,20 @@ import {
 } from "@/lib/cv/export-utils";
 import type { CvData } from "@/lib/cv/schema";
 import { errorMessage } from "@/lib/cv/cv-utils";
+import { defaultLocale, type Locale } from "@/i18n/routing";
 
 export function useCvExport({
   canExport,
   getCurrentData,
   getDownloadTitle,
+  locale = defaultLocale,
   onImportExportError,
   onPreviewError,
 }: {
   canExport: () => boolean;
   getCurrentData: () => CvData;
   getDownloadTitle: (data: CvData) => string;
+  locale?: Locale;
   onImportExportError: (error: string) => void;
   onPreviewError: (error: string | null) => void;
 }) {
@@ -33,7 +36,7 @@ export function useCvExport({
 
     try {
       const data = getCurrentData();
-      await downloadCvPdf(data, getDownloadTitle(data));
+      await downloadCvPdf(data, getDownloadTitle(data), locale);
     } catch (pdfError) {
       onPreviewError(errorMessage(pdfError));
     } finally {
@@ -48,7 +51,7 @@ export function useCvExport({
 
     try {
       const data = getCurrentData();
-      downloadCvJson(data, getDownloadTitle(data));
+      downloadCvJson(data, getDownloadTitle(data), locale);
     } catch (exportError) {
       onImportExportError(errorMessage(exportError));
     } finally {
@@ -63,7 +66,7 @@ export function useCvExport({
 
     try {
       const data = getCurrentData();
-      downloadTypstSource(data, getDownloadTitle(data));
+      downloadTypstSource(data, getDownloadTitle(data), locale);
     } catch (exportError) {
       onImportExportError(errorMessage(exportError));
     } finally {
@@ -78,7 +81,7 @@ export function useCvExport({
 
     try {
       const data = getCurrentData();
-      await downloadTypstPackage(data, getDownloadTitle(data));
+      await downloadTypstPackage(data, getDownloadTitle(data), locale);
     } catch (exportError) {
       onImportExportError(errorMessage(exportError));
     } finally {

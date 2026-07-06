@@ -24,6 +24,7 @@ import {
   Plus,
 } from "lucide-react";
 import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -116,6 +117,7 @@ export function CvLibrarySidebar({
   onEnableEncryption: (id: string) => void;
   onDismissError: () => void;
 }) {
+  const t = useTranslations("CvLibrary");
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -168,7 +170,7 @@ export function CvLibrarySidebar({
         onClick={() => runCreateAction(onCreateEmpty)}
       >
         <FilePlus2 className="size-4" />
-        Empty CV
+        {t("emptyCv")}
       </button>
       <button
         type="button"
@@ -176,7 +178,7 @@ export function CvLibrarySidebar({
         onClick={() => runCreateAction(onCreateSample)}
       >
         <FilePlus2 className="size-4" />
-        Sample CV
+        {t("sampleCv")}
       </button>
       <button
         type="button"
@@ -184,7 +186,7 @@ export function CvLibrarySidebar({
         onClick={() => runCreateAction(() => importInputRef.current?.click())}
       >
         <FileJson className="size-4" />
-        Import JSON
+        {t("importJson")}
       </button>
     </div>
   );
@@ -204,13 +206,13 @@ export function CvLibrarySidebar({
           )}
         >
           {collapsed ? (
-            <Button type="button" variant="ghost" size="icon" onClick={onToggleCollapsed} title="Expand CV library">
+            <Button type="button" variant="ghost" size="icon" onClick={onToggleCollapsed} title={t("expand")}>
               <ChevronRight />
             </Button>
           ) : (
             <>
               <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-slate-950">CVs</h2>
+                <h2 className="truncate text-sm font-semibold text-slate-950">{t("title")}</h2>
               </div>
               <div className="relative flex items-center gap-1">
                 <Button
@@ -218,7 +220,7 @@ export function CvLibrarySidebar({
                   variant="ghost"
                   size="icon"
                   onClick={() => setCreateMenuOpen((open) => !open)}
-                  title="New CV"
+                  title={t("newCv")}
                 >
                   <Plus />
                 </Button>
@@ -227,7 +229,7 @@ export function CvLibrarySidebar({
                   variant="ghost"
                   size="icon"
                   onClick={onToggleCollapsed}
-                  title="Collapse CV library"
+                  title={t("collapse")}
                 >
                   <ChevronLeft />
                 </Button>
@@ -244,7 +246,7 @@ export function CvLibrarySidebar({
               variant="secondary"
               size="icon"
               onClick={() => setCreateMenuOpen((open) => !open)}
-              title="New CV"
+              title={t("newCv")}
             >
               <Plus />
             </Button>
@@ -261,7 +263,7 @@ export function CvLibrarySidebar({
               onClick={onDismissError}
               className="shrink-0 text-rose-600 hover:text-rose-800"
             >
-              <span className="sr-only">Dismiss</span>
+              <span className="sr-only">{t("dismiss")}</span>
               <span aria-hidden="true">&times;</span>
             </button>
           </div>

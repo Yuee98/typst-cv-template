@@ -3,7 +3,6 @@ import type { UseFormReturn } from "react-hook-form";
 
 import { cloneCvData, summarizeLocalDocument } from "@/lib/cv/cv-utils";
 import type { CvData } from "@/lib/cv/schema";
-import { sampleCvData } from "@/lib/cv/sample-data";
 import {
   createLocalCvDocument,
   initializeCvDocumentLibrary,
@@ -18,14 +17,18 @@ type SetOrderedDocuments = (
 
 export function useCvLibraryBootstrap({
   form,
+  initialData,
   initializedRef,
   loadCollapsedPreference,
+  localFallbackTitle,
   setActiveDocumentId,
   setOrderedDocuments,
 }: {
   form: UseFormReturn<CvData>;
+  initialData: CvData;
   initializedRef: MutableRefObject<boolean>;
   loadCollapsedPreference: () => void;
+  localFallbackTitle: string;
   setActiveDocumentId: (id: string | null) => void;
   setOrderedDocuments: SetOrderedDocuments;
 }) {
@@ -37,7 +40,7 @@ export function useCvLibraryBootstrap({
         return;
       }
 
-      const library = initializeCvDocumentLibrary(cloneCvData(sampleCvData));
+      const library = initializeCvDocumentLibrary(cloneCvData(initialData), localFallbackTitle);
       const activeSummary = library.documents.find((document) => document.id === library.activeDocumentId);
       const isCloudActive = activeSummary?.storageKind === "cloud" || activeSummary?.storageKind === "encrypted";
       const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
@@ -59,7 +62,7 @@ export function useCvLibraryBootstrap({
         return;
       }
 
-      const documentToLoad = initialDocument ?? createLocalCvDocument(cloneCvData(sampleCvData), "Untitled CV");
+      const documentToLoad = initialDocument ?? createLocalCvDocument(cloneCvData(initialData), localFallbackTitle);
       const nextDocuments = initialDocument
         ? library.documents
         : [summarizeLocalDocument(documentToLoad), ...library.documents];

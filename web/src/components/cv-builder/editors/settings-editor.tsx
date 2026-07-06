@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useFormContext } from "react-hook-form";
 
 import { useLocalFonts, loadLocalFontData } from "@/lib/typst/font-access";
@@ -10,6 +11,7 @@ import type { CvData } from "@/lib/cv/schema";
 const CUSTOM_FONT_SENTINEL = "__custom__";
 
 export function FontSettingsEditor() {
+  const t = useTranslations("Editors.Settings");
   const { setValue, watch } = useFormContext<CvData>();
   const bodyFont = watch("bodyFont");
   const { supported: fontApiSupported, fonts: localFonts } = useLocalFonts();
@@ -47,7 +49,7 @@ export function FontSettingsEditor() {
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Font</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{t("font")}</div>
         <div className="space-y-2">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -68,7 +70,7 @@ export function FontSettingsEditor() {
                 onChange={() => handleModeChange(true)}
                 className="accent-slate-900"
               />
-              Custom font
+              {t("customFont")}
             </label>
           )}
         </div>
@@ -79,7 +81,7 @@ export function FontSettingsEditor() {
           {fontApiSupported && localFonts.length > 0 ? (
             <>
               <p className="text-xs text-slate-400">
-                Select fonts from your device. Pick one for Latin + one for CJK, or type below.
+                {t("customHint")}
               </p>
               <div className="max-h-48 space-y-1 overflow-auto rounded-md border border-slate-200 p-2">
                 {localFonts.map((f) => (
@@ -106,7 +108,7 @@ export function FontSettingsEditor() {
                         type="button"
                         onClick={() => handleFontToggle(family, false)}
                         className="text-slate-400 hover:text-slate-700"
-                        aria-label={`Remove ${family}`}
+                        aria-label={t("removeFont", { family })}
                       >
                         <X className="h-3 w-3" />
                       </button>
@@ -117,7 +119,7 @@ export function FontSettingsEditor() {
             </>
           ) : (
             <p className="text-xs text-slate-400">
-              Font Access API not available. Use Chrome for local font selection.
+              {t("apiNotAvailable")}
             </p>
           )}
         </div>

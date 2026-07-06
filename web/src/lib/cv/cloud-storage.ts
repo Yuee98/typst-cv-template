@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { defaultLocale, type Locale } from "@/i18n/routing";
 import type { EncryptedPayload } from "./encryption";
 import { persistedCvSchema, type CvData } from "./schema";
 import type { CvDocumentSummary } from "./storage";
@@ -25,6 +26,25 @@ export type EncryptedCloudCvDocument = CvDocumentSummary & {
   encryptedPayload: EncryptedPayload;
 };
 
+const cloudStorageMessages = {
+  en: {
+    encryptedNeedsUnlock: "Encrypted CVs need to be unlocked before editing.",
+    schemaMismatch: "Cloud CV data does not match the current CV schema.",
+    notEncrypted: "This cloud CV is not encrypted.",
+    notFound: "Cloud CV was not found.",
+  },
+  zh: {
+    encryptedNeedsUnlock: "加密简历需要先解锁才能编辑。",
+    schemaMismatch: "云端简历数据不符合当前 CV schema。",
+    notEncrypted: "此云端简历未加密。",
+    notFound: "未找到该云端简历。",
+  },
+};
+
+function getCloudStorageMessage(locale: Locale, key: keyof typeof cloudStorageMessages.en) {
+  return cloudStorageMessages[locale]?.[key] ?? cloudStorageMessages.en[key];
+}
+
 const cloudDocumentColumns =
   "id,title,storage_mode,data,encrypted_payload,schema_version,created_at,updated_at";
 
@@ -42,14 +62,14 @@ function summaryFromCloudRow(row: CvDocumentRow): CvDocumentSummary {
   };
 }
 
-function plainDocumentFromRow(row: CvDocumentRow): CloudCvDocument {
+function plainDocumentFromRow(row: CvDocumentRow, locale: Locale): CloudCvDocument {
   if (row.storage_mode !== "plain") {
-    throw new Error("Encrypted CVs need to be unlocked before editing.");
+    throw new Error(getCloudStorageMessage(locale, "encryptedNeedsUnlock"));
   }
 
   const parsed = persistedCvSchema.safeParse(row.data);
   if (!parsed.success) {
-    throw new Error("Cloud CV data does not match the current CV schema.");
+    throw new Error(getCloudStorageMessage(locale, "schemaMismatch"));
   }
 
   return {
@@ -59,9 +79,9 @@ function plainDocumentFromRow(row: CvDocumentRow): CloudCvDocument {
   };
 }
 
-function encryptedDocumentFromRow(row: CvDocumentRow): EncryptedCloudCvDocument {
+function encryptedDocumentFromRow(row: CvDocumentRow, locale: Locale): EncryptedCloudCvDocument {
   if (row.storage_mode !== "encrypted") {
-    throw new Error("This cloud CV is not encrypted.");
+    throw new Error(getCloudStorageMessage(locale, "notEncrypted"));
   }
 
   return {
@@ -71,9 +91,9 @@ function encryptedDocumentFromRow(row: CvDocumentRow): EncryptedCloudCvDocument 
   };
 }
 
-function requireSingleRow(row: CvDocumentRow | null) {
+function requireSingleRow(row: CvDocumentRow | null, locale: Locale) {
   if (!row) {
-    throw new Error("Cloud CV was not found.");
+    throw new Error(getCloudStorageMessage(locale, "notFound"));
   }
 
   return row;
@@ -95,6 +115,7 @@ export async function listCloudCvDocuments(supabase: SupabaseClient): Promise<Cv
 export async function loadCloudCvDocument(
   supabase: SupabaseClient,
   id: string,
+  locale: Locale = defaultLocale,
 ): Promise<CloudCvDocument> {
   const { data, error } = await supabase
     .from("cv_documents")
@@ -106,12 +127,13 @@ export async function loadCloudCvDocument(
     throw error;
   }
 
-  return plainDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
+  return plainDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
 }
 
 export async function loadEncryptedCloudCvDocument(
   supabase: SupabaseClient,
   id: string,
+  locale: Locale = defaultLocale,
 ): Promise<EncryptedCloudCvDocument> {
   const { data, error } = await supabase
     .from("cv_documents")
@@ -123,12 +145,13 @@ export async function loadEncryptedCloudCvDocument(
     throw error;
   }
 
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
 }
 
 export async function createCloudCvDocument(
   supabase: SupabaseClient,
   { title, data }: { title: string; data: CvData },
+  locale: Locale = defaultLocale,
 ): Promise<CloudCvDocument> {
   const { data: row, error } = await supabase
     .from("cv_documents")
@@ -145,12 +168,13 @@ export async function createCloudCvDocument(
     throw error;
   }
 
-  return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null));
+  return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null, locale), locale);
 }
 
 export async function createEncryptedCloudCvDocument(
   supabase: SupabaseClient,
   { title, encryptedPayload, schemaVersion }: { title: string; encryptedPayload: EncryptedPayload; schemaVersion: number },
+  locale: Locale = defaultLocale,
 ): Promise<EncryptedCloudCvDocument> {
   const { data, error } = await supabase
     .from("cv_documents")
@@ -167,13 +191,14 @@ export async function createEncryptedCloudCvDocument(
     throw error;
   }
 
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
 }
 
 export async function updateCloudCvDocumentData(
   supabase: SupabaseClient,
   id: string,
   data: CvData,
+  locale: Locale = defaultLocale,
 ): Promise<CloudCvDocument> {
   const { data: row, error } = await supabase
     .from("cv_documents")
@@ -190,13 +215,14 @@ export async function updateCloudCvDocumentData(
     throw error;
   }
 
-  return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null));
+  return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null, locale), locale);
 }
 
 export async function updateEncryptedCloudCvDocumentData(
   supabase: SupabaseClient,
   id: string,
   { encryptedPayload, schemaVersion }: { encryptedPayload: EncryptedPayload; schemaVersion: number },
+  locale: Locale = defaultLocale,
 ): Promise<EncryptedCloudCvDocument> {
   const { data, error } = await supabase
     .from("cv_documents")
@@ -213,13 +239,14 @@ export async function updateEncryptedCloudCvDocumentData(
     throw error;
   }
 
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
 }
 
 export async function encryptExistingCloudCvDocument(
   supabase: SupabaseClient,
   id: string,
   { encryptedPayload, schemaVersion }: { encryptedPayload: EncryptedPayload; schemaVersion: number },
+  locale: Locale = defaultLocale,
 ): Promise<EncryptedCloudCvDocument> {
   const { data, error } = await supabase
     .from("cv_documents")
@@ -238,7 +265,7 @@ export async function encryptExistingCloudCvDocument(
     throw error;
   }
 
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null));
+  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
 }
 
 export async function renameCloudCvDocument(
@@ -257,7 +284,7 @@ export async function renameCloudCvDocument(
     throw error;
   }
 
-  return summaryFromCloudRow(requireSingleRow(data as CvDocumentRow | null));
+  return summaryFromCloudRow(requireSingleRow(data as CvDocumentRow | null, defaultLocale));
 }
 
 export async function deleteCloudCvDocument(supabase: SupabaseClient, id: string) {

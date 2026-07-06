@@ -1,11 +1,13 @@
 "use client";
 
 import { CloudUpload, Copy, LockKeyhole, Pencil, Trash2 } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
+import type { Locale } from "@/i18n/routing";
 
-import { CompactStorageMark, StorageBadge, storageLabel } from "./storage-indicator";
+import { CompactStorageMark, StorageBadge } from "./storage-indicator";
 
 export function CvDocumentCard({
   document,
@@ -28,10 +30,14 @@ export function CvDocumentCard({
   onEnableEncryption: () => void;
   onDelete: () => void;
 }) {
+  const t = useTranslations("CvDocumentCard");
+  const tStorage = useTranslations("StorageIndicator");
+  const locale = useLocale() as Locale;
+
   if (collapsed) {
     return (
       <div
-        title={`${document.title} (${storageLabel(document.storageKind)})`}
+        title={`${document.title} (${tStorage(document.storageKind)})`}
         className={cn(
           "pointer-events-none relative flex size-9 items-center justify-center rounded-md border text-slate-600 transition-colors hover:bg-slate-50",
           selected
@@ -39,7 +45,7 @@ export function CvDocumentCard({
             : "border-slate-200 bg-white",
         )}
       >
-        <span className="text-sm font-semibold">{document.title.trim().charAt(0).toUpperCase() || "C"}</span>
+        <span className="text-sm font-semibold">{document.title.trim().charAt(0).toUpperCase() || t("fallbackInitial")}</span>
         <CompactStorageMark storageKind={document.storageKind} />
       </div>
     );
@@ -56,7 +62,7 @@ export function CvDocumentCard({
         <span className="min-w-0">
           <span className="block truncate text-sm font-medium text-slate-950">{document.title}</span>
           <span className="mt-1 block text-xs text-slate-500">
-            {new Intl.DateTimeFormat(undefined, {
+            {new Intl.DateTimeFormat(locale, {
               month: "short",
               day: "numeric",
               hour: "2-digit",
@@ -68,19 +74,19 @@ export function CvDocumentCard({
       </div>
 
       <div className="mt-2 flex items-center gap-1">
-        <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onRename(); }} title="Rename">
+        <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onRename(); }} title={t("rename")}>
           <Pencil />
         </Button>
-        <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title="Duplicate">
+        <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title={t("duplicate")}>
           <Copy />
         </Button>
         {document.storageKind === "local" && cloudActionsEnabled && (
-          <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onMoveToCloud(); }} title="Move to cloud">
+          <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onMoveToCloud(); }} title={t("moveToCloud")}>
             <CloudUpload />
           </Button>
         )}
         {document.storageKind !== "encrypted" && cloudActionsEnabled && (
-          <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onEnableEncryption(); }} title="Enable encryption">
+          <Button type="button" variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); onEnableEncryption(); }} title={t("enableEncryption")}>
             <LockKeyhole />
           </Button>
         )}
@@ -89,7 +95,7 @@ export function CvDocumentCard({
           variant="ghost"
           size="icon"
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          title="Delete"
+          title={t("delete")}
           className="ml-auto text-rose-700 hover:bg-rose-50"
         >
           <Trash2 />

@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 
@@ -10,13 +12,15 @@ export function ImportExportErrorModal({
   error: string;
   onClose: () => void;
 }) {
+  const t = useTranslations("ImportExportErrorModal");
+
   return (
     <Modal
-      title="Import/Export Error"
+      title={t("title")}
       onClose={onClose}
       footer={
         <Button type="button" onClick={onClose}>
-          OK
+          {t("ok")}
         </Button>
       }
     >
@@ -25,7 +29,7 @@ export function ImportExportErrorModal({
           {error}
         </div>
         <p className="text-sm text-slate-600">
-          Please check the file format and try again. If the problem persists, ensure the file is a valid CV JSON export.
+          {t("description")}
         </p>
       </div>
     </Modal>

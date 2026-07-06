@@ -1,14 +1,17 @@
-import Link from "next/link";
+import { useTranslations } from "next-intl";
 
+import { Link } from "@/i18n/navigation";
 import type { LegalDocument } from "@/content/legal";
 
 export function LegalDocumentPage({ document }: { document: LegalDocument }) {
+  const t = useTranslations("LegalDocumentPage");
+
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900 sm:px-6 lg:px-8">
       <article className="mx-auto max-w-3xl rounded-lg border border-slate-200 bg-white px-5 py-6 shadow-sm sm:px-8 sm:py-8">
         <nav className="mb-8 flex flex-wrap items-center gap-3 text-sm text-slate-500">
           <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/">
-            cv maker
+            {t("brand")}
           </Link>
           <span>/</span>
           <span>{document.title}</span>
@@ -19,7 +22,7 @@ export function LegalDocumentPage({ document }: { document: LegalDocument }) {
             {document.title}
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            Effective Date: {document.effectiveDate}
+            {t("effectiveDate", { date: document.effectiveDate })}
           </p>
           <div className="mt-5 space-y-3 text-base leading-7 text-slate-700">
             {document.intro.map((paragraph) => (

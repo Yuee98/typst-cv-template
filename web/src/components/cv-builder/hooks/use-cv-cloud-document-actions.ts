@@ -1,11 +1,13 @@
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
+import { useTranslations } from "next-intl";
 
 import type { EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
 import { loadEncryptedCloudCvDocument, type CloudCvDocument, type EncryptedCloudCvDocument } from "@/lib/cv/cloud-storage";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
 import type { EncryptedPayload } from "@/lib/cv/encryption";
+import { defaultLocale, type Locale } from "@/i18n/routing";
 import { storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
 import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
 import type { CvData } from "@/lib/cv/schema";
@@ -24,6 +26,8 @@ type SetOrderedDocuments = (
 ) => void;
 
 export function useCvCloudDocumentActions({
+  locale = defaultLocale,
+  tCloudActions,
   activeDocumentId,
   closeEncryptionModal,
   createCloudDocument,
@@ -43,6 +47,8 @@ export function useCvCloudDocumentActions({
   termsGate,
   upsertDocumentSummary,
 }: {
+  locale?: Locale;
+  tCloudActions: ReturnType<typeof useTranslations<"CvCloudActions">>;
   activeDocumentId: string | null;
   closeEncryptionModal: () => void;
   createCloudDocument: (input: {
@@ -64,7 +70,7 @@ export function useCvCloudDocumentActions({
     id: string;
     schemaVersion: number;
   }) => Promise<EncryptedCloudCvDocument>;
-  fetchCloudDocument: (client: SupabaseClient, id: string) => Promise<CloudCvDocument>;
+  fetchCloudDocument: (client: SupabaseClient, id: string, locale: Locale) => Promise<CloudCvDocument>;
   loadDataIntoForm: (id: string, data: CvData) => void;
   onError: (message: string) => void;
   openEnableEncryptionModal: (documentId: string) => void;
@@ -81,7 +87,7 @@ export function useCvCloudDocumentActions({
     if (!current) return;
 
     if (!supabase || !session) {
-      onError("Sign in before moving a CV to cloud storage.");
+      onError(tCloudActions("signInBeforeMove"));
       return;
     }
 
@@ -100,7 +106,7 @@ export function useCvCloudDocumentActions({
 
       const localDocument = loadCvDocument(id);
       if (!localDocument) {
-        throw new Error("The selected local CV could not be loaded.");
+        throw new Error(tCloudActions("localLoadFailed"));
       }
 
       const cloudDocument = await createCloudDocument({
@@ -125,7 +131,7 @@ export function useCvCloudDocumentActions({
     if (!current) return;
 
     if (!supabase || !session) {
-      onError("Sign in before enabling encrypted cloud storage.");
+      onError(tCloudActions("signInBeforeEncrypt"));
       return;
     }
 
@@ -134,7 +140,7 @@ export function useCvCloudDocumentActions({
     }
 
     if (!password) {
-      onError("Enter an encryption password before enabling encryption.");
+      onError(tCloudActions("passwordRequired"));
       return;
     }
 
@@ -150,13 +156,13 @@ export function useCvCloudDocumentActions({
       const sourceData =
         current.storageKind === "local"
           ? loadCvDocument(id)?.data
-          : (await fetchCloudDocument(supabase, id)).data;
+          : (await fetchCloudDocument(supabase, id, locale)).data;
 
       if (!sourceData) {
-        throw new Error("The selected CV could not be loaded before encryption.");
+        throw new Error(tCloudActions("loadBeforeEncryptFailed"));
       }
 
-      const encryptedPayload = await encryptCvData(sourceData, password);
+      const encryptedPayload = await encryptCvData(sourceData, password, locale);
 
       if (current.storageKind === "local") {
         const encryptedDocument = await createEncryptedCloudDocument({
@@ -193,15 +199,15 @@ export function useCvCloudDocumentActions({
 
   async function unlockEncryptedDocument(id: string, password: string) {
     if (!supabase || !session) {
-      throw new Error("Sign in before opening this encrypted CV.");
+      throw new Error(tCloudActions("signInBeforeOpenEncrypted"));
     }
 
     if (!(await termsGate.ensure())) {
       return;
     }
 
-    const document = await loadEncryptedCloudCvDocument(supabase, id);
-    const decryptedData = await decryptCvData(document.encryptedPayload, password);
+    const document = await loadEncryptedCloudCvDocument(supabase, id, locale);
+    const decryptedData = await decryptCvData(document.encryptedPayload, password, locale);
     upsertDocumentSummary(document);
     loadDataIntoForm(document.id, decryptedData);
   }
@@ -213,7 +219,7 @@ export function useCvCloudDocumentActions({
     }
 
     if (!supabase || !session) {
-      onError("Sign in before enabling encrypted cloud storage.");
+      onError(tCloudActions("signInBeforeEncrypt"));
       return;
     }
 

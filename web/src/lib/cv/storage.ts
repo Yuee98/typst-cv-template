@@ -210,7 +210,7 @@ export function storeCvDocumentOrder(documents: CvDocumentSummary[]) {
   window.localStorage.setItem(DOCUMENT_ORDER_KEY, JSON.stringify(documents.map(documentOrderKey)));
 }
 
-export function initializeCvDocumentLibrary(defaultData: CvData): CvDocumentLibrary {
+export function initializeCvDocumentLibrary(defaultData: CvData, localFallbackTitle = "Local CV"): CvDocumentLibrary {
   if (!canUseBrowserStorage()) {
     return { documents: [], activeDocumentId: null };
   }
@@ -219,7 +219,7 @@ export function initializeCvDocumentLibrary(defaultData: CvData): CvDocumentLibr
 
   if (!index) {
     const initialData = readLegacyCvData() ?? defaultData;
-    const initialDocument = createLocalDocumentRecord(initialData, titleFromData(initialData, "Local CV"));
+    const initialDocument = createLocalDocumentRecord(initialData, titleFromData(initialData, localFallbackTitle));
     writeLocalDocument(initialDocument);
     const documents = [summaryFromDocument(initialDocument)];
     writeDocumentIndex(documents);

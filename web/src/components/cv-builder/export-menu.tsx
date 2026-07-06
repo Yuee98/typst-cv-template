@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
 import { MenuContainer, MenuItem } from "@/components/ui/menu-item";
@@ -32,6 +33,7 @@ export function ExportMenu({
   onExportTypstSource: () => void;
   onExportJson: () => void;
 }) {
+  const t = useTranslations("ExportMenu");
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const busy = exportingFormat != null;
@@ -54,11 +56,11 @@ export function ExportMenu({
         size="sm"
         disabled={disabled || busy}
         onClick={() => setOpen((nextOpen) => !nextOpen)}
-        title={busy ? "Exporting" : "Export"}
-        aria-label={busy ? "Exporting" : "Export"}
+        title={busy ? t("exporting") : t("export")}
+        aria-label={busy ? t("exporting") : t("export")}
       >
         {busy ? <Loader2 className="animate-spin" /> : <Download />}
-        <span>Export</span>
+        <span>{t("export")}</span>
         <ChevronDown className="!size-3.5" />
       </Button>
       {open && (
@@ -68,28 +70,28 @@ export function ExportMenu({
             disabled={busy}
             onClick={() => run(onDownloadPdf)}
           >
-            PDF
+            {t("pdf")}
           </MenuItem>
           <MenuItem
             icon={itemIcon("typst-package", <FileArchive className="size-4" />)}
             disabled={busy}
             onClick={() => run(onExportTypstPackage)}
           >
-            Typst package
+            {t("typstPackage")}
           </MenuItem>
           <MenuItem
             icon={itemIcon("typst-source", <FileCode2 className="size-4" />)}
             disabled={busy}
             onClick={() => run(onExportTypstSource)}
           >
-            Typst source
+            {t("typstSource")}
           </MenuItem>
           <MenuItem
             icon={itemIcon("json", <FileJson className="size-4" />)}
             disabled={busy}
             onClick={() => run(onExportJson)}
           >
-            Data JSON
+            {t("dataJson")}
           </MenuItem>
         </MenuContainer>
       )}

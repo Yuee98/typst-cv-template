@@ -2,18 +2,13 @@
 
 import { ShieldCheck, AlertTriangle } from "lucide-react";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 
 export type EncryptionModalMode = "enable" | "unlock" | "duplicate";
-
-const modeTitles: Record<EncryptionModalMode, string> = {
-  enable: "Enable encryption",
-  unlock: "Unlock encrypted CV",
-  duplicate: "Duplicate encrypted CV",
-};
 
 export function EncryptionModal({
   mode,
@@ -34,7 +29,13 @@ export function EncryptionModal({
   onSubmit: () => void;
   onClose: () => void;
 }) {
+  const t = useTranslations("EncryptionModal");
   const [confirming, setConfirming] = useState(false);
+  const modeTitles: Record<EncryptionModalMode, string> = {
+    enable: t("title.enable"),
+    unlock: t("title.unlock"),
+    duplicate: t("title.duplicate"),
+  };
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -57,11 +58,11 @@ export function EncryptionModal({
               variant="secondary"
               onClick={confirming ? () => setConfirming(false) : onClose}
             >
-              {confirming ? "Back" : "Cancel"}
+              {confirming ? t("back") : t("cancel")}
             </Button>
             <Button type="submit" disabled={!!error}>
               <ShieldCheck />
-              {confirming ? "Confirm" : "Continue"}
+              {confirming ? t("confirm") : t("continue")}
             </Button>
           </>
         }
@@ -71,10 +72,10 @@ export function EncryptionModal({
             <div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-3">
               <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
               <div className="space-y-2 text-sm leading-5 text-amber-900">
-                <p className="font-medium">Before you continue:</p>
+                <p className="font-medium">{t("warning.title")}</p>
                 <ul className="list-disc space-y-1 pl-4">
-                  <li>The server does not store your password. If you forget it, the CV cannot be recovered.</li>
-                  <li>After enabling encryption, changes are not saved automatically. You must click Save after editing, or your changes will be lost.</li>
+                  <li>{t("warning.item1")}</li>
+                  <li>{t("warning.item2")}</li>
                 </ul>
               </div>
             </div>
@@ -85,7 +86,7 @@ export function EncryptionModal({
               type="password"
               value={password}
               onChange={(event) => onPasswordChange(event.target.value)}
-              placeholder="encryption password"
+              placeholder={t("placeholder.password")}
             />
             {error && (
               <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -99,7 +100,7 @@ export function EncryptionModal({
                 onChange={(event) => onTrustDeviceChange(event.target.checked)}
                 className="size-3.5 accent-slate-900"
               />
-              Remember this device
+              {t("rememberThisDevice")}
             </label>
           </div>
         )}

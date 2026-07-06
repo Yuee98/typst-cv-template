@@ -1,6 +1,7 @@
 "use client";
 
 import { Circle, FilePlus2, Loader2, RotateCcw, Save } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { FormProvider } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
@@ -17,6 +18,7 @@ import { PreviewPane } from "@/components/cv-builder/preview-pane";
 import { useCvBuilder } from "@/components/cv-builder/hooks/use-cv-builder";
 
 export function CvBuilder() {
+  const t = useTranslations("CvBuilder");
   const h = useCvBuilder();
 
   return (
@@ -60,12 +62,12 @@ export function CvBuilder() {
                   h.activeDocument?.storageKind !== "local" && (
                     <div className="flex items-center gap-1">
                       {h.isDirty && (
-                        <Button type="button" variant="ghost" size="icon" onClick={() => void h.discardChanges()} title="Discard changes">
+                        <Button type="button" variant="ghost" size="icon" onClick={() => void h.discardChanges()} title={t("discardChanges")}>
                           <RotateCcw />
                         </Button>
                       )}
                       <div className="relative">
-                        <Button type="button" variant="secondary" size="icon" disabled={h.saving} onClick={() => void h.saveCurrentDocument()} title="Save">
+                        <Button type="button" variant="secondary" size="icon" disabled={h.saving} onClick={() => void h.saveCurrentDocument()} title={t("save")}>
                           {h.saving ? <Loader2 className="animate-spin" /> : <Save />}
                         </Button>
                         {h.isDirty && (
@@ -80,7 +82,7 @@ export function CvBuilder() {
               <div className="flex h-full min-h-[720px] items-center justify-center rounded-lg border border-slate-200 bg-white">
                 <div className="flex flex-col items-center gap-3 text-slate-400">
                   <FilePlus2 className="size-10" />
-                  <p className="text-sm">Select or create a CV to start editing</p>
+                  <p className="text-sm">{t("emptyState")}</p>
                 </div>
               </div>
             )

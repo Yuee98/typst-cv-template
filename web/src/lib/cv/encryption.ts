@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { defaultLocale, type Locale } from "@/i18n/routing";
 import { persistedCvSchema, type CvData } from "./schema";
 
 const encryptedPayloadSchema = z.object({
@@ -14,13 +15,34 @@ const encryptedPayloadSchema = z.object({
 
 export type EncryptedPayload = z.infer<typeof encryptedPayloadSchema>;
 
+const encryptionMessages = {
+  en: {
+    webCryptoUnsupported: "This browser does not support Web Crypto encryption.",
+    passwordRequired: "Encryption password is required.",
+    payloadUnsupported: "Encrypted CV payload is not supported.",
+    decryptedSchemaMismatch: "Decrypted CV data does not match the current CV schema.",
+    decryptFailed: "Could not decrypt this CV with the provided password.",
+  },
+  zh: {
+    webCryptoUnsupported: "此浏览器不支持 Web Crypto 加密。",
+    passwordRequired: "需要提供加密密码。",
+    payloadUnsupported: "不支持的加密简历载荷。",
+    decryptedSchemaMismatch: "解密的简历数据不符合当前 CV schema。",
+    decryptFailed: "无法使用提供的密码解密此简历。",
+  },
+};
+
+function getEncryptionMessage(locale: Locale, key: keyof typeof encryptionMessages.en) {
+  return encryptionMessages[locale]?.[key] ?? encryptionMessages.en[key];
+}
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const encryptionIterations = 600000;
 
-function requireSubtleCrypto() {
+function requireSubtleCrypto(locale: Locale) {
   if (typeof crypto === "undefined" || !crypto.subtle) {
-    throw new Error("This browser does not support Web Crypto encryption.");
+    throw new Error(getEncryptionMessage(locale, "webCryptoUnsupported"));
   }
 
   return crypto.subtle;
@@ -50,8 +72,8 @@ function toArrayBuffer(bytes: Uint8Array) {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-async function deriveAesKey(passphrase: string, salt: Uint8Array, usages: KeyUsage[]) {
-  const subtle = requireSubtleCrypto();
+async function deriveAesKey(passphrase: string, salt: Uint8Array, usages: KeyUsage[], locale: Locale) {
+  const subtle = requireSubtleCrypto(locale);
   const keyMaterial = await subtle.importKey("raw", encoder.encode(passphrase), "PBKDF2", false, [
     "deriveKey",
   ]);
@@ -70,17 +92,21 @@ async function deriveAesKey(passphrase: string, salt: Uint8Array, usages: KeyUsa
   );
 }
 
-export async function encryptCvData(data: CvData, passphrase: string): Promise<EncryptedPayload> {
+export async function encryptCvData(
+  data: CvData,
+  passphrase: string,
+  locale: Locale = defaultLocale,
+): Promise<EncryptedPayload> {
   if (!passphrase) {
-    throw new Error("Encryption password is required.");
+    throw new Error(getEncryptionMessage(locale, "passwordRequired"));
   }
 
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveAesKey(passphrase, salt, ["encrypt"]);
+  const key = await deriveAesKey(passphrase, salt, ["encrypt"], locale);
   const plaintext = encoder.encode(JSON.stringify(data));
   const ciphertext = new Uint8Array(
-    await requireSubtleCrypto().encrypt(
+    await requireSubtleCrypto(locale).encrypt(
       { name: "AES-GCM", iv: toArrayBuffer(iv) },
       key,
       toArrayBuffer(plaintext),
@@ -98,23 +124,27 @@ export async function encryptCvData(data: CvData, passphrase: string): Promise<E
   };
 }
 
-export async function decryptCvData(payload: unknown, passphrase: string): Promise<CvData> {
+export async function decryptCvData(
+  payload: unknown,
+  passphrase: string,
+  locale: Locale = defaultLocale,
+): Promise<CvData> {
   if (!passphrase) {
-    throw new Error("Encryption password is required.");
+    throw new Error(getEncryptionMessage(locale, "passwordRequired"));
   }
 
   const parsedPayload = encryptedPayloadSchema.safeParse(payload);
   if (!parsedPayload.success) {
-    throw new Error("Encrypted CV payload is not supported.");
+    throw new Error(getEncryptionMessage(locale, "payloadUnsupported"));
   }
 
   const salt = base64ToBytes(parsedPayload.data.salt);
   const iv = base64ToBytes(parsedPayload.data.iv);
   const ciphertext = base64ToBytes(parsedPayload.data.ciphertext);
-  const key = await deriveAesKey(passphrase, salt, ["decrypt"]);
+  const key = await deriveAesKey(passphrase, salt, ["decrypt"], locale);
 
   try {
-    const plaintext = await requireSubtleCrypto().decrypt(
+    const plaintext = await requireSubtleCrypto(locale).decrypt(
       { name: "AES-GCM", iv: toArrayBuffer(iv) },
       key,
       toArrayBuffer(ciphertext),
@@ -122,7 +152,7 @@ export async function decryptCvData(payload: unknown, passphrase: string): Promi
     const parsedData = persistedCvSchema.safeParse(JSON.parse(decoder.decode(plaintext)));
 
     if (!parsedData.success) {
-      throw new Error("Decrypted CV data does not match the current CV schema.");
+      throw new Error(getEncryptionMessage(locale, "decryptedSchemaMismatch"));
     }
 
     return parsedData.data;
@@ -131,6 +161,6 @@ export async function decryptCvData(payload: unknown, passphrase: string): Promi
       throw decryptError;
     }
 
-    throw new Error("Could not decrypt this CV with the provided password.");
+    throw new Error(getEncryptionMessage(locale, "decryptFailed"));
   }
 }

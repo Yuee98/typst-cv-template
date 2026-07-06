@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 
 import { loadCloudCvDocument, type CloudCvDocument } from "@/lib/cv/cloud-storage";
+import { defaultLocale, type Locale } from "@/i18n/routing";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 
 export function cvCloudDocumentQueryKey(userId: string | undefined, id: string) {
@@ -16,14 +17,14 @@ export function useCvCloudDocumentQuery({
   const queryClient = useQueryClient();
   const userId = session?.user.id;
 
-  async function fetchCloudDocument(client: SupabaseClient, id: string) {
+  async function fetchCloudDocument(client: SupabaseClient, id: string, locale: Locale) {
     if (!userId) {
       throw new Error("Sign in before opening this cloud CV.");
     }
 
     return queryClient.fetchQuery({
       queryKey: cvCloudDocumentQueryKey(userId, id),
-      queryFn: () => loadCloudCvDocument(client, id),
+      queryFn: () => loadCloudCvDocument(client, id, locale),
       staleTime: 0,
     });
   }
@@ -70,11 +71,13 @@ function resolveActiveCloudDocumentId(
 export function useCvCloudActiveDocumentQuery({
   activeDocumentId,
   documentsData,
+  locale = defaultLocale,
   session,
   supabase,
 }: {
   activeDocumentId: string | null;
   documentsData: CvDocumentSummary[];
+  locale?: Locale;
   session: Session | null;
   supabase: SupabaseClient | null;
 }) {
@@ -84,6 +87,6 @@ export function useCvCloudActiveDocumentQuery({
   return useQuery<CloudCvDocument>({
     enabled: Boolean(supabase && userId && cloudDocumentId),
     queryKey: cvCloudDocumentQueryKey(userId, cloudDocumentId ?? "__none__"),
-    queryFn: () => loadCloudCvDocument(supabase!, cloudDocumentId!),
+    queryFn: () => loadCloudCvDocument(supabase!, cloudDocumentId!, locale),
   });
 }

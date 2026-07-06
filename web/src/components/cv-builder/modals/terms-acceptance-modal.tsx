@@ -1,8 +1,12 @@
 "use client";
 
+import { useLocale, useTranslations } from "next-intl";
+
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
-import { TERMS_VERSION, termsAcceptanceSummary } from "@/content/legal";
+import { TERMS_VERSION, getLegalContent } from "@/content/legal";
+import { Link } from "@/i18n/navigation";
+import type { Locale } from "@/i18n/routing";
 
 export function TermsAcceptanceModal({
   checked,
@@ -19,18 +23,22 @@ export function TermsAcceptanceModal({
   onAccept: () => void;
   onClose: () => void;
 }) {
+  const t = useTranslations("TermsAcceptanceModal");
+  const locale = useLocale() as Locale;
+  const legal = getLegalContent(locale);
+
   return (
     <Modal
-      title="Terms and Privacy Notice"
-      description="Accept the current terms before using cloud storage."
+      title={t("title")}
+      description={t("description")}
       onClose={onClose}
       footer={
         <>
           <Button type="button" variant="secondary" onClick={onClose} disabled={accepting}>
-            Cancel
+            {t("cancel")}
           </Button>
           <Button type="button" onClick={onAccept} disabled={!checked || accepting}>
-            {accepting ? "Saving" : "Accept"}
+            {accepting ? t("saving") : t("accept")}
           </Button>
         </>
       }
@@ -43,10 +51,10 @@ export function TermsAcceptanceModal({
         )}
         <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
           <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Version {TERMS_VERSION}
+            {t("version", { version: TERMS_VERSION })}
           </div>
           <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-5 text-slate-700">
-            {termsAcceptanceSummary.map((item) => (
+            {legal.termsAcceptanceSummary.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
@@ -59,14 +67,14 @@ export function TermsAcceptanceModal({
             onChange={(event) => onCheckedChange(event.target.checked)}
           />
           <span>
-            I agree to the{" "}
-            <a className="font-medium text-emerald-700 hover:text-emerald-600" href="/terms" target="_blank" rel="noreferrer">
-              Terms of Use
-            </a>{" "}
-            and acknowledge the{" "}
-            <a className="font-medium text-emerald-700 hover:text-emerald-600" href="/privacy" target="_blank" rel="noreferrer">
-              Privacy Policy
-            </a>
+            {t("terms.agreeTo")}{" "}
+            <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/terms" target="_blank" rel="noreferrer">
+              {t("terms.termsOfUse")}
+            </Link>{" "}
+            {t("terms.andAcknowledge")}{" "}
+            <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/privacy" target="_blank" rel="noreferrer">
+              {t("terms.privacyPolicy")}
+            </Link>
             .
           </span>
         </label>

@@ -1,6 +1,7 @@
 "use client";
 
 import { Cloud, HardDrive, LockKeyhole } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { cn } from "@/lib/utils";
 import type { CvStorageKind } from "@/lib/cv/storage";
@@ -24,6 +25,8 @@ export function storageLabel(storageKind: CvStorageKind) {
 }
 
 export function StorageBadge({ storageKind }: { storageKind: CvStorageKind }) {
+  const t = useTranslations("StorageIndicator");
+
   return (
     <span
       className={cn(
@@ -34,7 +37,7 @@ export function StorageBadge({ storageKind }: { storageKind: CvStorageKind }) {
       )}
     >
       <StorageIcon storageKind={storageKind} />
-      {storageLabel(storageKind)}
+      {t(storageKind)}
     </span>
   );
 }

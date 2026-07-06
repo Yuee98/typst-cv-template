@@ -1,3 +1,4 @@
+import { defaultLocale, type Locale } from "@/i18n/routing";
 import type { CvData } from "@/lib/cv/schema";
 import { buildTypstDocument } from "@/lib/cv/typst";
 import { loadLocalFontData } from "@/lib/typst/font-access";
@@ -7,6 +8,43 @@ import { createZip } from "@/lib/zip";
 export type CvExportFormat = "pdf" | "typst-package" | "typst-source" | "json";
 
 const CUSTOM_FONT_SENTINEL = "__custom__";
+
+const exportMessages = {
+  en: {
+    fallbackFileName: "resume",
+    fallbackJsonName: "cv-data",
+    typstPackageSuffix: (title: string) => `${title} typst package`,
+    readme: {
+      title: "Typst CV package",
+      files: "Files:",
+      resumeTyp: "generated Typst source",
+      styleTyp: "template style used by the web preview",
+      dataJson: "structured CV data backup",
+      compile: "Compile locally:",
+      command: "typst compile resume.typ resume.pdf",
+      fonts: "If this CV uses custom local fonts, install fonts with matching family names before compiling locally.",
+    },
+  },
+  zh: {
+    fallbackFileName: "简历",
+    fallbackJsonName: "cv-data",
+    typstPackageSuffix: (title: string) => `${title} typst 包`,
+    readme: {
+      title: "Typst CV 包",
+      files: "文件：",
+      resumeTyp: "生成的 Typst 源文件",
+      styleTyp: "网页预览使用的模板样式",
+      dataJson: "结构化 CV 数据备份",
+      compile: "本地编译：",
+      command: "typst compile resume.typ resume.pdf",
+      fonts: "如果此 CV 使用了自定义本地字体，请在本地编译前安装相同字族名称的字体。",
+    },
+  },
+};
+
+function getExportMessages(locale: Locale) {
+  return exportMessages[locale] ?? exportMessages.en;
+}
 
 function selectedFontFamilies(data: CvData) {
   if (!data.bodyFont || data.bodyFont === CUSTOM_FONT_SENTINEL) return [];
@@ -32,29 +70,30 @@ function toArrayBuffer(data: Uint8Array) {
   return buffer;
 }
 
-function safeDownloadName(title: string, extension: string) {
+function safeDownloadName(title: string, extension: string, locale: Locale = defaultLocale) {
   const baseName = title
     .trim()
     .replace(/[\\/:*?"<>|]+/g, "-")
     .replace(/\s+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  return `${baseName || "resume"}.${extension}`;
+  return `${baseName || getExportMessages(locale).fallbackFileName}.${extension}`;
 }
 
-function buildTypstPackageReadme() {
+function buildTypstPackageReadme(locale: Locale = defaultLocale) {
+  const m = getExportMessages(locale).readme;
   return [
-    "Typst CV package",
+    m.title,
     "",
-    "Files:",
-    "- resume.typ: generated Typst source",
-    "- style.typ: template style used by the web preview",
-    "- data.json: structured CV data backup",
+    m.files,
+    `- resume.typ: ${m.resumeTyp}`,
+    `- style.typ: ${m.styleTyp}`,
+    `- data.json: ${m.dataJson}`,
     "",
-    "Compile locally:",
-    "typst compile resume.typ resume.pdf",
+    m.compile,
+    m.command,
     "",
-    "If this CV uses custom local fonts, install fonts with matching family names before compiling locally.",
+    m.fonts,
     "",
   ].join("\n");
 }
@@ -69,35 +108,39 @@ export async function ensureLocalFontsForData(data: CvData) {
   }
 }
 
-export function downloadCvJson(data: CvData, title: string) {
+export function downloadCvJson(data: CvData, title: string, locale: Locale = defaultLocale) {
   const payload = JSON.stringify(data, null, 2);
-  downloadBlob(new Blob([payload], { type: "application/json" }), safeDownloadName(title || "cv-data", "json"));
+  downloadBlob(
+    new Blob([payload], { type: "application/json" }),
+    safeDownloadName(title || getExportMessages(locale).fallbackJsonName, "json", locale),
+  );
 }
 
-export async function downloadCvPdf(data: CvData, title: string) {
+export async function downloadCvPdf(data: CvData, title: string, locale: Locale = defaultLocale) {
   await ensureLocalFontsForData(data);
   const document = buildTypstDocument(data);
-  const pdf = await renderTypstPdf(document);
-  downloadBlob(new Blob([toArrayBuffer(pdf)], { type: "application/pdf" }), safeDownloadName(title, "pdf"));
+  const pdf = await renderTypstPdf(document, undefined, locale);
+  downloadBlob(new Blob([toArrayBuffer(pdf)], { type: "application/pdf" }), safeDownloadName(title, "pdf", locale));
 }
 
-export function downloadTypstSource(data: CvData, title: string) {
+export function downloadTypstSource(data: CvData, title: string, locale: Locale = defaultLocale) {
   const source = buildTypstDocument(data, { styleImportPath: "style.typ" });
-  downloadBlob(new Blob([source], { type: "text/plain;charset=utf-8" }), safeDownloadName(title, "typ"));
+  downloadBlob(new Blob([source], { type: "text/plain;charset=utf-8" }), safeDownloadName(title, "typ", locale));
 }
 
-export async function downloadTypstPackage(data: CvData, title: string) {
-  const styleSource = await fetchStyleSource();
+export async function downloadTypstPackage(data: CvData, title: string, locale: Locale = defaultLocale) {
+  const styleSource = await fetchStyleSource(locale);
   const source = buildTypstDocument(data, { styleImportPath: "style.typ" });
+  const m = getExportMessages(locale);
   const zip = createZip({
     "resume.typ": source,
     "style.typ": styleSource,
     "data.json": JSON.stringify(data, null, 2),
-    "README.txt": buildTypstPackageReadme(),
+    "README.txt": buildTypstPackageReadme(locale),
   });
 
   downloadBlob(
     new Blob([toArrayBuffer(zip)], { type: "application/zip" }),
-    safeDownloadName(`${title} typst package`, "zip"),
+    safeDownloadName(m.typstPackageSuffix(title), "zip", locale),
   );
 }

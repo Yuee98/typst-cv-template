@@ -3,7 +3,9 @@
 import { Cloud, LogIn, LogOut, UserPlus, UserRound, UserRoundCheck } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
+import { LocaleSwitcher } from "@/components/layout/locale-switcher";
 import { Toolbar, ToolbarGroup, ToolbarTitle } from "@/components/layout/toolbar";
 import { Button } from "@/components/ui/button";
 import { GithubIcon } from "@/components/ui/github-icon";
@@ -30,22 +32,24 @@ export function CvToolbar({
   onSyncCloud: () => void;
   onSignOut: () => void;
 }) {
+  const t = useTranslations("CvToolbar");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   useClickOutside(accountMenuRef, () => setAccountMenuOpen(false), accountMenuOpen);
   const cloudLabel =
     termsStatus === "required"
-      ? "Terms required"
+      ? t("termsRequired")
       : cloudStatus === "loading"
-        ? "Syncing"
+        ? t("syncing")
         : cloudStatus === "error"
-          ? "Cloud issue"
-          : "Cloud ready";
+          ? t("cloudIssue")
+          : t("cloudReady");
 
   return (
     <Toolbar>
       <ToolbarTitle />
       <ToolbarGroup>
+        <LocaleSwitcher />
         <Button variant="secondary" size="icon" asChild title="GitHub">
           <a
             href="https://github.com/Yuee98/typst-cv-template"
@@ -61,8 +65,8 @@ export function CvToolbar({
             variant="secondary"
             size="icon"
             onClick={() => setAccountMenuOpen((open) => !open)}
-            title={session ? "Signed in account" : "Account"}
-            aria-label={session ? "Signed in account" : "Account"}
+            title={session ? t("signedInAccount") : t("account")}
+            aria-label={session ? t("signedInAccount") : t("account")}
           >
             {session ? <UserRoundCheck /> : <UserRound />}
           </Button>
@@ -84,7 +88,7 @@ export function CvToolbar({
                       onSyncCloud();
                     }}
                   >
-                    Sync cloud
+                    {t("syncCloud")}
                   </MenuItem>
                   <MenuItem
                     icon={<LogOut className="size-4" />}
@@ -93,14 +97,14 @@ export function CvToolbar({
                       onSignOut();
                     }}
                   >
-                    Log out
+                    {t("logOut")}
                   </MenuItem>
                 </>
               ) : (
                 <>
                   <MenuDivider>
                     <span className="text-xs text-slate-500">
-                      {supabaseConfigured ? "Cloud signed out" : "Cloud not configured"}
+                      {supabaseConfigured ? t("cloudSignedOut") : t("cloudNotConfigured")}
                     </span>
                   </MenuDivider>
                   <MenuItem
@@ -111,7 +115,7 @@ export function CvToolbar({
                       onOpenAuthModal("signIn");
                     }}
                   >
-                    Log in
+                    {t("logIn")}
                   </MenuItem>
                   <MenuItem
                     icon={<UserPlus className="size-4" />}
@@ -121,7 +125,7 @@ export function CvToolbar({
                       onOpenAuthModal("signUp");
                     }}
                   >
-                    Sign up
+                    {t("signUp")}
                   </MenuItem>
                 </>
               )}

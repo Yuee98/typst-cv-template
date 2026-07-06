@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import type { EncryptionModalMode } from "@/components/cv-builder/modals/encryption-modal";
 
@@ -34,7 +35,9 @@ export interface UseEncryptionModalReturn {
 
 // ── hook ─────────────────────────────────────────────────────────────────
 
-export function useEncryptionModal(): UseEncryptionModalReturn {
+export function useEncryptionModal(
+  tEncryption: ReturnType<typeof useTranslations<"EncryptionModal">>,
+): UseEncryptionModalReturn {
   const [modalState, setModalState] = useState<EncryptionModalState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -63,7 +66,7 @@ export function useEncryptionModal(): UseEncryptionModalReturn {
     if (!modalState) return;
 
     if (!password) {
-      setError("Enter the encryption password first.");
+      setError(tEncryption("error.passwordRequired"));
       return;
     }
 

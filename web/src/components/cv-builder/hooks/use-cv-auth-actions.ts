@@ -1,7 +1,9 @@
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import type { UseFormReturn } from "react-hook-form";
+import { useLocale, useTranslations } from "next-intl";
 
 import type { AuthModalMode } from "@/components/cv-builder/modals/auth-modal";
+import type { Locale } from "@/i18n/routing";
 import {
   cloneCvData,
   errorMessage,
@@ -10,7 +12,7 @@ import {
 } from "@/lib/cv/cv-utils";
 import { clearEncryptionPasswords } from "@/lib/cv/encryption-storage";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
-import { sampleCvData } from "@/lib/cv/sample-data";
+import { getSampleCvData } from "@/lib/cv/sample-data";
 import {
   createLocalCvDocument,
   type CvDocumentSummary,
@@ -59,14 +61,18 @@ export function useCvAuthActions({
   supabase: SupabaseClient | null;
   termsGate: AuthActionsTermsGate;
 }) {
+  const locale = useLocale() as Locale;
+  const t = useTranslations("CvAuthActions");
+  const tImportExport = useTranslations("ImportExport");
+
   async function signIn() {
     if (!supabase) {
-      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      authModal.setError(t("supabaseNotConfigured"));
       return;
     }
 
     if (!authModal.email || !authModal.password) {
-      authModal.setError("Enter email and password before signing in.");
+      authModal.setError(t("signInMissingFields"));
       return;
     }
 
@@ -84,17 +90,17 @@ export function useCvAuthActions({
 
   async function signUp() {
     if (!supabase) {
-      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      authModal.setError(t("supabaseNotConfigured"));
       return;
     }
 
     if (!authModal.email || !authModal.password) {
-      authModal.setError("Enter email and password before creating an account.");
+      authModal.setError(t("signUpMissingFields"));
       return;
     }
 
     if (!authModal.termsAccepted) {
-      authModal.setError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
+      authModal.setError(t("termsRequired"));
       return;
     }
 
@@ -104,7 +110,7 @@ export function useCvAuthActions({
       email: authModal.email,
       password: authModal.password,
       options: {
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: window.location.href,
       },
     });
 
@@ -116,7 +122,7 @@ export function useCvAuthActions({
 
     if (!data.session) {
       authModal.setError(null);
-      authModal.setSuccessMessage("Account created. Check your email before signing in.");
+      authModal.setSuccessMessage(t("accountCreated"));
     } else {
       try {
         await termsGate.recordAccepted(supabase);
@@ -131,13 +137,13 @@ export function useCvAuthActions({
 
   async function signInWithGithub() {
     if (!supabase) {
-      authModal.setError("Supabase is not configured. Add web/.env.local to enable cloud storage.");
+      authModal.setError(t("supabaseNotConfigured"));
       return;
     }
 
     if (authModal.mode === "signUp") {
       if (!authModal.termsAccepted) {
-        authModal.setError("Agree to the Terms of Use and acknowledge the Privacy Policy before continuing.");
+        authModal.setError(t("termsRequired"));
         return;
       }
 
@@ -147,7 +153,7 @@ export function useCvAuthActions({
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "github",
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: window.location.href,
       },
     });
 
@@ -180,8 +186,8 @@ export function useCvAuthActions({
     const activeIsCloudBacked = activeDocument?.storageKind === "cloud" || activeDocument?.storageKind === "encrypted";
     if (activeIsCloudBacked || localDocuments.length === 0) {
       const parsed = cvSchema.safeParse(form.getValues());
-      const fallbackData = parsed.success ? parsed.data : cloneCvData(sampleCvData);
-      const fallbackTitle = activeDocument?.title ?? titleFromImportedData(fallbackData);
+      const fallbackData = parsed.success ? parsed.data : cloneCvData(getSampleCvData(locale));
+      const fallbackTitle = activeDocument?.title ?? titleFromImportedData(fallbackData, tImportExport("importFallbackTitle"));
       const localDocument = createLocalCvDocument(fallbackData, fallbackTitle);
       setOrderedDocuments([summarizeLocalDocument(localDocument), ...localDocuments]);
       loadDataIntoForm(localDocument.id, localDocument.data);

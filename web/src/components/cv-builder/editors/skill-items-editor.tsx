@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useFormContext } from "react-hook-form";
 
 import {
@@ -25,6 +26,7 @@ export function SkillItemsEditor({
   addLabel: string;
 }) {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors.Skills");
   const { fields, append, remove, move } = useCvFieldArray(name);
 
   return (
@@ -34,21 +36,21 @@ export function SkillItemsEditor({
         getId={(field) => field.id}
         onMove={move}
         className="rounded-md border border-slate-200 px-3"
-        handleLabel="Reorder skill"
+        handleLabel={t("reorder")}
         renderItem={({ item: field, index, dragHandle }) => (
           <AccordionItem value={field.id}>
             <div className="flex items-center gap-1">
               {dragHandle}
               <AccordionTrigger>
-                <WatchedTitle name={`${name}.${index}.label`} fallback={`Skill ${index + 1}`} />
+                <WatchedTitle name={`${name}.${index}.label`} fallback={t("fallback", { index: index + 1 })} />
               </AccordionTrigger>
             </div>
             <AccordionContent>
               <div className="space-y-3">
-                <Field label="Label">
+                <Field label={t("label")}>
                   <Input {...register(fieldPath(`${name}.${index}.label`))} />
                 </Field>
-                <Field label="Body">
+                <Field label={t("body")}>
                   <Textarea {...register(fieldPath(`${name}.${index}.body`))} />
                 </Field>
                 <Button
@@ -58,7 +60,7 @@ export function SkillItemsEditor({
                   onClick={() => remove(index)}
                 >
                   <Trash2 />
-                  Remove skill
+                  {t("remove")}
                 </Button>
               </div>
             </AccordionContent>

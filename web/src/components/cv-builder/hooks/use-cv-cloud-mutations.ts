@@ -15,6 +15,7 @@ import {
 import type { EncryptedPayload } from "@/lib/cv/encryption";
 import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
+import { defaultLocale, type Locale } from "@/i18n/routing";
 import { cvCloudDocumentListQueryKey } from "@/components/cv-builder/hooks/use-cv-cloud-document-list-query";
 import { cvCloudDocumentQueryKey } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
 
@@ -28,7 +29,13 @@ function upsertSummary(documents: CvDocumentSummary[], summary: CvDocumentSummar
     : [summary, ...documents];
 }
 
-export function useCvCloudMutations({ userId }: { userId: string | undefined }) {
+export function useCvCloudMutations({
+  userId,
+  locale = defaultLocale,
+}: {
+  userId: string | undefined;
+  locale?: Locale;
+}) {
   const queryClient = useQueryClient();
 
   function setCloudDocuments(updater: (current: CvDocumentSummary[]) => CvDocumentSummary[]) {
@@ -64,7 +71,7 @@ export function useCvCloudMutations({ userId }: { userId: string | undefined }) 
 
   const createCloudDocument = useMutation({
     mutationFn: ({ client, data, title }: CloudMutationContext & { data: CvData; title: string }) =>
-      createCloudCvDocument(client, { data, title }),
+      createCloudCvDocument(client, { data, title }, locale),
     onSuccess: (document) => {
       upsertCloudSummary(document);
       setPlainCloudDocument(document);
@@ -81,7 +88,7 @@ export function useCvCloudMutations({ userId }: { userId: string | undefined }) 
       encryptedPayload: EncryptedPayload;
       schemaVersion: number;
       title: string;
-    }) => createEncryptedCloudCvDocument(client, { encryptedPayload, schemaVersion, title }),
+    }) => createEncryptedCloudCvDocument(client, { encryptedPayload, schemaVersion, title }, locale),
     onSuccess: (document) => {
       upsertCloudSummary(document);
     },
@@ -97,7 +104,7 @@ export function useCvCloudMutations({ userId }: { userId: string | undefined }) 
       encryptedPayload: EncryptedPayload;
       id: string;
       schemaVersion: number;
-    }) => encryptExistingCloudCvDocument(client, id, { encryptedPayload, schemaVersion }),
+    }) => encryptExistingCloudCvDocument(client, id, { encryptedPayload, schemaVersion }, locale),
     onSuccess: (document: EncryptedCloudCvDocument) => {
       upsertCloudSummary(document);
       removePlainCloudDocument(document.id);
@@ -106,7 +113,7 @@ export function useCvCloudMutations({ userId }: { userId: string | undefined }) 
 
   const updateCloudDocumentData = useMutation({
     mutationFn: ({ client, data, id }: CloudMutationContext & { data: CvData; id: string }) =>
-      updateCloudCvDocumentData(client, id, data),
+      updateCloudCvDocumentData(client, id, data, locale),
     onSuccess: (document) => {
       upsertCloudSummary(document);
       setPlainCloudDocument(document);
@@ -123,7 +130,7 @@ export function useCvCloudMutations({ userId }: { userId: string | undefined }) 
       encryptedPayload: EncryptedPayload;
       id: string;
       schemaVersion: number;
-    }) => updateEncryptedCloudCvDocumentData(client, id, { encryptedPayload, schemaVersion }),
+    }) => updateEncryptedCloudCvDocumentData(client, id, { encryptedPayload, schemaVersion }, locale),
     onSuccess: (document) => {
       upsertCloudSummary(document);
     },

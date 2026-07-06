@@ -1,6 +1,7 @@
 import { CV_SCHEMA_VERSION, DEFAULT_SECTION_ORDER, type CvData } from "./schema";
+import type { Locale } from "@/i18n/routing";
 
-export const sampleCvData: CvData = {
+export const sampleCvDataZh: CvData = {
   schemaVersion: CV_SCHEMA_VERSION,
   typstLang: "zh",
   sectionOrder: [...DEFAULT_SECTION_ORDER],
@@ -180,3 +181,190 @@ export const sampleCvData: CvData = {
     },
   ],
 };
+
+export const sampleCvDataEn: CvData = {
+  schemaVersion: CV_SCHEMA_VERSION,
+  typstLang: "en",
+  sectionOrder: [...DEFAULT_SECTION_ORDER],
+  header: {
+    name: "Lin Zhou",
+    subtitle: "Senior Full-Stack Engineer | Platform Engineering | AI Products",
+    email: "lin.zhou@example.com",
+    phone: "+1 415-555-0128",
+    selfName: "Lin Zhou",
+  },
+  sectionTitles: {
+    profile: { title: "Profile", isDisplay: true, pageBreakBefore: false },
+    skills: { title: "Skills", isDisplay: true, pageBreakBefore: false },
+    experience: { title: "Experience", isDisplay: true, pageBreakBefore: false },
+    education: { title: "Education", isDisplay: true, pageBreakBefore: false },
+    research: { title: "Research", isDisplay: true, pageBreakBefore: false },
+    publications: { title: "Publications", isDisplay: true, pageBreakBefore: false },
+    additional: { title: "Additional", isDisplay: true, pageBreakBefore: false },
+  },
+  profile: [
+    {
+      body: "Full-stack engineer with experience building B2B SaaS, AI workflow products, and internal platforms from product discovery through production delivery.",
+    },
+    {
+      body: "Focused on developer experience, type-safe APIs, observability, and maintainable frontend systems for distributed engineering teams.",
+    },
+  ],
+  skills: [
+    {
+      label: "Frontend",
+      body: "TypeScript, React, Next.js, React Hook Form, Zod, design systems, complex forms, accessibility",
+    },
+    {
+      label: "Backend",
+      body: "Node.js, C#/.NET, REST APIs, PostgreSQL, SQL Server, authorization models, background jobs",
+    },
+    {
+      label: "Platform",
+      body: "CI/CD, Docker, Vercel, Azure, OpenTelemetry, feature flags, release and rollback processes",
+    },
+    {
+      label: "AI Products",
+      body: "LLM workflows, prompt evaluation, human-in-the-loop review, RAG prototypes, internal automation",
+    },
+    {
+      label: "Collaboration",
+      body: "Technical writing, code review, cross-time-zone communication, mentoring, architecture notes",
+    },
+  ],
+  experience: [
+    {
+      org: "Northstar Labs",
+      date: "2023 - Present",
+      projects: [
+        {
+          title: "Senior Software Engineer",
+          detail: "AI Workflow Platform",
+          date: "2024 - Present",
+          bullets: [
+            {
+              body: "Led end-to-end implementation of LLM task orchestration, human approval steps, and audit logs for configurable operational workflows.",
+            },
+            {
+              body: "Introduced Zod schemas and typed API contracts across form-heavy product areas, reducing regressions and improving review speed.",
+            },
+          ],
+        },
+        {
+          title: "Full-Stack Engineer",
+          detail: "Developer Portal / Design System",
+          date: "2023 - 2024",
+          bullets: [
+            {
+              body: "Built an internal developer portal that unified service catalogs, runbooks, on-call dashboards, and release checklists.",
+            },
+            {
+              body: "Created reusable React components and a shadcn/ui wrapper layer for consistent forms, tables, empty states, and error feedback.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      org: "HarborCloud Data Platform",
+      date: "2020 - 2023",
+      projects: [
+        {
+          title: "Software Engineer",
+          detail: "Order & Fulfillment Platform",
+          date: "",
+          bullets: [
+            {
+              body: "Maintained order fulfillment, inventory synchronization, and customer notification modules during a legacy service migration.",
+            },
+            {
+              body: "Optimized high-frequency SQL queries and batch import jobs, reducing average background processing time by 35%.",
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  education: [
+    {
+      org: "Riverstone University",
+      title: "M.S. in Computer Science",
+      detail: "Distributed Systems",
+      date: "2018 - 2020",
+      bullets: [
+        {
+          body: "Thesis: Scheduling interactive workloads across heterogeneous edge nodes.",
+        },
+      ],
+    },
+    {
+      org: "Jiangcheng University",
+      title: "B.Eng. in Software Engineering",
+      detail: "Data structures, operating systems, database systems, and software engineering practice",
+      date: "2014 - 2018",
+      bullets: [
+        {
+          body: "Participated in ACM team training and delivered multiple course projects using Java, C++, and web technologies.",
+        },
+      ],
+    },
+  ],
+  research: [
+    {
+      title: "Human-in-the-loop Code Review Study",
+      date: "2024",
+      bullets: [
+        {
+          body: "Designed an experiment comparing LLM review, human review, and hybrid workflows on defect discovery and false positive rates.",
+        },
+        {
+          body: "Analyzed review logs and developer feedback to produce prompt guidelines, review checklists, and quantitative reports.",
+        },
+      ],
+    },
+    {
+      title: "Edge Cache Scheduling",
+      date: "2019 - 2020",
+      bullets: [
+        {
+          body: "Built a scheduling simulator from workload traces to study the trade-off between cache locality and tail latency.",
+        },
+        {
+          body: "Implemented baseline strategies and compared p95/p99 latency, cache hit rate, and resource utilization.",
+        },
+      ],
+    },
+  ],
+  publications: [
+    {
+      authors: "Lin Zhou, Emily Park, Wei Chen",
+      title: "Type-Safe Workflow Orchestration for Internal AI Tools",
+      venue: "ACM Symposium on Cloud Computing Workshop",
+      year: "2024",
+      url: "https://example.com/publications/workflow-orchestration",
+    },
+    {
+      authors: "Wei Chen, Lin Zhou, Sara Ahmed",
+      title: "Adaptive Edge Cache Scheduling with Mixed Workloads",
+      venue: "IEEE ICWS",
+      year: "2021",
+      url: "",
+    },
+  ],
+  additional: [
+    {
+      label: "Open Source",
+      body: "Maintain TypeScript utilities and internal CLI templates, with occasional fixes contributed to React ecosystem projects.",
+    },
+    {
+      label: "Languages",
+      body: "English for technical writing, design review, and cross-time-zone collaboration; Mandarin Chinese native proficiency.",
+    },
+  ],
+};
+
+export const sampleCvData = sampleCvDataZh;
+
+export function getSampleCvData(locale: Locale) {
+  return locale === "en" ? sampleCvDataEn : sampleCvDataZh;
+}

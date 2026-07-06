@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useFormContext } from "react-hook-form";
 
 import {
@@ -25,6 +26,7 @@ export function ResumeEntriesEditor({
   addLabel: string;
 }) {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors.Education");
   const { fields, append, remove, move } = useCvFieldArray(name);
 
   return (
@@ -34,35 +36,35 @@ export function ResumeEntriesEditor({
         getId={(field) => field.id}
         onMove={move}
         className="rounded-md border border-slate-200 px-3"
-        handleLabel="Reorder entry"
+        handleLabel={t("reorder")}
         renderItem={({ item: field, index, dragHandle }) => (
           <AccordionItem value={field.id}>
             <div className="flex items-center gap-1">
               {dragHandle}
               <AccordionTrigger>
-                <WatchedTitle name={`${name}.${index}.org`} fallback={`Entry ${index + 1}`} />
+                <WatchedTitle name={`${name}.${index}.org`} fallback={t("fallback", { index: index + 1 })} />
               </AccordionTrigger>
             </div>
             <AccordionContent>
               <div className="space-y-3">
                 <FieldGrid>
-                  <Field label="Organization">
+                  <Field label={t("organization")}>
                     <Input {...register(fieldPath(`${name}.${index}.org`))} />
                   </Field>
-                  <Field label="Date">
+                  <Field label={t("date")}>
                     <Input {...register(fieldPath(`${name}.${index}.date`))} />
                   </Field>
-                  <Field label="Title">
+                  <Field label={t("title")}>
                     <Input {...register(fieldPath(`${name}.${index}.title`))} />
                   </Field>
-                  <Field label="Detail">
+                  <Field label={t("detail")}>
                     <Input {...register(fieldPath(`${name}.${index}.detail`))} />
                   </Field>
                 </FieldGrid>
                 <BulletEditor name={`${name}.${index}.bullets`} />
                 <Button type="button" variant="destructive" size="sm" onClick={() => remove(index)}>
                   <Trash2 />
-                  Remove education
+                  {t("remove")}
                 </Button>
               </div>
             </AccordionContent>

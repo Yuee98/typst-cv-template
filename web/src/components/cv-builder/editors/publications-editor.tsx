@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useFormContext } from "react-hook-form";
 
 import {
@@ -18,6 +19,7 @@ import { fieldPath, publicationItem, useCvFieldArray, WatchedTitle } from "./sha
 
 export function PublicationsEditor({ name }: { name: string }) {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors.Publications");
   const { fields, append, remove, move } = useCvFieldArray(name);
 
   return (
@@ -27,7 +29,7 @@ export function PublicationsEditor({ name }: { name: string }) {
         getId={(field) => field.id}
         onMove={move}
         className="rounded-md border border-slate-200 px-3"
-        handleLabel="Reorder publication"
+        handleLabel={t("reorder")}
         renderItem={({ item: field, index, dragHandle }) => (
           <AccordionItem value={field.id}>
             <div className="flex items-center gap-1">
@@ -35,35 +37,35 @@ export function PublicationsEditor({ name }: { name: string }) {
               <AccordionTrigger>
                 <WatchedTitle
                   name={`${name}.${index}.title`}
-                  fallback={`Publication ${index + 1}`}
+                  fallback={t("fallback", { index: index + 1 })}
                 />
               </AccordionTrigger>
             </div>
             <AccordionContent>
               <div className="space-y-3">
-                <Field label="Authors">
+                <Field label={t("authors")}>
                   <Input
-                    placeholder="Ming Chen, John Doe, Jane Smith"
+                    placeholder={t("authorsPlaceholder")}
                     {...register(fieldPath(`${name}.${index}.authors`))}
                   />
                 </Field>
-                <Field label="Title">
+                <Field label={t("title")}>
                   <Input {...register(fieldPath(`${name}.${index}.title`))} />
                 </Field>
                 <FieldGrid>
-                  <Field label="Venue">
+                  <Field label={t("venue")}>
                     <Input
-                      placeholder="IEEE ICWS"
+                      placeholder={t("venuePlaceholder")}
                       {...register(fieldPath(`${name}.${index}.venue`))}
                     />
                   </Field>
-                  <Field label="Year">
+                  <Field label={t("year")}>
                     <Input {...register(fieldPath(`${name}.${index}.year`))} />
                   </Field>
                 </FieldGrid>
-                <Field label="URL">
+                <Field label={t("url")}>
                   <Input
-                    placeholder="https://doi.org/..."
+                    placeholder={t("urlPlaceholder")}
                     {...register(fieldPath(`${name}.${index}.url`))}
                   />
                 </Field>
@@ -74,7 +76,7 @@ export function PublicationsEditor({ name }: { name: string }) {
                   onClick={() => remove(index)}
                 >
                   <Trash2 />
-                  Remove publication
+                  {t("remove")}
                 </Button>
               </div>
             </AccordionContent>
@@ -83,7 +85,7 @@ export function PublicationsEditor({ name }: { name: string }) {
       />
       <Button type="button" variant="secondary" onClick={() => append(publicationItem() as never)}>
         <Plus />
-        Add publication
+        {t("add")}
       </Button>
     </div>
   );

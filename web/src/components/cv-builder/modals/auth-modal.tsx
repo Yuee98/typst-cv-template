@@ -1,9 +1,12 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { Button } from "@/components/ui/button";
 import { GithubIcon } from "@/components/ui/github-icon";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { Link } from "@/i18n/navigation";
 
 export type AuthModalMode = "signIn" | "signUp";
 
@@ -36,17 +39,19 @@ export function AuthModal({
   onGithubSignIn: () => void;
   onClose: () => void;
 }) {
+  const t = useTranslations("AuthModal");
+
   return (
     <Modal
-      title={mode === "signIn" ? "Log in" : "Sign up"}
+      title={mode === "signIn" ? t("title.signIn") : t("title.signUp")}
       onClose={onClose}
       footer={
         <>
           <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
+            {t("cancel")}
           </Button>
           <Button type="button" onClick={mode === "signIn" ? onSignIn : onSignUp}>
-            {mode === "signIn" ? "Log in" : "Sign up"}
+            {mode === "signIn" ? t("submit.signIn") : t("submit.signUp")}
           </Button>
         </>
       }
@@ -66,13 +71,13 @@ export function AuthModal({
           type="email"
           value={email}
           onChange={(event) => onEmailChange(event.target.value)}
-          placeholder="email"
+          placeholder={t("placeholder.email")}
         />
         <Input
           type="password"
           value={password}
           onChange={(event) => onPasswordChange(event.target.value)}
-          placeholder="password"
+          placeholder={t("placeholder.password")}
         />
         {mode === "signUp" && (
           <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-700">
@@ -83,26 +88,26 @@ export function AuthModal({
               onChange={(event) => onTermsAcceptedChange(event.target.checked)}
             />
             <span>
-              I agree to the{" "}
-              <a className="font-medium text-emerald-700 hover:text-emerald-600" href="/terms" target="_blank" rel="noreferrer">
-                Terms of Use
-              </a>{" "}
-              and acknowledge the{" "}
-              <a className="font-medium text-emerald-700 hover:text-emerald-600" href="/privacy" target="_blank" rel="noreferrer">
-                Privacy Policy
-              </a>
+              {t("terms.agreeTo")}{" "}
+              <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/terms" target="_blank" rel="noreferrer">
+                {t("terms.termsOfUse")}
+              </Link>{" "}
+              {t("terms.andAcknowledge")}{" "}
+              <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/privacy" target="_blank" rel="noreferrer">
+                {t("terms.privacyPolicy")}
+              </Link>
               .
             </span>
           </label>
         )}
         <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
           <div className="h-px flex-1 bg-slate-200" />
-          <span>or</span>
+          <span>{t("divider")}</span>
           <div className="h-px flex-1 bg-slate-200" />
         </div>
         <Button type="button" variant="secondary" className="w-full" onClick={onGithubSignIn}>
           <GithubIcon className="!size-4" />
-          Continue with GitHub
+          {t("continueWithGithub")}
         </Button>
       </div>
     </Modal>

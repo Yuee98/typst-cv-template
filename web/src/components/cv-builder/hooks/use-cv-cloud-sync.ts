@@ -5,6 +5,7 @@ import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-sessio
 import { useCvCloudActiveDocumentQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { loadTrustDevice } from "@/lib/cv/encryption-storage";
+import type { Locale } from "@/i18n/routing";
 import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 
@@ -15,6 +16,7 @@ type CloudSyncTermsGate = {
 };
 
 export function useCvCloudSync({
+  locale,
   activeDocumentId,
   documentsData,
   loadDataIntoForm,
@@ -33,6 +35,7 @@ export function useCvCloudSync({
   termsGate,
   upsertDocumentSummary,
 }: {
+  locale: Locale;
   activeDocumentId: string | null;
   documentsData: CvDocumentSummary[] | undefined;
   loadDataIntoForm: (id: string, data: CvData) => void;
@@ -54,6 +57,7 @@ export function useCvCloudSync({
   const { data: activeCloudDocument, error: activeDocumentError } = useCvCloudActiveDocumentQuery({
     activeDocumentId,
     documentsData: documentsData ?? [],
+    locale,
     session,
     supabase,
   });

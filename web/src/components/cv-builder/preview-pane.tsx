@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { Panel } from "@/components/ui/panel";
 import { cn } from "@/lib/utils";
@@ -11,16 +12,7 @@ import { splitTypstSvg } from "@/lib/typst/typst-svg-utils";
 
 export type PreviewStatus = LoadStage;
 
-const STATUS_LABELS: Record<LoadStage, string> = {
-  idle: "Waiting",
-  "loading-assets": "Loading assets",
-  compiling: "Compiling",
-  ready: "Ready",
-  error: "Error",
-};
-
-function StatusBadge({ status, percent }: { status: PreviewStatus; percent: number | null }) {
-  const label = STATUS_LABELS[status];
+function StatusBadge({ status, label, percent }: { status: PreviewStatus; label: string; percent: number | null }) {
   const isActive = status === "loading-assets" || status === "compiling";
   const Icon = isActive ? Loader2 : status === "error" ? AlertTriangle : CheckCircle2;
 
@@ -63,14 +55,22 @@ export function PreviewPane({
   error: string | null;
   actions?: ReactNode;
 }) {
+  const t = useTranslations("PreviewPane");
+  const statusLabels: Record<LoadStage, string> = {
+    idle: t("status.waiting"),
+    "loading-assets": t("status.loadingAssets"),
+    compiling: t("status.compiling"),
+    ready: t("status.ready"),
+    error: t("status.error"),
+  };
   const pages = useMemo(() => splitTypstSvg(svg ?? ""), [svg]);
 
   return (
     <Panel
-      title="Preview"
+      title={t("title")}
       actions={
         <div className="flex items-center gap-2">
-          <StatusBadge status={status} percent={percent} />
+          <StatusBadge status={status} label={statusLabels[status]} percent={percent} />
           {actions}
         </div>
       }
@@ -93,7 +93,7 @@ export function PreviewPane({
             ))
           ) : (
             <div className="flex aspect-[210/297] w-full items-center justify-center bg-white text-sm text-slate-500 shadow-md ring-1 ring-slate-300">
-              Preview will appear here.
+              {t("emptyHint")}
             </div>
           )}
         </div>

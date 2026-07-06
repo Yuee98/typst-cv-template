@@ -1,11 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 
-import { QueryProvider } from "@/app/query-provider";
-
-import "./globals.css";
+import "../globals.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,22 +14,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "cv maker",
+  title: "Online CV Builder | Typst CV Maker",
   description: "Create, preview, export, and optionally sync CV documents.",
 };
 
-export default function RootLayout({
+export default function RootLandingLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-      <body>
-        <QueryProvider>{children}</QueryProvider>
-        <Analytics />
-        <SpeedInsights />
-      </body>
+    <html lang="zh" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body>{children}</body>
     </html>
   );
 }

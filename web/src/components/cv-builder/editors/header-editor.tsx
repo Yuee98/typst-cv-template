@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useFormContext } from "react-hook-form";
 
 import { Field, FieldGrid } from "@/components/ui/field";
@@ -10,21 +11,22 @@ import { fieldPath } from "./shared";
 
 export function HeaderEditor() {
   const { register } = useFormContext<CvData>();
+  const t = useTranslations("Editors.Header");
   const base = "header";
 
   return (
     <div className="grid gap-4">
       <FieldGrid>
-        <Field label="Name">
+        <Field label={t("name")}>
           <Input {...register(fieldPath(`${base}.name`))} />
         </Field>
-        <Field label="Subtitle">
+        <Field label={t("subtitle")}>
           <Input {...register(fieldPath(`${base}.subtitle`))} />
         </Field>
-        <Field label="Email">
+        <Field label={t("email")}>
           <Input {...register(fieldPath(`${base}.email`))} />
         </Field>
-        <Field label="Phone">
+        <Field label={t("phone")}>
           <Input {...register(fieldPath(`${base}.phone`))} />
         </Field>
       </FieldGrid>

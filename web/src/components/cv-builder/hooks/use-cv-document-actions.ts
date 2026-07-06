@@ -1,7 +1,9 @@
 import type { UseFormReturn } from "react-hook-form";
+import { useLocale, useTranslations } from "next-intl";
 
 import { cloneCvData, createEmptyCvData, errorMessage } from "@/lib/cv/cv-utils";
-import { sampleCvData } from "@/lib/cv/sample-data";
+import { getSampleCvData } from "@/lib/cv/sample-data";
+import type { Locale } from "@/i18n/routing";
 import type { CvData } from "@/lib/cv/schema";
 import {
   createLocalCvDocument,
@@ -45,6 +47,9 @@ export function useCvDocumentActions({
   storageAdapters: CvStorageAdapters;
   upsertDocumentSummary: (summary: CvDocumentSummary) => void;
 }) {
+  const locale = useLocale() as Locale;
+  const t = useTranslations("CvDocumentActions");
+
   async function selectDocument(id: string) {
     if (id === activeDocumentId) {
       return;
@@ -59,7 +64,7 @@ export function useCvDocumentActions({
 
     const documentSummary = documents.find((document) => document.id === id);
     if (!documentSummary) {
-      onError("The selected CV could not be loaded.");
+      onError(t("selectedLoadError"));
       return;
     }
 
@@ -92,11 +97,11 @@ export function useCvDocumentActions({
   }
 
   async function createSampleDocument() {
-    await createDocumentFromData(cloneCvData(sampleCvData), "Sample CV");
+    await createDocumentFromData(cloneCvData(getSampleCvData(locale)), t("sampleTitle"));
   }
 
   async function createEmptyDocument() {
-    await createDocumentFromData(createEmptyCvData(), "Untitled CV");
+    await createDocumentFromData(createEmptyCvData(locale), t("emptyTitle"));
   }
 
   async function renameDocument(id: string) {
@@ -105,7 +110,7 @@ export function useCvDocumentActions({
       return;
     }
 
-    const nextTitle = window.prompt("Rename CV", current.title);
+    const nextTitle = window.prompt(t("renamePrompt"), current.title);
     if (!nextTitle) {
       return;
     }
@@ -128,7 +133,7 @@ export function useCvDocumentActions({
 
     try {
       const source = await storageAdapters[current.storageKind].load(current, { passphraseOverride });
-      const document = createLocalCvDocument(source.data, `${source.summary.title} Copy`);
+      const document = createLocalCvDocument(source.data, t("copyTitle", { title: source.summary.title }));
       replaceLocalDocumentSummary(document);
       loadDataIntoForm(document.id, document.data);
     } catch (duplicateError) {
@@ -146,7 +151,7 @@ export function useCvDocumentActions({
       return;
     }
 
-    if (!window.confirm(`Delete "${current.title}"?`)) {
+    if (!window.confirm(t("deleteConfirm", { title: current.title }))) {
       return;
     }
 
@@ -159,7 +164,7 @@ export function useCvDocumentActions({
       if (id === activeDocumentId) {
         setActiveDocumentId(null);
         saveActiveCvDocumentId(null);
-        form.reset(createEmptyCvData());
+        form.reset(createEmptyCvData(locale));
         resetActiveDocument();
       }
     } catch (deleteError) {

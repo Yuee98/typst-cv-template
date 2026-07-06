@@ -1,0 +1,294 @@
+{
+  "Metadata": {
+    "title": "在线简历生成器 | Typst CV Maker",
+    "description": "创建、预览、导出并可选同步简历文档。"
+  },
+  "ToolbarTitle": {
+    "title": "在线简历生成器",
+    "subtitle": "编辑结构化数据，预览 Typst SVG，并导出 PDF。"
+  },
+  "LocaleSwitcher": {
+    "label": "界面语言",
+    "switchTo": "切换到{language}",
+    "zh": "中文",
+    "en": "EN"
+  },
+  "CvToolbar": {
+    "termsRequired": "需接受条款",
+    "syncing": "同步中",
+    "cloudIssue": "云端异常",
+    "cloudReady": "云端就绪",
+    "signedInAccount": "已登录账户",
+    "account": "账户",
+    "syncCloud": "同步云端",
+    "logOut": "退出登录",
+    "cloudSignedOut": "云端未登录",
+    "cloudNotConfigured": "云端未配置",
+    "logIn": "登录",
+    "signUp": "注册"
+  },
+  "CvBuilder": {
+    "discardChanges": "放弃更改",
+    "save": "保存",
+    "emptyState": "选择或创建一份简历后开始编辑"
+  },
+  "ExportMenu": {
+    "export": "导出",
+    "exporting": "导出中",
+    "pdf": "PDF",
+    "typstPackage": "Typst 包",
+    "typstSource": "Typst 源文件",
+    "dataJson": "数据 JSON"
+  },
+  "CvLibrary": {
+    "title": "简历库",
+    "expand": "展开简历库",
+    "collapse": "收起简历库",
+    "newCv": "新建简历",
+    "emptyCv": "空白简历",
+    "sampleCv": "样例简历",
+    "importJson": "导入 JSON",
+    "dismiss": "关闭"
+  },
+  "CvDocumentCard": {
+    "rename": "重命名",
+    "duplicate": "复制",
+    "moveToCloud": "移到云端",
+    "enableEncryption": "启用加密",
+    "delete": "删除",
+    "fallbackInitial": "简"
+  },
+  "StorageIndicator": {
+    "local": "本地",
+    "cloud": "云端",
+    "encrypted": "已加密"
+  },
+  "CvDocumentActions": {
+    "selectedLoadError": "无法加载选中的简历。",
+    "sampleTitle": "样例简历",
+    "emptyTitle": "未命名简历",
+    "localTitle": "本地简历",
+    "renamePrompt": "重命名简历",
+    "copyTitle": "{title} 副本",
+    "deleteConfirm": "删除「{title}」？"
+  },
+  "CvAuthActions": {
+    "supabaseNotConfigured": "Supabase 未配置。添加 web/.env.local 后可启用云端存储。",
+    "signInMissingFields": "登录前请填写邮箱和密码。",
+    "signUpMissingFields": "创建账户前请填写邮箱和密码。",
+    "termsRequired": "继续前请同意使用条款并确认隐私政策。",
+    "accountCreated": "账户已创建。请先检查邮箱，再登录。"
+  },
+  "ImportExport": {
+    "currentSchemaError": "当前表单数据不符合 CV schema。",
+    "importSchemaError": "导入的 JSON 不符合受支持的 CV schema。",
+    "importFallbackTitle": "导入的简历"
+  },
+  "LegalDocumentPage": {
+    "brand": "在线简历生成器",
+    "effectiveDate": "生效日期：{date}"
+  },
+  "AuthModal": {
+    "title": {
+      "signIn": "登录",
+      "signUp": "注册"
+    },
+    "cancel": "取消",
+    "submit": {
+      "signIn": "登录",
+      "signUp": "注册"
+    },
+    "placeholder": {
+      "email": "邮箱",
+      "password": "密码"
+    },
+    "terms": {
+      "agreeTo": "我同意",
+      "termsOfUse": "使用条款",
+      "andAcknowledge": "并确认",
+      "privacyPolicy": "隐私政策"
+    },
+    "divider": "或",
+    "continueWithGithub": "使用 GitHub 继续"
+  },
+  "EncryptionModal": {
+    "title": {
+      "enable": "启用加密",
+      "unlock": "解锁加密简历",
+      "duplicate": "复制加密简历"
+    },
+    "back": "返回",
+    "cancel": "取消",
+    "confirm": "确认",
+    "continue": "继续",
+    "warning": {
+      "title": "继续前请注意：",
+      "item1": "服务器不保存你的密码。如果忘记密码，简历将无法恢复。",
+      "item2": "启用加密后，编辑内容不会自动保存。编辑后必须点击保存，否则更改将丢失。"
+    },
+    "placeholder": {
+      "password": "加密密码"
+    },
+    "rememberThisDevice": "记住此设备",
+    "error": {
+      "passwordRequired": "请先输入加密密码。"
+    }
+  },
+  "ImportExportErrorModal": {
+    "title": "导入/导出错误",
+    "ok": "确定",
+    "description": "请检查文件格式后重试。如果问题仍然存在，请确保文件是有效的 CV JSON 导出文件。"
+  },
+  "TermsAcceptanceModal": {
+    "title": "条款与隐私通知",
+    "description": "使用云端存储前，请先接受当前条款。",
+    "cancel": "取消",
+    "saving": "保存中",
+    "accept": "接受",
+    "version": "版本 {version}",
+    "terms": {
+      "agreeTo": "我同意",
+      "termsOfUse": "使用条款",
+      "andAcknowledge": "并确认",
+      "privacyPolicy": "隐私政策"
+    }
+  },
+  "TermsGate": {
+    "signInRequired": "接受条款与隐私通知前请先登录。",
+    "checkBoxRequired": "接受前请先勾选复选框。"
+  },
+  "PreviewPane": {
+    "title": "预览",
+    "status": {
+      "waiting": "等待中",
+      "loadingAssets": "加载资源",
+      "compiling": "编译中",
+      "ready": "就绪",
+      "error": "错误"
+    },
+    "emptyHint": "预览将显示在这里。"
+  },
+  "Editors": {
+    "title": "编辑器",
+    "tabs": {
+      "header": "页眉",
+      "profile": "简介",
+      "skills": "技能",
+      "experience": "经历",
+      "education": "教育",
+      "research": "研究",
+      "publications": "发表成果",
+      "additional": "其他",
+      "settings": "设置"
+    },
+    "dragTitle": "拖动以重新排序栏目",
+    "aria": {
+      "dragSection": "{label}。拖动以重新排序栏目。"
+    },
+    "Header": {
+      "name": "姓名",
+      "subtitle": "副标题",
+      "email": "邮箱",
+      "phone": "电话"
+    },
+    "Settings": {
+      "font": "字体",
+      "customFont": "自定义字体",
+      "customHint": "从设备中选择字体。可选一种拉丁字体和一种 CJK 字体。",
+      "apiNotAvailable": "字体访问 API 不可用。请使用 Chrome 进行本地字体选择。",
+      "removeFont": "移除 {family}"
+    },
+    "Shared": {
+      "sectionTitle": "栏目标题",
+      "show": "显示",
+      "startOnNewPage": "另起新页"
+    },
+    "Publications": {
+      "selfNameLabel": "发表成果中的作者名",
+      "selfNamePlaceholder": "例如：Ming Chen、Chen M",
+      "authors": "作者",
+      "title": "标题",
+      "venue": "期刊/会议",
+      "year": "年份",
+      "url": "链接",
+      "authorsPlaceholder": "Ming Chen、John Doe、Jane Smith",
+      "venuePlaceholder": "IEEE ICWS",
+      "urlPlaceholder": "https://doi.org/...",
+      "reorder": "重新排序发表成果",
+      "fallback": "发表成果 {index}",
+      "remove": "移除发表成果",
+      "add": "添加发表成果"
+    },
+    "Experience": {
+      "company": "公司",
+      "companyDate": "公司日期",
+      "projectTitle": "项目标题",
+      "projectDetail": "项目详情",
+      "projectDate": "项目日期",
+      "projects": "项目",
+      "reorderProject": "重新排序项目经历",
+      "reorderCompany": "重新排序工作经历",
+      "projectFallback": "项目经历 {index}",
+      "companyFallback": "工作经历 {index}",
+      "removeProject": "移除项目经历",
+      "addProject": "添加项目经历",
+      "removeCompany": "移除工作经历",
+      "addCompany": "添加工作经历"
+    },
+    "Education": {
+      "organization": "机构",
+      "date": "日期",
+      "title": "标题",
+      "detail": "详情",
+      "reorder": "重新排序条目",
+      "fallback": "条目 {index}",
+      "remove": "移除教育经历",
+      "add": "添加教育经历"
+    },
+    "Research": {
+      "title": "标题",
+      "date": "日期",
+      "reorder": "重新排序条目",
+      "fallback": "条目 {index}",
+      "remove": "移除研究经历",
+      "add": "添加研究经历"
+    },
+    "Skills": {
+      "label": "标签",
+      "body": "内容",
+      "reorder": "重新排序技能",
+      "fallback": "技能 {index}",
+      "remove": "移除技能",
+      "add": "添加技能"
+    },
+    "Additional": {
+      "add": "添加条目"
+    },
+    "TextItems": {
+      "add": "添加简介条目",
+      "reorder": "重新排序条目",
+      "itemLabel": "条目 {index}",
+      "removeAria": "移除条目"
+    },
+    "Bullets": {
+      "add": "添加要点"
+    }
+  },
+  "CvCloudActions": {
+    "signInRequired": "请先登录。",
+    "signInBeforeDeleteCloud": "删除此云端简历前请先登录。",
+    "signInBeforeOpenCloud": "打开此云端简历前请先登录。",
+    "signInBeforeRenameCloud": "重命名此云端简历前请先登录。",
+    "signInBeforeSaveCloud": "保存此云端简历前请先登录。",
+    "signInBeforeMove": "将简历移到云端前请先登录。",
+    "localLoadFailed": "无法加载选中的本地简历。",
+    "signInBeforeEncrypt": "启用加密云端存储前请先登录。",
+    "passwordRequired": "启用加密前请输入加密密码。",
+    "loadBeforeEncryptFailed": "加密前无法加载选中的简历。",
+    "signInBeforeOpenEncrypted": "打开此加密简历前请先登录。",
+    "signInBeforeSaveEncrypted": "保存此加密简历前请先登录。"
+  },
+  "CvPersistence": {
+    "schemaError": "当前表单数据不符合 CV schema。"
+  }
+}

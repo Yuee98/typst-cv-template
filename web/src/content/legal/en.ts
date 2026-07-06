@@ -1,22 +1,12 @@
-export const SERVICE_NAME = "cv maker";
-export const SERVICE_WEBSITE = "https://cvmaker.dyue.org";
-export const SERVICE_OPERATOR = "Yue, operator of cv maker";
-export const SERVICE_CONTACT_EMAIL = "cvmaker@dyue.org";
-export const TERMS_VERSION = "2026-07-03";
+import {
+  SERVICE_CONTACT_EMAIL,
+  SERVICE_NAME,
+  SERVICE_OPERATOR,
+  SERVICE_WEBSITE,
+} from "./constants";
+import type { LegalDocument } from "./types";
+
 export const LEGAL_EFFECTIVE_DATE = "July 3, 2026";
-
-export type LegalSection = {
-  heading: string;
-  body: string[];
-  bullets?: string[];
-};
-
-export type LegalDocument = {
-  title: string;
-  effectiveDate: string;
-  intro: string[];
-  sections: LegalSection[];
-};
 
 export const termsDocument: LegalDocument = {
   title: "Terms of Use",
