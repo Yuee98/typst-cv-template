@@ -19,6 +19,13 @@ export function getSupabaseBrowserClient() {
     return null;
   }
 
-  browserClient ??= createClient(config.url, config.publishableKey);
+  browserClient ??= createClient(config.url, config.publishableKey, {
+    auth: {
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: "implicit",
+      persistSession: true,
+    },
+  });
   return browserClient;
 }

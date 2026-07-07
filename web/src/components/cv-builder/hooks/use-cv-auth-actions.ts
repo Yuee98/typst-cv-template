@@ -38,6 +38,10 @@ type SetOrderedDocuments = (
   documents: CvDocumentSummary[] | ((current: CvDocumentSummary[]) => CvDocumentSummary[]),
 ) => void;
 
+function currentPageRedirectUrl() {
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
 export function useCvAuthActions({
   activeDocument,
   authModal,
@@ -110,7 +114,7 @@ export function useCvAuthActions({
       email: authModal.email,
       password: authModal.password,
       options: {
-        emailRedirectTo: window.location.href,
+        emailRedirectTo: currentPageRedirectUrl(),
       },
     });
 
@@ -153,7 +157,7 @@ export function useCvAuthActions({
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "github",
       options: {
-        redirectTo: window.location.href,
+        redirectTo: currentPageRedirectUrl(),
       },
     });
 

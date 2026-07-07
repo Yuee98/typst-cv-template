@@ -5,6 +5,15 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type CloudStatus = "idle" | "loading" | "ready" | "error";
 
+function readAuthRedirectError() {
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  const searchParams = new URLSearchParams(window.location.search);
+  const description = hashParams.get("error_description") ?? searchParams.get("error_description");
+  const error = hashParams.get("error") ?? searchParams.get("error");
+
+  return description ?? error;
+}
+
 export function useCloudSession({ onError }: { onError: (message: string) => void }) {
   const [supabase] = useState(() => getSupabaseBrowserClient());
   const [session, setSession] = useState<Session | null>(null);
@@ -20,6 +29,12 @@ export function useCloudSession({ onError }: { onError: (message: string) => voi
     let cancelled = false;
 
     async function loadInitialSession() {
+      const redirectError = readAuthRedirectError();
+      if (redirectError) {
+        setCloudStatus("error");
+        onError(redirectError);
+      }
+
       const { data, error } = await client.auth.getSession();
       if (cancelled) {
         return;
