@@ -67,10 +67,16 @@ export function CvDocumentCard({
     );
   }
 
+  const stopPropagation = (handler: () => void) => (event: React.MouseEvent) => {
+    event.stopPropagation();
+    handler();
+  };
+
   return (
     <div
+      onClick={onSelect}
       className={cn(
-        "rounded-md border transition-colors",
+        "cursor-pointer rounded-md border transition-colors",
         selected ? "border-accent-border bg-accent-soft" : "border-border bg-surface hover:bg-surface-hover dark:border-white/[0.06] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]",
       )}
     >
@@ -78,7 +84,6 @@ export function CvDocumentCard({
         type="button"
         ref={activatorRef}
         data-cv-card-select={document.id}
-        onClick={onSelect}
         aria-current={selected ? "true" : undefined}
         {...dragAttributes}
         {...(dragListeners ?? {})}
@@ -101,19 +106,19 @@ export function CvDocumentCard({
       </button>
 
       <div className="flex items-center gap-1 px-2 pb-2">
-        <Button type="button" variant="ghost" size="icon" onClick={onRename} title={t("rename")}>
+        <Button type="button" variant="ghost" size="icon" onClick={stopPropagation(onRename)} title={t("rename")}>
           <Pencil />
         </Button>
-        <Button type="button" variant="ghost" size="icon" onClick={onDuplicate} title={t("duplicate")}>
+        <Button type="button" variant="ghost" size="icon" onClick={stopPropagation(onDuplicate)} title={t("duplicate")}>
           <Copy />
         </Button>
         {document.storageKind === "local" && cloudActionsEnabled && (
-          <Button type="button" variant="ghost" size="icon" onClick={onMoveToCloud} title={t("moveToCloud")}>
+          <Button type="button" variant="ghost" size="icon" onClick={stopPropagation(onMoveToCloud)} title={t("moveToCloud")}>
             <CloudUpload />
           </Button>
         )}
         {document.storageKind !== "encrypted" && cloudActionsEnabled && (
-          <Button type="button" variant="ghost" size="icon" onClick={onEnableEncryption} title={t("enableEncryption")}>
+          <Button type="button" variant="ghost" size="icon" onClick={stopPropagation(onEnableEncryption)} title={t("enableEncryption")}>
             <LockKeyhole />
           </Button>
         )}
@@ -121,7 +126,7 @@ export function CvDocumentCard({
           type="button"
           variant="ghost"
           size="icon"
-          onClick={onDelete}
+          onClick={stopPropagation(onDelete)}
           title={t("delete")}
           className="ml-auto text-danger-foreground hover:bg-danger-soft hover:text-danger-foreground"
         >
