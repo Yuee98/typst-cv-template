@@ -83,7 +83,7 @@ export function CvBuilder() {
                 }
               />
             ) : (
-              <div className="flex h-full min-h-[720px] items-center justify-center rounded-xl border border-border bg-surface">
+              <div className="flex h-full min-h-[720px] items-center justify-center rounded-xl border border-border glass-panel shadow-sm">
                 <div className="flex flex-col items-center gap-3 text-foreground-subtle">
                   <FilePlus2 className="size-10" />
                   <p className="text-sm">{t("emptyState")}</p>

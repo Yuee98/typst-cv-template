@@ -1,5 +1,6 @@
 "use client";
 
+import { LogIn, UserPlus } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,7 @@ export function AuthModal({
             {t("cancel")}
           </Button>
           <Button type="button" onClick={mode === "signIn" ? onSignIn : onSignUp}>
+            {mode === "signIn" ? <LogIn /> : <UserPlus />}
             {mode === "signIn" ? t("submit.signIn") : t("submit.signUp")}
           </Button>
         </>

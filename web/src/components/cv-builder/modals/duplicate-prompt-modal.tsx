@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Copy } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ export function DuplicatePromptModal({
             {t("cancel")}
           </Button>
           <Button type="submit" form="duplicate-form" disabled={!value.trim()}>
+            <Copy />
             {t("duplicateSubmit")}
           </Button>
         </>

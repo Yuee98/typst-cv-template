@@ -1,5 +1,6 @@
 "use client";
 
+import { Check, Loader2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ export function TermsAcceptanceModal({
             {t("cancel")}
           </Button>
           <Button type="button" onClick={onAccept} disabled={!checked || accepting}>
+            {accepting ? <Loader2 className="animate-spin" /> : <Check />}
             {accepting ? t("saving") : t("accept")}
           </Button>
         </>

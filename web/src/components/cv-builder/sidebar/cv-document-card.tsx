@@ -123,7 +123,7 @@ export function CvDocumentCard({
           size="icon"
           onClick={onDelete}
           title={t("delete")}
-          className="ml-auto text-danger-foreground hover:bg-danger-soft"
+          className="ml-auto text-danger-foreground hover:bg-danger-soft hover:text-danger-foreground"
         >
           <Trash2 />
         </Button>

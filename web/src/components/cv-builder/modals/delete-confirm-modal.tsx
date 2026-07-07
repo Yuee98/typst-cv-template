@@ -1,5 +1,6 @@
 "use client";
 
+import { Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, type RefObject } from "react";
 
@@ -56,6 +57,7 @@ export function DeleteConfirmModal({
               onConfirm();
             }}
           >
+            <Trash2 />
             {t("deleteConfirm")}
           </Button>
         </>

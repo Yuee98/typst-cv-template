@@ -2,7 +2,8 @@
   "ThemeToggle": {
     "toggle": "主题",
     "light": "浅色",
-    "dark": "深色"
+    "dark": "深色",
+    "system": "跟随系统"
   },
   "Metadata": {
     "title": "在线简历生成器 | Typst CV Maker",

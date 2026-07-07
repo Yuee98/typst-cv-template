@@ -2,7 +2,8 @@
   "ThemeToggle": {
     "toggle": "Theme",
     "light": "Light",
-    "dark": "Dark"
+    "dark": "Dark",
+    "system": "System"
   },
   "Metadata": {
     "title": "Online CV Builder | Typst CV Maker",

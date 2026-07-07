@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Pencil } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ export function RenamePromptModal({
             {t("cancel")}
           </Button>
           <Button type="submit" form="rename-form" disabled={!value.trim() || value.trim() === currentTitle.trim()}>
+            <Pencil />
             {t("renameSubmit")}
           </Button>
         </>
