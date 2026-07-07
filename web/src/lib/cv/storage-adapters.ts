@@ -125,11 +125,11 @@ export function createCvStorageAdapters({
 }: {
   locale?: Locale;
   cloudStorage?: CvCloudStorageOperations;
-  getEncryptionPassphrase: (id: string) => string | null;
+  getEncryptionPassphrase: (id: string) => Promise<string | null>;
   requireCloudAccess: (action: CvCloudAccessAction) => Promise<SupabaseClient>;
 }): CvStorageAdapters {
-  function requirePassphrase(id: string, override?: string) {
-    const passphrase = override ?? getEncryptionPassphrase(id);
+  async function requirePassphrase(id: string, override?: string) {
+    const passphrase = override ?? (await getEncryptionPassphrase(id));
     if (!passphrase) {
       throw new MissingPassphraseError(id, locale);
     }
@@ -200,7 +200,7 @@ export function createCvStorageAdapters({
       },
       async load(summary, options) {
         const client = await requireCloudAccess("signInBeforeOpenEncrypted");
-        const passphrase = requirePassphrase(summary.id, options?.passphraseOverride);
+        const passphrase = await requirePassphrase(summary.id, options?.passphraseOverride);
         const document = await loadEncryptedCloudCvDocument(client, summary.id, locale);
         return {
           data: await decryptCvData(document.encryptedPayload, passphrase, locale),
@@ -213,7 +213,7 @@ export function createCvStorageAdapters({
       },
       async save(summary, data) {
         const client = await requireCloudAccess("signInBeforeSaveEncrypted");
-        const passphrase = requirePassphrase(summary.id);
+        const passphrase = await requirePassphrase(summary.id);
         const encryptedPayload = await encryptCvData(data, passphrase, locale);
         return cloudStorage.updateEncryptedCloudDocumentData(client, summary.id, {
           encryptedPayload,

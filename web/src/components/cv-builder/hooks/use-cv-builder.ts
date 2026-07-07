@@ -240,9 +240,9 @@ export function useCvBuilder() {
 
   // ── helpers ──────────────────────────────────────────────────────
 
-  function getKnownEncryptionPassphrase(id: string) {
+  async function getKnownEncryptionPassphrase(id: string) {
     const userId = session?.user.id;
-    return userId ? loadEncryptionPassword(userId, id) : null;
+    return userId ? await loadEncryptionPassword(userId, id) : null;
   }
 
   async function requireCloudAccess(action: CvCloudAccessAction) {

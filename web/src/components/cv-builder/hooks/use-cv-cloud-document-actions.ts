@@ -173,7 +173,7 @@ export function useCvCloudDocumentActions({
         });
         removeCvDocument(id);
         if (session.user.id) {
-          storeEncryptionPassword(session.user.id, encryptedDocument.id, password, trustDevice);
+          await storeEncryptionPassword(session.user.id, encryptedDocument.id, password, trustDevice);
         }
         setOrderedDocuments((currentDocuments) => [
           encryptedDocument,
@@ -236,7 +236,7 @@ export function useCvCloudDocumentActions({
     try {
       const userId = session?.user.id;
       if (userId) {
-        storeEncryptionPassword(userId, documentId, password, trustDevice);
+        await storeEncryptionPassword(userId, documentId, password, trustDevice);
         storeTrustDevice(userId, trustDevice);
       }
 
