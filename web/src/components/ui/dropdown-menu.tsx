@@ -30,7 +30,7 @@ export function DropdownMenuContent({
         align={align}
         collisionPadding={collisionPadding}
         className={cn(
-          "z-50 min-w-40 max-h-[calc(100vh-1rem)] max-w-[calc(100vw-1rem)] overflow-auto rounded-md border border-slate-200 bg-white p-1.5 text-slate-950 shadow-lg outline-none",
+          "z-50 min-w-40 max-h-[calc(100vh-1rem)] max-w-[calc(100vw-1rem)] overflow-auto rounded-md border border-border bg-surface p-1.5 text-foreground shadow-lg outline-none",
           className,
         )}
         {...props}
@@ -53,7 +53,7 @@ export function DropdownMenuItem({
     <DropdownMenuPrimitive.Item
       ref={ref}
       className={cn(
-        "relative flex h-9 w-full cursor-default select-none items-center gap-2 rounded px-2 text-left text-sm text-slate-700 outline-none transition-colors focus:bg-slate-50 focus:text-slate-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4",
+        "relative flex h-9 w-full cursor-default select-none items-center gap-2 rounded px-2 text-left text-sm text-foreground-muted outline-none transition-colors focus:bg-surface-hover focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4",
         className,
       )}
       {...props}
@@ -74,7 +74,7 @@ export function DropdownMenuLabel({
   return (
     <DropdownMenuPrimitive.Label
       ref={ref}
-      className={cn("px-2 py-1.5 text-sm font-semibold text-slate-950", className)}
+      className={cn("px-2 py-1.5 text-sm font-semibold text-foreground", className)}
       {...props}
     />
   );
@@ -90,7 +90,7 @@ export function DropdownMenuSeparator({
   return (
     <DropdownMenuPrimitive.Separator
       ref={ref}
-      className={cn("-mx-1.5 my-1 h-px bg-slate-200", className)}
+      className={cn("-mx-1.5 my-1 h-px bg-border", className)}
       {...props}
     />
   );

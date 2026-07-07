@@ -75,7 +75,7 @@ export function CvBuilder() {
                           {h.saving ? <Loader2 className="animate-spin" /> : <Save />}
                         </Button>
                         {h.isDirty && (
-                          <Circle className="absolute -right-0.5 -top-0.5 size-2.5 fill-amber-500 text-amber-500" />
+                          <Circle className="absolute -right-0.5 -top-0.5 size-2.5 fill-warning text-warning" />
                         )}
                       </div>
                     </div>
@@ -83,8 +83,8 @@ export function CvBuilder() {
                 }
               />
             ) : (
-              <div className="flex h-full min-h-[720px] items-center justify-center rounded-lg border border-slate-200 bg-white">
-                <div className="flex flex-col items-center gap-3 text-slate-400">
+              <div className="flex h-full min-h-[720px] items-center justify-center rounded-xl border border-border bg-surface">
+                <div className="flex flex-col items-center gap-3 text-foreground-subtle">
                   <FilePlus2 className="size-10" />
                   <p className="text-sm">{t("emptyState")}</p>
                 </div>

@@ -66,9 +66,9 @@ export function AccountMenu({
       <DropdownMenuContent align="end" className="min-w-52 max-w-72">
         {session ? (
           <>
-            <DropdownMenuLabel className="border-b border-slate-200 px-2 pb-2 pt-0">
-              <div className="truncate text-sm font-medium text-slate-950">{session.user.email}</div>
-              <div className="mt-1 flex items-center gap-1.5 text-xs font-normal text-slate-500">
+            <DropdownMenuLabel className="border-b border-border px-2 pb-2 pt-0">
+              <div className="truncate text-sm font-medium text-foreground">{session.user.email}</div>
+              <div className="mt-1 flex items-center gap-1.5 text-xs font-normal text-foreground-muted">
                 <Cloud className="size-3.5" />
                 {cloudLabel}
               </div>
@@ -82,8 +82,8 @@ export function AccountMenu({
           </>
         ) : (
           <>
-            <DropdownMenuLabel className="border-b border-slate-200 px-2 pb-2 pt-0">
-              <span className="text-xs font-normal text-slate-500">
+            <DropdownMenuLabel className="border-b border-border px-2 pb-2 pt-0">
+              <span className="text-xs font-normal text-foreground-muted">
                 {supabaseConfigured ? t("cloudSignedOut") : t("cloudNotConfigured")}
               </span>
             </DropdownMenuLabel>

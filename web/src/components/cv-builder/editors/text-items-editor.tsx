@@ -34,7 +34,7 @@ export function TextItemsEditor({
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
               {dragHandle}
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              <span className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                 {t("TextItems.itemLabel", { index: index + 1 })}
               </span>
               <Button

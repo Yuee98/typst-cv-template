@@ -55,10 +55,10 @@ export function CvDocumentCard({
         {...dragAttributes}
         {...(dragListeners ?? {})}
         className={cn(
-          "relative flex size-9 items-center justify-center rounded-md border text-slate-600 transition-colors hover:bg-slate-50",
+          "relative flex size-9 items-center justify-center rounded-md border text-foreground-muted transition-colors hover:bg-surface-hover",
           selected
-            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-            : "border-slate-200 bg-white",
+            ? "border-accent-border bg-accent-soft text-accent-soft-foreground"
+            : "border-border bg-surface dark:border-white/[0.06] dark:bg-white/[0.03]",
         )}
       >
         <span className="text-sm font-semibold">{document.title.trim().charAt(0).toUpperCase() || t("fallbackInitial")}</span>
@@ -71,7 +71,7 @@ export function CvDocumentCard({
     <div
       className={cn(
         "rounded-md border transition-colors",
-        selected ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50",
+        selected ? "border-accent-border bg-accent-soft" : "border-border bg-surface hover:bg-surface-hover dark:border-white/[0.06] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]",
       )}
     >
       <button
@@ -86,8 +86,8 @@ export function CvDocumentCard({
       >
         <div className="flex w-full min-w-0 items-start justify-between gap-2">
           <span className="min-w-0">
-            <span className="block truncate text-sm font-medium text-slate-950">{document.title}</span>
-            <span className="mt-1 block text-xs text-slate-500">
+            <span className="block truncate text-sm font-medium text-foreground">{document.title}</span>
+            <span className="mt-1 block text-xs text-foreground-muted">
               {new Intl.DateTimeFormat(locale, {
                 month: "short",
                 day: "numeric",
@@ -123,7 +123,7 @@ export function CvDocumentCard({
           size="icon"
           onClick={onDelete}
           title={t("delete")}
-          className="ml-auto text-rose-700 hover:bg-rose-50"
+          className="ml-auto text-danger-foreground hover:bg-danger-soft"
         >
           <Trash2 />
         </Button>

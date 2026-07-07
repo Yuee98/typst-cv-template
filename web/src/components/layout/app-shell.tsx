@@ -2,8 +2,17 @@ import type { ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <main className="h-full bg-slate-100 text-slate-950">
-      <div className="mx-auto flex h-full w-full max-w-[1800px] flex-col gap-4 overflow-hidden px-4 pb-4">{children}</div>
+    <main className="relative h-full overflow-hidden bg-bg text-foreground">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 overflow-hidden"
+      >
+        <div className="absolute -top-48 -left-40 size-[64rem] rounded-full bg-blue-600/0 blur-[128px] dark:bg-blue-600/[0.18]" />
+        <div className="absolute -bottom-56 -right-40 size-[64rem] rounded-full bg-rose-500/0 blur-[128px] dark:bg-rose-500/[0.14]" />
+      </div>
+      <div className="relative mx-auto flex h-full w-full max-w-[1800px] flex-col gap-4 overflow-hidden px-4 pb-4">
+        {children}
+      </div>
     </main>
   );
 }

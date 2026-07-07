@@ -1,4 +1,9 @@
 {
+  "ThemeToggle": {
+    "toggle": "主题",
+    "light": "浅色",
+    "dark": "深色"
+  },
   "Metadata": {
     "title": "在线简历生成器 | Typst CV Maker",
     "description": "创建、预览、导出并可选同步简历文档。"

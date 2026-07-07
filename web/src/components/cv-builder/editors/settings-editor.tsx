@@ -49,7 +49,7 @@ export function FontSettingsEditor() {
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{t("font")}</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{t("font")}</div>
         <div className="space-y-2">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -57,7 +57,7 @@ export function FontSettingsEditor() {
               name="bodyFontMode"
               checked={!isCustom}
               onChange={() => handleModeChange(false)}
-              className="accent-slate-900"
+              className="accent-accent"
             />
             Liberation Serif + Noto Serif CJK SC
           </label>
@@ -68,7 +68,7 @@ export function FontSettingsEditor() {
                 name="bodyFontMode"
                 checked={isCustom}
                 onChange={() => handleModeChange(true)}
-                className="accent-slate-900"
+                className="accent-accent"
               />
               {t("customFont")}
             </label>
@@ -80,17 +80,17 @@ export function FontSettingsEditor() {
         <div className="space-y-3 pl-6">
           {fontApiSupported && localFonts.length > 0 ? (
             <>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-foreground-subtle">
                 {t("customHint")}
               </p>
-              <div className="max-h-48 space-y-1 overflow-auto rounded-md border border-slate-200 p-2">
+              <div className="max-h-48 space-y-1 overflow-auto rounded-md border border-border p-2">
                 {localFonts.map((f) => (
                   <label key={f.family} className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
                       checked={selectedFamilies.has(f.family)}
                       onChange={(e) => handleFontToggle(f.family, e.target.checked)}
-                      className="accent-slate-900"
+                      className="accent-accent"
                     />
                     {f.family}
                   </label>
@@ -101,13 +101,13 @@ export function FontSettingsEditor() {
                   {[...selectedFamilies].map((family) => (
                     <span
                       key={family}
-                      className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
+                      className="inline-flex items-center gap-1 rounded-full bg-surface-active px-2.5 py-0.5 text-xs text-foreground-muted"
                     >
                       {family}
                       <button
                         type="button"
                         onClick={() => handleFontToggle(family, false)}
-                        className="text-slate-400 hover:text-slate-700"
+                        className="text-foreground-subtle hover:text-foreground"
                         aria-label={t("removeFont", { family })}
                       >
                         <X className="h-3 w-3" />
@@ -118,7 +118,7 @@ export function FontSettingsEditor() {
               )}
             </>
           ) : (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-foreground-subtle">
               {t("apiNotAvailable")}
             </p>
           )}

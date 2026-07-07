@@ -1,13 +1,98 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #f1f5f9;
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface-hover: #f8fafc;
+  --surface-active: #f1f5f9;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
   --foreground: #0f172a;
+  --foreground-muted: #64748b;
+  --foreground-subtle: #94a3b8;
+  --accent: #18181b;
+  --accent-hover: #27272a;
+  --accent-foreground: #ffffff;
+  --accent-soft: #f4f4f5;
+  --accent-soft-foreground: #18181b;
+  --accent-border: #d4d4d8;
+  --ring: #18181b;
+  --success: #059669;
+  --success-soft: #ecfdf5;
+  --success-foreground: #047857;
+  --success-border: #a7f3d0;
+  --danger: #e11d48;
+  --danger-soft: #fff1f2;
+  --danger-foreground: #be123c;
+  --danger-border: #fecdd3;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --warning-foreground: #b45309;
+  --warning-border: #fde68a;
+}
+
+.dark {
+  --bg: #09090b;
+  --surface: #18181b;
+  --surface-hover: #27272a;
+  --surface-active: #2a2a2e;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --foreground: #f4f4f5;
+  --foreground-muted: #a1a1aa;
+  --foreground-subtle: #71717a;
+  --accent: #fafafa;
+  --accent-hover: #e4e4e7;
+  --accent-foreground: #18181b;
+  --accent-soft: rgba(255, 255, 255, 0.10);
+  --accent-soft-foreground: #fafafa;
+  --accent-border: rgba(255, 255, 255, 0.20);
+  --ring: #fafafa;
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.14);
+  --success-foreground: #6ee7b7;
+  --success-border: rgba(52, 211, 153, 0.35);
+  --danger: #fb7185;
+  --danger-soft: rgba(244, 63, 94, 0.14);
+  --danger-foreground: #fda4af;
+  --danger-border: rgba(244, 63, 94, 0.35);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --warning-foreground: #fcd34d;
+  --warning-border: rgba(251, 191, 36, 0.35);
 }
 
 @theme inline {
-  --color-background: var(--background);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-subtle: var(--foreground-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-foreground: var(--accent-soft-foreground);
+  --color-accent-border: var(--accent-border);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-border: var(--success-border);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-danger-border: var(--danger-border);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-border: var(--warning-border);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -24,9 +109,20 @@ body {
 
 body {
   margin: 0;
-  background: var(--background);
+  background: var(--bg);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.glass-panel {
+  background-color: var(--surface);
+}
+
+.dark .glass-panel {
+  background-color: color-mix(in srgb, var(--surface) 35%, transparent);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.1), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
 }
 
 .typst-page-shell svg {
@@ -48,23 +144,13 @@ body {
 }
 
 @keyframes accordion-down {
-  from {
-    height: 0;
-  }
-
-  to {
-    height: var(--radix-accordion-content-height);
-  }
+  from { height: 0; }
+  to { height: var(--radix-accordion-content-height); }
 }
 
 @keyframes accordion-up {
-  from {
-    height: var(--radix-accordion-content-height);
-  }
-
-  to {
-    height: 0;
-  }
+  from { height: var(--radix-accordion-content-height); }
+  to { height: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -121,6 +207,7 @@ body {
   }
 
   .typst-page-shell {
+    filter: none !important;
     height: 297mm !important;
     box-shadow: none !important;
     margin: 0 !important;
@@ -139,6 +226,7 @@ body {
   }
 
   .typst-page-shell svg {
+    filter: none !important;
     height: 297mm !important;
     width: 210mm !important;
   }

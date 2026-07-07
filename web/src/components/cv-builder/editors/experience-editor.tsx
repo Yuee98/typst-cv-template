@@ -30,7 +30,7 @@ function ProjectEditor({
   const base = `experience.${companyIndex}.projects.${projectIndex}`;
 
   return (
-    <div className="grid gap-3 rounded-md border border-slate-200 p-3">
+    <div className="grid gap-3 rounded-md border border-border p-3">
       <FieldGrid>
         <Field label={t("projectTitle")}>
           <Input {...register(fieldPath(`${base}.title`))} />
@@ -64,12 +64,12 @@ function CompanyEditor({ companyIndex }: { companyIndex: number }) {
         </Field>
       </FieldGrid>
       <div className="space-y-3">
-        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{t("projects")}</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{t("projects")}</div>
         <SortableAccordionList
           items={fields}
           getId={(field) => field.id}
           onMove={move}
-          className="rounded-md border border-slate-200 px-3"
+          className="rounded-md border border-border px-3"
           handleLabel={t("reorderProject")}
           renderItem={({ item: field, index: projectIndex, dragHandle }) => (
             <AccordionItem value={field.id}>
@@ -122,7 +122,7 @@ export function ExperienceEditor() {
         items={fields}
         getId={(field) => field.id}
         onMove={move}
-        className="rounded-md border border-slate-200 px-3"
+        className="rounded-md border border-border px-3"
         handleLabel={t("reorderCompany")}
         renderItem={({ item: field, index, dragHandle }) => (
           <AccordionItem value={field.id}>

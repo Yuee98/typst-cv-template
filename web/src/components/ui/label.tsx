@@ -13,7 +13,7 @@ export function Label({
   return (
     <LabelPrimitive.Root
       ref={ref}
-      className={cn("text-xs font-medium uppercase tracking-wide text-slate-500", className)}
+      className={cn("text-xs font-medium uppercase tracking-wide text-foreground-muted", className)}
       {...props}
     />
   );

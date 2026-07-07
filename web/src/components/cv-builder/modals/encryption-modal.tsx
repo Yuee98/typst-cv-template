@@ -80,9 +80,9 @@ export function EncryptionModal({
       <form id="encryption-form" onSubmit={handleSubmit}>
         {confirming ? (
           <div className="space-y-3">
-            <div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-3">
-              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
-              <div className="space-y-2 text-sm leading-5 text-amber-900">
+            <div className="flex items-start gap-3 rounded-md border border-warning-border bg-warning-soft p-3">
+              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-warning" />
+              <div className="space-y-2 text-sm leading-5 text-warning-foreground">
                 <p className="font-medium">{t("warning.title")}</p>
                 <ul className="list-disc space-y-1 pl-4">
                   <li>{t("warning.item1")}</li>
@@ -100,16 +100,16 @@ export function EncryptionModal({
               placeholder={t("placeholder.password")}
             />
             {error && (
-              <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <p className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-xs text-danger-foreground">
                 {error}
               </p>
             )}
-            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+            <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
               <input
                 type="checkbox"
                 checked={trustDevice}
                 onChange={(event) => onTrustDeviceChange(event.target.checked)}
-                className="size-3.5 accent-slate-900"
+                className="size-3.5 accent-accent"
               />
               {t("rememberThisDevice")}
             </label>

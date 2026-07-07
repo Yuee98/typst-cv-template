@@ -14,10 +14,10 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={cn("rounded-lg border border-slate-200 bg-white shadow-sm", className)}>
+    <section className={cn("rounded-xl border border-border glass-panel shadow-sm", className)}>
       {(title || actions) && (
-        <div className="flex min-h-12 items-center justify-between gap-3 border-b border-slate-200 px-4">
-          {title && <h2 className="text-sm font-semibold text-slate-950">{title}</h2>}
+        <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border px-4">
+          {title && <h2 className="text-sm font-semibold text-foreground">{title}</h2>}
           {actions}
         </div>
       )}

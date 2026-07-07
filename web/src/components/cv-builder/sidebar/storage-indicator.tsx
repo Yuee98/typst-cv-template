@@ -31,9 +31,9 @@ export function StorageBadge({ storageKind }: { storageKind: CvStorageKind }) {
     <span
       className={cn(
         "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[11px] font-medium",
-        storageKind === "encrypted" && "border-violet-200 bg-violet-50 text-violet-700",
-        storageKind === "cloud" && "border-sky-200 bg-sky-50 text-sky-700",
-        storageKind === "local" && "border-slate-200 bg-slate-50 text-slate-600",
+        storageKind === "encrypted" && "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400",
+        storageKind === "cloud" && "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400",
+        storageKind === "local" && "border-border bg-surface-hover text-foreground-muted",
       )}
     >
       <StorageIcon storageKind={storageKind} />
@@ -46,10 +46,10 @@ export function CompactStorageMark({ storageKind }: { storageKind: CvStorageKind
   return (
     <span
       className={cn(
-        "absolute -bottom-1 -right-1 flex size-4 items-center justify-center rounded-full border bg-white",
-        storageKind === "encrypted" && "border-violet-200 text-violet-700",
-        storageKind === "cloud" && "border-sky-200 text-sky-700",
-        storageKind === "local" && "border-slate-200 text-slate-600",
+        "absolute -bottom-1 -right-1 flex size-4 items-center justify-center rounded-full border bg-surface",
+        storageKind === "encrypted" && "border-violet-500/30 text-violet-600 dark:text-violet-400",
+        storageKind === "cloud" && "border-sky-500/30 text-sky-600 dark:text-sky-400",
+        storageKind === "local" && "border-border text-foreground-muted",
       )}
     >
       <StorageIcon storageKind={storageKind} />

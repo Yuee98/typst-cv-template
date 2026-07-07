@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 
 export function Toolbar({ children }: { children: ReactNode }) {
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border border-slate-200 bg-white px-4 py-3 shadow-sm print:hidden">
+    <header className="flex flex-wrap items-center justify-between gap-3 rounded-b-xl border border-border glass-panel px-4 py-3 shadow-sm print:hidden">
       {children}
     </header>
   );
@@ -16,7 +16,7 @@ export function ToolbarGroup({ children }: { children: ReactNode }) {
 }
 
 export function ToolbarSeparator() {
-  return <span aria-hidden="true" className="hidden h-6 w-px bg-slate-200 sm:block" />;
+  return <span aria-hidden="true" className="hidden h-6 w-px bg-border sm:block" />;
 }
 
 export function ToolbarTitle() {
@@ -24,8 +24,8 @@ export function ToolbarTitle() {
 
   return (
     <div>
-      <h1 className="text-base font-semibold text-slate-950">{t("title")}</h1>
-      <p className="text-xs text-slate-500">{t("subtitle")}</p>
+      <h1 className="text-base font-semibold text-foreground">{t("title")}</h1>
+      <p className="text-xs text-foreground-muted">{t("subtitle")}</p>
     </div>
   );
 }

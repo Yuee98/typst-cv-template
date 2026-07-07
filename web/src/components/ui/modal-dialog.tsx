@@ -46,7 +46,7 @@ export function ModalDialog({
   return (
     <Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <Portal>
-        <Overlay className="fixed inset-0 z-50 bg-slate-950/35 print:hidden" />
+        <Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm print:hidden" />
         <Content
           aria-modal="true"
           onOpenAutoFocus={(event) => {
@@ -65,17 +65,17 @@ export function ModalDialog({
           }}
           {...descriptionAriaProps}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-xl outline-none",
+            "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface shadow-xl outline-none",
             className,
           )}
         >
           <div className="flex items-start justify-between gap-4 px-4 py-3">
             <div className="min-w-0">
-              <Title className="text-sm font-semibold text-slate-950">
+              <Title className="text-sm font-semibold text-foreground">
                 {title}
               </Title>
               {description && (
-                <Description className="mt-1 text-sm leading-5 text-slate-500">
+                <Description className="mt-1 text-sm leading-5 text-foreground-muted">
                   {description}
                 </Description>
               )}

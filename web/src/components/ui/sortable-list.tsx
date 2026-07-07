@@ -176,7 +176,7 @@ function SortableListItem({
       ref={setActivatorNodeRef}
       type="button"
       className={cn(
-        "flex size-8 shrink-0 touch-none items-center justify-center rounded-md border border-transparent text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950",
+        "flex size-8 shrink-0 touch-none items-center justify-center rounded-md border border-transparent text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         handleClassName,
       )}
       aria-label={handleLabel}

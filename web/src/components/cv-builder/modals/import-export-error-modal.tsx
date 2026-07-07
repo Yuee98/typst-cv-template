@@ -29,10 +29,10 @@ export function ImportExportErrorModal({
       }
     >
       <div className="space-y-3">
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+        <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
           {error}
         </div>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-foreground-muted">
           {t("description")}
         </p>
       </div>

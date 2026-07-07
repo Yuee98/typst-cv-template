@@ -31,7 +31,7 @@ export function AccordionItem({
   return (
     <AccordionPrimitive.Item
       ref={ref}
-      className={cn("border-b border-slate-200", className)}
+      className={cn("border-b border-border", className)}
       {...props}
     />
   );
@@ -50,7 +50,7 @@ export function AccordionTrigger({
       <AccordionPrimitive.Trigger
         ref={ref}
         className={cn(
-          "flex min-h-11 w-full flex-1 items-center justify-between gap-3 py-2 text-left text-sm font-semibold text-slate-900 outline-none transition-colors hover:text-slate-600 [&[data-state=open]>svg]:rotate-180",
+          "flex min-h-11 w-full flex-1 items-center justify-between gap-3 py-2 text-left text-sm font-semibold text-foreground outline-none transition-colors hover:text-foreground-muted [&[data-state=open]>svg]:rotate-180",
           className,
         )}
         {...props}

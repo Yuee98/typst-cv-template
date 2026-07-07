@@ -28,7 +28,7 @@ export function PublicationsEditor({ name }: { name: string }) {
         items={fields}
         getId={(field) => field.id}
         onMove={move}
-        className="rounded-md border border-slate-200 px-3"
+        className="rounded-md border border-border px-3"
         handleLabel={t("reorder")}
         renderItem={({ item: field, index, dragHandle }) => (
           <AccordionItem value={field.id}>

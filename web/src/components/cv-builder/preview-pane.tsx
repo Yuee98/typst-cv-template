@@ -21,17 +21,17 @@ function StatusBadge({ status, label, percent }: { status: PreviewStatus; label:
       className={cn(
         "inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-medium",
         status === "error"
-          ? "border-rose-200 bg-rose-50 text-rose-700"
-          : "border-emerald-200 bg-emerald-50 text-emerald-700",
+          ? "border-danger-border bg-danger-soft text-danger-foreground"
+          : "border-success-border bg-success-soft text-success-foreground",
       )}
     >
       <Icon className={cn("size-4", isActive && "animate-spin")} />
       {label}
       {percent != null && (
         <span className="inline-flex w-20 items-center gap-1.5">
-          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-emerald-200">
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-success/30">
             <span
-              className="block h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+              className="block h-full rounded-full bg-success transition-[width] duration-300"
               style={{ width: `${percent}%` }}
             />
           </span>
@@ -41,6 +41,9 @@ function StatusBadge({ status, label, percent }: { status: PreviewStatus; label:
     </span>
   );
 }
+
+const PAGE_CLASS =
+  "typst-page-shell bg-white shadow-xl ring-1 ring-black/5 dark:brightness-[0.8] dark:shadow-2xl dark:shadow-black/60 dark:ring-white/10";
 
 export function PreviewPane({
   svg,
@@ -77,22 +80,22 @@ export function PreviewPane({
       className="preview-pane flex h-full flex-col overflow-hidden"
     >
       {error && (
-        <div className="preview-error border-b border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-800 print:hidden">
+        <div className="preview-error border-b border-danger-border bg-danger-soft px-4 py-3 text-sm leading-6 text-danger-foreground print:hidden">
           {error}
         </div>
       )}
-      <div className="preview-scroll flex-1 overflow-auto bg-slate-200 p-5">
+      <div className="preview-scroll flex-1 overflow-auto p-5">
         <div className="mx-auto flex w-full max-w-[210mm] flex-col gap-5">
           {pages.length > 0 ? (
             pages.map((page, index) => (
               <div
                 key={index}
-                className="typst-page-shell bg-white shadow-md ring-1 ring-slate-300"
+                className={PAGE_CLASS}
                 dangerouslySetInnerHTML={{ __html: page }}
               />
             ))
           ) : (
-            <div className="flex aspect-[210/297] w-full items-center justify-center bg-white text-sm text-slate-500 shadow-md ring-1 ring-slate-300">
+            <div className={cn(PAGE_CLASS, "flex aspect-[210/297] w-full items-center justify-center text-sm text-foreground-muted")}>
               {t("emptyHint")}
             </div>
           )}

@@ -177,14 +177,14 @@ export function CvLibrarySidebar({
   return (
     <aside
       className={cn(
-        "library-sidebar relative flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[width] print:hidden",
+        "library-sidebar relative flex h-full flex-col overflow-hidden rounded-xl border border-border glass-panel shadow-sm transition-[width] print:hidden",
         collapsed ? "w-14" : "w-full lg:w-72",
       )}
     >
       <>
         <div
           className={cn(
-            "flex min-h-12 items-center border-b border-slate-200 px-2",
+            "flex min-h-12 items-center border-b border-border px-2",
             collapsed ? "justify-center" : "justify-between gap-2",
           )}
         >
@@ -195,7 +195,7 @@ export function CvLibrarySidebar({
           ) : (
             <>
               <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-slate-950">{t("title")}</h2>
+                <h2 className="truncate text-sm font-semibold text-foreground">{t("title")}</h2>
               </div>
               <div className="relative flex items-center gap-1">
                 <DropdownMenu>
@@ -240,7 +240,7 @@ export function CvLibrarySidebar({
         </div>
 
         {collapsed && (
-          <div className="border-b border-slate-200 p-2">
+          <div className="border-b border-border p-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -273,13 +273,13 @@ export function CvLibrarySidebar({
       </>
 
       {error && !collapsed && (
-        <div className="border-b border-rose-200 bg-rose-50 px-3 py-2">
+        <div className="border-b border-danger-border bg-danger-soft px-3 py-2">
           <div className="flex items-start justify-between gap-2">
-            <p className="text-xs text-rose-800">{error}</p>
+            <p className="text-xs text-danger-foreground">{error}</p>
             <button
               type="button"
               onClick={onDismissError}
-              className="shrink-0 text-rose-600 hover:text-rose-800"
+              className="shrink-0 text-danger hover:text-danger-foreground"
             >
               <span className="sr-only">{t("dismiss")}</span>
               <span aria-hidden="true">&times;</span>

@@ -1,4 +1,9 @@
 {
+  "ThemeToggle": {
+    "toggle": "Theme",
+    "light": "Light",
+    "dark": "Dark"
+  },
   "Metadata": {
     "title": "Online CV Builder | Typst CV Maker",
     "description": "Create, preview, export, and optionally sync CV documents."

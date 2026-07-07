@@ -6,6 +6,7 @@ import {
   AccountMenu,
   GithubMenu,
   LocaleSwitcher,
+  ThemeToggle,
   Toolbar,
   ToolbarGroup,
   ToolbarTitle,
@@ -34,6 +35,7 @@ export function CvToolbar({
     <Toolbar>
       <ToolbarTitle />
       <ToolbarGroup>
+        <ThemeToggle />
         <LocaleSwitcher />
         <GithubMenu />
         <AccountMenu

@@ -5,14 +5,18 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
+  "inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
   {
     variants: {
       variant: {
-        default: "border-slate-700 bg-slate-700 text-white hover:bg-slate-600",
-        secondary: "border-slate-200 bg-white text-slate-900 hover:bg-slate-50",
-        ghost: "border-transparent bg-transparent text-slate-700 hover:bg-slate-100",
-        destructive: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
+        default:
+          "border-accent bg-accent text-accent-foreground hover:border-accent-hover hover:bg-accent-hover",
+        secondary:
+          "border-border bg-surface text-foreground hover:bg-surface-hover",
+        ghost:
+          "border-transparent bg-transparent text-foreground-muted hover:bg-surface-hover hover:text-foreground",
+        destructive:
+          "border-danger-border bg-danger-soft text-danger-foreground hover:bg-danger/10",
       },
       size: {
         default: "h-9 px-3",

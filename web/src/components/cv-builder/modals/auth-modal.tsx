@@ -62,12 +62,12 @@ export function AuthModal({
     >
       <div className="space-y-3">
         {error && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+          <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
             {error}
           </div>
         )}
         {successMessage && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <div className="rounded-md border border-success-border bg-success-soft px-3 py-2 text-sm text-success-foreground">
             {successMessage}
           </div>
         )}
@@ -84,30 +84,30 @@ export function AuthModal({
           placeholder={t("placeholder.password")}
         />
         {mode === "signUp" && (
-          <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-700">
+          <label className="flex items-start gap-2 rounded-md border border-border bg-surface-hover px-3 py-2 text-sm leading-5 text-foreground-muted">
             <input
               type="checkbox"
-              className="mt-1 size-4 rounded border-slate-300"
+              className="mt-1 size-4 rounded border-border-strong"
               checked={termsAccepted}
               onChange={(event) => onTermsAcceptedChange(event.target.checked)}
             />
             <span>
               {t("terms.agreeTo")}{" "}
-              <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/terms" target="_blank" rel="noreferrer">
+              <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/terms" target="_blank" rel="noreferrer">
                 {t("terms.termsOfUse")}
               </Link>{" "}
               {t("terms.andAcknowledge")}{" "}
-              <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/privacy" target="_blank" rel="noreferrer">
+              <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/privacy" target="_blank" rel="noreferrer">
                 {t("terms.privacyPolicy")}
               </Link>
               .
             </span>
           </label>
         )}
-        <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
-          <div className="h-px flex-1 bg-slate-200" />
+        <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-foreground-subtle">
+          <div className="h-px flex-1 bg-border" />
           <span>{t("divider")}</span>
-          <div className="h-px flex-1 bg-slate-200" />
+          <div className="h-px flex-1 bg-border" />
         </div>
         <Button type="button" variant="secondary" className="w-full" onClick={onGithubSignIn}>
           <GithubIcon className="!size-4" />

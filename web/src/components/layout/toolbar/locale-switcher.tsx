@@ -38,7 +38,7 @@ export function LocaleSwitcher() {
             key={item}
             icon={item === locale ? <Check className="size-4" /> : <span className="size-4" />}
             aria-current={item === locale ? "true" : undefined}
-            className={item === locale ? "text-slate-950" : undefined}
+            className={item === locale ? "text-foreground" : undefined}
             onSelect={() => {
               if (item !== locale) {
                 router.replace(pathname, { locale: item });

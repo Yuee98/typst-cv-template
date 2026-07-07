@@ -49,34 +49,34 @@ export function TermsAcceptanceModal({
     >
       <div className="space-y-4">
         {error && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+          <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
             {error}
           </div>
         )}
-        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        <div className="rounded-md border border-border bg-surface-hover px-3 py-3">
+          <div className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
             {t("version", { version: TERMS_VERSION })}
           </div>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-5 text-slate-700">
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-5 text-foreground-muted">
             {legal.termsAcceptanceSummary.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
         </div>
-        <label className="flex items-start gap-2 text-sm leading-5 text-slate-700">
+        <label className="flex items-start gap-2 text-sm leading-5 text-foreground-muted">
           <input
             type="checkbox"
-            className="mt-1 size-4 rounded border-slate-300"
+            className="mt-1 size-4 rounded border-border-strong"
             checked={checked}
             onChange={(event) => onCheckedChange(event.target.checked)}
           />
           <span>
             {t("terms.agreeTo")}{" "}
-            <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/terms" target="_blank" rel="noreferrer">
+            <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/terms" target="_blank" rel="noreferrer">
               {t("terms.termsOfUse")}
             </Link>{" "}
             {t("terms.andAcknowledge")}{" "}
-            <Link className="font-medium text-emerald-700 hover:text-emerald-600" href="/privacy" target="_blank" rel="noreferrer">
+            <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/privacy" target="_blank" rel="noreferrer">
               {t("terms.privacyPolicy")}
             </Link>
             .

@@ -19,19 +19,19 @@ export function SectionHeader({ name }: { name: string }) {
       <Field label={t("Shared.sectionTitle")}>
         <Input {...register(fieldPath(`${basePath}.title`))} />
       </Field>
-      <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-slate-700">
+      <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-foreground-muted">
         <input
           type="checkbox"
           {...register(fieldPath(`${basePath}.isDisplay`))}
-          className="accent-slate-900"
+          className="accent-accent"
         />
         {t("Shared.show")}
       </label>
-      <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-slate-700">
+      <label className="flex h-9 items-center gap-1.5 whitespace-nowrap text-sm text-foreground-muted">
         <input
           type="checkbox"
           {...register(fieldPath(`${basePath}.pageBreakBefore`))}
-          className="accent-slate-900"
+          className="accent-accent"
         />
         {t("Shared.startOnNewPage")}
       </label>
