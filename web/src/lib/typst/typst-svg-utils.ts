@@ -1,3 +1,8 @@
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
+const H5_NS = "http://www.w3.org/1999/xhtml";
+const XMLNS_NS = "http://www.w3.org/2000/xmlns/";
+
 function splitSelectorList(selectorText: string) {
   const selectors: string[] = [];
   let start = 0;
@@ -82,15 +87,30 @@ function scopeTypstCss(cssText: string) {
   }
 }
 
-function serializeSharedTypstChild(child: Element) {
+function cloneSharedChild(child: Element): Element {
   const name = child.localName.toLowerCase();
 
   if (name === "style") {
     const scopedCss = scopeTypstCss(child.textContent ?? "");
-    return `<style>${scopedCss}</style>`;
+    const clone = child.cloneNode(false) as Element;
+    clone.textContent = scopedCss;
+    return clone;
   }
 
-  return child.outerHTML;
+  return child.cloneNode(true) as Element;
+}
+
+function parsePageSize(value: string | null, fallback: string): string {
+  if (value === null) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return String(parsed);
 }
 
 export function splitTypstSvg(svg: string) {
@@ -107,19 +127,35 @@ export function splitTypstSvg(svg: string) {
     return svg ? [svg] : [];
   }
 
-  const shared = Array.from(root.children)
-    .filter((child) => {
-      const name = child.localName.toLowerCase();
-      return name === "style" || name === "defs";
-    })
-    .map(serializeSharedTypstChild)
-    .join("");
+  const shared = Array.from(root.children).filter((child) => {
+    const name = child.localName.toLowerCase();
+    return name === "style" || name === "defs";
+  });
 
   return pages.map((page) => {
-    const width = page.getAttribute("data-page-width") ?? "595.28";
-    const height = page.getAttribute("data-page-height") ?? "841.89";
+    const width = parsePageSize(page.getAttribute("data-page-width"), "595.28");
+    const height = parsePageSize(page.getAttribute("data-page-height"), "841.89");
+
+    const pageSvg = document.createElementNS(SVG_NS, "svg");
+    pageSvg.setAttribute("style", "overflow: visible;");
+    pageSvg.setAttribute("class", "typst-doc");
+    pageSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    pageSvg.setAttribute("width", width);
+    pageSvg.setAttribute("height", height);
+    pageSvg.setAttribute("data-width", width);
+    pageSvg.setAttribute("data-height", height);
+    pageSvg.setAttribute("xmlns", SVG_NS);
+    pageSvg.setAttributeNS(XMLNS_NS, "xmlns:xlink", XLINK_NS);
+    pageSvg.setAttributeNS(XMLNS_NS, "xmlns:h5", H5_NS);
+
+    for (const child of shared) {
+      pageSvg.appendChild(cloneSharedChild(child));
+    }
+
     const clone = page.cloneNode(true) as Element;
     clone.setAttribute("transform", "translate(0, 0)");
-    return `<svg style="overflow: visible;" class="typst-doc" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" data-width="${width}" data-height="${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:h5="http://www.w3.org/1999/xhtml">${shared}${clone.outerHTML}</svg>`;
+    pageSvg.appendChild(clone);
+
+    return pageSvg.outerHTML;
   });
 }
