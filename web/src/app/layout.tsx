@@ -22,6 +22,8 @@ export const metadata: Metadata = {
   description: "Create, preview, export, and optionally sync CV documents.",
 };
 
+const enableVercelInsights = process.env.VERCEL === "1";
+
 /**
  * Root layout shared by every route.
  *
@@ -51,8 +53,12 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           {children}
         </ThemeProvider>
-        <Analytics />
-        <SpeedInsights />
+        {enableVercelInsights ? (
+          <>
+            <Analytics />
+            <SpeedInsights />
+          </>
+        ) : null}
       </body>
     </html>
   );
