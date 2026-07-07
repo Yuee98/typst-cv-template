@@ -7,7 +7,7 @@ export function LegalDocumentPage({ document }: { document: LegalDocument }) {
   const t = useTranslations("LegalDocumentPage");
 
   return (
-    <main className="min-h-screen bg-bg px-4 py-8 text-foreground sm:px-6 lg:px-8">
+    <main className="h-screen overflow-y-auto bg-bg px-4 py-8 text-foreground sm:px-6 lg:px-8">
       <article className="mx-auto max-w-3xl rounded-xl border border-border bg-surface px-5 py-6 shadow-sm sm:px-8 sm:py-8">
         <nav className="mb-8 flex flex-wrap items-center gap-3 text-sm text-foreground-muted">
           <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/">
