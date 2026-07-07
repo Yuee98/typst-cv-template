@@ -15,7 +15,8 @@ function preferredLocale() {
 
 export default function RootRedirectPage() {
   useEffect(() => {
-    window.location.replace(preferredLocale() === "en" ? "/en" : "/zh");
+    const localePath = preferredLocale() === "en" ? "/en/" : "/zh/";
+    window.location.replace(`${localePath}${window.location.search}${window.location.hash}`);
   }, []);
 
   return (
