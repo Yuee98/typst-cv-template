@@ -44,6 +44,15 @@ export function AuthModal({
 }) {
   const t = useTranslations("AuthModal");
 
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (mode === "signIn") {
+      onSignIn();
+    } else {
+      onSignUp();
+    }
+  }
+
   return (
     <ModalDialog
       open={open}
@@ -55,14 +64,14 @@ export function AuthModal({
           <Button type="button" variant="secondary" onClick={onClose}>
             {t("cancel")}
           </Button>
-          <Button type="button" onClick={mode === "signIn" ? onSignIn : onSignUp}>
+          <Button type="submit" form="auth-form">
             {mode === "signIn" ? <LogIn /> : <UserPlus />}
             {mode === "signIn" ? t("submit.signIn") : t("submit.signUp")}
           </Button>
         </>
       }
     >
-      <div className="space-y-3">
+      <form id="auth-form" onSubmit={handleSubmit} className="space-y-3">
         {error && (
           <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
             {error}
@@ -74,13 +83,19 @@ export function AuthModal({
           </div>
         )}
         <Input
+          id="email"
+          name="email"
           type="email"
+          autoComplete="username"
           value={email}
           onChange={(event) => onEmailChange(event.target.value)}
           placeholder={t("placeholder.email")}
         />
         <Input
+          id="current-password"
+          name="password"
           type="password"
+          autoComplete="current-password"
           value={password}
           onChange={(event) => onPasswordChange(event.target.value)}
           placeholder={t("placeholder.password")}
@@ -115,7 +130,7 @@ export function AuthModal({
           <GithubIcon className="!size-4" />
           {t("continueWithGithub")}
         </Button>
-      </div>
+      </form>
     </ModalDialog>
   );
 }

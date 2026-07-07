@@ -94,7 +94,10 @@ export function EncryptionModal({
         ) : (
           <div className="space-y-3">
             <Input
+              id="cv-encryption-password"
+              name="cv-encryption-password"
               type="password"
+              autoComplete="one-time-code"
               value={password}
               onChange={(event) => onPasswordChange(event.target.value)}
               placeholder={t("placeholder.password")}
