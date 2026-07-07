@@ -1,27 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 import { NextIntlClientProvider } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { QueryProvider } from "@/app/query-provider";
-import { ThemeProvider } from "@/components/theme/theme-provider";
+import { HtmlLangSync } from "@/components/layout/html-lang-sync";
 import { getMessages } from "@/i18n/messages";
 import { isLocale, locales } from "@/i18n/routing";
-
-import "../globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 type LocaleParams = Promise<{ locale: string }>;
 
@@ -41,7 +26,7 @@ export async function generateMetadata({ params }: { params: LocaleParams }): Pr
   };
 }
 
-export default async function RootLayout({
+export default async function LocaleLayout({
   children,
   params,
 }: Readonly<{
@@ -58,20 +43,9 @@ export default async function RootLayout({
   const messages = getMessages(locale);
 
   return (
-    <html
-      lang={locale}
-      className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      suppressHydrationWarning
-    >
-      <body>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <NextIntlClientProvider locale={locale} messages={messages}>
-            <QueryProvider>{children}</QueryProvider>
-          </NextIntlClientProvider>
-        </ThemeProvider>
-        <Analytics />
-        <SpeedInsights />
-      </body>
-    </html>
+    <NextIntlClientProvider locale={locale} messages={messages}>
+      <HtmlLangSync locale={locale} />
+      <QueryProvider>{children}</QueryProvider>
+    </NextIntlClientProvider>
   );
 }
