@@ -30,8 +30,8 @@
     "account": "账户",
     "syncCloud": "同步云端",
     "logOut": "退出登录",
-    "cloudSignedOut": "云端未登录",
-    "cloudNotConfigured": "云端未配置",
+    "cloudSignedOut": "未登录云端",
+    "cloudNotConfigured": "云端同步不可用",
     "logIn": "登录",
     "signUp": "注册"
   },
@@ -243,10 +243,10 @@
     },
     "Experience": {
       "company": "公司",
-      "companyDate": "公司日期",
+      "companyDate": "任职时间",
       "projectTitle": "项目标题",
       "projectDetail": "项目详情",
-      "projectDate": "项目日期",
+      "projectDate": "项目时间",
       "projects": "项目",
       "reorderProject": "重新排序项目经历",
       "reorderCompany": "重新排序工作经历",

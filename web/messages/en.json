@@ -30,8 +30,8 @@
     "account": "Account",
     "syncCloud": "Sync cloud",
     "logOut": "Log out",
-    "cloudSignedOut": "Cloud signed out",
-    "cloudNotConfigured": "Cloud not configured",
+    "cloudSignedOut": "Signed out of cloud",
+    "cloudNotConfigured": "Cloud sync unavailable",
     "logIn": "Log in",
     "signUp": "Sign up"
   },
@@ -80,7 +80,7 @@
     "renameTitle": "Rename CV",
     "renamePlaceholder": "New title",
     "renameSubmit": "Rename",
-    "copyTitle": "{title} Copy",
+    "copyTitle": "Copy of {title}",
     "duplicateTitle": "Duplicate CV",
     "duplicatePlaceholder": "New title",
     "duplicateSubmit": "Duplicate",
@@ -117,8 +117,8 @@
       "signUp": "Sign up"
     },
     "placeholder": {
-      "email": "email",
-      "password": "password"
+      "email": "Email",
+      "password": "Password"
     },
     "terms": {
       "agreeTo": "I agree to the",
@@ -146,7 +146,7 @@
       "item2": "After enabling encryption, changes are not saved automatically. You must click Save after editing, or your changes will be lost."
     },
     "placeholder": {
-      "password": "encryption password"
+      "password": "Encryption password"
     },
     "rememberThisDevice": "Remember this device",
     "error": {
@@ -243,10 +243,10 @@
     },
     "Experience": {
       "company": "Company",
-      "companyDate": "Company date",
+      "companyDate": "Employment dates",
       "projectTitle": "Title",
       "projectDetail": "Detail",
-      "projectDate": "Project date",
+      "projectDate": "Project dates",
       "projects": "Projects",
       "reorderProject": "Reorder project",
       "reorderCompany": "Reorder experience",
