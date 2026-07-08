@@ -115,9 +115,16 @@ export function useCvCloudDocumentActions({
         data: localDocument.data,
       });
       removeCvDocument(id);
+      // The createCloudDocument mutation's onSuccess already upserts this new cloud doc
+      // into the React Query list cache; the documentsData effect mirrors that cache into
+      // documents via replaceCloudSummaries. Filter out the new cloud id as well as the
+      // old local id so this prepend stays a single entry regardless of whether the mirror
+      // effect has already run (avoids the duplicate-key bug seen on local->cloud moves).
       setOrderedDocuments((currentDocuments) => [
         cloudDocument,
-        ...currentDocuments.filter((document) => document.id !== id),
+        ...currentDocuments.filter(
+          (document) => document.id !== id && document.id !== cloudDocument.id,
+        ),
       ]);
       loadDataIntoForm(cloudDocument.id, cloudDocument.data);
       setCloudStatus("ready");
@@ -175,9 +182,14 @@ export function useCvCloudDocumentActions({
         if (session.user.id) {
           await storeEncryptionPassword(session.user.id, encryptedDocument.id, password, trustDevice);
         }
+        // Dedupe against the new cloud id too (see moveToCloud): the encryption mutation's
+        // onSuccess mirrors the new doc into documents via the documentsData effect, so the
+        // manual prepend must not double it up regardless of execution order.
         setOrderedDocuments((currentDocuments) => [
           encryptedDocument,
-          ...currentDocuments.filter((document) => document.id !== id),
+          ...currentDocuments.filter(
+            (document) => document.id !== id && document.id !== encryptedDocument.id,
+          ),
         ]);
         loadDataIntoForm(encryptedDocument.id, sourceData);
       } else {
