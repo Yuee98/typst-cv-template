@@ -11,6 +11,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "smoke:api": "node scripts/smoke-polish-api.mjs",
     "sync:typst-assets": "node scripts/sync-typst-assets.mjs"
   },
   "dependencies": {

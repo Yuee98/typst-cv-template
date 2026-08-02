@@ -106,22 +106,66 @@ The builder can export your resume in several formats:
 
 ```powershell
 pnpm install
-pnpm --filter web dev
+pnpm dev   # dev server in "server" mode (API routes included)
 ```
 
 ### Build & Check
 
+The web app builds in two modes (see `web/scripts/run-next-mode.mjs`):
+
 ```powershell
-pnpm --filter web build
-pnpm --filter web lint
-pnpm --filter web typecheck
+pnpm build          # default = server build
+pnpm build:server   # Node server build for Vercel — includes the generated /api/polish routes
+pnpm build:static   # static export for GitHub Pages — no API routes, no AI UI entry
+pnpm test           # vitest unit tests
+pnpm lint
+pnpm typecheck
+```
+
+(All are root-level passthroughs of the `web/` package scripts.)
+
+After a server build, a production smoke check of the polish API stub is available:
+
+```powershell
+pnpm --filter web start          # serve the .next build on :3000
+pnpm --filter web smoke:api      # assert the 503 AI_DISABLED contract on /api/polish and /api/polish/quota
 ```
 
 The web app syncs the root `style.typ` into `web/public/typst/style.typ` before dev and build, so the root Typst style remains the source of truth.
 
+### AI Polish (server deployments only)
+
+An AI polish feature for whitelisted free-text CV fields is being rolled out behind flags:
+
+- The API routes (`/api/polish`, `/api/polish/quota`) exist only in the **server build**; the static Pages export contains neither the routes nor any UI entry point (Invariant 9). Until the server-side phases land, the Phase 0 handlers answer `503 AI_DISABLED`.
+- `NEXT_PUBLIC_AI_POLISH_ENABLED` only toggles the UI entry points — it is **not** a security switch. Setting it to `true` for a static export fails the build (`run-next-mode.mjs` flag-consistency check).
+- See `web/.env.example` for the full environment variable list.
+
 ### Deploy on Vercel
 
-Keep the project root at the repository root:
+Vercel serves the **server build**; GitHub Pages serves the **static export** via the `promote-release` workflow.
 
-- Build command: `pnpm --filter web build`
-- Output directory: `web/out`
+> **Manual gate** — the steps below are executed by a human in the Vercel dashboard, not by CI.
+
+One-time project settings (keep the project root at the repository root):
+
+1. **Build command**: `pnpm build:server` (equivalently `pnpm --filter web build:server`).
+2. **Output directory**: **remove the `out` override** — the server build emits `.next/`, not `out/`. Keeping the old `web/out` override breaks the deployment.
+3. **Environment variables** (Production):
+
+   | Variable | Value | Notes |
+   |---|---|---|
+   | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | existing | already configured |
+   | `NEXT_PUBLIC_AI_POLISH_ENABLED` | `true` | Vercel only — never set it in CI or for Pages |
+   | `DEEPSEEK_API_KEY` | secret | required once the real provider lands (unit 2.1) |
+   | `SUPABASE_SERVICE_ROLE_KEY` | secret | required once the real handler lands (unit 2.3) |
+
+   Never set `POLISH_FAKE_LLM` in production — startup is refused when it is combined with `NODE_ENV=production`. A server-side hard switch (`AI_POLISH_ENABLED`, default off) arrives with the real handler in unit 2.3; leaving it unset keeps the API disabled.
+4. **Verify after deploy**:
+
+   ```
+   curl -X POST https://<your-vercel-domain>/api/polish
+   curl https://<your-vercel-domain>/api/polish/quota
+   ```
+
+   Both must answer `503` with `{"requestId": ..., "error": {"code": "AI_DISABLED", ...}}` (Phase 0 stub; after unit 2.3 a token-less request must answer `401 UNAUTHORIZED` instead).
