@@ -160,7 +160,7 @@ One-time project settings (keep the project root at the repository root):
    | `DEEPSEEK_API_KEY` | secret | required once the real provider lands (unit 2.1) |
    | `SUPABASE_SERVICE_ROLE_KEY` | secret | required once the real handler lands (unit 2.3) |
 
-   Never set `POLISH_FAKE_LLM` in production — startup is refused when it is combined with `NODE_ENV=production`. A server-side hard switch (`AI_POLISH_ENABLED`, default off) arrives with the real handler in unit 2.3; leaving it unset keeps the API disabled.
+   Never set `POLISH_FAKE_LLM` in production — `getPolishProvider()` throws when it is combined with `NODE_ENV=production`. The Phase 0 stub never resolves a provider, so this guard takes effect once the real handler wires the provider at module scope (CP2). A server-side hard switch (`AI_POLISH_ENABLED`, default off) arrives with the real handler in unit 2.3; leaving it unset keeps the API disabled.
 4. **Verify after deploy**:
 
    ```

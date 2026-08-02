@@ -5,6 +5,10 @@
  * 「架构决策：润色粒度与能力矩阵」. Imported by BOTH the client (scope
  * builder / dialog) and the server (route handler); keep it free of
  * Node/DOM-specific APIs. Frozen after checkpoint CP1.
+ *
+ * Every wire object uses z.strictObject: unknown keys are REJECTED, never
+ * silently stripped, so local-only fields (RHF `path`, header PII, …) can
+ * never "validate" their way across the network boundary.
  */
 
 import { z } from "zod";
@@ -75,23 +79,54 @@ export const MAX_ITEMS = 30;
 export const MAX_ITEM_CHARS = 2000;
 export const MAX_REFERENCES = 60;
 export const MAX_REFERENCE_ITEM_CHARS = 2000;
+/**
+ * Per-reference label cap. Labels are prompt content (consumed by prompt
+ * construction), so they also count toward the MAX_REFERENCE_CHARS aggregate
+ * — every string forwarded into the prompt participates in a hard budget.
+ */
+export const MAX_REFERENCE_LABEL_CHARS = 200;
 export const MAX_STYLE_INSTRUCTION_CHARS = 200;
 export const ITEM_ID_PATTERN = /^[a-zA-Z0-9_-]{1,32}$/;
 
 /**
- * The three budget constants are mutually consistent (roadmap「总输出预算」):
- * sum(items.text) ≤ MAX_TARGET_CHARS → polished output is capped by
- * MAX_TOTAL_POLISHED_CHARS ≈ MAX_TARGET_CHARS × 1.5 (the per-item hard cap is
- * ceil(original × 1.5) + 40) → POLISH_MAX_OUTPUT_TOKENS covers
- * MAX_TOTAL_POLISHED_CHARS plus JSON structure overhead even at the Chinese
- * worst case of ≈1 token per character. max_tokens per request is computed
- * dynamically as min(POLISH_MAX_OUTPUT_TOKENS, totalTargetChars × 1.5 + JSON
- * overhead) so oversized requests can neither truncate nor blow up cost.
+ * Output budget math (roadmap「总输出预算」). The AGGREGATE cap is
+ * authoritative; per-item caps are sanity bounds:
+ *
+ * - Input: sum(items.text) ≤ MAX_TARGET_CHARS.
+ * - Per result: polished.length ≤ min(MAX_POLISHED_ITEM_CHARS,
+ *   ceil(original × 1.5) + PER_ITEM_POLISHED_SLACK_CHARS). The request-aware
+ *   part (×1.5 + slack against the original text) is enforced by the
+ *   orchestrator validator (unit 2.2); the absolute cap
+ *   MAX_POLISHED_ITEM_CHARS is enforced by polishSuccessResponseSchema.
+ * - Aggregate (authoritative): sum(polished.length) ≤
+ *   MAX_TOTAL_POLISHED_CHARS = MAX_TARGET_CHARS × 1.5, enforced by
+ *   polishSuccessResponseSchema. The sum of per-item caps can reach
+ *   MAX_TARGET_CHARS × 1.5 + MAX_ITEMS × slack = 8700 > 7500; such a
+ *   response is invalid by construction and burns a retry, so the token
+ *   budget only needs to cover VALID responses.
+ * - Tokens: any valid raw response is at most MAX_TOTAL_POLISHED_CHARS +
+ *   POLISH_RESPONSE_ENVELOPE_CHARS characters; POLISH_MAX_OUTPUT_TOKENS
+ *   covers that at the Chinese worst case of ≈1 token per character (ASCII
+ *   ids/escapes tokenize below 1 token per char, so the headroom is real).
+ *   max_tokens per request is computed dynamically (unit 2.1) as
+ *   min(POLISH_MAX_OUTPUT_TOKENS, totalTargetChars × 1.5 + envelope), so
+ *   oversized requests can neither truncate valid output nor blow up cost.
  */
 export const MAX_TARGET_CHARS = 5000;
 export const MAX_REFERENCE_CHARS = 10000;
 export const MAX_TOTAL_POLISHED_CHARS = 7500;
-export const POLISH_MAX_OUTPUT_TOKENS = 8192;
+/** Absolute per-result cap on polished length (roadmap: min(2400, …)). */
+export const MAX_POLISHED_ITEM_CHARS = 2400;
+/** Per-result slack on top of the ×1.5 polish factor (roadmap: +40). */
+export const PER_ITEM_POLISHED_SLACK_CHARS = 40;
+/**
+ * Worst-case JSON structure of the model's raw response
+ * (`{"items":[{"id":"…","polished":"…"},…]}`): 12 chars of wrapper plus,
+ * per item, 24 chars of structure/separator plus up to 32 chars of id
+ * (ITEM_ID_PATTERN).
+ */
+export const POLISH_RESPONSE_ENVELOPE_CHARS = 12 + MAX_ITEMS * (24 + 32);
+export const POLISH_MAX_OUTPUT_TOKENS = 10240;
 
 // ---------------------------------------------------------------------------
 // Request schema
@@ -99,7 +134,7 @@ export const POLISH_MAX_OUTPUT_TOKENS = 8192;
 
 const itemIdSchema = z.string().regex(ITEM_ID_PATTERN);
 
-export const polishItemSchema = z.object({
+export const polishItemSchema = z.strictObject({
   id: itemIdSchema,
   kind: z.enum(POLISHABLE_FIELD_KINDS),
   text: z.string().min(1).max(MAX_ITEM_CHARS),
@@ -108,15 +143,15 @@ export const polishItemSchema = z.object({
 export const POLISH_REFERENCE_ROLES = ["scope_metadata", "sibling", "profile", "skill"] as const;
 export type PolishReferenceRole = (typeof POLISH_REFERENCE_ROLES)[number];
 
-export const polishReferenceSchema = z.object({
+export const polishReferenceSchema = z.strictObject({
   role: z.enum(POLISH_REFERENCE_ROLES),
-  label: z.string().optional(),
+  label: z.string().max(MAX_REFERENCE_LABEL_CHARS).optional(),
   text: z.string().min(1).max(MAX_REFERENCE_ITEM_CHARS),
 });
 
 export const POLISH_CONTEXT_LEVELS = [0, 1, 2] as const;
 
-export const polishContextSchema = z.object({
+export const polishContextSchema = z.strictObject({
   level: z.union([z.literal(0), z.literal(1), z.literal(2)]),
   references: z.array(polishReferenceSchema).max(MAX_REFERENCES),
 });
@@ -130,7 +165,7 @@ export const POLISH_STYLE_PRESETS = [
 export type PolishStylePreset = (typeof POLISH_STYLE_PRESETS)[number];
 
 export const polishRequestSchema = z
-  .object({
+  .strictObject({
     /** Dedup key generated per "confirm polish"; never sent to the provider. */
     clientRequestId: z.uuid(),
     granularity: z.enum(POLISH_GRANULARITIES),
@@ -158,6 +193,17 @@ export const polishRequestSchema = z
         code: "custom",
         path: ["granularity"],
         message: `granularity "${request.granularity}" is not supported for section "${request.sectionId}"`,
+      });
+    }
+
+    // "item" granularity targets exactly one item; entry/section stay
+    // variable-length because the wire format deliberately does not encode
+    // project/entry grouping.
+    if (request.granularity === "item" && request.items.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message: "item granularity requires exactly one target item",
       });
     }
 
@@ -197,8 +243,9 @@ export const polishRequestSchema = z
       });
     }
 
+    // Labels count toward the aggregate: they are prompt content too.
     const totalReferenceChars = request.context.references.reduce(
-      (sum, reference) => sum + reference.text.length,
+      (sum, reference) => sum + reference.text.length + (reference.label?.length ?? 0),
       0,
     );
     if (totalReferenceChars > MAX_REFERENCE_CHARS) {
@@ -214,17 +261,80 @@ export const polishRequestSchema = z
 // Response schemas
 // ---------------------------------------------------------------------------
 
-export const polishQuotaSchema = z.object({
-  limit: z.number().int().nonnegative(),
-  remaining: z.number().int().nonnegative(),
-  /** DB time, ISO UTC. */
-  resetAt: z.iso.datetime(),
+export const polishQuotaSchema = z
+  .strictObject({
+    limit: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+    /** DB time, ISO UTC. */
+    resetAt: z.iso.datetime(),
+  })
+  .superRefine((quota, ctx) => {
+    if (quota.remaining > quota.limit) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["remaining"],
+        message: `remaining (${quota.remaining}) exceeds limit (${quota.limit})`,
+      });
+    }
+  });
+
+const polishResultItemSchema = z.strictObject({
+  id: itemIdSchema,
+  polished: z.string().min(1).max(MAX_POLISHED_ITEM_CHARS),
 });
 
-export const polishSuccessResponseSchema = z.object({
+export const polishSuccessResponseSchema = z
+  .strictObject({
+    /** Server-generated; also echoed in the X-Request-Id header. */
+    requestId: z.string().min(1),
+    items: z.array(polishResultItemSchema).min(1).max(MAX_ITEMS),
+    quota: polishQuotaSchema,
+  })
+  .superRefine((response, ctx) => {
+    const seenIds = new Set<string>();
+    let totalPolishedChars = 0;
+    for (const [index, item] of response.items.entries()) {
+      if (seenIds.has(item.id)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["items", index, "id"],
+          message: `duplicate result id "${item.id}"`,
+        });
+      }
+      seenIds.add(item.id);
+      // Whitespace-only output is rejected, but the stored value is NOT
+      // trimmed — validation only, no transformation.
+      if (item.polished.trim().length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["items", index, "polished"],
+          message: "polished text must not be blank",
+        });
+      }
+      totalPolishedChars += item.polished.length;
+    }
+    // Aggregate output cap — the authoritative output budget. Exact equality
+    // against the request's id set stays with the request-aware validator
+    // (unit 2.2); the standalone wire schema cannot know the request.
+    if (totalPolishedChars > MAX_TOTAL_POLISHED_CHARS) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message: `total polished characters ${totalPolishedChars} exceeds MAX_TOTAL_POLISHED_CHARS (${MAX_TOTAL_POLISHED_CHARS})`,
+      });
+    }
+  });
+
+/**
+ * Frozen success envelope of GET /api/polish/quota:
+ * `{ requestId, quota: { limit, remaining, resetAt } }` — the requestId
+ * mirrors X-Request-Id like every other polish response; the quota payload
+ * itself is identical to the one embedded in the POST success response.
+ * Errors reuse polishErrorResponseSchema.
+ */
+export const polishQuotaResponseSchema = z.strictObject({
   /** Server-generated; also echoed in the X-Request-Id header. */
   requestId: z.string().min(1),
-  items: z.array(z.object({ id: itemIdSchema, polished: z.string().min(1) })),
   quota: polishQuotaSchema,
 });
 
@@ -264,9 +374,9 @@ export const POLISH_ERROR_HTTP_STATUS = {
   UPSTREAM_TIMEOUT: 504,
 } as const satisfies Record<PolishErrorCode, number>;
 
-export const polishErrorResponseSchema = z.object({
+export const polishErrorResponseSchema = z.strictObject({
   requestId: z.string().min(1),
-  error: z.object({
+  error: z.strictObject({
     code: z.enum(POLISH_ERROR_CODES),
     message: z.string(),
     resetAt: z.iso.datetime().optional(),
@@ -285,4 +395,5 @@ export type PolishLanguage = z.infer<typeof polishRequestSchema>["language"];
 export type PolishRequest = z.infer<typeof polishRequestSchema>;
 export type PolishQuota = z.infer<typeof polishQuotaSchema>;
 export type PolishSuccessResponse = z.infer<typeof polishSuccessResponseSchema>;
+export type PolishQuotaResponse = z.infer<typeof polishQuotaResponseSchema>;
 export type PolishErrorResponse = z.infer<typeof polishErrorResponseSchema>;
