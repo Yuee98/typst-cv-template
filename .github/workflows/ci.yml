@@ -13,9 +13,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Dual-mode build (tmp/ai-polish-roadmap.md「双模式构建」CI 节): the static
+# export (GitHub Pages) and the server build (Vercel) are gated by two
+# independent jobs. Each job runs on its own checkout so that .next/, out/,
+# and the generated API route files can never cross-contaminate the other
+# mode. lint/typecheck/vitest deliberately run in BOTH jobs: the vitest suite
+# is small, and this keeps each job a self-contained gate instead of paying a
+# third checkout+install cycle for a standalone web-test job.
 jobs:
-  web:
-    name: Web
+  web-static-build:
+    name: Web (static export)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -44,5 +51,101 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build
-        run: pnpm build
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build (static export)
+        run: pnpm build:static
+
+      - name: Assert static export artifact
+        run: |
+          set -euo pipefail
+
+          # Pages serves web/out: it must exist and contain servable HTML.
+          if [ ! -d web/out ]; then
+            echo "::error::web/out does not exist after build:static."
+            exit 1
+          fi
+          if ! find web/out -name '*.html' -print -quit | grep -q .; then
+            echo "::error::web/out contains no HTML pages; the export is not servable by Pages."
+            exit 1
+          fi
+
+          # Invariant 9: the static export must never ship AI API routes.
+          # run-next-mode.mjs deletes the generated route files in static
+          # mode and `output: export` never emits route handlers anyway, so
+          # any web/out/api path means the mode wiring is broken.
+          if [ -e web/out/api ]; then
+            echo "::error::web/out/api exists in the static export; AI API routes must never ship to Pages (Invariant 9)."
+            exit 1
+          fi
+
+  web-server-build:
+    name: Web (server build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build (server)
+        run: pnpm build:server
+
+      - name: Smoke — assert stub 503 AI_DISABLED contract
+        run: |
+          set -euo pipefail
+
+          cd web
+
+          # Next 16 `next start` defaults to port 3000 and has no dedicated
+          # readiness endpoint, so pin an explicit port and poll HTTP until
+          # the server answers with any status (a locale redirect counts).
+          node_modules/.bin/next start -p 3100 > "${RUNNER_TEMP}/next-start.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
+
+          status="000"
+          for _ in $(seq 1 60); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/ || true)"
+            if [ "${status}" != "000" ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "${status}" = "000" ]; then
+            echo "::error::next start did not become ready within 60s. Log follows."
+            cat "${RUNNER_TEMP}/next-start.log"
+            exit 1
+          fi
+          echo "Server ready (HTTP ${status})."
+
+          # Phase 0 stub: both polish routes answer 503 AI_DISABLED. Unit 2.3
+          # replaces the stub with the real request lifecycle — then update
+          # the smoke to assert 401 UNAUTHORIZED for token-less requests
+          # (see scripts/smoke-polish-api.mjs).
+          node scripts/smoke-polish-api.mjs http://localhost:3100

@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
+    "build:server": "pnpm --filter web build:server",
+    "build:static": "pnpm --filter web build:static",
+    "test": "pnpm --filter web test",
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm --filter web typecheck",
     "sync:typst-assets": "pnpm --filter web sync:typst-assets",
