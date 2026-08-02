@@ -3,6 +3,7 @@ import { useLocale, useTranslations } from "next-intl";
 
 import { useDocumentActionDialogs } from "@/components/cv-builder/hooks/use-document-action-dialogs";
 
+import { isDraftRedundant } from "@/lib/cv/baseline";
 import { cloneCvData, createEmptyCvData, errorMessage } from "@/lib/cv/cv-utils";
 import { getSampleCvData } from "@/lib/cv/sample-data";
 import type { Locale } from "@/i18n/routing";
@@ -17,12 +18,12 @@ import type { CvStorageAdapters } from "@/lib/cv/storage-adapters";
 export function useCvDocumentActions({
   activeDocument,
   activeDocumentId,
+  clearDraft,
   documents,
   form,
   handleStorageDeferredError,
   loadDataIntoForm,
   loadDraft,
-  onDirtyChange,
   onError,
   replaceLocalDocumentSummary,
   resetActiveDocument,
@@ -34,12 +35,12 @@ export function useCvDocumentActions({
 }: {
   activeDocument: CvDocumentSummary | null;
   activeDocumentId: string | null;
+  clearDraft: (cvId: string) => void;
   documents: CvDocumentSummary[];
   form: UseFormReturn<CvData>;
   handleStorageDeferredError: (error: unknown, mode: "unlock" | "duplicate") => boolean;
-  loadDataIntoForm: (id: string, data: CvData) => void;
+  loadDataIntoForm: (id: string, data: CvData, options?: { baselineData?: CvData }) => void;
   loadDraft: (cvId: string) => CvData | null;
-  onDirtyChange: (dirty: boolean) => void;
   onError: (message: string) => void;
   replaceLocalDocumentSummary: (document: ReturnType<typeof createLocalCvDocument>) => void;
   resetActiveDocument: () => void;
@@ -75,10 +76,15 @@ export function useCvDocumentActions({
       upsertDocumentSummary(document.summary);
 
       const draft = documentSummary.storageKind === "cloud" ? loadDraft(id) : null;
-      loadDataIntoForm(document.summary.id, draft ?? document.data);
-      if (draft) {
-        onDirtyChange(true);
+      // A draft identical to the server data is redundant; drop it.
+      if (isDraftRedundant(draft, document.data)) {
+        clearDraft(id);
       }
+      // Same rule as the cloud sync path: a recovered draft fills the form,
+      // but the persisted (server) data stays the baseline.
+      loadDataIntoForm(document.summary.id, draft ?? document.data, {
+        baselineData: document.data,
+      });
     } catch (loadError) {
       if (handleStorageDeferredError(loadError, "unlock")) {
         return;

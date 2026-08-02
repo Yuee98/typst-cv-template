@@ -15,7 +15,7 @@ export function useCvPersistence({
   form,
   handleStorageDeferredError,
   loadDataIntoForm,
-  onDirtyChange,
+  onPersisted,
   onError,
   storageAdapters,
   upsertDocumentSummary,
@@ -27,7 +27,7 @@ export function useCvPersistence({
   form: UseFormReturn<CvData>;
   handleStorageDeferredError: (error: unknown, mode: "unlock" | "duplicate") => boolean;
   loadDataIntoForm: (id: string, data: CvData) => void;
-  onDirtyChange: (dirty: boolean) => void;
+  onPersisted: (id: string, data: CvData) => void;
   onError: (message: string) => void;
   storageAdapters: CvStorageAdapters;
   upsertDocumentSummary: (summary: CvDocumentSummary) => void;
@@ -66,7 +66,9 @@ export function useCvPersistence({
       setSaving(false);
     }
 
-    onDirtyChange(false);
+    // The save succeeded: the form data just written becomes the persisted
+    // baseline. On failure above, the baseline is left untouched.
+    onPersisted(activeDocumentId, parsed.data);
     if (activeDocument.storageKind === "cloud") {
       clearDraft(activeDocumentId);
     }
