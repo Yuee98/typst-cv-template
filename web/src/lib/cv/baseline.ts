@@ -9,11 +9,15 @@ import type { CvData } from "./schema";
  * when data is loaded from a storage backend or successfully written to one,
  * so it always reflects what is actually persisted — never an intermediate
  * in-memory state (e.g. a recovered draft).
+ *
+ * The baseline stores the canonical serialization of the persisted data and
+ * comparisons are exact string comparisons, so there is no hash-collision
+ * risk to reason about.
  */
 
 export type CvBaseline = {
   documentId: string;
-  hash: string;
+  serialized: string;
 };
 
 function sortKeysRecursively(value: unknown): unknown {
@@ -42,26 +46,9 @@ export function stableSerializeCvData(data: CvData): string {
   return JSON.stringify(sortKeysRecursively(data));
 }
 
-/**
- * Hashes CV data to a compact, deterministic fingerprint (cyrb53 over the
- * stable serialization). Two structurally equal values always hash equal;
- * any structural difference changes the hash.
- */
-export function hashCvBaseline(data: CvData): string {
-  const serialized = stableSerializeCvData(data);
-  let h1 = 0xdeadbeef;
-  let h2 = 0x41c6ce57;
-
-  for (let i = 0; i < serialized.length; i++) {
-    const ch = serialized.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-
-  return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}`;
+/** Exact structural equality for CV data (via the canonical serialization). */
+export function sameCvData(a: CvData, b: CvData): boolean {
+  return stableSerializeCvData(a) === stableSerializeCvData(b);
 }
 
 /**
@@ -70,7 +57,7 @@ export function hashCvBaseline(data: CvData): string {
  * backend), not an unsaved in-memory variant.
  */
 export function createCvBaseline(documentId: string, data: CvData): CvBaseline {
-  return { documentId, hash: hashCvBaseline(data) };
+  return { documentId, serialized: stableSerializeCvData(data) };
 }
 
 /**
@@ -87,5 +74,81 @@ export function matchesCvBaseline(
     return false;
   }
 
-  return baseline.hash === hashCvBaseline(data);
+  return baseline.serialized === stableSerializeCvData(data);
+}
+
+/**
+ * Computes the baseline and dirty flag for loading data into the form. The
+ * baseline tracks what is persisted, which is not always what goes into the
+ * form: when a local draft is recovered, the form gets the draft while the
+ * baseline stays at the persisted (server) data, so the document reads dirty.
+ */
+export function baselineOnFormLoad(
+  documentId: string,
+  data: CvData,
+  baselineData: CvData = data,
+): { baseline: CvBaseline; dirty: boolean } {
+  const baseline = createCvBaseline(documentId, baselineData);
+  return { baseline, dirty: !matchesCvBaseline(baseline, documentId, data) };
+}
+
+/**
+ * Computes the outcome of a successful save. Returns null when the completion
+ * must be ignored: the saved document is no longer the active one, or the
+ * baseline has already moved to another document (a stale async completion
+ * must never rebase the newly active document).
+ *
+ * `currentData` is the live form data, which may have advanced past
+ * `savedData` while the save was in flight — dirty is derived from it, not
+ * assumed clean. Pass null when the current form data could not be parsed;
+ * an unparseable form is treated as dirty.
+ */
+export function baselineOnPersisted({
+  baseline,
+  activeDocumentId,
+  savedDocumentId,
+  savedData,
+  currentData,
+}: {
+  baseline: CvBaseline | null;
+  activeDocumentId: string | null;
+  savedDocumentId: string;
+  savedData: CvData;
+  currentData: CvData | null;
+}): { baseline: CvBaseline; dirty: boolean } | null {
+  if (activeDocumentId !== savedDocumentId) {
+    return null;
+  }
+
+  if (baseline !== null && baseline.documentId !== savedDocumentId) {
+    return null;
+  }
+
+  const nextBaseline = createCvBaseline(savedDocumentId, savedData);
+  return {
+    baseline: nextBaseline,
+    dirty: currentData === null || !matchesCvBaseline(nextBaseline, savedDocumentId, currentData),
+  };
+}
+
+/**
+ * Decides the cloud-draft lifecycle for one debounced edit tick: a dirty form
+ * keeps the localStorage draft as a safety net; a form back at the persisted
+ * baseline makes the draft redundant, so it is cleared instead of rewritten.
+ */
+export function cloudDraftTick(
+  baseline: CvBaseline | null,
+  documentId: string,
+  data: CvData,
+): { dirty: boolean; action: "save-draft" | "clear-draft" } {
+  const dirty = !matchesCvBaseline(baseline, documentId, data);
+  return { dirty, action: dirty ? "save-draft" : "clear-draft" };
+}
+
+/**
+ * A recovered draft that is identical to the persisted (server) data is
+ * redundant and should be cleared rather than kept around.
+ */
+export function isDraftRedundant(draft: CvData | null, persistedData: CvData): boolean {
+  return draft !== null && sameCvData(draft, persistedData);
 }

@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
@@ -21,8 +21,9 @@ import { useEncryptionModal } from "@/components/cv-builder/hooks/use-encryption
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import type { Locale } from "@/i18n/routing";
 import {
+  baselineOnFormLoad,
+  baselineOnPersisted,
   createCvBaseline,
-  matchesCvBaseline,
   type CvBaseline,
 } from "@/lib/cv/baseline";
 import {
@@ -65,15 +66,11 @@ export function useCvBuilder() {
     reorderDocuments,
     replaceCloudSummaries,
     replaceLocalDocumentSummary,
-    setActiveDocumentId,
+    setActiveDocumentId: setActiveDocumentIdState,
     setOrderedDocuments,
     toggleLibraryCollapsed,
     upsertDocumentSummary,
   } = useCvDocuments({ initializedRef });
-
-  useEffect(() => {
-    activeDocumentIdRef.current = activeDocumentId;
-  }, [activeDocumentId]);
 
   const { cloudStatus, session, sessionInitialized, setCloudStatus, supabase } = useCloudSession({
     onError: setLibraryError,
@@ -93,8 +90,9 @@ export function useCvBuilder() {
   // Dirty state is derived by comparing the form data against the persisted
   // baseline of the same document (see lib/cv/baseline.ts).
   const baselineRef = useRef<CvBaseline | null>(null);
-  // Mirrors activeDocumentId so async save completions can tell whether the
-  // saved document is still the active one before rebasing.
+  // Updated synchronously by the setActiveDocumentId wrapper below, so an
+  // async save completion can always tell whether the saved document is
+  // still the active one before rebasing.
   const activeDocumentIdRef = useRef<string | null>(null);
 
   const form = useForm<CvData>({
@@ -151,6 +149,7 @@ export function useCvBuilder() {
     locale,
     activeDocument,
     activeDocumentId,
+    clearDraft,
     form,
     getDirtyBaseline,
     initializedRef,
@@ -172,6 +171,7 @@ export function useCvBuilder() {
   const documentActions = useCvDocumentActions({
     activeDocument,
     activeDocumentId,
+    clearDraft,
     documents,
     form,
     handleStorageDeferredError,
@@ -190,6 +190,7 @@ export function useCvBuilder() {
   const cloudSync = useCvCloudSync({
     locale,
     activeDocumentId,
+    clearDraft,
     documentsData,
     loadDataIntoForm,
     loadDraft,
@@ -285,17 +286,26 @@ export function useCvBuilder() {
     return false;
   }
 
+  // Single synchronous entry point for changing the active document: the ref
+  // is updated before the state so async completions (e.g. an in-flight save)
+  // always observe the truly current document — no effect-flush window.
+  function setActiveDocumentId(id: string | null) {
+    activeDocumentIdRef.current = id;
+    setActiveDocumentIdState(id);
+  }
+
   function loadDataIntoForm(id: string, data: CvData, options?: { baselineData?: CvData }) {
     // The baseline must track what is persisted, which is not always what goes
     // into the form: when a local draft is recovered, the form gets the draft
     // while the baseline stays at the server data (so the doc reads dirty).
-    baselineRef.current = createCvBaseline(id, options?.baselineData ?? data);
+    const { baseline, dirty } = baselineOnFormLoad(id, data, options?.baselineData);
+    baselineRef.current = baseline;
     setActiveDocumentId(id);
     saveActiveCvDocumentId(id);
     form.reset(data);
     preview.resetForFormLoad();
     setLibraryError(null);
-    setIsDirty(!matchesCvBaseline(baselineRef.current, id, data));
+    setIsDirty(dirty);
   }
 
   function setPersistedBaseline(id: string, data: CvData) {
@@ -308,13 +318,23 @@ export function useCvBuilder() {
 
   function markDocumentPersisted(id: string, data: CvData) {
     // A save that completes after the user switched documents must not rebase
-    // the newly active document.
-    if (activeDocumentIdRef.current !== id) {
+    // the newly active document; dirty is re-derived from the live form data
+    // because the form may have advanced past the saved snapshot while the
+    // save was in flight.
+    const current = cvSchema.safeParse(form.getValues());
+    const result = baselineOnPersisted({
+      baseline: baselineRef.current,
+      activeDocumentId: activeDocumentIdRef.current,
+      savedDocumentId: id,
+      savedData: data,
+      currentData: current.success ? current.data : null,
+    });
+    if (!result) {
       return;
     }
 
-    setPersistedBaseline(id, data);
-    setIsDirty(false);
+    baselineRef.current = result.baseline;
+    setIsDirty(result.dirty);
   }
 
   function saveDraft(cvId: string, data: CvData) {

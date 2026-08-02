@@ -3,6 +3,7 @@ import { useEffect, type Dispatch, type SetStateAction } from "react";
 
 import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
 import { useCvCloudActiveDocumentQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
+import { isDraftRedundant } from "@/lib/cv/baseline";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { loadTrustDevice } from "@/lib/cv/encryption-storage";
 import type { Locale } from "@/i18n/routing";
@@ -18,6 +19,7 @@ type CloudSyncTermsGate = {
 export function useCvCloudSync({
   locale,
   activeDocumentId,
+  clearDraft,
   documentsData,
   loadDataIntoForm,
   loadDraft,
@@ -36,6 +38,7 @@ export function useCvCloudSync({
 }: {
   locale: Locale;
   activeDocumentId: string | null;
+  clearDraft: (cvId: string) => void;
   documentsData: CvDocumentSummary[] | undefined;
   loadDataIntoForm: (id: string, data: CvData, options?: { baselineData?: CvData }) => void;
   loadDraft: (cvId: string) => CvData | null;
@@ -105,6 +108,10 @@ export function useCvCloudSync({
 
     upsertDocumentSummary(activeCloudDocument);
     const draft = loadDraft(activeCloudDocument.id);
+    // A draft identical to the server data is redundant; drop it.
+    if (isDraftRedundant(draft, activeCloudDocument.data)) {
+      clearDraft(activeCloudDocument.id);
+    }
     // The baseline always stays at the server data, even when a draft is
     // restored into the form — a draft must never become the baseline.
     loadDataIntoForm(activeCloudDocument.id, draft ?? activeCloudDocument.data, {

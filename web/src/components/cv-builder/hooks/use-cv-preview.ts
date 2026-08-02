@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { useTranslations } from "next-intl";
 
-import { matchesCvBaseline, type CvBaseline } from "@/lib/cv/baseline";
+import { cloudDraftTick, matchesCvBaseline, type CvBaseline } from "@/lib/cv/baseline";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
@@ -16,6 +16,7 @@ export function useCvPreview({
   locale = defaultLocale,
   activeDocument,
   activeDocumentId,
+  clearDraft,
   form,
   getDirtyBaseline,
   initializedRef,
@@ -28,6 +29,7 @@ export function useCvPreview({
   locale?: Locale;
   activeDocument: CvDocumentSummary | null;
   activeDocumentId: string | null;
+  clearDraft: (cvId: string) => void;
   form: UseFormReturn<CvData>;
   getDirtyBaseline: () => CvBaseline | null;
   initializedRef: MutableRefObject<boolean>;
@@ -77,17 +79,26 @@ export function useCvPreview({
       // Auto-save: only for local CVs (skip during reset)
       if (!isResetting) {
         if (activeDocument?.storageKind === "local") {
-          // On success the save updates the persisted baseline itself.
+          // On success the save updates the persisted baseline itself; on
+          // failure the baseline stays put and the derived dirty flag is
+          // reported so the editor never shows a false clean state.
+          const dirty = !matchesCvBaseline(getDirtyBaseline(), activeDocumentId, parsed.data);
           const saved = await saveCurrentDocument({ silent: true });
           if (!saved) {
+            onDirtyChange(dirty);
             return;
           }
         } else if (activeDocument?.storageKind === "cloud") {
-          // Cloud CVs: save draft to localStorage as safety net; dirty is
-          // derived from the persisted baseline (a recovered draft differing
-          // from the server data reads dirty, identical content reads clean).
-          saveDraft(activeDocumentId, parsed.data);
-          onDirtyChange(!matchesCvBaseline(getDirtyBaseline(), activeDocumentId, parsed.data));
+          // Cloud CVs: keep the localStorage draft as a safety net while the
+          // form differs from the persisted baseline; a form back at the
+          // baseline makes the draft redundant, so clear it instead.
+          const { dirty, action } = cloudDraftTick(getDirtyBaseline(), activeDocumentId, parsed.data);
+          if (action === "save-draft") {
+            saveDraft(activeDocumentId, parsed.data);
+          } else {
+            clearDraft(activeDocumentId);
+          }
+          onDirtyChange(dirty);
         } else {
           // Encrypted CVs: no auto-save, no draft
           onDirtyChange(!matchesCvBaseline(getDirtyBaseline(), activeDocumentId, parsed.data));
