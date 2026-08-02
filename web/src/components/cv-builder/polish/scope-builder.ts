@@ -8,9 +8,9 @@
  *
  * - targets carry the react-hook-form field `path` for local write-back and
  *   the stale guard; paths NEVER leave the client (apiRequest contains only
- *   opaque ids). `PolishTarget`/`PolishSnapshot` stay structurally compatible
- *   with `PolishTarget`/`PolishSnapshotBase` in polish-reducer.ts (CP0b),
- *   which lands on a sibling branch — integration swaps in that import.
+ *   opaque ids). `PolishTarget` is defined once in polish-reducer.ts (CP0b)
+ *   and re-exported here; `PolishSnapshot` extends the reducer's
+ *   `PolishSnapshotBase`, so the dialog reducer consumes snapshots as-is.
  * - apiRequest is the exact POST /api/polish body and always validates
  *   against polishRequestSchema. `clientRequestId` is parameter-injected:
  *   the caller mints it with crypto.randomUUID() per "confirm polish" (a
@@ -56,6 +56,10 @@ import {
   type PolishStylePreset,
 } from "@/lib/polish/contract";
 
+import type { PolishSnapshotBase, PolishTarget } from "./polish-reducer";
+
+export type { PolishTarget } from "./polish-reducer";
+
 /** Minimum meaningful length of a polishable text (roadmap aggregate filter). */
 export const MIN_POLISHABLE_TEXT_CHARS = 10;
 
@@ -79,13 +83,9 @@ export interface PolishScope {
 /**
  * One polish target inside a snapshot. `path` is the react-hook-form field
  * path used for local write-back and the stale guard; it must never be sent
- * to the server — only the opaque `id` leaves the client.
+ * to the server — only the opaque `id` leaves the client. The single type
+ * definition lives in polish-reducer.ts and is re-exported above.
  */
-export interface PolishTarget {
-  id: string;
-  path: string;
-  text: string;
-}
 
 /** Human-readable account of exactly what leaves the device. */
 export interface PolishDisclosure {
@@ -97,12 +97,15 @@ export interface PolishDisclosure {
   stylePreset?: PolishStylePreset;
   styleInstruction?: string;
   totalTargetChars: number;
+  /**
+   * Aggregate reference size counting text AND label per reference — the same
+   * accounting as the contract's MAX_REFERENCE_CHARS check (labels are prompt
+   * content too), so the displayed count matches the enforced budget.
+   */
   totalReferenceChars: number;
 }
 
-export interface PolishSnapshot {
-  documentId: string;
-  targets: PolishTarget[];
+export interface PolishSnapshot extends PolishSnapshotBase {
   /**
    * Form paths every sent reference text was sourced from. Together with the
    * target paths this is the input of the stale guard: if any of these fields
@@ -127,7 +130,7 @@ export type PolishScopeFailureCode =
   | "too_many_targets"
   /** A target over MAX_ITEM_CHARS, or the total over MAX_TARGET_CHARS. */
   | "targets_too_large"
-  /** More references than MAX_REFERENCES, or the total over MAX_REFERENCE_CHARS. */
+  /** More references than MAX_REFERENCES, or the text+label total over MAX_REFERENCE_CHARS. */
   | "references_too_large"
   /** styleInstruction over MAX_STYLE_INSTRUCTION_CHARS after trimming. */
   | "style_instruction_too_long"
@@ -570,7 +573,13 @@ export function buildPolishSnapshot(input: BuildPolishSnapshotInput): BuildPolis
     new Set(filtered.map((item) => item.text)),
   );
   if (references.length > MAX_REFERENCES) return { ok: false, code: "references_too_large" };
-  const totalReferenceChars = references.reduce((sum, reference) => sum + reference.text.length, 0);
+  // Labels count toward the aggregate, exactly like the contract's
+  // MAX_REFERENCE_CHARS check — the pre-check must trip the same failure code
+  // the final self-check would, never fall through to `invalid_request`.
+  const totalReferenceChars = references.reduce(
+    (sum, reference) => sum + reference.text.length + (reference.label?.length ?? 0),
+    0,
+  );
   if (totalReferenceChars > MAX_REFERENCE_CHARS) {
     return { ok: false, code: "references_too_large" };
   }

@@ -312,5 +312,126 @@
   },
   "CvPersistence": {
     "schemaError": "当前表单数据不符合 CV schema。"
+  },
+  "PolishDialog": {
+    "title": "AI 润色",
+    "close": "关闭",
+    "cancel": "取消",
+    "confirm": "确认润色",
+    "retry": "重试",
+    "adjustParams": "调整参数",
+    "done": "完成",
+    "rerun": "调整参数重跑",
+    "phaseDescription": {
+      "config": "确认将发送的内容并选择润色选项。",
+      "loading": "正在等待 AI 响应。",
+      "preview": "逐条审阅润色结果，接受或拒绝。",
+      "error": "润色请求失败。"
+    },
+    "signInRequired": "登录后可使用 AI 润色。",
+    "configChanged": "表单内容已变化，披露信息已更新，请重新确认。",
+    "disclosure": {
+      "heading": "将发送给 AI 服务的内容",
+      "summary": "{targetCount} 条正文（{targetChars} 字符）· {referenceCount} 条上下文（{referenceChars} 字符）",
+      "expand": "展开",
+      "collapse": "收起",
+      "targetsHeading": "润色目标",
+      "referencesHeading": "上下文（仅供参考，不会被改写）",
+      "stylePreset": "风格预设：{preset}",
+      "styleInstruction": "自定义指令：{instruction}",
+      "roles": {
+        "scope_metadata": "范围信息",
+        "sibling": "相邻条目",
+        "profile": "个人简介",
+        "skill": "技能"
+      }
+    },
+    "privacyReminder": "不会发送简历页眉中的姓名、邮箱和电话。本次选中的正文及上下文若自行包含个人信息，仍会发送至 AI 服务处理。",
+    "e2eeWarning": "润色文本将以明文离开你的设备，经我们的服务器转发至第三方 AI 服务处理。端到端加密只保护云端存储。",
+    "quota": {
+      "remaining": "今日剩余 {remaining}/{limit} 次",
+      "loading": "正在查询用量…",
+      "error": "用量查询失败。",
+      "retry": "重试"
+    },
+    "level": {
+      "heading": "上下文范围",
+      "l0": "Level 0 · 仅原文",
+      "l1": "Level 1 · 相邻条目",
+      "l2": "Level 2 · 简介与技能",
+      "l0Description": "最隐私：只发送选中的正文。",
+      "l1Description": "额外发送同范围的元信息与相邻条目。",
+      "l2Description": "再额外发送个人简介与技能标签（不含页眉信息）。"
+    },
+    "style": {
+      "heading": "润色风格",
+      "customPlaceholder": "自定义风格指令（可选，最多 200 字）",
+      "counter": "{count}/{max}",
+      "presets": {
+        "professional": "专业稳重",
+        "concise": "简洁有力",
+        "quantified": "突出量化成果",
+        "management": "管理向"
+      }
+    },
+    "terms": {
+      "agreePrefix": "我已阅读并同意",
+      "aiTerms": "《AI 功能使用条款》",
+      "required": "请先勾选同意 AI 功能条款。",
+      "checking": "正在检查条款接受状态…",
+      "accepting": "正在记录…",
+      "error": "条款状态查询失败。",
+      "retry": "重试"
+    },
+    "scopeFailures": {
+      "section_not_polishable": "该板块不支持 AI 润色。",
+      "granularity_not_supported": "该板块不支持此润色范围。",
+      "invalid_scope": "无法定位所选内容，请重新选择。",
+      "no_targets": "所选内容为空或过短（少于 10 字符），无法润色。",
+      "too_many_targets": "一次最多润色 30 条，请缩小范围。",
+      "targets_too_large": "正文超出大小限制，请缩小范围。",
+      "references_too_large": "上下文超出大小限制，请降低上下文范围。",
+      "style_instruction_too_long": "自定义风格指令最多 200 字。",
+      "invalid_request": "请求构建失败，请重试。"
+    },
+    "loading": {
+      "title": "AI 正在润色…",
+      "cancelHint": "取消请求仍可能计入当日配额。",
+      "cancel": "取消请求"
+    },
+    "preview": {
+      "counts": "已接受 {accepted} · 已拒绝 {rejected} · 待处理 {pending}",
+      "acceptAll": "全部接受",
+      "rejectAll": "全部拒绝",
+      "original": "原文",
+      "polished": "润色后",
+      "accept": "接受",
+      "reject": "拒绝",
+      "undo": "撤销",
+      "accepted": "已接受",
+      "rejected": "已拒绝",
+      "staleItem": "该字段已在别处被修改，无法写回。",
+      "referencesStale": "上下文内容已变化，结果可能不再准确。",
+      "srOriginal": "原文：{text}",
+      "srPolished": "润色后：{text}"
+    },
+    "errors": {
+      "quota_exhausted": "今日配额已用完。",
+      "rate_limited": "请求过于频繁，请稍后再试。",
+      "duplicate": "已有相同请求在处理，请稍候。",
+      "too_large": "内容超出大小限制，请缩小范围后重试。",
+      "timeout": "AI 服务响应超时，请重试。",
+      "invalid_output": "AI 返回了无效结果，可重试。",
+      "disabled": "AI 润色功能暂未开放。",
+      "auth": "登录状态已失效，请重新登录。",
+      "stale": "编辑内容已被外部更改，请确认后重试。",
+      "network": "网络异常，请检查连接后重试。",
+      "upstream": "AI 服务暂时不可用，请稍后重试。",
+      "invalid_request": "请求无效。",
+      "unknown": "发生未知错误。",
+      "resetAt": "配额重置时间：{resetAt}",
+      "retryAfter": "请等待 {seconds} 秒后重试。",
+      "requestId": "请求 ID：{requestId}"
+    }
   }
 }
