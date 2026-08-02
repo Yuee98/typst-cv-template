@@ -8,6 +8,8 @@ import type { LegalDocument } from "./types";
 
 export const LEGAL_EFFECTIVE_DATE = "July 3, 2026";
 
+export const AI_TERMS_EFFECTIVE_DATE = "August 2, 2026";
+
 export const termsDocument: LegalDocument = {
   title: "Terms of Use",
   effectiveDate: LEGAL_EFFECTIVE_DATE,
@@ -242,3 +244,73 @@ export const termsAcceptanceSummary = [
   "If you lose an encryption password or trusted-device key, encrypted CV content may not be recoverable.",
   "The service is provided as-is. Keep your own backups of important CV data and exported files.",
 ];
+
+export const aiTermsDocument: LegalDocument = {
+  title: "AI Service Terms",
+  effectiveDate: AI_TERMS_EFFECTIVE_DATE,
+  intro: [
+    `These AI Service Terms govern your use of the AI polish feature of ${SERVICE_NAME} at ${SERVICE_WEBSITE}. They apply in addition to the Terms of Use and the Privacy Policy.`,
+    "You must accept these AI Service Terms before using AI polish. Your acceptance (user ID, document version, and timestamp) is recorded so we can demonstrate that consent was given.",
+  ],
+  sections: [
+    {
+      heading: "The AI Polish Feature",
+      body: [
+        "AI polish rewrites selected free-text fields of your resume at your request, such as profile summaries, bullet points, and skill descriptions. It is intended to change wording only, not facts, figures, employers, job titles, or other factual content, and it never applies changes automatically.",
+        "When you confirm a polish request, the text you selected, together with any surrounding context you choose to include, is sent through our server to a third-party AI provider for processing.",
+      ],
+    },
+    {
+      heading: "What Is Sent",
+      body: [
+        "We do not actively send the name, email address, or phone number from your resume header. However, any personal information contained in the text and context you select will still be sent to the AI provider as part of your request.",
+        "Before each request, the feature shows you exactly what will be sent. Review this disclosure carefully and remove or avoid content you do not want to share.",
+      ],
+    },
+    {
+      heading: "What We Store",
+      body: [
+        "We do not intentionally store the resume text you send for polishing or the AI-generated output on our servers. Request content is processed in memory and discarded after the response is returned.",
+        "We keep metadata logs about each request, such as timestamps, user ID, feature settings, request counts, token usage, latency, and status or error codes. These logs never include your resume text, the AI output, or your style instructions.",
+        "Metadata logs are retained for up to 90 days and then deleted. Records of your acceptance of these AI Service Terms are kept until you delete your account.",
+      ],
+    },
+    {
+      heading: "Third-Party AI Provider",
+      body: [
+        "AI polish is powered by DeepSeek, a third-party AI provider. The content you send is processed by DeepSeek under its own terms and privacy policy, which we do not control.",
+        "We do not make any representation or guarantee about how DeepSeek retains, uses, or deletes the content it receives, including whether that content is used to train models. If this is a concern, do not include sensitive information in polish requests, or do not use the feature.",
+        "We may change the AI provider in the future. If we do, we will update these terms and, where required, ask you to accept the updated version before continuing to use the feature.",
+      ],
+    },
+    {
+      heading: "AI Output Requires Your Review",
+      body: [
+        "AI-generated suggestions may be inaccurate, incomplete, biased, or unsuitable, and may alter meaning or emphasis in unintended ways. They are provided as drafting suggestions only.",
+        "Polished text is never applied automatically. You must review each suggestion and explicitly accept or reject it. You are solely responsible for the final content of your resume.",
+        "Usage limits apply to AI polish, such as daily request limits and rate limits. We may suspend access in cases of abuse, excessive use, or risk to the service.",
+      ],
+    },
+    {
+      heading: "Encryption and AI Polish",
+      body: [
+        "End-to-end encryption, where available, protects only your cloud-saved resume data at rest. It does not apply to AI polish.",
+        "When you use AI polish on an encrypted resume, the selected plaintext leaves your device and is sent through our server to the AI provider. The rest of your encrypted resume remains protected as described in the Privacy Policy.",
+      ],
+    },
+    {
+      heading: "Changes",
+      body: [
+        "We may update these AI Service Terms from time to time. If changes are material, we will update the effective date and require you to accept the new version before using AI polish again.",
+      ],
+    },
+    {
+      heading: "Contact",
+      body: [
+        `For questions about these AI Service Terms, contact ${SERVICE_OPERATOR}.`,
+        `Email: ${SERVICE_CONTACT_EMAIL}`,
+        `Website: ${SERVICE_WEBSITE}`,
+      ],
+    },
+  ],
+};
