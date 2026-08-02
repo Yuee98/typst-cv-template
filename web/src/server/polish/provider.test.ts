@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getPolishProvider } from "./provider";
+import { getPolishProvider, PolishProviderError } from "./provider";
 
 describe("getPolishProvider", () => {
   afterEach(() => {
@@ -15,11 +15,16 @@ describe("getPolishProvider", () => {
     vi.stubEnv("POLISH_FAKE_LLM", "true");
     const provider = getPolishProvider();
     const result = await provider.complete(
-      { messages: [{ role: "user", content: '{"id":"k1","text":"x"}' }], maxOutputTokens: 100 },
+      {
+        messages: [{ role: "user", content: "polish please" }],
+        maxOutputTokens: 100,
+        providerUserId: "hmac-sha256-hex-pseudonymous-id",
+        targets: [{ id: "k1", text: "原始文本 k1" }],
+      },
       { signal: new AbortController().signal, timeoutMs: 500 },
     );
     expect(JSON.parse(result.text)).toEqual({
-      items: [{ id: "k1", polished: "[FAKE] polished k1" }],
+      items: [{ id: "k1", polished: "原始文本 k1" }],
     });
   });
 
@@ -50,5 +55,24 @@ describe("getPolishProvider", () => {
     expect(() =>
       getPolishProvider({ POLISH_FAKE_LLM: "true", NODE_ENV: "production" }),
     ).toThrow(/Refusing to start/);
+  });
+});
+
+describe("PolishProviderError", () => {
+  it("carries optional structured metadata (providerRequestId, upstreamStatus)", () => {
+    const error = new PolishProviderError("UPSTREAM_ERROR", "upstream HTTP failure", {
+      providerRequestId: "req-abc",
+      upstreamStatus: 503,
+    });
+    expect(error.name).toBe("PolishProviderError");
+    expect(error.code).toBe("UPSTREAM_ERROR");
+    expect(error.providerRequestId).toBe("req-abc");
+    expect(error.upstreamStatus).toBe(503);
+  });
+
+  it("leaves metadata undefined when not provided", () => {
+    const error = new PolishProviderError("UPSTREAM_TIMEOUT", "hard timeout");
+    expect(error.providerRequestId).toBeUndefined();
+    expect(error.upstreamStatus).toBeUndefined();
   });
 });
