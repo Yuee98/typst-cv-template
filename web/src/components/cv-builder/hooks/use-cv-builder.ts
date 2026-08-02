@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale, useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
@@ -20,6 +20,11 @@ import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal } from "@/components/cv-builder/hooks/use-encryption-modal";
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import type { Locale } from "@/i18n/routing";
+import {
+  createCvBaseline,
+  matchesCvBaseline,
+  type CvBaseline,
+} from "@/lib/cv/baseline";
 import {
   cloneCvData,
   errorMessage,
@@ -66,6 +71,10 @@ export function useCvBuilder() {
     upsertDocumentSummary,
   } = useCvDocuments({ initializedRef });
 
+  useEffect(() => {
+    activeDocumentIdRef.current = activeDocumentId;
+  }, [activeDocumentId]);
+
   const { cloudStatus, session, sessionInitialized, setCloudStatus, supabase } = useCloudSession({
     onError: setLibraryError,
   });
@@ -81,6 +90,12 @@ export function useCvBuilder() {
 
   const encryptionModal = useEncryptionModal(tEncryption);
   const [isDirty, setIsDirty] = useState(false);
+  // Dirty state is derived by comparing the form data against the persisted
+  // baseline of the same document (see lib/cv/baseline.ts).
+  const baselineRef = useRef<CvBaseline | null>(null);
+  // Mirrors activeDocumentId so async save completions can tell whether the
+  // saved document is still the active one before rebasing.
+  const activeDocumentIdRef = useRef<string | null>(null);
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
@@ -125,7 +140,7 @@ export function useCvBuilder() {
     form,
     handleStorageDeferredError,
     loadDataIntoForm,
-    onDirtyChange: setIsDirty,
+    onPersisted: markDocumentPersisted,
     onError: setLibraryError,
     storageAdapters,
     upsertDocumentSummary,
@@ -137,6 +152,7 @@ export function useCvBuilder() {
     activeDocument,
     activeDocumentId,
     form,
+    getDirtyBaseline,
     initializedRef,
     onDirtyChange: setIsDirty,
     saveCurrentDocument: persistence.saveCurrentDocument,
@@ -161,7 +177,6 @@ export function useCvBuilder() {
     handleStorageDeferredError,
     loadDataIntoForm,
     loadDraft,
-    onDirtyChange: setIsDirty,
     onError: setLibraryError,
     replaceLocalDocumentSummary,
     resetActiveDocument,
@@ -178,7 +193,6 @@ export function useCvBuilder() {
     documentsData,
     loadDataIntoForm,
     loadDraft,
-    onDirtyChange: setIsDirty,
     onError: setLibraryError,
     refetchDocuments,
     removeCloudSummaries,
@@ -235,6 +249,7 @@ export function useCvBuilder() {
     loadCollapsedPreference,
     localFallbackTitle: tActions("localTitle"),
     setActiveDocumentId,
+    setPersistedBaseline,
     setOrderedDocuments,
   });
 
@@ -270,12 +285,35 @@ export function useCvBuilder() {
     return false;
   }
 
-  function loadDataIntoForm(id: string, data: CvData) {
+  function loadDataIntoForm(id: string, data: CvData, options?: { baselineData?: CvData }) {
+    // The baseline must track what is persisted, which is not always what goes
+    // into the form: when a local draft is recovered, the form gets the draft
+    // while the baseline stays at the server data (so the doc reads dirty).
+    baselineRef.current = createCvBaseline(id, options?.baselineData ?? data);
     setActiveDocumentId(id);
     saveActiveCvDocumentId(id);
     form.reset(data);
     preview.resetForFormLoad();
     setLibraryError(null);
+    setIsDirty(!matchesCvBaseline(baselineRef.current, id, data));
+  }
+
+  function setPersistedBaseline(id: string, data: CvData) {
+    baselineRef.current = createCvBaseline(id, data);
+  }
+
+  function getDirtyBaseline() {
+    return baselineRef.current;
+  }
+
+  function markDocumentPersisted(id: string, data: CvData) {
+    // A save that completes after the user switched documents must not rebase
+    // the newly active document.
+    if (activeDocumentIdRef.current !== id) {
+      return;
+    }
+
+    setPersistedBaseline(id, data);
     setIsDirty(false);
   }
 
@@ -294,6 +332,7 @@ export function useCvBuilder() {
   function resetActiveDocument() {
     preview.reset();
     setLibraryError(null);
+    baselineRef.current = null;
     setIsDirty(false);
   }
 

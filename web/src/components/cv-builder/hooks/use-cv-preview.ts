@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { useTranslations } from "next-intl";
 
+import { matchesCvBaseline, type CvBaseline } from "@/lib/cv/baseline";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
@@ -16,6 +17,7 @@ export function useCvPreview({
   activeDocument,
   activeDocumentId,
   form,
+  getDirtyBaseline,
   initializedRef,
   onDirtyChange,
   saveCurrentDocument,
@@ -27,6 +29,7 @@ export function useCvPreview({
   activeDocument: CvDocumentSummary | null;
   activeDocumentId: string | null;
   form: UseFormReturn<CvData>;
+  getDirtyBaseline: () => CvBaseline | null;
   initializedRef: MutableRefObject<boolean>;
   onDirtyChange: (dirty: boolean) => void;
   saveCurrentDocument: (options?: { silent?: boolean }) => Promise<boolean>;
@@ -74,17 +77,20 @@ export function useCvPreview({
       // Auto-save: only for local CVs (skip during reset)
       if (!isResetting) {
         if (activeDocument?.storageKind === "local") {
+          // On success the save updates the persisted baseline itself.
           const saved = await saveCurrentDocument({ silent: true });
           if (!saved) {
             return;
           }
         } else if (activeDocument?.storageKind === "cloud") {
-          // Cloud CVs: save draft to localStorage as safety net
+          // Cloud CVs: save draft to localStorage as safety net; dirty is
+          // derived from the persisted baseline (a recovered draft differing
+          // from the server data reads dirty, identical content reads clean).
           saveDraft(activeDocumentId, parsed.data);
-          onDirtyChange(true);
+          onDirtyChange(!matchesCvBaseline(getDirtyBaseline(), activeDocumentId, parsed.data));
         } else {
           // Encrypted CVs: no auto-save, no draft
-          onDirtyChange(true);
+          onDirtyChange(!matchesCvBaseline(getDirtyBaseline(), activeDocumentId, parsed.data));
         }
       }
 

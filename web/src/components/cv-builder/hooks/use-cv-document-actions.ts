@@ -22,7 +22,6 @@ export function useCvDocumentActions({
   handleStorageDeferredError,
   loadDataIntoForm,
   loadDraft,
-  onDirtyChange,
   onError,
   replaceLocalDocumentSummary,
   resetActiveDocument,
@@ -37,9 +36,8 @@ export function useCvDocumentActions({
   documents: CvDocumentSummary[];
   form: UseFormReturn<CvData>;
   handleStorageDeferredError: (error: unknown, mode: "unlock" | "duplicate") => boolean;
-  loadDataIntoForm: (id: string, data: CvData) => void;
+  loadDataIntoForm: (id: string, data: CvData, options?: { baselineData?: CvData }) => void;
   loadDraft: (cvId: string) => CvData | null;
-  onDirtyChange: (dirty: boolean) => void;
   onError: (message: string) => void;
   replaceLocalDocumentSummary: (document: ReturnType<typeof createLocalCvDocument>) => void;
   resetActiveDocument: () => void;
@@ -75,10 +73,11 @@ export function useCvDocumentActions({
       upsertDocumentSummary(document.summary);
 
       const draft = documentSummary.storageKind === "cloud" ? loadDraft(id) : null;
-      loadDataIntoForm(document.summary.id, draft ?? document.data);
-      if (draft) {
-        onDirtyChange(true);
-      }
+      // Same rule as the cloud sync path: a recovered draft fills the form,
+      // but the persisted (server) data stays the baseline.
+      loadDataIntoForm(document.summary.id, draft ?? document.data, {
+        baselineData: document.data,
+      });
     } catch (loadError) {
       if (handleStorageDeferredError(loadError, "unlock")) {
         return;
