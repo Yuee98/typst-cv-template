@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ORDERED_SECTION_IDS, type CvSectionId } from "@/lib/cv/schema";
 import {
+  computePolishMaxOutputTokens,
   getSectionCapability,
   ITEM_ID_PATTERN,
   MAX_BODY_BYTES,
@@ -14,6 +15,7 @@ import {
   MAX_STYLE_INSTRUCTION_CHARS,
   MAX_TARGET_CHARS,
   MAX_TOTAL_POLISHED_CHARS,
+  maxPolishedCharsForItem,
   PER_ITEM_POLISHED_SLACK_CHARS,
   POLISH_CAPABILITY_MATRIX,
   POLISH_ERROR_CODES,
@@ -217,6 +219,29 @@ describe("polishRequestSchema — item granularity cardinality", () => {
       expect(accepts(request)).toBe(true);
     },
   );
+});
+
+describe("polishRequestSchema — nonblank wire text", () => {
+  it.each(["   ", "\t\n ", "　　", " 　 "])("rejects whitespace-only target text %j", (text) => {
+    const request = makeRequest();
+    request.items = [{ id: "i0", kind: "experience_bullet", text }];
+    expect(accepts(request)).toBe(false);
+  });
+
+  it.each(["   ", "　"])("rejects whitespace-only reference text %j", (text) => {
+    const request = makeRequest();
+    request.context = { level: 1, references: [{ role: "sibling", text }] };
+    expect(accepts(request)).toBe(false);
+  });
+
+  it("accepts text with nonblank padding (stored untrimmed)", () => {
+    const request = makeRequest();
+    const padded = "  负责后端服务开发。  ";
+    request.items = [{ id: "i0", kind: "experience_bullet", text: padded }];
+    const parsed = polishRequestSchema.safeParse(request);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.items[0].text).toBe(padded);
+  });
 });
 
 describe("polishRequestSchema — hard constraints", () => {
@@ -476,6 +501,55 @@ describe("capability matrix & constants", () => {
     expect(POLISH_ERROR_HTTP_STATUS.AI_DISABLED).toBe(503);
     expect(POLISH_ERROR_HTTP_STATUS.SERVICE_UNAVAILABLE).toBe(503);
     expect(POLISH_ERROR_HTTP_STATUS.UPSTREAM_TIMEOUT).toBe(504);
+  });
+});
+
+describe("dynamic output budget helpers", () => {
+  it("maxPolishedCharsForItem applies ceil, ×1.5, slack, and the absolute cap", () => {
+    // Odd source length exercises Math.ceil: ceil(11 × 1.5) = 17.
+    expect(maxPolishedCharsForItem(11)).toBe(17 + PER_ITEM_POLISHED_SLACK_CHARS);
+    expect(maxPolishedCharsForItem(10)).toBe(15 + PER_ITEM_POLISHED_SLACK_CHARS);
+    // Long items are clamped by the absolute per-result cap.
+    expect(maxPolishedCharsForItem(MAX_ITEM_CHARS)).toBe(MAX_POLISHED_ITEM_CHARS);
+    expect(maxPolishedCharsForItem(0)).toBe(PER_ITEM_POLISHED_SLACK_CHARS);
+  });
+
+  it("includes per-item slack: 30 short items where the +40 dominates", () => {
+    const items = Array.from({ length: MAX_ITEMS }, () => ({ text: "x".repeat(10) }));
+    // Per item: 15 + 40 = 55 → 30 × 55 = 1650 content + envelope.
+    expect(computePolishMaxOutputTokens(items)).toBe(1650 + POLISH_RESPONSE_ENVELOPE_CHARS);
+  });
+
+  it("caps a single long item at MAX_POLISHED_ITEM_CHARS", () => {
+    const items = [{ text: "x".repeat(MAX_ITEM_CHARS) }];
+    expect(computePolishMaxOutputTokens(items)).toBe(
+      MAX_POLISHED_ITEM_CHARS + POLISH_RESPONSE_ENVELOPE_CHARS,
+    );
+  });
+
+  it("clamps the content sum at the authoritative aggregate cap", () => {
+    // 30 items × 2400 would be 72000 without the aggregate clamp.
+    const items = Array.from({ length: MAX_ITEMS }, () => ({ text: "x".repeat(MAX_ITEM_CHARS) }));
+    expect(computePolishMaxOutputTokens(items)).toBe(
+      MAX_TOTAL_POLISHED_CHARS + POLISH_RESPONSE_ENVELOPE_CHARS,
+    );
+    // And the result never exceeds the hard token ceiling for ANY request.
+    expect(computePolishMaxOutputTokens(items)).toBeLessThanOrEqual(POLISH_MAX_OUTPUT_TOKENS);
+  });
+
+  it("covers the worst-case valid response within POLISH_MAX_OUTPUT_TOKENS", () => {
+    // The maximal VALID response (aggregate cap + envelope) must fit.
+    expect(MAX_TOTAL_POLISHED_CHARS + POLISH_RESPONSE_ENVELOPE_CHARS).toBeLessThanOrEqual(
+      POLISH_MAX_OUTPUT_TOKENS,
+    );
+    // A maximal-input request computes exactly that budget: 5 × 1000 chars
+    // fills MAX_TARGET_CHARS; per-item ceilings 5 × 1540 = 7700 exceed the
+    // aggregate cap, so the clamp yields MAX_TOTAL_POLISHED_CHARS.
+    const items = Array.from({ length: 5 }, () => ({ text: "x".repeat(1000) }));
+    expect(items.reduce((sum, item) => sum + item.text.length, 0)).toBe(MAX_TARGET_CHARS);
+    expect(computePolishMaxOutputTokens(items)).toBe(
+      MAX_TOTAL_POLISHED_CHARS + POLISH_RESPONSE_ENVELOPE_CHARS,
+    );
   });
 });
 

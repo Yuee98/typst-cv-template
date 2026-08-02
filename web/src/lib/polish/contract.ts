@@ -104,12 +104,16 @@ export const ITEM_ID_PATTERN = /^[a-zA-Z0-9_-]{1,32}$/;
  *   MAX_TARGET_CHARS × 1.5 + MAX_ITEMS × slack = 8700 > 7500; such a
  *   response is invalid by construction and burns a retry, so the token
  *   budget only needs to cover VALID responses.
- * - Tokens: any valid raw response is at most MAX_TOTAL_POLISHED_CHARS +
- *   POLISH_RESPONSE_ENVELOPE_CHARS characters; POLISH_MAX_OUTPUT_TOKENS
- *   covers that at the Chinese worst case of ≈1 token per character (ASCII
- *   ids/escapes tokenize below 1 token per char, so the headroom is real).
- *   max_tokens per request is computed dynamically (unit 2.1) as
- *   min(POLISH_MAX_OUTPUT_TOKENS, totalTargetChars × 1.5 + envelope), so
+ * - Tokens: the budget is a CONSERVATIVE expected-prose estimate, not a
+ *   mathematical guarantee — JSON escaping inside content (quotes,
+ *   backslashes, control characters) can make the raw response longer than
+ *   decoded length + structural envelope, and character counts only estimate
+ *   model tokens. POLISH_MAX_OUTPUT_TOKENS covers the valid worst case at
+ *   ≈1 token per CJK character with real headroom; a pathological response
+ *   that still overflows surfaces as finishReason "length" and is handled as
+ *   ordinary invalid output / retry (unit 2.2), never as an impossible state.
+ *   max_tokens per request is computed dynamically by
+ *   computePolishMaxOutputTokens (single source for units 2.1/2.2), so
  *   oversized requests can neither truncate valid output nor blow up cost.
  */
 export const MAX_TARGET_CHARS = 5000;
@@ -123,10 +127,39 @@ export const PER_ITEM_POLISHED_SLACK_CHARS = 40;
  * Worst-case JSON structure of the model's raw response
  * (`{"items":[{"id":"…","polished":"…"},…]}`): 12 chars of wrapper plus,
  * per item, 24 chars of structure/separator plus up to 32 chars of id
- * (ITEM_ID_PATTERN).
+ * (ITEM_ID_PATTERN). Does NOT cover in-content JSON escaping (see the
+ * conservative-budget note above).
  */
 export const POLISH_RESPONSE_ENVELOPE_CHARS = 12 + MAX_ITEMS * (24 + 32);
 export const POLISH_MAX_OUTPUT_TOKENS = 10240;
+
+/**
+ * Per-result polished-length ceiling for a source text of `originalChars`
+ * (the schema-level valid bound; the request-aware validator enforces the
+ * same formula against the actual original text).
+ */
+export function maxPolishedCharsForItem(originalChars: number): number {
+  return Math.min(
+    MAX_POLISHED_ITEM_CHARS,
+    Math.ceil(originalChars * 1.5) + PER_ITEM_POLISHED_SLACK_CHARS,
+  );
+}
+
+/**
+ * Dynamic max_tokens for a request — the single source of truth so units
+ * 2.1/2.2 cannot reinterpret the formula independently:
+ *
+ *   sum of per-item valid ceilings (slack INCLUDED — many short items make
+ *   the +40 dominate the ×1.5 factor) → clamped to the aggregate cap →
+ *   plus the response envelope → clamped to POLISH_MAX_OUTPUT_TOKENS.
+ */
+export function computePolishMaxOutputTokens(items: ReadonlyArray<{ text: string }>): number {
+  const maxContentChars = Math.min(
+    MAX_TOTAL_POLISHED_CHARS,
+    items.reduce((sum, item) => sum + maxPolishedCharsForItem(item.text.length), 0),
+  );
+  return Math.min(POLISH_MAX_OUTPUT_TOKENS, maxContentChars + POLISH_RESPONSE_ENVELOPE_CHARS);
+}
 
 // ---------------------------------------------------------------------------
 // Request schema
@@ -134,10 +167,23 @@ export const POLISH_MAX_OUTPUT_TOKENS = 10240;
 
 const itemIdSchema = z.string().regex(ITEM_ID_PATTERN);
 
+/**
+ * Wire text must carry substantive content: a whitespace-only target would
+ * pass min(1) but can never produce a valid (nonblank) polished result —
+ * the deterministic fake would echo it into an invalid success response,
+ * and a real model would have nothing to polish. The UI's stricter <10
+ * chars rule stays a UX policy on top of this wire floor.
+ */
+const nonBlankText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((value) => value.trim().length > 0, { message: "text must not be blank" });
+
 export const polishItemSchema = z.strictObject({
   id: itemIdSchema,
   kind: z.enum(POLISHABLE_FIELD_KINDS),
-  text: z.string().min(1).max(MAX_ITEM_CHARS),
+  text: nonBlankText(MAX_ITEM_CHARS),
 });
 
 export const POLISH_REFERENCE_ROLES = ["scope_metadata", "sibling", "profile", "skill"] as const;
@@ -146,7 +192,7 @@ export type PolishReferenceRole = (typeof POLISH_REFERENCE_ROLES)[number];
 export const polishReferenceSchema = z.strictObject({
   role: z.enum(POLISH_REFERENCE_ROLES),
   label: z.string().max(MAX_REFERENCE_LABEL_CHARS).optional(),
-  text: z.string().min(1).max(MAX_REFERENCE_ITEM_CHARS),
+  text: nonBlankText(MAX_REFERENCE_ITEM_CHARS),
 });
 
 export const POLISH_CONTEXT_LEVELS = [0, 1, 2] as const;
