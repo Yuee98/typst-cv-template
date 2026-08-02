@@ -142,8 +142,10 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build
-        run: pnpm build
+      - name: Build (static export)
+        # Pages serves web/out, so this must be the static export. The
+        # default `pnpm build` is the server build, which has no out/.
+        run: pnpm build:static
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
