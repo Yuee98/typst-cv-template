@@ -160,7 +160,7 @@ Vercel 部署 **server 构建**；GitHub Pages 通过 `promote-release` workflow
    | `DEEPSEEK_API_KEY` | secret | 真实 provider（单元 2.1）落地后必需 |
    | `SUPABASE_SERVICE_ROLE_KEY` | secret | 真实 handler（单元 2.3）落地后必需 |
 
-   生产环境绝不设置 `POLISH_FAKE_LLM`——与 `NODE_ENV=production` 组合时启动会被拒绝。服务端硬开关（`AI_POLISH_ENABLED`，默认关闭）随单元 2.3 的真实 handler 引入；不设置即保持 API 关闭。
+   生产环境绝不设置 `POLISH_FAKE_LLM`——`getPolishProvider()` 在与 `NODE_ENV=production` 组合时会抛错。Phase 0 stub 不解析 provider，该 guard 在真实 handler 于模块作用域装配 provider 后（CP2）才生效。服务端硬开关（`AI_POLISH_ENABLED`，默认关闭）随单元 2.3 的真实 handler 引入；不设置即保持 API 关闭。
 4. **部署后验证**：
 
    ```

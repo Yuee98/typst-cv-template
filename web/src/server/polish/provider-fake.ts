@@ -7,18 +7,30 @@
  * dependence beyond the simulated delay, so tests can assert exact values.
  * The returned text is always shaped as `{"items":[{"id":...,"polished":...}]}`,
  * matching the prompt contract the orchestrator (unit 2.2) validates against.
+ * Each target's ORIGINAL text is echoed unchanged (taken from the structured
+ * `targets` metadata, never parsed back out of the prompt strings), so the
+ * fake's success path survives the language / protected-span / length
+ * validation pipeline exactly like a real polished response must.
  *
  * Codewords scanned across all message contents:
  * - FAIL_UPSTREAM → throws PolishProviderError(UPSTREAM_ERROR)
  * - FAIL_JSON     → resolves with malformed JSON text (exercises the
  *                   orchestrator's JSON-parse failure path)
- * - SLOW          → resolves only after timeoutMs + FAKE_SLOW_EXTRA_DELAY_MS
- *                   (exercises the orchestrator's timeout path); still
- *                   rejects immediately on signal abort
+ * - SLOW          → simulates a call that outlasts `timeoutMs`
+ *                   (timeoutMs + FAKE_SLOW_EXTRA_DELAY_MS), so the fake's
+ *                   own single-attempt timeout fires first (exercises the
+ *                   orchestrator's timeout path)
  *
- * `maxOutputTokens` is accepted but ignored: the fake's output is far below
- * any realistic cap, and the cap only matters for the real provider's
- * max_tokens mapping (unit 2.1).
+ * Timeout contract (same as every provider): `timeoutMs` is the hard timeout
+ * of this single call. The fake races it against the caller's signal — its
+ * own timeout rejects with PolishProviderError("UPSTREAM_TIMEOUT", …), while
+ * caller cancellation rejects with the signal's AbortError. The
+ * orchestrator's overall multi-attempt deadline is a separate concern (unit
+ * 2.2) and is not simulated here.
+ *
+ * `maxOutputTokens` and `providerUserId` are accepted but ignored: the
+ * fake's output is far below any realistic cap, and the id only matters for
+ * the real provider's upstream mapping (unit 2.1).
  */
 
 import {
@@ -37,7 +49,10 @@ export const FAKE_PROVIDER_CODEWORDS = {
 
 export const DEFAULT_FAKE_DELAY_MS = 20;
 
-/** Extra delay added on top of `timeoutMs` when the SLOW codeword is present. */
+/**
+ * Extra delay added on top of `timeoutMs` when the SLOW codeword is present,
+ * so the fake's own timeout always fires before the simulated latency ends.
+ */
 export const FAKE_SLOW_EXTRA_DELAY_MS = 1000;
 
 export interface FakePolishProviderOptions {
@@ -45,43 +60,39 @@ export interface FakePolishProviderOptions {
   delayMs?: number;
 }
 
-/** Matches `"id":"..."` JSON fragments (contract ITEM_ID_PATTERN charset). */
-const ITEM_ID_FRAGMENT = /"id"\s*:\s*"([A-Za-z0-9_-]{1,32})"/g;
-
 /**
- * Best-effort echo of the item ids embedded in the request messages. Prompt
- * assembly (unit 2.2) serializes items as JSON with `"id"` fields, so this
- * picks them up in order, deduplicated. When no id fragment is found (e.g.
- * hand-written test messages), a single generic placeholder id is used so
- * the output stays well-formed.
+ * Waits `ms`, racing the fake's own hard `timeoutMs` against caller
+ * cancellation: the fake's timeout rejects with UPSTREAM_TIMEOUT, a caller
+ * abort rejects with the signal's reason (AbortError).
  */
-function extractItemIds(corpus: string): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const match of corpus.matchAll(ITEM_ID_FRAGMENT)) {
-    if (!seen.has(match[1])) {
-      seen.add(match[1]);
-      ids.push(match[1]);
-    }
-  }
-  return ids.length > 0 ? ids : ["i0"];
-}
-
-/** Rejects with the signal's reason (AbortError) if the signal fires. */
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+function sleep(ms: number, signal: AbortSignal, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
       reject(signal.reason);
       return;
     }
+    const cleanup = () => {
+      clearTimeout(delayTimer);
+      clearTimeout(timeoutTimer);
+      signal.removeEventListener("abort", onAbort);
+    };
     const onAbort = () => {
-      clearTimeout(timer);
+      cleanup();
       reject(signal.reason);
     };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
+    const delayTimer = setTimeout(() => {
+      cleanup();
       resolve();
     }, ms);
+    const timeoutTimer = setTimeout(() => {
+      cleanup();
+      reject(
+        new PolishProviderError(
+          "UPSTREAM_TIMEOUT",
+          `fake polish provider: single call exceeded its hard timeoutMs (${timeoutMs}ms)`,
+        ),
+      );
+    }, timeoutMs);
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }
@@ -120,17 +131,14 @@ export function createFakePolishProvider(options: FakePolishProviderOptions = {}
       }
 
       const slow = corpus.includes(FAKE_PROVIDER_CODEWORDS.slow);
-      await sleep(slow ? timeoutMs + FAKE_SLOW_EXTRA_DELAY_MS : delayMs, signal);
+      await sleep(slow ? timeoutMs + FAKE_SLOW_EXTRA_DELAY_MS : delayMs, signal, timeoutMs);
 
       let text: string;
       if (corpus.includes(FAKE_PROVIDER_CODEWORDS.failJson)) {
         // Malformed on purpose: truncated mid-string, unrecoverable by JSON.parse.
         text = '{"items":[{"id":"i0","polished":"truncated';
       } else {
-        const items = extractItemIds(corpus).map((id) => ({
-          id,
-          polished: `[FAKE] polished ${id}`,
-        }));
+        const items = request.targets.map((target) => ({ id: target.id, polished: target.text }));
         text = JSON.stringify({ items });
       }
 
