@@ -3,9 +3,15 @@
  *
  * Phases: config -> loading -> preview, or loading -> error.
  *
- * The reducer owns no I/O: the dialog layer builds snapshots via the scope
- * builder, fires the fetch (AbortController), writes accepted values back to
- * the form, and feeds outcomes back as actions. Two honesty guards live here:
+ * The reducer is a pure function of (state, action) — safe under React
+ * Strict Mode double dispatch. All nondeterminism lives with the caller:
+ * the clientRequestId is minted (crypto.randomUUID) by the event handler
+ * BEFORE dispatching CONFIRM and travels in the action payload; the reducer
+ * only moves it into state. It also owns no I/O: the dialog layer builds
+ * snapshots via the scope builder, fires the fetch (AbortController), writes
+ * accepted values back to the form, and feeds outcomes back as actions.
+ *
+ * Two honesty guards live here:
  *
  * - Late responses: REQUEST_SUCCESS / REQUEST_FAILURE carry the
  *   clientRequestId they answer; anything not matching the in-flight request
@@ -17,17 +23,16 @@
  *   per-item write-backs stay guarded by `expectedCurrent`.
  */
 
+import type {
+  PolishContextLevel,
+  PolishStylePreset,
+} from "@/lib/polish/contract";
+
+export type { PolishContextLevel, PolishStylePreset };
+
 export type PolishPhase = "config" | "loading" | "preview" | "error";
 
 export type PolishItemStatus = "pending" | "accepted" | "rejected";
-
-export type PolishContextLevel = 0 | 1 | 2;
-
-export type PolishStylePreset =
-  | "professional"
-  | "concise"
-  | "quantified"
-  | "management";
 
 export interface PolishParams {
   level: PolishContextLevel;
@@ -64,6 +69,11 @@ export interface PolishItem {
   state: PolishItemStatus;
 }
 
+/**
+ * `code` is a server code from the API contract or one of
+ * POLISH_CLIENT_ERROR_CODES; kept as open string so the UI can also surface
+ * client-side failures (network, abort) without a contract change.
+ */
 export interface PolishError {
   code: string;
   message?: string;
@@ -106,10 +116,16 @@ export type PolishAction<S extends PolishSnapshotBase = PolishSnapshotBase> =
   /** config only: refresh params + a rebuilt snapshot (dialog open, param change). */
   | { type: "CONFIGURE"; params: PolishParams; snapshot: S }
   /**
-   * config/error -> loading: adopt the freshly built snapshot and mint a NEW
-   * clientRequestId (manual retries must never reuse a consumed dedup key).
+   * config/error -> loading: adopt the freshly built snapshot and the
+   * clientRequestId the caller minted for THIS attempt (manual retries and
+   * reruns must never reuse a consumed dedup key).
    */
-  | { type: "CONFIRM"; params: PolishParams; snapshot: S }
+  | {
+      type: "CONFIRM";
+      params: PolishParams;
+      snapshot: S;
+      clientRequestId: string;
+    }
   /** loading -> preview; ignored unless clientRequestId matches the in-flight request. */
   | {
       type: "REQUEST_SUCCESS";
@@ -138,9 +154,9 @@ export type PolishAction<S extends PolishSnapshotBase = PolishSnapshotBase> =
   | { type: "REJECT_ALL" }
   /**
    * preview/error -> config: drop unaccepted results (accepted write-backs
-   * already live in the form, so they survive); the next CONFIRM rebuilds the
-   * snapshot from the current form — accepted values included — and mints a
-   * new clientRequestId.
+   * already live in the form, so they survive); the next CONFIRM carries a
+   * snapshot rebuilt from the current form — accepted values included — and
+   * a freshly minted clientRequestId.
    */
   | { type: "RERUN" }
   /** loading -> config: cancel the in-flight request; its late response no-ops. */
@@ -149,16 +165,6 @@ export type PolishAction<S extends PolishSnapshotBase = PolishSnapshotBase> =
   | { type: "MARK_SNAPSHOT_STALE" }
   /** any phase -> initial config state (dialog closed); params are kept. */
   | { type: "RESET" };
-
-export type PolishReducer<S extends PolishSnapshotBase = PolishSnapshotBase> = (
-  state: PolishState<S>,
-  action: PolishAction<S>,
-) => PolishState<S>;
-
-export interface PolishReducerDeps {
-  /** Mints the dedup key for each CONFIRM. Injected for deterministic tests. */
-  createClientRequestId?: () => string;
-}
 
 /** Default context level per the roadmap (Level 1: siblings + scope metadata). */
 export const DEFAULT_POLISH_PARAMS: PolishParams = { level: 1 };
@@ -204,154 +210,153 @@ export function countItems(
   return { pending, accepted, rejected };
 }
 
-export function createPolishReducer<
-  S extends PolishSnapshotBase = PolishSnapshotBase,
->(deps: PolishReducerDeps = {}): PolishReducer<S> {
-  const createClientRequestId =
-    deps.createClientRequestId ?? (() => crypto.randomUUID());
-
-  return function polishReducer(state, action) {
-    switch (action.type) {
-      case "CONFIGURE": {
-        if (state.phase !== "config") return state;
-        // A freshly built snapshot reflects the current form: never stale.
-        return {
-          ...state,
-          params: action.params,
-          snapshot: action.snapshot,
-          snapshotStale: false,
-        };
-      }
-
-      case "CONFIRM": {
-        if (state.phase !== "config" && state.phase !== "error") return state;
-        return {
-          ...state,
-          phase: "loading",
-          params: action.params,
-          snapshot: action.snapshot,
-          clientRequestId: createClientRequestId(),
-          serverRequestId: null,
-          items: [],
-          snapshotStale: false,
-          error: null,
-        };
-      }
-
-      case "REQUEST_SUCCESS": {
-        if (
-          state.phase !== "loading" ||
-          action.clientRequestId !== state.clientRequestId
-        ) {
-          // Late or duplicate response (e.g. after ABORT): leave state as-is.
-          return state;
-        }
-        if (state.snapshotStale) {
-          return toErrorState(
-            state,
-            { code: POLISH_CLIENT_ERROR_CODES.snapshotStale },
-            action.serverRequestId,
-          );
-        }
-        // The model output is untrusted input: the returned ids must exactly
-        // match the snapshot targets and every polished text must be non-empty.
-        const targets = state.snapshot?.targets ?? [];
-        const polishedById = new Map(
-          action.items.map((item) => [item.id, item.polished]),
-        );
-        const exactIdSet =
-          targets.length > 0 &&
-          targets.length === action.items.length &&
-          targets.every((target) => polishedById.has(target.id));
-        const items: PolishItem[] = [];
-        if (exactIdSet) {
-          for (const target of targets) {
-            const polished = polishedById.get(target.id);
-            if (typeof polished !== "string" || polished.length === 0) break;
-            items.push({
-              id: target.id,
-              path: target.path,
-              original: target.text,
-              polished,
-              state: "pending",
-            });
-          }
-        }
-        if (!exactIdSet || items.length !== targets.length) {
-          return toErrorState(
-            state,
-            { code: POLISH_CLIENT_ERROR_CODES.invalidResponse },
-            action.serverRequestId,
-          );
-        }
-        return {
-          ...state,
-          phase: "preview",
-          serverRequestId: action.serverRequestId ?? null,
-          items,
-        };
-      }
-
-      case "REQUEST_FAILURE": {
-        if (
-          state.phase !== "loading" ||
-          action.clientRequestId !== state.clientRequestId
-        ) {
-          return state;
-        }
-        return toErrorState(state, action.error, action.serverRequestId);
-      }
-
-      case "ACCEPT_ITEM":
-        return setItemStatus(state, action.id, "accepted");
-      case "REJECT_ITEM":
-        return setItemStatus(state, action.id, "rejected");
-      case "UNDO_ACCEPT_ITEM":
-        return setItemStatus(state, action.id, "pending", "accepted");
-      case "UNDO_REJECT_ITEM":
-        return setItemStatus(state, action.id, "pending", "rejected");
-      case "ACCEPT_ALL":
-        return setAllItemsStatus(state, "accepted");
-      case "REJECT_ALL":
-        return setAllItemsStatus(state, "rejected");
-
-      case "RERUN": {
-        if (state.phase !== "preview" && state.phase !== "error") return state;
-        // Accepted write-backs live in the form and are kept; old unaccepted
-        // results are dropped. Params and the old snapshot stay for display
-        // until the next CONFIGURE/CONFIRM rebuilds from the current form.
-        return {
-          ...state,
-          phase: "config",
-          clientRequestId: null,
-          serverRequestId: null,
-          items: [],
-          error: null,
-        };
-      }
-
-      case "ABORT": {
-        if (state.phase !== "loading") return state;
-        // Clearing clientRequestId turns the late response into a no-op.
-        return {
-          ...state,
-          phase: "config",
-          clientRequestId: null,
-          serverRequestId: null,
-          items: [],
-          error: null,
-        };
-      }
-
-      case "MARK_SNAPSHOT_STALE": {
-        if (state.snapshotStale) return state;
-        return { ...state, snapshotStale: true };
-      }
-
-      case "RESET":
-        return createInitialState<S>(state.params);
+export function polishReducer<S extends PolishSnapshotBase = PolishSnapshotBase>(
+  state: PolishState<S>,
+  action: PolishAction<S>,
+): PolishState<S> {
+  switch (action.type) {
+    case "CONFIGURE": {
+      if (state.phase !== "config") return state;
+      // A freshly built snapshot reflects the current form: never stale.
+      return {
+        ...state,
+        params: action.params,
+        snapshot: action.snapshot,
+        snapshotStale: false,
+      };
     }
-  };
+
+    case "CONFIRM": {
+      if (state.phase !== "config" && state.phase !== "error") return state;
+      return {
+        ...state,
+        phase: "loading",
+        params: action.params,
+        snapshot: action.snapshot,
+        clientRequestId: action.clientRequestId,
+        serverRequestId: null,
+        items: [],
+        snapshotStale: false,
+        error: null,
+      };
+    }
+
+    case "REQUEST_SUCCESS": {
+      if (
+        state.phase !== "loading" ||
+        action.clientRequestId !== state.clientRequestId
+      ) {
+        // Late or duplicate response (e.g. after ABORT): leave state as-is.
+        return state;
+      }
+      if (state.snapshotStale) {
+        return toErrorState(
+          state,
+          { code: POLISH_CLIENT_ERROR_CODES.snapshotStale },
+          action.serverRequestId,
+        );
+      }
+      // The model output is untrusted input: the returned ids must exactly
+      // match the snapshot targets and every polished text must be non-blank
+      // (whitespace-only output is rejected; stored values are never trimmed).
+      const targets = state.snapshot?.targets ?? [];
+      const polishedById = new Map(
+        action.items.map((item) => [item.id, item.polished]),
+      );
+      const exactIdSet =
+        targets.length > 0 &&
+        targets.length === action.items.length &&
+        targets.every((target) => polishedById.has(target.id));
+      const items: PolishItem[] = [];
+      if (exactIdSet) {
+        for (const target of targets) {
+          const polished = polishedById.get(target.id);
+          if (typeof polished !== "string" || polished.trim().length === 0) {
+            break;
+          }
+          items.push({
+            id: target.id,
+            path: target.path,
+            original: target.text,
+            polished,
+            state: "pending",
+          });
+        }
+      }
+      if (!exactIdSet || items.length !== targets.length) {
+        return toErrorState(
+          state,
+          { code: POLISH_CLIENT_ERROR_CODES.invalidResponse },
+          action.serverRequestId,
+        );
+      }
+      return {
+        ...state,
+        phase: "preview",
+        serverRequestId: action.serverRequestId ?? null,
+        items,
+      };
+    }
+
+    case "REQUEST_FAILURE": {
+      if (
+        state.phase !== "loading" ||
+        action.clientRequestId !== state.clientRequestId
+      ) {
+        return state;
+      }
+      return toErrorState(state, action.error, action.serverRequestId);
+    }
+
+    case "ACCEPT_ITEM":
+      return setItemStatus(state, action.id, "accepted");
+    case "REJECT_ITEM":
+      return setItemStatus(state, action.id, "rejected");
+    case "UNDO_ACCEPT_ITEM":
+      return setItemStatus(state, action.id, "pending", "accepted");
+    case "UNDO_REJECT_ITEM":
+      return setItemStatus(state, action.id, "pending", "rejected");
+    case "ACCEPT_ALL":
+      return setAllItemsStatus(state, "accepted");
+    case "REJECT_ALL":
+      return setAllItemsStatus(state, "rejected");
+
+    case "RERUN": {
+      if (state.phase !== "preview" && state.phase !== "error") return state;
+      // Accepted write-backs live in the form and are kept; old unaccepted
+      // results are dropped. Params and the old snapshot stay for display
+      // until the next CONFIGURE/CONFIRM rebuilds from the current form.
+      return {
+        ...state,
+        phase: "config",
+        clientRequestId: null,
+        serverRequestId: null,
+        items: [],
+        error: null,
+      };
+    }
+
+    case "ABORT": {
+      if (state.phase !== "loading") return state;
+      // Clearing clientRequestId turns the late response into a no-op.
+      return {
+        ...state,
+        phase: "config",
+        clientRequestId: null,
+        serverRequestId: null,
+        items: [],
+        error: null,
+      };
+    }
+
+    case "MARK_SNAPSHOT_STALE": {
+      if (state.snapshotStale) return state;
+      return { ...state, snapshotStale: true };
+    }
+
+    case "RESET":
+      return createInitialState<S>(state.params);
+  }
 }
 
 function toErrorState<S extends PolishSnapshotBase>(
