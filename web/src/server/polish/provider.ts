@@ -14,6 +14,7 @@
  */
 
 import type { PolishErrorCode } from "@/lib/polish/contract";
+import { createDeepSeekPolishProvider } from "./deepseek";
 import { createFakePolishProvider } from "./provider-fake";
 
 export interface PolishProviderRequest {
@@ -86,20 +87,25 @@ export class PolishProviderError extends Error {
  *
  * - `POLISH_FAKE_LLM=true` → the deterministic fake (unit 0.4), for tests
  *   and local/CI runs without a real DeepSeek key.
- * - otherwise → throws until the real provider lands (unit 2.1).
+ * - otherwise → the real DeepSeek provider (unit 2.1). `options.userId` must
+ *   be the verified supabase user id: it is HMAC'd into the upstream `user`
+ *   field and never sent in clear (roadmap「发给 DeepSeek 的 user 标识」).
  *
  * Fail-loud in production: `POLISH_FAKE_LLM=true` combined with
  * `NODE_ENV=production` throws here, before any request can be served by a
  * fake (the fake returns synthetic output and must never run in production).
- * Callers (the unit 2.3 handler) must resolve the provider once at module
- * scope so this misconfiguration refuses startup instead of failing
- * per-request.
+ *
+ * The unit 2.3 handler resolves the provider per request, after auth, with
+ * the verified user id: construction is cheap and stateless, and any
+ * misconfiguration (fake-in-production, missing DEEPSEEK_API_KEY or
+ * AI_USER_ID_HMAC_SECRET) throws here instead of serving degraded requests.
  *
  * `env` is injectable for tests; production callers use the default
  * `process.env`.
  */
 export function getPolishProvider(
   env: Record<string, string | undefined> = process.env,
+  options: { userId?: string } = {},
 ): PolishProvider {
   const fakeRequested = env.POLISH_FAKE_LLM === "true";
   if (fakeRequested) {
@@ -111,8 +117,5 @@ export function getPolishProvider(
     }
     return createFakePolishProvider();
   }
-  throw new Error(
-    "No polish LLM provider is wired yet (the real DeepSeek provider lands in unit 2.1). " +
-      "Set POLISH_FAKE_LLM=true to use the deterministic fake in non-production environments.",
-  );
+  return createDeepSeekPolishProvider({ env, userId: options.userId });
 }
