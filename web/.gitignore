@@ -18,6 +18,10 @@
 /out/
 /public/typst/
 
+# generated API routes (managed by scripts/run-next-mode.mjs)
+/src/app/api/polish/route.ts
+/src/app/api/polish/quota/route.ts
+
 # production
 /build
 

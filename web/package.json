@@ -3,10 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm sync:typst-assets && next dev",
-    "build": "pnpm sync:typst-assets && next build",
+    "dev": "pnpm sync:typst-assets && node scripts/run-next-mode.mjs dev server",
+    "build": "pnpm build:server",
+    "build:server": "pnpm sync:typst-assets && node scripts/run-next-mode.mjs build server",
+    "build:static": "pnpm sync:typst-assets && node scripts/run-next-mode.mjs build static",
+    "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "smoke:api": "node scripts/smoke-polish-api.mjs",
     "sync:typst-assets": "node scripts/sync-typst-assets.mjs"
   },
   "dependencies": {
@@ -47,6 +52,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }
