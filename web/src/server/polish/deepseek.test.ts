@@ -118,7 +118,7 @@ describe("createDeepSeekPolishProvider — request mapping", () => {
     expect(body).not.toHaveProperty("stream");
   });
 
-  it("forwards request.providerUserId as the `user` field, unchanged", async () => {
+  it("forwards request.providerUserId as the documented `user_id` field, unchanged", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(successPayload()));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -126,8 +126,11 @@ describe("createDeepSeekPolishProvider — request mapping", () => {
 
     const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
     // The provider applies no privacy logic of its own: the pseudonymous id
-    // arrives pre-computed from the handler and goes upstream verbatim.
-    expect(body.user).toBe(TEST_PROVIDER_USER_ID);
+    // arrives pre-computed from the handler and goes upstream verbatim, under
+    // the field DeepSeek documents for identity/KV-cache isolation (user_id,
+    // NOT the undocumented `user`).
+    expect(body.user_id).toBe(TEST_PROVIDER_USER_ID);
+    expect(body).not.toHaveProperty("user");
   });
 
   it("never forwards the `targets` metadata upstream (pinned interface rule)", async () => {
@@ -141,7 +144,7 @@ describe("createDeepSeekPolishProvider — request mapping", () => {
     expect(body).not.toHaveProperty("targets");
     expect(rawBody).not.toContain(TARGET_ONLY_SENTINEL);
     expect(Object.keys(body).sort()).toEqual(
-      ["max_tokens", "messages", "model", "response_format", "thinking", "user"].sort(),
+      ["max_tokens", "messages", "model", "response_format", "thinking", "user_id"].sort(),
     );
   });
 
@@ -199,7 +202,10 @@ describe("createDeepSeekPolishProvider — response mapping", () => {
     expect(result.providerRequestId).toBe("hdr-req-42");
   });
 
-  it("defaults missing cache fields to zero", async () => {
+  it("conserves prompt tokens when the cache fields are missing: unexplained input is UNCACHED", async () => {
+    // DeepSeek schema: prompt_tokens = hit + miss. A response without the
+    // cache split must not record zero billable input — the unexplained part
+    // is booked as uncached reads (the cost-conservative classification).
     const payload = successPayload();
     payload.usage = { prompt_tokens: 100, completion_tokens: 40 } as never;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(payload)));
@@ -210,22 +216,77 @@ describe("createDeepSeekPolishProvider — response mapping", () => {
       promptTokens: 100,
       completionTokens: 40,
       cachedReadTokens: 0,
-      uncachedReadTokens: 0,
+      uncachedReadTokens: 100,
     });
   });
 
-  it("degrades a missing usage block to zeros instead of failing the request", async () => {
+  it("conserves prompt tokens when the cache split under-reports (partial cache usage)", async () => {
     const payload = successPayload();
-    delete (payload as Record<string, unknown>).usage;
+    payload.usage = {
+      prompt_tokens: 100,
+      completion_tokens: 40,
+      prompt_cache_hit_tokens: 30,
+    } as never;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(payload)));
 
     const result = await makeProvider().complete(makeRequest(), callOptions());
 
     expect(result.usage).toEqual({
-      promptTokens: 0,
-      completionTokens: 0,
-      cachedReadTokens: 0,
-      uncachedReadTokens: 0,
+      promptTokens: 100,
+      completionTokens: 40,
+      cachedReadTokens: 30,
+      uncachedReadTokens: 70, // 0 reported miss + 70 unexplained
+    });
+  });
+
+  it("keeps the reported split when hit + miss already covers prompt_tokens", async () => {
+    const payload = successPayload();
+    payload.usage = {
+      prompt_tokens: 100,
+      completion_tokens: 40,
+      prompt_cache_hit_tokens: 60,
+      prompt_cache_miss_tokens: 60, // over-explained: keep reported, never go negative
+    } as never;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(payload)));
+
+    const result = await makeProvider().complete(makeRequest(), callOptions());
+
+    expect(result.usage).toEqual({
+      promptTokens: 100,
+      completionTokens: 40,
+      cachedReadTokens: 60,
+      uncachedReadTokens: 60,
+    });
+  });
+
+  it("rejects a missing usage block with a controlled UPSTREAM_ERROR (never a fake zero-usage success)", async () => {
+    const payload = successPayload();
+    delete (payload as Record<string, unknown>).usage;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(payload)));
+
+    const error = await makeProvider()
+      .complete(makeRequest(), callOptions())
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(PolishProviderError);
+    expect(error).toMatchObject({
+      name: "PolishProviderError",
+      code: "UPSTREAM_ERROR",
+      providerRequestId: "chatcmpl-test",
+    });
+  });
+
+  it.each([
+    ["prompt_tokens", { completion_tokens: 40, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 20 }],
+    ["completion_tokens", { prompt_tokens: 30, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 20 }],
+  ])("rejects a usage block missing the required total %s", async (_label, usage) => {
+    const payload = successPayload();
+    payload.usage = usage as never;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(payload)));
+
+    await expect(makeProvider().complete(makeRequest(), callOptions())).rejects.toMatchObject({
+      name: "PolishProviderError",
+      code: "UPSTREAM_ERROR",
     });
   });
 

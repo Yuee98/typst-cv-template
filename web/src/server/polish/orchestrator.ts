@@ -12,7 +12,14 @@
  *   failures share the same attempt budget
  * - attempt 2 carries the previous failure reason in the retry prompt
  * - usage is accumulated across attempts and returned/surfaced on BOTH
- *   success and failure (roadmap Invariant 7: all retry tokens count)
+ *   success and failure (roadmap Invariant 7: all retry tokens count);
+ *   additionally it is PUBLISHED via onProgress after every provider
+ *   result, so cancellation and attempt-start hook failures still settle
+ *   with the known cumulative usage (relay #3)
+ * - the ledger mark is not proof of an upstream call: after
+ *   onProviderAttemptStart the loop rechecks signal.aborted and recomputes
+ *   the remaining deadline — the provider is never entered with an
+ *   aborted signal or a zero budget (relay #3.3/#3.4)
  * - AbortSignal cancellation propagates upward as-is: it is not counted as
  *   a failed attempt and never triggers a retry
  * - maxOutputTokens is dynamic, computed by the contract's single-source
@@ -136,6 +143,26 @@ export interface PolishOrchestratorSuccess {
   providerRequestId?: string;
 }
 
+/**
+ * Terminal progress snapshot (relay #3): published via onProgress so the
+ * handler's settlement survives EVERY exit path — success, budget
+ * exhaustion, cancellation, and attempt-start hook failures.
+ *
+ * - `cumulativeUsage` sums every provider result received so far (roadmap
+ *   invariant 7: retry tokens are recorded even when the request later
+ *   fails or is canceled);
+ * - `providerCallEntered` distinguishes "a provider call was actually
+ *   entered" from "only the ledger mark succeeded" — the roadmap charges
+ *   cancellations only after the upstream request was sent.
+ */
+export interface PolishOrchestrationProgress {
+  /** Attempts that produced a provider result (usage fully accounted). */
+  completedAttempts: number;
+  cumulativeUsage: PolishProviderUsage;
+  lastProviderRequestId?: string;
+  providerCallEntered: boolean;
+}
+
 export interface PolishOrchestrateOptions {
   /** Caller cancellation (client disconnect / user abort). Propagated, never retried. */
   signal: AbortSignal;
@@ -153,6 +180,13 @@ export interface PolishOrchestrateOptions {
    * as transport failures and never retried by this loop.
    */
   onProviderAttemptStart?: (attempt: number) => Promise<void>;
+  /**
+   * Synchronous progress sink (relay #3): fired when a provider call is
+   * ENTERED (providerCallEntered flips true) and after EVERY provider
+   * result (cumulative usage published). The handler keeps the latest
+   * snapshot and settles from it on cancellation / hook failures.
+   */
+  onProgress?: (progress: PolishOrchestrationProgress) => void;
   /** Time source, injectable for deterministic deadline tests. Defaults to Date.now. */
   now?: () => number;
 }
@@ -224,6 +258,9 @@ export async function orchestratePolish(
 
   let usage = zeroPolishUsage();
   let attempts = 0;
+  let completedAttempts = 0;
+  let providerCallEntered = false;
+  let lastProviderRequestId: string | undefined;
   let lastFailure: {
     code: PolishOrchestrationErrorCode;
     stage: PolishOrchestrationFailureStage;
@@ -231,6 +268,16 @@ export async function orchestratePolish(
     providerRequestId?: string;
     upstreamStatus?: number;
   } | null = null;
+
+  /** Publish the terminal progress snapshot (relay #3) — sync, never throws. */
+  const publishProgress = (): void => {
+    options.onProgress?.({
+      completedAttempts,
+      cumulativeUsage: usage,
+      lastProviderRequestId,
+      providerCallEntered,
+    });
+  };
 
   while (attempts < POLISH_MAX_ATTEMPTS) {
     if (options.signal.aborted) {
@@ -251,8 +298,31 @@ export async function orchestratePolish(
     // degrade into a retried "transport failure".
     await options.onProviderAttemptStart?.(attempts);
 
+    // Post-mark rechecks (relay #3.3/#3.4): the mark RPC takes real time, so
+    // the caller may have aborted DURING it and the deadline may have moved.
+    // A successful ledger mark is NOT evidence that an upstream call was
+    // sent — never enter the provider with an already-aborted signal, and
+    // never call it with no budget left.
+    if (options.signal.aborted) {
+      throw new DOMException("The polish request was aborted.", "AbortError");
+    }
+    const postMarkRemainingMs = deadline - now();
+    if (postMarkRemainingMs <= 0) {
+      // The mark RPC consumed the rest of the deadline: the provider must
+      // not be called with no budget (#3.4). Keep any earlier failure as
+      // the reported cause; a first-attempt exhaustion reads as a timeout.
+      lastFailure ??= {
+        code: "UPSTREAM_TIMEOUT",
+        stage: "transport",
+        reason: "total deadline exhausted before the provider call could start",
+      };
+      break;
+    }
+
     let result: PolishProviderResult;
     try {
+      providerCallEntered = true;
+      publishProgress();
       result = await provider.complete(
         {
           messages,
@@ -260,7 +330,7 @@ export async function orchestratePolish(
           providerUserId: options.providerUserId,
           targets,
         },
-        { signal: options.signal, timeoutMs: remainingMs },
+        { signal: options.signal, timeoutMs: postMarkRemainingMs },
       );
     } catch (error) {
       if (options.signal.aborted) {
@@ -279,6 +349,11 @@ export async function orchestratePolish(
     }
 
     usage = addPolishUsage(usage, result.usage);
+    completedAttempts = attempts;
+    lastProviderRequestId = result.providerRequestId;
+    // Cumulative usage is published after EVERY provider result, so a later
+    // cancellation or attempt-start failure still settles with it (#3.1/#3.2).
+    publishProgress();
 
     const validation = validatePolishOutput(result, {
       items: request.items,

@@ -4,9 +4,12 @@
  *   POST /api/polish:
  *     deployment switch → auth (Bearer) → ai_terms gate → bounded reader →
  *     JSON parse → polishRequestSchema → reserve (atomic: runtime switch,
- *     dedup 409×2, global/user quota, rate limit) → mark_provider_started
- *     (per attempt, via the orchestrator hook) → orchestrator → finalize
- *     (settlement table) → response
+ *     dedup 409×2 under an advisory lock, global pre-filter, user quota,
+ *     rate limit) → mark_provider_started per attempt (authoritative
+ *     atomic global-cap gate, via the orchestrator hook) → orchestrator
+ *     (publishes terminal progress: cumulative usage + providerCallEntered)
+ *     → finalize (settlement table + atomic post-settlement quota snapshot)
+ *     → response
  *
  *   GET /api/polish/quota:
  *     deployment switch → login check ONLY (no ai_terms gate) → quota read
@@ -40,12 +43,15 @@ import {
   PolishOrchestrationError,
   POLISH_PROMPT_VERSION,
   POLISH_VALIDATOR_VERSION,
+  zeroPolishUsage,
   type PolishOrchestrationFailureStage,
+  type PolishOrchestrationProgress,
   type PolishProvider,
   type PolishProviderUsage,
 } from "./orchestrator";
 import { requirePolishUser, verifyBearerUser } from "./auth";
 import {
+  INTERNAL_QUOTA_SERVICE_MESSAGE,
   PolishQuotaError,
   type PolishFinalizeResult,
   type PolishFinalizeStatus,
@@ -114,6 +120,7 @@ export interface PolishLogEvent {
     | "polish.request.denied"
     | "polish.request.canceled"
     | "polish.finalize_failed"
+    | "polish.quota_read_failed"
     | "polish.quota.served"
     | "polish.quota.denied";
   requestId: string;
@@ -387,7 +394,7 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
             (error.code === "AI_DISABLED" || error.code === "SERVICE_UNAVAILABLE"
               ? POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS
               : undefined));
-      return deny(error.code, error.message, {
+      return deny(error.code, error.code === "INTERNAL_ERROR" ? INTERNAL_QUOTA_SERVICE_MESSAGE : error.message, {
         resetAt: error.resetAt === undefined ? undefined : toIsoUtc(error.resetAt),
         retryAfterSeconds,
         userId,
@@ -406,7 +413,19 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
   // 7. Orchestrate (prompt + validation + ≤2 attempts inside the 45s
   //    deadline). mark_provider_started fires per attempt via the hook so the
   //    global cost counter counts every transmission (roadmap invariant 7).
-  let providerStarted = false;
+  //
+  //    Terminal progress (relay #3): the orchestrator publishes a snapshot
+  //    when a provider call is ENTERED and after EVERY provider result, so
+  //    every exit path below — success, budget exhaustion, cancellation,
+  //    attempt-start hook failure, global-gate denial — settles with the
+  //    known cumulative usage and the true providerCallEntered flag (a
+  //    successful ledger mark alone is NOT proof of an upstream call).
+  const progress: PolishOrchestrationProgress = {
+    completedAttempts: 0,
+    cumulativeUsage: zeroPolishUsage(),
+    lastProviderRequestId: undefined,
+    providerCallEntered: false,
+  };
   const baseMetadata: PolishLedgerMetadata = {
     ...requestMeta,
     model: deps.model,
@@ -429,6 +448,29 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
     }
   };
 
+  /**
+   * Shared terminal-settlement facts derived from the progress snapshot:
+   * usage known from completed provider attempts is ALWAYS recorded
+   * (roadmap invariant 7), and billability reflects what is actually known —
+   * content returned → billable; a call entered with no usage back →
+   * unknown (null, relay #4); never entered → not billable.
+   */
+  const progressSettlement = (): {
+    providerBillable: boolean | null;
+    usage?: PolishTokenUsage;
+  } => {
+    const hasUsage = hasBillableUsage(progress.cumulativeUsage);
+    return {
+      providerBillable: hasUsage ? true : progress.providerCallEntered ? null : false,
+      usage: hasUsage
+        ? // The recorded attempts' usage is complete; an in-flight attempt's
+          // can never be, so a cancellation is reported usageComplete=false
+          // by the caller via the override below.
+          toTokenUsage(progress.cumulativeUsage, true)
+        : undefined,
+    };
+  };
+
   try {
     const result = await orchestratePolish(deps.provider, polishRequest, {
       signal: request.signal,
@@ -443,15 +485,24 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
             "The polish reservation was already settled.",
           );
         }
-        providerStarted = true;
+        // NOTE: a successful mark is NOT provider-call evidence — the
+        // orchestrator rechecks signal/deadline after this hook and flips
+        // progress.providerCallEntered only when the call is really entered.
+      },
+      onProgress: (update) => {
+        Object.assign(progress, update);
       },
     });
 
     const latencyMs = now() - startedAt;
 
     // 8a. Success settlement: charged, billable, all attempt tokens recorded.
+    //    The finalize RPC returns the post-charge quota snapshot atomically
+    //    (relay #8): settlement and the response quota can never disagree,
+    //    and no read happens after irreversible settlement.
+    let settledQuota: PolishQuotaStatus | undefined;
     try {
-      await deps.finalize({
+      const settled = await deps.finalize({
         reservationId: reservation.reservationId,
         status: "succeeded",
         quotaCharged: true,
@@ -465,6 +516,7 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
           latencyMs,
         },
       });
+      settledQuota = settled.quota;
     } catch {
       // Settlement failed after a successful polish: the reconciler refunds
       // the user (stale provider_started → abandoned), so answering 500 is
@@ -482,21 +534,46 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
       return errorResponse(requestId, "INTERNAL_ERROR", "Failed to settle the polish request.");
     }
 
-    // Response quota is authoritative (post-charge), read after finalize.
+    // Response quota: the finalize snapshot is authoritative (post-charge).
+    // Fallbacks, in order: a direct quota read (older/fake wirings without
+    // the snapshot), then the reserve-time point-in-time snapshot (relay #8
+    // minimum fallback) — a charged user must never lose a valid result to
+    // an ancillary read failure.
     let quota: PolishQuota;
-    try {
-      const dbQuota = await deps.getQuota(userId);
-      quota = { ...dbQuota, resetAt: toIsoUtc(dbQuota.resetAt) };
-    } catch {
-      log({
-        event: "polish.request.failed",
-        requestId,
-        userId,
-        code: "INTERNAL_ERROR",
-        ...requestMeta,
-        latencyMs: now() - startedAt,
-      });
-      return errorResponse(requestId, "INTERNAL_ERROR", "Failed to read the remaining quota.");
+    if (settledQuota !== undefined) {
+      quota = { ...settledQuota, resetAt: toIsoUtc(settledQuota.resetAt) };
+    } else {
+      let readQuota: PolishQuotaStatus | undefined;
+      try {
+        readQuota = await deps.getQuota(userId);
+      } catch {
+        log({
+          event: "polish.quota_read_failed",
+          requestId,
+          userId,
+          ...requestMeta,
+          latencyMs: now() - startedAt,
+        });
+      }
+      if (readQuota !== undefined) {
+        quota = { ...readQuota, resetAt: toIsoUtc(readQuota.resetAt) };
+      } else if (reservation.limit !== undefined) {
+        quota = {
+          limit: reservation.limit,
+          remaining: reservation.remaining,
+          resetAt: toIsoUtc(reservation.resetAt),
+        };
+      } else {
+        log({
+          event: "polish.request.failed",
+          requestId,
+          userId,
+          code: "INTERNAL_ERROR",
+          ...requestMeta,
+          latencyMs: now() - startedAt,
+        });
+        return errorResponse(requestId, "INTERNAL_ERROR", "Failed to read the remaining quota.");
+      }
     }
 
     log({
@@ -519,11 +596,19 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
 
     // 8b. Cancellation (client disconnect / user abort): the settlement table
     // charges the user once the provider was reached, releases otherwise.
+    // "Reached" means a provider call was actually ENTERED
+    // (progress.providerCallEntered) — a successful ledger mark alone does
+    // not charge (relay #3.3). Known usage from completed attempts is always
+    // recorded (#3.1).
     if (isAbortError(error)) {
+      const entered = progress.providerCallEntered;
+      const settled = progressSettlement();
       await finalizeQuiet({
-        status: providerStarted ? "canceled" : "released",
-        quotaCharged: providerStarted,
-        providerBillable: providerStarted ? true : false,
+        status: entered ? "canceled" : "released",
+        quotaCharged: entered,
+        providerBillable: settled.providerBillable,
+        // An in-flight attempt's tokens are unknowable → not complete.
+        usage: settled.usage ? { ...settled.usage, usageComplete: false } : undefined,
         metadata: { ...baseMetadata, failureStage: "canceled", latencyMs },
       });
       log({
@@ -531,6 +616,9 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
         requestId,
         userId,
         ...requestMeta,
+        inputCachedTokens: progress.cumulativeUsage.cachedReadTokens,
+        inputUncachedTokens: progress.cumulativeUsage.uncachedReadTokens,
+        outputTokens: progress.cumulativeUsage.completionTokens,
         latencyMs,
       });
       // The client is gone, so this response is moot; the contract has no
@@ -541,12 +629,19 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
     // 8c. Attempt budget exhausted: refund the user quota; token costs are
     // still recorded (roadmap settlement table). invalid_output is always
     // billable (content WAS returned); failed_upstream is billable when any
-    // attempt reported usage.
+    // attempt reported usage — a started upstream call that returned no
+    // usage is billability UNKNOWN (null, relay #4), not provably free.
     if (error instanceof PolishOrchestrationError) {
       const status: PolishFinalizeStatus =
         error.code === "INVALID_MODEL_OUTPUT" ? "invalid_output" : "failed_upstream";
       const providerBillable =
-        error.code === "INVALID_MODEL_OUTPUT" ? true : hasBillableUsage(error.usage);
+        error.code === "INVALID_MODEL_OUTPUT"
+          ? true
+          : hasBillableUsage(error.usage)
+            ? true
+            : progress.providerCallEntered
+              ? null
+              : false;
       await finalizeQuiet({
         status,
         quotaCharged: false,
@@ -583,9 +678,45 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
       return errorResponse(requestId, error.code, messages[error.code]);
     }
 
-    // 8d. Infrastructure failure (mark/finalize RPCs and unknown errors):
-    // release the reservation (provider attempt accounting unknown at this
-    // point → user refunded, failure recorded as quota-stage).
+    // 8d. Global-gate / kill-switch denial at provider start (relay #2): the
+    // authoritative mark-time gate rejected an attempt (global daily cap
+    // reached, or the runtime switch/allowlist flipped after reserve). The
+    // provider was NOT called for this attempt: refund the user quota, keep
+    // the earlier attempts' usage record, and report 503 — never a 500.
+    if (
+      error instanceof PolishQuotaError &&
+      (error.code === "SERVICE_UNAVAILABLE" || error.code === "AI_DISABLED")
+    ) {
+      const settled = progressSettlement();
+      await finalizeQuiet({
+        status: progress.providerCallEntered ? "failed_upstream" : "released",
+        quotaCharged: false,
+        providerBillable: settled.providerBillable,
+        usage: settled.usage,
+        metadata: { ...baseMetadata, failureStage: "quota", latencyMs },
+      });
+      log({
+        event: "polish.request.denied",
+        requestId,
+        userId,
+        code: error.code,
+        ...requestMeta,
+        inputCachedTokens: progress.cumulativeUsage.cachedReadTokens,
+        inputUncachedTokens: progress.cumulativeUsage.uncachedReadTokens,
+        outputTokens: progress.cumulativeUsage.completionTokens,
+        latencyMs,
+      });
+      return errorResponse(requestId, error.code, error.message, {
+        retryAfterSeconds: POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS,
+      });
+    }
+
+    // 8e. Infrastructure failure (mark/finalize RPCs and unknown errors):
+    // refund the user, but NEVER pretend earlier provider contact did not
+    // happen (#3.2): usage known from completed attempts is recorded and
+    // stays billable, and providerBillable is null (unknown) when a call
+    // was entered without usage coming back. Client messages are fixed
+    // strings — raw RPC/PostgREST detail never crosses the API (#10).
     if (!(error instanceof PolishQuotaError)) {
       log({
         event: "polish.request.failed",
@@ -596,16 +727,18 @@ async function handlePolishPost(request: Request, deps: PolishRouteDeps): Promis
         latencyMs,
       });
     }
+    const settled = progressSettlement();
     await finalizeQuiet({
-      status: "released",
+      status: progress.providerCallEntered ? "failed_upstream" : "released",
       quotaCharged: false,
-      providerBillable: false,
+      providerBillable: settled.providerBillable,
+      usage: settled.usage,
       metadata: { ...baseMetadata, failureStage: "quota", latencyMs },
     });
     return errorResponse(
       requestId,
       "INTERNAL_ERROR",
-      error instanceof PolishQuotaError ? error.message : "Internal error while polishing.",
+      error instanceof PolishQuotaError ? INTERNAL_QUOTA_SERVICE_MESSAGE : "Internal error while polishing.",
     );
   }
 }

@@ -22,6 +22,7 @@
 import { z } from "zod";
 import {
   MAX_TOTAL_POLISHED_CHARS,
+  maxPolishedCharsForItem,
   type PolishItem,
   type PolishLanguage,
 } from "@/lib/polish/contract";
@@ -93,13 +94,13 @@ function fail(
 // Length caps (roadmap「长度策略」: hard upper bound only)
 // ---------------------------------------------------------------------------
 
-/** Absolute per-item ceiling, from the roadmap length strategy. */
-export const PER_ITEM_MAX_POLISHED_CHARS = 2400;
-
-/** Hard per-item cap: min(2400, ceil(original × 1.5) + 40). */
-export function perItemPolishedCharCap(originalChars: number): number {
-  return Math.min(PER_ITEM_MAX_POLISHED_CHARS, Math.ceil(originalChars * 1.5) + 40);
-}
+/**
+ * Hard per-item cap: min(2400, ceil(original × 1.5) + 40) — the CP1-frozen
+ * single-source helper from the contract. There is exactly ONE
+ * implementation (contract.ts); this alias only keeps the historic export
+ * name for existing callers/tests.
+ */
+export const perItemPolishedCharCap = maxPolishedCharsForItem;
 
 // ---------------------------------------------------------------------------
 // Language rough check (roadmap: only block obviously wrong-language output;
@@ -133,6 +134,14 @@ export function passesLanguageRoughCheck(text: string, language: PolishLanguage)
  * Single scanning pattern; alternatives are ordered by priority (earliest
  * wins at a given position). The SAME extraction runs on original and output,
  * so tokenizer quirks apply equally to both sides of the multiset compare.
+ *
+ * Ordering invariants (do not regress):
+ * - the currency-magnitude form (£27bn) precedes the plain currency form so
+ *   the magnitude suffix is never truncated away;
+ * - number+unit forms (200 ms / 32 GB) precede the plain-number forms so the
+ *   unit is never split off its number;
+ * - the multiword phrase form (SQL Server) precedes the single-word acronym
+ *   form so the phrase is captured whole.
  */
 const PROTECTED_TOKEN_SOURCES: readonly string[] = [
   // URLs (brackets/quotes/CJK sentence punctuation terminate the token)
@@ -151,10 +160,21 @@ const PROTECTED_TOKEN_SOURCES: readonly string[] = [
   String.raw`(?<![\w.])v?\d+(?:\.\d+){1,3}(?![\w.])`,
   // Percentages: 40% / 40％
   String.raw`\d+(?:\.\d+)?\s*[%％]`,
+  // Currency with magnitude suffix FIRST (£27bn / $3m / ¥2k) so the suffix is
+  // never truncated to the bare amount (£27bn must not scan as £27)
+  String.raw`[$€£¥￥]\s*\d[\d,]*(?:\.\d+)?\s*(?:bn|tn|m|k)(?![A-Za-z])`,
   // Currencies: $1,000 / ¥300 / 100 USD / 300美元
   String.raw`[$€£¥￥]\s*\d[\d,]*(?:\.\d+)?`,
   String.raw`\d[\d,]*(?:\.\d+)?\s*(?:USD|CNY|RMB|EUR|GBP|JPY|HKD|dollars?|元|美元|欧元|日元|人民币|港元)`,
+  // Number + unit, whitespace optional (200 ms / 32 GB / 5GHz): longest unit
+  // alternatives first, and the unit is required so bare numbers fall through
+  String.raw`\d+(?:\.\d+)?\s*(?:ms|GHz|MHz|kHz|KiB|MiB|GiB|TiB|KB|MB|GB|TB|PB|kWh|Hz|kW|MW|kg|mg|km|cm|mm|lb|sec|min|hr|[WVEhsmg])(?![A-Za-z])`,
+  // Multiword technical names as a phrase: an ALL-CAPS word followed by
+  // capitalized words (SQL Server, API Gateway). Must precede the
+  // single-word acronym pattern below so "SQL Server" is captured whole.
+  String.raw`\b[A-Z]{2,}\d*(?:\s+[A-Z][A-Za-z0-9]*)+`,
   // Code-like technical names
+  String.raw`(?<![\w.])(?:\.[A-Za-z0-9]+)+`, // leading-dot frameworks: .NET
   String.raw`[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+`, // Node.js, ASP.NET
   String.raw`\b[A-Za-z](?:\+\+|#)(?![\w+#])`, // C++, C#, F# (lookahead: \b fails before CJK/space)
   String.raw`[A-Za-z]*[a-z][A-Z][A-Za-z0-9]*`, // camelCase/PascalCase: JavaScript, iOS, eBay

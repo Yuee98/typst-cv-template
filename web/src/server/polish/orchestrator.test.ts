@@ -410,3 +410,109 @@ describe("orchestratePolish — request shaping", () => {
     });
   });
 });
+
+describe("orchestratePolish — terminal progress & post-mark rechecks (relay #3)", () => {
+  it("recomputes the deadline after the mark: a slow mark leaves only the post-mark budget for the provider", async () => {
+    const clock = fakeClock();
+    const { provider, calls } = makeMockProvider(resolveWith(successResult()));
+
+    await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: clock.now,
+        onProviderAttemptStart: async () => {
+          clock.advance(10_000); // the mark RPC burned 10s of the 45s deadline
+        },
+      }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options.timeoutMs).toBe(35_000); // 45s − 10s mark time
+  });
+
+  it("never calls the provider when the mark consumed the whole deadline", async () => {
+    const clock = fakeClock();
+    const { provider, calls } = makeMockProvider(resolveWith(successResult()));
+
+    const error = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: clock.now,
+        onProviderAttemptStart: async () => {
+          clock.advance(POLISH_TOTAL_DEADLINE_MS + 1);
+        },
+      }),
+    ).catch((caught: unknown) => caught);
+
+    expect(calls).toHaveLength(0);
+    expect(error).toMatchObject({
+      name: "PolishOrchestrationError",
+      code: "UPSTREAM_TIMEOUT",
+      attempts: 1,
+    });
+  });
+
+  it("rethrows AbortError after the mark when the caller aborted during the mark RPC (provider never entered)", async () => {
+    const controller = new AbortController();
+    const progress: import("./orchestrator").PolishOrchestrationProgress[] = [];
+    const { provider, calls } = makeMockProvider(resolveWith(successResult()));
+
+    const error = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(controller.signal, {
+        now: fakeClock().now,
+        onProviderAttemptStart: async () => {
+          controller.abort(); // aborted mid-mark; the RPC itself "succeeded"
+        },
+        onProgress: (update) => progress.push({ ...update }),
+      }),
+    ).catch((caught: unknown) => caught);
+
+    expect(calls).toHaveLength(0);
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe("AbortError");
+    // A ledger mark is NOT provider-call evidence: nothing was published.
+    expect(progress.every((p) => !p.providerCallEntered)).toBe(true);
+  });
+
+  it("publishes providerCallEntered at call entry and cumulative usage after every provider result", async () => {
+    const invalid: PolishProviderResult = {
+      text: JSON.stringify({ items: [{ id: "i0", polished: "将延迟降低 99%。" }] }),
+      finishReason: "stop",
+      usage: usage(),
+      providerRequestId: "req-attempt-1",
+    };
+    const progress: import("./orchestrator").PolishOrchestrationProgress[] = [];
+    const { provider } = makeMockProvider(resolveWith(invalid), resolveWith(successResult()));
+
+    const result = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: fakeClock().now,
+        onProgress: (update) => progress.push({ ...update }),
+      }),
+    );
+
+    expect(result.attempts).toBe(2);
+    // Entry events (providerCallEntered, no usage yet / attempt-1 usage) and
+    // post-result events (cumulative usage) were published in order.
+    expect(progress.length).toBeGreaterThanOrEqual(4);
+    expect(progress[0]).toMatchObject({ providerCallEntered: true, completedAttempts: 0 });
+    expect(progress[1]).toMatchObject({
+      providerCallEntered: true,
+      completedAttempts: 1,
+      cumulativeUsage: usage(),
+      lastProviderRequestId: "req-attempt-1",
+    });
+    const last = progress[progress.length - 1];
+    expect(last).toMatchObject({
+      providerCallEntered: true,
+      completedAttempts: 2,
+      cumulativeUsage: addPolishUsage(usage(), usage()),
+    });
+  });
+});

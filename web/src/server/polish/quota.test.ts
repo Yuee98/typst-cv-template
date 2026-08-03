@@ -32,6 +32,7 @@ describe("reservePolishRequest", () => {
       data: {
         allowed: true,
         reservationId: RESERVATION_ID,
+        limit: 20,
         remaining: 19,
         resetAt: "2026-08-03T00:00:00+00:00",
       },
@@ -45,6 +46,7 @@ describe("reservePolishRequest", () => {
 
     expect(reservation).toEqual({
       reservationId: RESERVATION_ID,
+      limit: 20,
       remaining: 19,
       resetAt: "2026-08-03T00:00:00+00:00",
     });
@@ -183,6 +185,34 @@ describe("markPolishProviderStarted", () => {
     });
   });
 
+  it("maps the atomic global-gate denial to SERVICE_UNAVAILABLE (relay #2)", async () => {
+    const { client } = mockClient(() => ({
+      data: { ok: false, reason: "SERVICE_UNAVAILABLE" },
+    }));
+
+    const error = (await markPolishProviderStarted(client, RESERVATION_ID).catch(
+      (e: unknown) => e,
+    )) as PolishQuotaError;
+
+    expect(error).toBeInstanceOf(PolishQuotaError);
+    expect(error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(error.httpStatus).toBe(503);
+    expect(error.message).toBe("AI polish is temporarily unavailable (daily capacity reached).");
+  });
+
+  it("maps a mark-time kill-switch / allowlist denial to AI_DISABLED (relay #2)", async () => {
+    const { client } = mockClient(() => ({
+      data: { ok: false, reason: "AI_DISABLED" },
+    }));
+
+    const error = (await markPolishProviderStarted(client, RESERVATION_ID).catch(
+      (e: unknown) => e,
+    )) as PolishQuotaError;
+
+    expect(error.code).toBe("AI_DISABLED");
+    expect(error.httpStatus).toBe(503);
+  });
+
   it("throws INTERNAL_ERROR for an unknown reservation", async () => {
     const { client } = mockClient(() => ({
       data: { ok: false, reason: "NOT_FOUND" },
@@ -281,7 +311,31 @@ describe("finalizePolishRequest", () => {
         status: "succeeded",
         quotaCharged: true,
       }),
-    ).resolves.toEqual({ alreadyFinalized: true });
+    ).resolves.toEqual({ alreadyFinalized: true, quota: undefined });
+  });
+
+  it("passes the atomic post-settlement quota snapshot through (relay #8)", async () => {
+    const { client } = mockClient(() => ({
+      data: {
+        ok: true,
+        alreadyFinalized: false,
+        status: "succeeded",
+        quotaCharged: true,
+        quota: { limit: 20, remaining: 19, resetAt: "2026-08-03T00:00:00+00:00" },
+      },
+    }));
+
+    const result = await finalizePolishRequest(client, {
+      reservationId: RESERVATION_ID,
+      status: "succeeded",
+      quotaCharged: true,
+      providerBillable: true,
+    });
+
+    expect(result).toEqual({
+      alreadyFinalized: false,
+      quota: { limit: 20, remaining: 19, resetAt: "2026-08-03T00:00:00+00:00" },
+    });
   });
 
   it("throws INTERNAL_ERROR when the reservation is unknown", async () => {
