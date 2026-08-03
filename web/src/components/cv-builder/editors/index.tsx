@@ -40,6 +40,7 @@ import { OneLineEntriesEditor } from "./research-editor";
 import { PublicationsEditor } from "./publications-editor";
 import { FontSettingsEditor } from "./settings-editor";
 import { PolishEntryButton } from "../polish/polish-entry-button";
+import { isAiPolishUiEnabled } from "../polish/polish-entry";
 
 type EditorTabId = "header" | "settings" | CvSectionId;
 
@@ -53,6 +54,10 @@ const tabNavigationKeysDuringDrag = new Set(["ArrowLeft", "ArrowRight", "Home", 
 
 export function CvEditor({ actions }: { actions?: ReactNode }) {
   const t = useTranslations("Editors");
+  // Feature-off builds must be layout-neutral: the actions prop itself is
+  // omitted (not a truthy element that renders null), so SectionHeader keeps
+  // its original column structure and no empty action slot appears.
+  const polishUiEnabled = isAiPolishUiEnabled();
   const sectionTabs: SectionTab[] = [
     {
       id: "profile",
@@ -62,9 +67,11 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
           <SectionHeader
             name="profile"
             actions={
-              // The whole profile is its "entry" granularity (capability
-              // matrix: profile's entry level == its section level).
-              <PolishEntryButton scope={{ sectionId: "profile", granularity: "entry" }} />
+              polishUiEnabled ? (
+                // The whole profile is its "entry" granularity (capability
+                // matrix: profile's entry level == its section level).
+                <PolishEntryButton scope={{ sectionId: "profile", granularity: "entry" }} />
+              ) : undefined
             }
           />
           <TextItemsEditor name="profile" addLabel={t("TextItems.add")} polish={{ sectionId: "profile" }} />
@@ -78,7 +85,11 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
         <div className="space-y-4">
           <SectionHeader
             name="skills"
-            actions={<PolishEntryButton scope={{ sectionId: "skills", granularity: "section" }} />}
+            actions={
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "skills", granularity: "section" }} />
+              ) : undefined
+            }
           />
           <SkillItemsEditor name="skills" addLabel={t("Skills.add")} polish={{ sectionId: "skills" }} />
         </div>
@@ -92,7 +103,9 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
           <SectionHeader
             name="experience"
             actions={
-              <PolishEntryButton scope={{ sectionId: "experience", granularity: "section" }} />
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "experience", granularity: "section" }} />
+              ) : undefined
             }
           />
           <ExperienceEditor />
@@ -107,7 +120,9 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
           <SectionHeader
             name="education"
             actions={
-              <PolishEntryButton scope={{ sectionId: "education", granularity: "section" }} />
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "education", granularity: "section" }} />
+              ) : undefined
             }
           />
           <ResumeEntriesEditor
@@ -126,7 +141,9 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
           <SectionHeader
             name="research"
             actions={
-              <PolishEntryButton scope={{ sectionId: "research", granularity: "section" }} />
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "research", granularity: "section" }} />
+              ) : undefined
             }
           />
           <OneLineEntriesEditor
@@ -156,7 +173,9 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
           <SectionHeader
             name="additional"
             actions={
-              <PolishEntryButton scope={{ sectionId: "additional", granularity: "section" }} />
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "additional", granularity: "section" }} />
+              ) : undefined
             }
           />
           <SkillItemsEditor
