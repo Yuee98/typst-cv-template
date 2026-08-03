@@ -178,6 +178,14 @@ export const privacyDocument: LegalDocument = {
       ],
     },
     {
+      heading: "AI Features",
+      body: [
+        "If you use the AI polish feature, the resume text you select and the context you choose to include are forwarded in plaintext through our server to a third-party AI provider (DeepSeek). DeepSeek processes that content under its own terms and policies, which we do not control.",
+        "Before you use AI polish for the first time, we ask you to separately accept the AI Service Terms. They describe in detail what is sent, the pseudonymous identifier mechanism, DeepSeek's retention and data-use policies, and our own metadata logging and quota rules — please read them before use.",
+        "End-to-end encryption, where available, does not apply to content sent to the AI provider; the rest of your encrypted resume remains protected as described in this policy.",
+      ],
+    },
+    {
       heading: "Data Retention",
       body: [
         "We keep personal data only as long as necessary for the purposes described in this Privacy Policy.",
@@ -188,6 +196,7 @@ export const privacyDocument: LegalDocument = {
         "Local browser data remains on your device until you clear it or delete it through the service.",
         "Support emails are kept for up to 24 months.",
         "Technical and security logs are kept for up to 90 days.",
+        "AI polish request metadata logs (which never contain resume text or AI output) are kept for up to 90 days.",
         "Backups may retain deleted data for a limited period, typically up to 90 days, before being overwritten or deleted.",
         "We may retain limited data longer where necessary for legal compliance, security, dispute resolution, or abuse prevention.",
       ],
@@ -249,37 +258,52 @@ export const aiTermsDocument: LegalDocument = {
   title: "AI Service Terms",
   effectiveDate: AI_TERMS_EFFECTIVE_DATE,
   intro: [
-    `These AI Service Terms govern your use of the AI polish feature of ${SERVICE_NAME} at ${SERVICE_WEBSITE}. They apply in addition to the Terms of Use and the Privacy Policy.`,
-    "You must accept these AI Service Terms before using AI polish. Your acceptance (user ID, document version, and timestamp) is recorded so we can demonstrate that consent was given.",
+    `These AI Service Terms govern your use of the AI polish feature of ${SERVICE_NAME} at ${SERVICE_WEBSITE}. They supplement the Terms of Use and the Privacy Policy and apply together with them.`,
+    "Before using AI polish for the first time, you must separately accept these terms in the feature interface. Your acceptance (user ID, document version, and timestamp) is recorded so we can demonstrate that consent was given. Our AI provider requires us to disclose its involvement in processing your content and to obtain your consent — these terms serve that purpose.",
   ],
   sections: [
     {
       heading: "The AI Polish Feature",
       body: [
         "AI polish rewrites selected free-text fields of your resume at your request, such as profile summaries, bullet points, and skill descriptions. It is intended to change wording only, not facts, figures, employers, job titles, or other factual content, and it never applies changes automatically.",
-        "When you confirm a polish request, the text you selected, together with any surrounding context you choose to include, is sent through our server to a third-party AI provider for processing.",
+        "When you confirm a polish request, the text you selected, together with any context you choose to include, is forwarded in plaintext through our server to a third-party AI provider (DeepSeek) for processing. Network transmission uses HTTPS, but your request content is readable by our server and by DeepSeek — end-to-end encryption does not apply to this feature (see \"Encryption and AI Polish\" below).",
       ],
     },
     {
       heading: "What Is Sent",
       body: [
-        "We do not actively send the name, email address, or phone number from your resume header. However, any personal information contained in the text and context you select will still be sent to the AI provider as part of your request.",
-        "Before each request, the feature shows you exactly what will be sent. Review this disclosure carefully and remove or avoid content you do not want to share.",
+        "We do not actively send the name, email address, or phone number from your resume header — they are never read at any context level. However, any personal information contained in the text and context you select will still be sent to the AI provider as part of your request.",
+        "Each request also carries a pseudonymous identifier (an HMAC-SHA256 hash of your account ID) in place of your real account ID. We never send your email address, username, or raw account ID to the AI provider.",
+        "Before each request, the feature shows you exactly what will be sent. Review this disclosure carefully and remove or avoid content you do not want to share. The context level you choose determines the scope:",
+      ],
+      bullets: [
+        "Level 0 (text only): only the texts you selected, plus the style preset or custom style instruction if you set one.",
+        "Level 1 (sibling items): in addition to Level 0, scope metadata (such as company or organization names, project titles and details, education institution/title/details, research titles and dates, and skill categories) and the unselected sibling text items in the same entry or section.",
+        "Level 2 (profile & skills): in addition to Level 1, your profile summary bodies and your skill labels.",
       ],
     },
     {
       heading: "What We Store",
       body: [
         "We do not intentionally store the resume text you send for polishing or the AI-generated output on our servers. Request content is processed in memory and discarded after the response is returned.",
-        "We keep metadata logs about each request, such as timestamps, user ID, feature settings, request counts, token usage, latency, and status or error codes. These logs never include your resume text, the AI output, or your style instructions.",
-        "Metadata logs are retained for up to 90 days and then deleted. Records of your acceptance of these AI Service Terms are kept until you delete your account.",
+        "We keep metadata logs about each request, such as: request timestamps, your user ID, request IDs, polish granularity, item count, context level, language, model and prompt/validator versions, attempt count, the AI provider's request ID, completion status or failure stage, token usage (cached and uncached input tokens and output tokens), latency, and the quota settlement outcome. These logs never include your resume text, the AI output, or your style instructions.",
+        "Request metadata logs are kept for up to 90 days after the request completes; per-minute rate-limit counters are kept for 2 days; daily usage aggregates are kept for 90 days. Expired data is deleted by a cleanup job that runs automatically every day. Records of your acceptance of these AI Service Terms are kept until you delete your account.",
+      ],
+    },
+    {
+      heading: "Usage Limits, Quota, and Cancellation",
+      body: [
+        "AI polish is currently a free feature with usage limits: at most 20 requests per user per day (reset at midnight UTC) and at most 3 requests per minute; a service-wide daily capacity limit also applies, after which the feature becomes temporarily unavailable. We may adjust these limits, and we may suspend access in cases of abuse, excessive use, or risk to the service.",
+        "A request consumes quota once accepted. If you cancel or interrupt a request after it has been sent to the AI provider, the quota is still charged, because the provider's cost has already been incurred. If a request fails because of a provider outage or because the output fails validation, the consumed quota is refunded automatically.",
       ],
     },
     {
       heading: "Third-Party AI Provider",
       body: [
-        "AI polish is powered by DeepSeek, a third-party AI provider. The content you send is processed by DeepSeek under its own terms and privacy policy, which we do not control.",
-        "We do not make any representation or guarantee about how DeepSeek retains, uses, or deletes the content it receives, including whether that content is used to train models. If this is a concern, do not include sensitive information in polish requests, or do not use the feature.",
+        "AI polish is powered by DeepSeek (Hangzhou DeepSeek Artificial Intelligence Co., Ltd.), a third-party AI provider. The content you send is processed by DeepSeek under its own terms and policies, which we do not control.",
+        "As of August 3, 2026, DeepSeek's official documentation and policies (Open Platform Terms of Service, Terms of Use, Privacy Policy, and API documentation) show that: request content is written to a disk cache by default to accelerate subsequent requests, and the cache is automatically cleared \"usually within a few hours to a few days\" after it is no longer in use; its policies commit to no fixed deletion timeline, and data is stored in the People's Republic of China; its Terms of Use allow it to use inputs and outputs to improve its services under strict de-identification, and we could not verify whether its consumer-facing opt-out of model training applies to API requests.",
+        "Therefore, treat anything sent to DeepSeek as potentially retained by DeepSeek and used for service improvement. Do not include sensitive or confidential information in polish requests; if that is not acceptable to you, do not use the feature. We make no representation or guarantee about how DeepSeek retains, uses, or deletes the content it receives.",
+        "The pseudonymous identifier sent with each request is only a hash of your account ID and contains neither your email address nor your username. DeepSeek's documentation states that this identifier is used for content safety review, cache isolation, and scheduling isolation.",
         "We may change the AI provider in the future. If we do, we will update these terms and, where required, ask you to accept the updated version before continuing to use the feature.",
       ],
     },
@@ -288,7 +312,6 @@ export const aiTermsDocument: LegalDocument = {
       body: [
         "AI-generated suggestions may be inaccurate, incomplete, biased, or unsuitable, and may alter meaning or emphasis in unintended ways. They are provided as drafting suggestions only.",
         "Polished text is never applied automatically. You must review each suggestion and explicitly accept or reject it. You are solely responsible for the final content of your resume.",
-        "Usage limits apply to AI polish, such as daily request limits and rate limits. We may suspend access in cases of abuse, excessive use, or risk to the service.",
       ],
     },
     {
