@@ -24,7 +24,10 @@ import type { PolishFlow } from "./use-polish-flow";
  *
  * Close semantics: in loading every close path (X / Esc / overlay / footer
  * cancel) aborts the request via flow.close / flow.cancel; in preview the
- * form already holds the accepted write-backs when the dialog closes.
+ * form already holds the accepted write-backs when the dialog closes. While
+ * the AI-terms acceptance write is in flight ALL close paths are disabled —
+ * the reviewed snapshot must not be sendable from a dismissed dialog (the
+ * hook additionally invalidates the continuation on any programmatic close).
  */
 export function PolishDialog({
   flow,
@@ -35,6 +38,7 @@ export function PolishDialog({
 }) {
   const t = useTranslations("PolishDialog");
   const phase = flow.state.phase;
+  const accepting = flow.terms.status === "accepting";
 
   return (
     <ModalDialog
@@ -43,6 +47,7 @@ export function PolishDialog({
       description={t(`phaseDescription.${phase}`)}
       closeLabel={t("close")}
       onClose={flow.close}
+      closeDisabled={accepting}
       className={cn(
         "transition-all duration-200",
         phase === "preview" && "max-h-[80dvh] sm:max-w-3xl",

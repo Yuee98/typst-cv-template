@@ -179,8 +179,12 @@ function QuotaLine({ flow }: { flow: PolishFlow }) {
 function LevelSelector({ flow }: { flow: PolishFlow }) {
   const t = useTranslations("PolishDialog");
   const level = flow.state.params.level;
+  // Terms acceptance in flight: the reviewed disclosure is frozen, so the
+  // config controls lock until it settles (the hook kills the continuation
+  // on any change regardless — this keeps the UI honest about it).
+  const locked = flow.terms.status === "accepting";
   return (
-    <fieldset className="space-y-1.5">
+    <fieldset className="space-y-1.5" disabled={locked}>
       <legend className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
         {t("level.heading")}
       </legend>
@@ -193,6 +197,7 @@ function LevelSelector({ flow }: { flow: PolishFlow }) {
               level === value
                 ? "border-accent-border bg-accent-soft"
                 : "border-border hover:bg-surface-hover",
+              locked && "pointer-events-none opacity-60",
             )}
           >
             <input
@@ -200,6 +205,7 @@ function LevelSelector({ flow }: { flow: PolishFlow }) {
               name="polish-context-level"
               className="mt-1 size-3.5"
               checked={level === value}
+              disabled={locked}
               onChange={() => flow.setLevel(value as PolishContextLevel)}
             />
             <span>
@@ -219,6 +225,8 @@ function StyleSelector({ flow }: { flow: PolishFlow }) {
   const t = useTranslations("PolishDialog");
   const params = flow.state.params;
   const instruction = params.styleInstruction ?? "";
+  // Locked during terms acceptance — see LevelSelector.
+  const locked = flow.terms.status === "accepting";
   return (
     <div className="space-y-2">
       <div className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
@@ -232,6 +240,7 @@ function StyleSelector({ flow }: { flow: PolishFlow }) {
               key={preset}
               type="button"
               aria-pressed={selected}
+              disabled={locked}
               onClick={() => flow.setStylePreset(selected ? undefined : preset)}
               className={cn(
                 "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
@@ -250,6 +259,7 @@ function StyleSelector({ flow }: { flow: PolishFlow }) {
           value={instruction}
           maxLength={MAX_STYLE_INSTRUCTION_CHARS}
           rows={2}
+          disabled={locked}
           onChange={(event) => flow.setStyleInstruction(event.target.value)}
           placeholder={t("style.customPlaceholder")}
           aria-label={t("style.heading")}
