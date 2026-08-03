@@ -312,5 +312,126 @@
   },
   "CvPersistence": {
     "schemaError": "The current form data does not match the CV schema."
+  },
+  "PolishDialog": {
+    "title": "AI Polish",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Polish with AI",
+    "retry": "Try again",
+    "adjustParams": "Adjust parameters",
+    "done": "Done",
+    "rerun": "Adjust & rerun",
+    "phaseDescription": {
+      "config": "Review exactly what will be sent and choose polish options.",
+      "loading": "Waiting for the AI response.",
+      "preview": "Review each polished item and accept or reject it.",
+      "error": "The polish request failed."
+    },
+    "signInRequired": "Sign in to use AI polish.",
+    "configChanged": "The form content changed; the disclosure was rebuilt. Please review and confirm again.",
+    "disclosure": {
+      "heading": "Content sent to the AI service",
+      "summary": "{targetCount} text(s) ({targetChars} chars) · {referenceCount} context item(s) ({referenceChars} chars)",
+      "expand": "Details",
+      "collapse": "Hide",
+      "targetsHeading": "Texts to polish",
+      "referencesHeading": "Context (reference only, never rewritten)",
+      "stylePreset": "Style preset: {preset}",
+      "styleInstruction": "Custom instruction: {instruction}",
+      "roles": {
+        "scope_metadata": "scope info",
+        "sibling": "sibling item",
+        "profile": "profile",
+        "skill": "skill"
+      }
+    },
+    "privacyReminder": "Your name, email and phone from the resume header are never sent. If the selected text or context itself contains personal information, it will still be sent to the AI service for processing.",
+    "e2eeWarning": "Polished text leaves your device in plaintext and is forwarded by our server to a third-party AI service. End-to-end encryption only protects cloud storage.",
+    "quota": {
+      "remaining": "{remaining}/{limit} requests left today",
+      "loading": "Checking usage…",
+      "error": "Could not load usage.",
+      "retry": "Retry"
+    },
+    "level": {
+      "heading": "Context level",
+      "l0": "Level 0 · text only",
+      "l1": "Level 1 · sibling items",
+      "l2": "Level 2 · profile & skills",
+      "l0Description": "Most private: only the selected text is sent.",
+      "l1Description": "Also sends scope metadata and sibling items.",
+      "l2Description": "Additionally sends the profile summary and skill labels (never header info)."
+    },
+    "style": {
+      "heading": "Polish style",
+      "customPlaceholder": "Custom style instruction (optional, up to 200 chars)",
+      "counter": "{count}/{max}",
+      "presets": {
+        "professional": "Professional",
+        "concise": "Concise",
+        "quantified": "Quantified impact",
+        "management": "Management"
+      }
+    },
+    "terms": {
+      "agreePrefix": "I have read and agree to the",
+      "aiTerms": "AI Features Terms",
+      "required": "Please accept the AI terms first.",
+      "checking": "Checking terms status…",
+      "accepting": "Recording…",
+      "error": "Could not check the terms status.",
+      "retry": "Retry"
+    },
+    "scopeFailures": {
+      "section_not_polishable": "This section does not support AI polish.",
+      "granularity_not_supported": "This polish scope is not available for the section.",
+      "invalid_scope": "Could not locate the selected content. Please select it again.",
+      "no_targets": "The selected content is empty or too short (under 10 characters).",
+      "too_many_targets": "At most 30 items per request; narrow the scope.",
+      "targets_too_large": "The text exceeds the size limit; narrow the scope.",
+      "references_too_large": "The context exceeds the size limit; lower the context level.",
+      "style_instruction_too_long": "The custom style instruction is limited to 200 characters.",
+      "invalid_request": "Could not build the request. Please try again."
+    },
+    "loading": {
+      "title": "Polishing with AI…",
+      "cancelHint": "Cancelling may still count toward today's quota.",
+      "cancel": "Cancel request"
+    },
+    "preview": {
+      "counts": "Accepted {accepted} · Rejected {rejected} · Pending {pending}",
+      "acceptAll": "Accept all",
+      "rejectAll": "Reject all",
+      "original": "Original",
+      "polished": "Polished",
+      "accept": "Accept",
+      "reject": "Reject",
+      "undo": "Undo",
+      "accepted": "Accepted",
+      "rejected": "Rejected",
+      "staleItem": "This field was changed elsewhere and cannot be written back.",
+      "referencesStale": "The context content changed; results may no longer be accurate.",
+      "srOriginal": "Original: {text}",
+      "srPolished": "Polished: {text}"
+    },
+    "errors": {
+      "quota_exhausted": "Today's quota is exhausted.",
+      "rate_limited": "Too many requests. Please try again later.",
+      "duplicate": "An identical request is already being processed. Please wait.",
+      "too_large": "The content exceeds the size limit; narrow the scope and try again.",
+      "timeout": "The AI service timed out. Please try again.",
+      "invalid_output": "The AI returned an invalid result. You can try again.",
+      "disabled": "AI polish is not available at the moment.",
+      "auth": "Your sign-in has expired. Please sign in again.",
+      "stale": "The content was changed externally. Please review and try again.",
+      "network": "Network error. Check your connection and try again.",
+      "upstream": "The AI service is temporarily unavailable. Please try again later.",
+      "invalid_request": "The request was invalid.",
+      "unknown": "An unexpected error occurred.",
+      "resetAt": "Quota resets at: {resetAt}",
+      "retryAfter": "Please wait {seconds} seconds before retrying.",
+      "requestId": "Request ID: {requestId}"
+    }
   }
 }

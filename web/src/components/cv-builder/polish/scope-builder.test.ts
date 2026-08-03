@@ -9,6 +9,7 @@ import {
   ITEM_ID_PATTERN,
   MAX_ITEM_CHARS,
   MAX_ITEMS,
+  MAX_REFERENCE_CHARS,
   MAX_REFERENCE_ITEM_CHARS,
   MAX_STYLE_INSTRUCTION_CHARS,
   POLISH_CAPABILITY_MATRIX,
@@ -587,7 +588,10 @@ describe("disclosure", () => {
       apiRequest.items.reduce((sum, item) => sum + item.text.length, 0),
     );
     expect(disclosure.totalReferenceChars).toBe(
-      apiRequest.context.references.reduce((sum, reference) => sum + reference.text.length, 0),
+      apiRequest.context.references.reduce(
+        (sum, reference) => sum + reference.text.length + (reference.label?.length ?? 0),
+        0,
+      ),
     );
   });
 
@@ -691,6 +695,41 @@ describe("hard caps", () => {
       scope: { sectionId: "experience", granularity: "item", itemId: "0.0.0" },
     });
     expect(result).toEqual({ ok: false, code: "references_too_large" });
+  });
+
+  it("counts reference labels toward the aggregate budget (contract alignment)", () => {
+    const cv = makeCvData();
+    cv.skills = [];
+    // Sized so the text-only sum stays under MAX_REFERENCE_CHARS while the
+    // text+label sum (the contract's accounting) trips it: the pre-check must
+    // fail as references_too_large, not fall through to invalid_request.
+    cv.profile = Array.from({ length: 5 }, (_, index) =>
+      bullet(`第${index}段` + "参".repeat(1990 - 5)),
+    );
+    const result = build({
+      cv,
+      level: 2,
+      scope: { sectionId: "experience", granularity: "item", itemId: "0.0.0" },
+    });
+    expect(result).toEqual({ ok: false, code: "references_too_large" });
+
+    // Guard the sizing premise: text-only accounting would have passed.
+    const cv2 = makeCvData();
+    cv2.skills = [];
+    cv2.profile = Array.from({ length: 5 }, (_, index) =>
+      bullet(`第${index}段` + "参".repeat(1990 - 5)),
+    );
+    const probe = buildPolishSnapshot({
+      documentId: "doc-1",
+      cv: cv2,
+      language: "zh",
+      level: 2,
+      scope: { sectionId: "experience", granularity: "item", itemId: "0.0.0" },
+      clientRequestId: CLIENT_REQUEST_ID,
+    });
+    if (probe.ok) throw new Error("premise broken: expected the label-inclusive budget to trip");
+    const textOnly = 5 * 1990 + "阿里巴巴".length + "订单中台".length + "核心交易链路重构".length;
+    expect(textOnly).toBeLessThanOrEqual(MAX_REFERENCE_CHARS);
   });
 
   it("drops an oversized reference instead of truncating it", () => {
