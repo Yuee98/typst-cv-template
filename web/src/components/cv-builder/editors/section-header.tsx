@@ -1,21 +1,30 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import type { ReactNode } from "react";
 import { useFormContext } from "react-hook-form";
 
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import type { CvData } from "@/lib/cv/schema";
+import { cn } from "@/lib/utils";
 
 import { fieldPath } from "./shared";
 
-export function SectionHeader({ name }: { name: string }) {
+export function SectionHeader({ name, actions }: { name: string; actions?: ReactNode }) {
   const { register } = useFormContext<CvData>();
   const t = useTranslations("Editors");
   const basePath = `sectionTitles.${name}` as const;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+    <div
+      className={cn(
+        "grid gap-3 sm:items-end",
+        actions
+          ? "sm:grid-cols-[minmax(0,1fr)_auto_auto_auto]"
+          : "sm:grid-cols-[minmax(0,1fr)_auto_auto]",
+      )}
+    >
       <Field label={t("Shared.sectionTitle")}>
         <Input {...register(fieldPath(`${basePath}.title`))} />
       </Field>
@@ -35,6 +44,7 @@ export function SectionHeader({ name }: { name: string }) {
         />
         {t("Shared.startOnNewPage")}
       </label>
+      {actions && <div className="flex h-9 items-center gap-1">{actions}</div>}
     </div>
   );
 }

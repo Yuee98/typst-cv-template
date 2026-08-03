@@ -13,17 +13,25 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldGrid } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { SortableAccordionList } from "@/components/ui/sortable-list";
-import type { CvData } from "@/lib/cv/schema";
+import type { CvData, CvSectionId } from "@/lib/cv/schema";
 
+import { PolishEntryButton } from "../polish/polish-entry-button";
 import { BulletEditor } from "./text-items-editor";
 import { fieldPath, resumeEntryItem, useCvFieldArray, WatchedTitle } from "./shared";
 
 export function ResumeEntriesEditor({
   name,
   addLabel,
+  polishSectionId,
 }: {
   name: string;
   addLabel: string;
+  /**
+   * The section this list belongs to: enables the entry-granularity AI
+   * button on each accordion row and item-granularity buttons on bullets
+   * (visibility still gated by flag + matrix).
+   */
+  polishSectionId?: CvSectionId;
 }) {
   const { register } = useFormContext<CvData>();
   const t = useTranslations("Editors.Education");
@@ -44,6 +52,11 @@ export function ResumeEntriesEditor({
               <AccordionTrigger>
                 <WatchedTitle name={`${name}.${index}.org`} fallback={t("fallback", { index: index + 1 })} />
               </AccordionTrigger>
+              {polishSectionId && (
+                <PolishEntryButton
+                  scope={{ sectionId: polishSectionId, granularity: "entry", entryId: `${index}` }}
+                />
+              )}
             </div>
             <AccordionContent>
               <div className="space-y-3">
@@ -61,7 +74,14 @@ export function ResumeEntriesEditor({
                     <Input {...register(fieldPath(`${name}.${index}.detail`))} />
                   </Field>
                 </FieldGrid>
-                <BulletEditor name={`${name}.${index}.bullets`} />
+                <BulletEditor
+                  name={`${name}.${index}.bullets`}
+                  polish={
+                    polishSectionId
+                      ? { sectionId: polishSectionId, entryId: `${index}` }
+                      : undefined
+                  }
+                />
                 <Button type="button" variant="destructive" size="sm" onClick={() => remove(index)}>
                   <Trash2 />
                   {t("remove")}

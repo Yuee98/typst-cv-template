@@ -39,6 +39,7 @@ import { ResumeEntriesEditor } from "./education-editor";
 import { OneLineEntriesEditor } from "./research-editor";
 import { PublicationsEditor } from "./publications-editor";
 import { FontSettingsEditor } from "./settings-editor";
+import { PolishEntryButton } from "../polish/polish-entry-button";
 
 type EditorTabId = "header" | "settings" | CvSectionId;
 
@@ -58,8 +59,15 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.profile"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="profile" />
-          <TextItemsEditor name="profile" addLabel={t("TextItems.add")} />
+          <SectionHeader
+            name="profile"
+            actions={
+              // The whole profile is its "entry" granularity (capability
+              // matrix: profile's entry level == its section level).
+              <PolishEntryButton scope={{ sectionId: "profile", granularity: "entry" }} />
+            }
+          />
+          <TextItemsEditor name="profile" addLabel={t("TextItems.add")} polish={{ sectionId: "profile" }} />
         </div>
       ),
     },
@@ -68,8 +76,11 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.skills"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="skills" />
-          <SkillItemsEditor name="skills" addLabel={t("Skills.add")} />
+          <SectionHeader
+            name="skills"
+            actions={<PolishEntryButton scope={{ sectionId: "skills", granularity: "section" }} />}
+          />
+          <SkillItemsEditor name="skills" addLabel={t("Skills.add")} polish={{ sectionId: "skills" }} />
         </div>
       ),
     },
@@ -78,7 +89,12 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.experience"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="experience" />
+          <SectionHeader
+            name="experience"
+            actions={
+              <PolishEntryButton scope={{ sectionId: "experience", granularity: "section" }} />
+            }
+          />
           <ExperienceEditor />
         </div>
       ),
@@ -88,8 +104,17 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.education"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="education" />
-          <ResumeEntriesEditor name="education" addLabel={t("Education.add")} />
+          <SectionHeader
+            name="education"
+            actions={
+              <PolishEntryButton scope={{ sectionId: "education", granularity: "section" }} />
+            }
+          />
+          <ResumeEntriesEditor
+            name="education"
+            addLabel={t("Education.add")}
+            polishSectionId="education"
+          />
         </div>
       ),
     },
@@ -98,8 +123,17 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.research"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="research" />
-          <OneLineEntriesEditor name="research" addLabel={t("Research.add")} />
+          <SectionHeader
+            name="research"
+            actions={
+              <PolishEntryButton scope={{ sectionId: "research", granularity: "section" }} />
+            }
+          />
+          <OneLineEntriesEditor
+            name="research"
+            addLabel={t("Research.add")}
+            polishSectionId="research"
+          />
         </div>
       ),
     },
@@ -119,8 +153,17 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.additional"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="additional" />
-          <SkillItemsEditor name="additional" addLabel={t("Additional.add")} />
+          <SectionHeader
+            name="additional"
+            actions={
+              <PolishEntryButton scope={{ sectionId: "additional", granularity: "section" }} />
+            }
+          />
+          <SkillItemsEditor
+            name="additional"
+            addLabel={t("Additional.add")}
+            polish={{ sectionId: "additional" }}
+          />
         </div>
       ),
     },
