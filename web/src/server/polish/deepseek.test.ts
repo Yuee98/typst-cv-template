@@ -1,4 +1,3 @@
-import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PolishProviderError, type PolishProviderRequest } from "./provider";
 import {
@@ -9,20 +8,14 @@ import {
 
 const TEST_ENV = {
   DEEPSEEK_API_KEY: "test-api-key",
-  AI_USER_ID_HMAC_SECRET: "test-hmac-secret",
 };
-const TEST_USER_ID = "00000000-0000-4000-8000-000000000000";
+/** Pseudonymous id the handler would compute; forwarded upstream unchanged. */
+const TEST_PROVIDER_USER_ID = "0".repeat(63) + "a";
+/** Distinctive target-only sentinel: proves `targets` never goes upstream. */
+const TARGET_ONLY_SENTINEL = "TARGET-ONLY-SENTINEL-7f3a9c";
 
-/** Independent recomputation of the expected `user` field (never the impl's). */
-function expectedUserHmac(userId: string = TEST_USER_ID, secret: string = TEST_ENV.AI_USER_ID_HMAC_SECRET) {
-  return createHmac("sha256", secret).update(userId).digest("hex");
-}
-
-function makeProvider(
-  envOverrides: Record<string, string | undefined> = {},
-  userId: string | undefined = TEST_USER_ID,
-) {
-  return createDeepSeekPolishProvider({ env: { ...TEST_ENV, ...envOverrides }, userId });
+function makeProvider(envOverrides: Record<string, string | undefined> = {}) {
+  return createDeepSeekPolishProvider({ env: { ...TEST_ENV, ...envOverrides } });
 }
 
 function makeRequest(maxOutputTokens = 1024): PolishProviderRequest {
@@ -32,6 +25,8 @@ function makeRequest(maxOutputTokens = 1024): PolishProviderRequest {
       { role: "user", content: '{"items":[{"id":"i0","text":"Led the migration."}]}' },
     ],
     maxOutputTokens,
+    providerUserId: TEST_PROVIDER_USER_ID,
+    targets: [{ id: "i0", text: TARGET_ONLY_SENTINEL }],
   };
 }
 
@@ -91,20 +86,9 @@ describe("createDeepSeekPolishProvider — configuration (fail-loud)", () => {
     expect(() => makeProvider({ DEEPSEEK_API_KEY: "" })).toThrow(/DEEPSEEK_API_KEY/);
   });
 
-  it("throws when AI_USER_ID_HMAC_SECRET is missing", () => {
-    expect(() => makeProvider({ AI_USER_ID_HMAC_SECRET: undefined })).toThrow(
-      /AI_USER_ID_HMAC_SECRET/,
-    );
-  });
-
-  it("throws when no verified user id is provided", () => {
-    expect(() => createDeepSeekPolishProvider({ env: TEST_ENV })).toThrow(/userId/);
-  });
-
   it("reads process.env by default", () => {
     vi.stubEnv("DEEPSEEK_API_KEY", "env-key");
-    vi.stubEnv("AI_USER_ID_HMAC_SECRET", "env-secret");
-    const provider = createDeepSeekPolishProvider({ userId: TEST_USER_ID });
+    const provider = createDeepSeekPolishProvider();
     expect(typeof provider.complete).toBe("function");
   });
 });
@@ -134,42 +118,31 @@ describe("createDeepSeekPolishProvider — request mapping", () => {
     expect(body).not.toHaveProperty("stream");
   });
 
-  it("sends HMAC-SHA256 hex of the user id in the `user` field, never the raw id", async () => {
+  it("forwards request.providerUserId as the `user` field, unchanged", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(successPayload()));
     vi.stubGlobal("fetch", fetchMock);
 
     await makeProvider().complete(makeRequest(), callOptions());
 
     const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
-    expect(body.user).toBe(expectedUserHmac());
-    expect(body.user).toMatch(/^[0-9a-f]{64}$/);
-    expect(JSON.stringify(body)).not.toContain(TEST_USER_ID);
+    // The provider applies no privacy logic of its own: the pseudonymous id
+    // arrives pre-computed from the handler and goes upstream verbatim.
+    expect(body.user).toBe(TEST_PROVIDER_USER_ID);
   });
 
-  it("derives distinct, stable user hashes per user id and secret", async () => {
-    // Fresh Response per call: a Response body can only be read once.
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve(jsonResponse(successPayload())),
-    );
+  it("never forwards the `targets` metadata upstream (pinned interface rule)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(successPayload()));
     vi.stubGlobal("fetch", fetchMock);
 
     await makeProvider().complete(makeRequest(), callOptions());
-    await makeProvider({}, "11111111-1111-4111-8111-111111111111").complete(
-      makeRequest(),
-      callOptions(),
-    );
-    await makeProvider({ AI_USER_ID_HMAC_SECRET: "other-secret" }).complete(
-      makeRequest(),
-      callOptions(),
-    );
 
-    const users = fetchMock.mock.calls.map(
-      (call) => JSON.parse((call as [string, RequestInit])[1].body as string).user as string,
+    const rawBody = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string;
+    const body = JSON.parse(rawBody) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("targets");
+    expect(rawBody).not.toContain(TARGET_ONLY_SENTINEL);
+    expect(Object.keys(body).sort()).toEqual(
+      ["max_tokens", "messages", "model", "response_format", "thinking", "user"].sort(),
     );
-    expect(users[0]).toBe(expectedUserHmac());
-    expect(users[1]).toBe(expectedUserHmac("11111111-1111-4111-8111-111111111111"));
-    expect(users[2]).toBe(expectedUserHmac(TEST_USER_ID, "other-secret"));
-    expect(new Set(users).size).toBe(3);
   });
 
   it("honors DEEPSEEK_BASE_URL override and strips trailing slashes", async () => {
@@ -202,6 +175,28 @@ describe("createDeepSeekPolishProvider — response mapping", () => {
       cachedReadTokens: 30,
       uncachedReadTokens: 70,
     });
+  });
+
+  it("extracts the provider request id from the completion id", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(successPayload())));
+
+    const result = await makeProvider().complete(makeRequest(), callOptions());
+
+    expect(result.providerRequestId).toBe("chatcmpl-test");
+  });
+
+  it("falls back to the x-request-id response header when the body omits the id", async () => {
+    const payload = successPayload();
+    delete (payload as Record<string, unknown>).id;
+    const response = new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "x-request-id": "hdr-req-42" },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+
+    const result = await makeProvider().complete(makeRequest(), callOptions());
+
+    expect(result.providerRequestId).toBe("hdr-req-42");
   });
 
   it("defaults missing cache fields to zero", async () => {
@@ -299,6 +294,27 @@ describe("createDeepSeekPolishProvider — transport error normalization", () =>
     expect(error).toBeInstanceOf(PolishProviderError);
     expect(error).toMatchObject({ code: "UPSTREAM_ERROR", cause });
     expect((error as Error).message).toContain("fetch failed");
+  });
+
+  it("carries upstreamStatus + providerRequestId on HTTP errors, still without the body", async () => {
+    const body = { error: { message: "SENSITIVE-UPSTREAM-DETAIL" } };
+    const response = new Response(JSON.stringify(body), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "x-request-id": "hdr-req-fail-9" },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+
+    const error = await makeProvider()
+      .complete(makeRequest(), callOptions())
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(PolishProviderError);
+    expect(error).toMatchObject({
+      code: "UPSTREAM_ERROR",
+      upstreamStatus: 429,
+      providerRequestId: "hdr-req-fail-9",
+    });
+    expect((error as Error).message).not.toContain("SENSITIVE-UPSTREAM-DETAIL");
   });
 
   it("maps an unparseable 200 body to UPSTREAM_ERROR", async () => {

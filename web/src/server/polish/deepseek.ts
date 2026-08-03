@@ -15,17 +15,22 @@
  * - thinking: { type: "disabled" } — V4 enables thinking by default
  * - response_format: { type: "json_object" } — JSON mode
  * - max_tokens = request.maxOutputTokens (dynamic cap computed upstream)
- * - user = HMAC-SHA256 hex of the verified supabase user id, keyed by the
- *   server-side AI_USER_ID_HMAC_SECRET — the raw UUID, email, or name is
- *   never sent (roadmap「发给 DeepSeek 的 user 标识」)
+ * - user = request.providerUserId — the pseudonymous HMAC identifier,
+ *   computed once per request by the handler
+ *   (HMAC_SHA256(AI_USER_ID_HMAC_SECRET, supabaseUserId), hex) and forwarded
+ *   here UNCHANGED: this provider applies no privacy logic of its own
+ *   (roadmap「发给 DeepSeek 的 user 标识」). The raw UUID/email never enters
+ *   this module.
+ *
+ * `request.targets` is internal validation/fake metadata per the pinned
+ * interface: it is NEVER forwarded upstream (the same texts already appear
+ * inside `request.messages`).
  *
  * Environment:
  * - DEEPSEEK_API_KEY (required — construction throws when missing)
- * - AI_USER_ID_HMAC_SECRET (required — keys the user-id HMAC)
  * - DEEPSEEK_BASE_URL (optional; defaults to the official origin)
  */
 
-import { createHmac } from "node:crypto";
 import {
   PolishProviderError,
   type PolishProvider,
@@ -46,25 +51,15 @@ export const DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 export interface DeepSeekPolishProviderOptions {
   /** Injectable for tests; production callers use the default process.env. */
   env?: Record<string, string | undefined>;
-  /**
-   * Verified supabase user id of the request being served. Required: it is
-   * HMAC'd into the upstream `user` abuse-tracking field, so the provider can
-   * only be constructed per authenticated request — never with a raw id sent
-   * upstream, and never anonymously.
-   */
-  userId?: string;
 }
 
 interface DeepSeekProviderConfig {
   apiKey: string;
   baseUrl: string;
-  /** HMAC-SHA256 hex (64 chars) of the supabase user id. */
-  userHmac: string;
 }
 
 function resolveConfig(
   env: Record<string, string | undefined>,
-  userId: string | undefined,
 ): DeepSeekProviderConfig {
   const apiKey = env.DEEPSEEK_API_KEY;
   if (!apiKey) {
@@ -73,26 +68,8 @@ function resolveConfig(
         "Set POLISH_FAKE_LLM=true to use the deterministic fake in non-production environments.",
     );
   }
-  if (!userId) {
-    throw new Error(
-      "The DeepSeek polish provider requires the verified supabase user id " +
-        "(options.userId) to derive the HMAC `user` field. Resolve the provider per " +
-        "authenticated request, after auth.",
-    );
-  }
-  const hmacSecret = env.AI_USER_ID_HMAC_SECRET;
-  if (!hmacSecret) {
-    throw new Error(
-      "AI_USER_ID_HMAC_SECRET is required for the DeepSeek polish provider: the upstream " +
-        "`user` field is HMAC-SHA256(secret, userId) and the raw user id must never be sent.",
-    );
-  }
   const baseUrl = (env.DEEPSEEK_BASE_URL?.trim() || DEFAULT_DEEPSEEK_BASE_URL).replace(/\/+$/, "");
-  return {
-    apiKey,
-    baseUrl,
-    userHmac: createHmac("sha256", hmacSecret).update(userId).digest("hex"),
-  };
+  return { apiKey, baseUrl };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -185,7 +162,7 @@ function normalizeTransportFailure(
 export function createDeepSeekPolishProvider(
   options: DeepSeekPolishProviderOptions = {},
 ): PolishProvider {
-  const config = resolveConfig(options.env ?? process.env, options.userId);
+  const config = resolveConfig(options.env ?? process.env);
 
   return {
     async complete(
@@ -209,13 +186,18 @@ export function createDeepSeekPolishProvider(
             "Content-Type": "application/json",
             Accept: "application/json",
           },
+          // Field-by-field: `targets` metadata is deliberately NOT forwarded —
+          // the target texts already appear inside `messages`, and the pinned
+          // interface restricts `targets` to validation/fake echo use.
           body: JSON.stringify({
             model: DEEPSEEK_POLISH_MODEL,
             messages: request.messages,
             thinking: { type: "disabled" },
             response_format: { type: "json_object" },
             max_tokens: request.maxOutputTokens,
-            user: config.userHmac,
+            // Pseudonymous id computed by the caller (handler); forwarded
+            // unchanged, never a raw supabase user id.
+            user: request.providerUserId,
           }),
           signal: combinedSignal,
         });
@@ -223,14 +205,17 @@ export function createDeepSeekPolishProvider(
         normalizeTransportFailure(error, signal, timeoutSignal, timeoutMs);
       }
 
+      // Correlation metadata is safe to surface (status codes and request ids
+      // are structured log fields, not content); the error BODY is on the
+      // roadmap no-store list (it may echo sensitive detail) and is never read.
+      const correlationId = response.headers.get("x-request-id") ?? undefined;
+
       if (!response.ok) {
-        // The upstream error body is on the roadmap no-store list (it may echo
-        // sensitive detail), so only the status code is surfaced — enough for
-        // diagnosis without persisting provider error payloads.
         throw new PolishProviderError(
           "UPSTREAM_ERROR",
           `DeepSeek chat completions failed with HTTP ${response.status} ` +
             "(response body omitted by design)",
+          { providerRequestId: correlationId, upstreamStatus: response.status },
         );
       }
 
@@ -252,6 +237,7 @@ export function createDeepSeekPolishProvider(
         throw new PolishProviderError(
           "UPSTREAM_ERROR",
           "DeepSeek response envelope is missing choices[0].message.content",
+          { providerRequestId: correlationId },
         );
       }
 
@@ -260,6 +246,12 @@ export function createDeepSeekPolishProvider(
         text: content,
         finishReason: normalizeFinishReason(firstChoice?.finish_reason),
         usage: normalizeUsage(isRecord(payload) ? payload.usage : undefined),
+        // The completion id is the provider-side correlation id; fall back to
+        // the HTTP x-request-id header when the body omits it.
+        providerRequestId:
+          isRecord(payload) && typeof payload.id === "string" && payload.id.length > 0
+            ? payload.id
+            : correlationId,
       };
     },
   };

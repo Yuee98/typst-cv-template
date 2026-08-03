@@ -15,12 +15,29 @@
  *   success and failure (roadmap Invariant 7: all retry tokens count)
  * - AbortSignal cancellation propagates upward as-is: it is not counted as
  *   a failed attempt and never triggers a retry
- * - maxOutputTokens is dynamic: min(POLISH_MAX_OUTPUT_TOKENS,
- *   totalTargetChars × 1.5 + JSON overhead), per roadmap「总输出预算」
+ * - maxOutputTokens is dynamic, computed by the contract's single-source
+ *   helper computePolishMaxOutputTokens (roadmap「总输出预算」). CP1 round3:
+ *   the helper assumes ALREADY-VALIDATED request items — this module only
+ *   accepts a PolishRequest that passed polishRequestSchema in the handler,
+ *   and the helper is never called with anything else.
+ * - finishReason "length" is an ordinary invalid-output/retry condition
+ *   (the token budget is a conservative estimate, CP1 round3), handled by
+ *   the validator like any other non-"stop" finish reason — never an
+ *   impossible state.
  */
 
-import { POLISH_MAX_OUTPUT_TOKENS, type PolishRequest } from "@/lib/polish/contract";
+import {
+  computePolishMaxOutputTokens,
+  type PolishRequest,
+} from "@/lib/polish/contract";
 import { buildPolishMessages, POLISH_PROMPT_VERSION, type PolishPromptInput } from "./prompt";
+import {
+  PolishProviderError,
+  type PolishProvider,
+  type PolishProviderRequest,
+  type PolishProviderResult,
+  type PolishProviderUsage,
+} from "./provider";
 import {
   POLISH_VALIDATOR_VERSION,
   validatePolishOutput,
@@ -28,40 +45,12 @@ import {
 } from "./validate";
 
 export { POLISH_PROMPT_VERSION, POLISH_VALIDATOR_VERSION };
-
-// ---------------------------------------------------------------------------
-// Provider contract
-// ---------------------------------------------------------------------------
-
-// TODO(2.3): import from "./provider" once the foundation branch lands (structural duplicate, pinned)
-export interface PolishProviderRequest {
-  /** Fully assembled chat messages (system + user), already level-trimmed. */
-  messages: { role: "system" | "user"; content: string }[];
-  /** Hard output cap computed by the orchestrator (dynamic max_tokens). */
-  maxOutputTokens: number;
-}
-
-export interface PolishProviderUsage {
-  promptTokens: number;
-  completionTokens: number;
-  cachedReadTokens: number;
-  uncachedReadTokens: number;
-}
-
-export interface PolishProviderResult {
-  /** Raw text body of the first choice (expected to be JSON per prompt contract). */
-  text: string;
-  /** Normalized finish reason. */
-  finishReason: "stop" | "length" | "content_filter" | "insufficient_system_resource" | "unknown";
-  usage: PolishProviderUsage;
-}
-
-export interface PolishProvider {
-  complete(
-    request: PolishProviderRequest,
-    options: { signal: AbortSignal; timeoutMs: number },
-  ): Promise<PolishProviderResult>;
-}
+export type {
+  PolishProvider,
+  PolishProviderRequest,
+  PolishProviderResult,
+  PolishProviderUsage,
+};
 
 // ---------------------------------------------------------------------------
 // Budget constants
@@ -73,21 +62,6 @@ export const POLISH_TOTAL_DEADLINE_MS = 45_000;
 export const POLISH_MAX_ATTEMPTS = 2;
 /** Below this remaining budget a retry is pointless for an LLM round-trip. */
 export const MIN_RETRY_BUDGET_MS = 5_000;
-
-/**
- * JSON structure overhead for the dynamic max_tokens computation
- * ({"items":[{"id":"...","polished":"..."}]}, ids ≤32 chars, escaping
- * margin). Worst case within contract limits: 32 + 30 × 24 = 752 tokens,
- * keeping MAX_TOTAL_POLISHED_CHARS + overhead ≤ POLISH_MAX_OUTPUT_TOKENS.
- */
-const JSON_ENVELOPE_TOKENS = 32;
-const JSON_TOKENS_PER_ITEM = 24;
-
-/** Dynamic max_tokens: min(POLISH_MAX_OUTPUT_TOKENS, totalTargetChars × 1.5 + JSON overhead). */
-export function computeMaxOutputTokens(totalTargetChars: number, itemCount: number): number {
-  const overhead = JSON_ENVELOPE_TOKENS + itemCount * JSON_TOKENS_PER_ITEM;
-  return Math.min(POLISH_MAX_OUTPUT_TOKENS, Math.ceil(totalTargetChars * 1.5) + overhead);
-}
 
 // ---------------------------------------------------------------------------
 // Usage accumulation
@@ -129,6 +103,10 @@ export class PolishOrchestrationError extends Error {
   readonly failureStage: PolishOrchestrationFailureStage;
   readonly usage: PolishProviderUsage;
   readonly attempts: number;
+  /** Provider-side correlation id of the last attempt, when known (safe structured log metadata). */
+  readonly providerRequestId?: string;
+  /** Upstream HTTP status of the last attempt, when the failure came with one. */
+  readonly upstreamStatus?: number;
 
   constructor(
     code: PolishOrchestrationErrorCode,
@@ -136,6 +114,7 @@ export class PolishOrchestrationError extends Error {
     usage: PolishProviderUsage,
     attempts: number,
     message: string,
+    options?: { providerRequestId?: string; upstreamStatus?: number },
   ) {
     super(message);
     this.name = "PolishOrchestrationError";
@@ -143,6 +122,8 @@ export class PolishOrchestrationError extends Error {
     this.failureStage = failureStage;
     this.usage = usage;
     this.attempts = attempts;
+    this.providerRequestId = options?.providerRequestId;
+    this.upstreamStatus = options?.upstreamStatus;
   }
 }
 
@@ -151,11 +132,27 @@ export interface PolishOrchestratorSuccess {
   /** Summed usage across all attempts made. */
   usage: PolishProviderUsage;
   attempts: number;
+  /** Provider-side correlation id of the successful attempt, when the upstream returned one. */
+  providerRequestId?: string;
 }
 
 export interface PolishOrchestrateOptions {
   /** Caller cancellation (client disconnect / user abort). Propagated, never retried. */
   signal: AbortSignal;
+  /**
+   * Pseudonymous provider user identifier, computed by the handler
+   * (HMAC_SHA256(AI_USER_ID_HMAC_SECRET, userId), hex) and forwarded to the
+   * provider unchanged. The raw supabase user id never enters this module.
+   */
+  providerUserId: string;
+  /**
+   * Called before every provider attempt (1-based). The handler uses it for
+   * the ledger's mark_provider_started transition (global cost accounting
+   * counts EVERY attempt — roadmap invariant 7). Errors thrown here
+   * propagate unchanged: they are infrastructure failures, never classified
+   * as transport failures and never retried by this loop.
+   */
+  onProviderAttemptStart?: (attempt: number) => Promise<void>;
   /** Time source, injectable for deterministic deadline tests. Defaults to Date.now. */
   now?: () => number;
 }
@@ -164,19 +161,27 @@ const MAX_TRANSPORT_REASON_CHARS = 200;
 
 /**
  * Transport failures are classified as "the provider threw" (its errors are
- * normalized PolishProviderError with code UPSTREAM_ERROR/UPSTREAM_TIMEOUT);
- * the code is read structurally without importing the provider module.
+ * normalized PolishProviderError with code UPSTREAM_ERROR/UPSTREAM_TIMEOUT).
+ * The code and structured correlation metadata are read STRUCTURALLY so test
+ * doubles (plain Errors with attached fields) classify the same way.
  */
 function classifyTransportError(error: unknown): {
   code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT";
   reason: string;
+  providerRequestId?: string;
+  upstreamStatus?: number;
 } {
-  const providerCode =
-    error instanceof Error ? (error as { code?: unknown }).code : undefined;
-  const code = providerCode === "UPSTREAM_TIMEOUT" ? "UPSTREAM_TIMEOUT" : "UPSTREAM_ERROR";
+  const fields = error instanceof Error ? (error as Partial<PolishProviderError>) : {};
+  const code = fields.code === "UPSTREAM_TIMEOUT" ? "UPSTREAM_TIMEOUT" : "UPSTREAM_ERROR";
   const detail = error instanceof Error ? error.message : String(error);
   const reason = `transport failure (${code}): ${detail}`.slice(0, MAX_TRANSPORT_REASON_CHARS);
-  return { code, reason };
+  return {
+    code,
+    reason,
+    providerRequestId:
+      typeof fields.providerRequestId === "string" ? fields.providerRequestId : undefined,
+    upstreamStatus: typeof fields.upstreamStatus === "number" ? fields.upstreamStatus : undefined,
+  };
 }
 
 /**
@@ -184,6 +189,10 @@ function classifyTransportError(error: unknown): {
  * Resolves with the validated items + accumulated usage; rejects with
  * PolishOrchestrationError on budget exhaustion, or rethrows the abort error
  * unchanged on cancellation.
+ *
+ * CP1 round3: the request MUST already have passed polishRequestSchema —
+ * computePolishMaxOutputTokens assumes schema-valid items and is never
+ * called with anything else.
  */
 export async function orchestratePolish(
   provider: PolishProvider,
@@ -193,8 +202,12 @@ export async function orchestratePolish(
   const now = options.now ?? Date.now;
   const deadline = now() + POLISH_TOTAL_DEADLINE_MS;
 
-  const totalTargetChars = request.items.reduce((sum, item) => sum + item.text.length, 0);
-  const maxOutputTokens = computeMaxOutputTokens(totalTargetChars, request.items.length);
+  // Dynamic output budget from the contract's single-source helper (per-item
+  // ceilings incl. slack → aggregate clamp → envelope → absolute token cap).
+  const maxOutputTokens = computePolishMaxOutputTokens(request.items);
+  // Fake-echo / validation metadata pinned by the provider interface; the
+  // real provider must not forward it upstream (the texts are in messages).
+  const targets = request.items.map((item) => ({ id: item.id, text: item.text }));
 
   // Narrow prompt input picked field-by-field: clientRequestId is a dedup
   // key and is never sent to the provider.
@@ -215,6 +228,8 @@ export async function orchestratePolish(
     code: PolishOrchestrationErrorCode;
     stage: PolishOrchestrationFailureStage;
     reason: string;
+    providerRequestId?: string;
+    upstreamStatus?: number;
   } | null = null;
 
   while (attempts < POLISH_MAX_ATTEMPTS) {
@@ -231,10 +246,20 @@ export async function orchestratePolish(
       retryFeedback: attempts > 1 ? lastFailure?.reason : undefined,
     });
 
+    // Ledger hook (mark_provider_started) runs outside the try below: its
+    // failures are infrastructure errors and must propagate unchanged, never
+    // degrade into a retried "transport failure".
+    await options.onProviderAttemptStart?.(attempts);
+
     let result: PolishProviderResult;
     try {
       result = await provider.complete(
-        { messages, maxOutputTokens },
+        {
+          messages,
+          maxOutputTokens,
+          providerUserId: options.providerUserId,
+          targets,
+        },
         { signal: options.signal, timeoutMs: remainingMs },
       );
     } catch (error) {
@@ -243,7 +268,13 @@ export async function orchestratePolish(
         throw error;
       }
       const transport = classifyTransportError(error);
-      lastFailure = { code: transport.code, stage: "transport", reason: transport.reason };
+      lastFailure = {
+        code: transport.code,
+        stage: "transport",
+        reason: transport.reason,
+        providerRequestId: transport.providerRequestId,
+        upstreamStatus: transport.upstreamStatus,
+      };
       continue;
     }
 
@@ -254,7 +285,12 @@ export async function orchestratePolish(
       language: request.language,
     });
     if (validation.ok) {
-      return { items: validation.items, usage, attempts };
+      return {
+        items: validation.items,
+        usage,
+        attempts,
+        providerRequestId: result.providerRequestId,
+      };
     }
     lastFailure = {
       // insufficient_system_resource is classified "upstream" by the
@@ -262,6 +298,7 @@ export async function orchestratePolish(
       code: validation.classification === "upstream" ? "UPSTREAM_ERROR" : "INVALID_MODEL_OUTPUT",
       stage: validation.stage,
       reason: validation.reason,
+      providerRequestId: result.providerRequestId,
     };
   }
 
@@ -271,5 +308,9 @@ export async function orchestratePolish(
     usage,
     attempts,
     `polish failed after ${attempts} attempt(s): ${lastFailure?.reason ?? "no attempt could be started within the deadline"}`,
+    {
+      providerRequestId: lastFailure?.providerRequestId,
+      upstreamStatus: lastFailure?.upstreamStatus,
+    },
   );
 }

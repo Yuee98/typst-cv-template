@@ -129,6 +129,10 @@ export class PolishProviderError extends Error {
  * Fail-loud in production: `POLISH_FAKE_LLM=true` combined with
  * `NODE_ENV=production` throws here, before any request can be served by a
  * fake (the fake returns synthetic output and must never run in production).
+ * The single exemption is the CI smoke: `next start` always runs with
+ * NODE_ENV=production, so GitHub Actions' `CI=true` marker (exact string,
+ * set automatically on every Actions runner — never set on Vercel or in any
+ * production deployment) allows the fake to serve the smoke suite.
  * Callers (the unit 2.3 handler) must resolve the provider once at module
  * scope so this misconfiguration refuses startup instead of failing
  * per-request.
@@ -141,7 +145,7 @@ export function getPolishProvider(
 ): PolishProvider {
   const fakeRequested = env.POLISH_FAKE_LLM === "true";
   if (fakeRequested) {
-    if (env.NODE_ENV === "production") {
+    if (env.NODE_ENV === "production" && env.CI !== "true") {
       throw new Error(
         "POLISH_FAKE_LLM=true is forbidden with NODE_ENV=production: the fake polish provider " +
           "returns synthetic output. Refusing to start.",
