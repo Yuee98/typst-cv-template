@@ -433,5 +433,11 @@
       "retryAfter": "Please wait {seconds} seconds before retrying.",
       "requestId": "Request ID: {requestId}"
     }
+  },
+  "PolishEntry": {
+    "item": "Polish this item with AI",
+    "entry": "Polish this entry with AI",
+    "section": "Polish this section with AI",
+    "tooShort": "Too short to polish (needs at least 10 characters)"
   }
 }

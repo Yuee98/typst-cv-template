@@ -9,14 +9,22 @@ import { SortableList } from "@/components/ui/sortable-list";
 import { Textarea } from "@/components/ui/textarea";
 import type { CvData } from "@/lib/cv/schema";
 
+import { polishItemId, type PolishItemScopeBase } from "../polish/polish-entry";
+import { PolishItemEntryButton } from "../polish/polish-entry-button";
 import { fieldPath, textItem, useCvFieldArray } from "./shared";
 
 export function TextItemsEditor({
   name,
   addLabel,
+  polish,
 }: {
   name: string;
   addLabel: string;
+  /**
+   * Item-granularity polish entry: when set, every item row gets an AI
+   * button scoped to that item (visibility still gated by flag + matrix).
+   */
+  polish?: PolishItemScopeBase;
 }) {
   const { register } = useFormContext<CvData>();
   const t = useTranslations("Editors");
@@ -37,16 +45,27 @@ export function TextItemsEditor({
               <span className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                 {t("TextItems.itemLabel", { index: index + 1 })}
               </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="ml-auto"
-                aria-label={t("TextItems.removeAria")}
-                onClick={() => remove(index)}
-              >
-                <Trash2 />
-              </Button>
+              <div className="ml-auto flex items-center gap-1">
+                {polish && (
+                  <PolishItemEntryButton
+                    textPath={`${name}.${index}.body`}
+                    scope={{
+                      sectionId: polish.sectionId,
+                      granularity: "item",
+                      itemId: polishItemId(polish.entryId, index),
+                    }}
+                  />
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("TextItems.removeAria")}
+                  onClick={() => remove(index)}
+                >
+                  <Trash2 />
+                </Button>
+              </div>
             </div>
             <Textarea {...register(fieldPath(`${name}.${index}.body`))} />
           </div>
@@ -60,7 +79,7 @@ export function TextItemsEditor({
   );
 }
 
-export function BulletEditor({ name }: { name: string }) {
+export function BulletEditor({ name, polish }: { name: string; polish?: PolishItemScopeBase }) {
   const t = useTranslations("Editors");
-  return <TextItemsEditor name={name} addLabel={t("Bullets.add")} />;
+  return <TextItemsEditor name={name} addLabel={t("Bullets.add")} polish={polish} />;
 }

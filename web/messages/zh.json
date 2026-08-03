@@ -433,5 +433,11 @@
       "retryAfter": "请等待 {seconds} 秒后重试。",
       "requestId": "请求 ID：{requestId}"
     }
+  },
+  "PolishEntry": {
+    "item": "AI 润色此条",
+    "entry": "AI 润色此条目",
+    "section": "AI 润色整个板块",
+    "tooShort": "内容不足 10 字，暂无法润色"
   }
 }
