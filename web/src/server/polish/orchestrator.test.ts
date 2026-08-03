@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { PolishRequest } from "@/lib/polish/contract";
+import { computePolishMaxOutputTokens, type PolishRequest } from "@/lib/polish/contract";
 import {
   addPolishUsage,
-  computeMaxOutputTokens,
   MIN_RETRY_BUDGET_MS,
   orchestratePolish,
   POLISH_MAX_ATTEMPTS,
@@ -15,6 +14,8 @@ import {
 } from "./orchestrator";
 
 const VALID_ZH_POLISHED = "负责后端核心服务的开发与优化，将 P99 延迟降低 40%。";
+/** Pseudonymous id the handler would inject; forwarded to the provider unchanged. */
+const TEST_PROVIDER_USER_ID = "1".repeat(63) + "b";
 
 function makeRequest(overrides: Partial<PolishRequest> = {}): PolishRequest {
   return {
@@ -26,6 +27,14 @@ function makeRequest(overrides: Partial<PolishRequest> = {}): PolishRequest {
     context: { level: 0, references: [] },
     ...overrides,
   };
+}
+
+/** Options every orchestratePolish call needs; override per test as needed. */
+function callOpts(
+  signal: AbortSignal,
+  extra: Partial<Parameters<typeof orchestratePolish>[2]> = {},
+): Parameters<typeof orchestratePolish>[2] {
+  return { signal, providerUserId: TEST_PROVIDER_USER_ID, ...extra };
 }
 
 function usage(overrides: Partial<PolishProviderUsage> = {}): PolishProviderUsage {
@@ -75,17 +84,6 @@ function fakeClock(start = 0): { now: () => number; advance: (ms: number) => voi
   return { now: () => t, advance: (ms: number) => void (t += ms) };
 }
 
-describe("computeMaxOutputTokens", () => {
-  it("is totalTargetChars × 1.5 + JSON overhead below the hard cap", () => {
-    // 1 item × 100 chars: ceil(150) + 32 + 24 = 206
-    expect(computeMaxOutputTokens(100, 1)).toBe(206);
-  });
-
-  it("is capped at POLISH_MAX_OUTPUT_TOKENS for large requests", () => {
-    expect(computeMaxOutputTokens(5000, 30)).toBe(8192);
-  });
-});
-
 describe("addPolishUsage", () => {
   it("sums every field", () => {
     expect(
@@ -104,10 +102,7 @@ describe("addPolishUsage", () => {
 describe("orchestratePolish — success paths", () => {
   it("succeeds on the first attempt and passes budget + prompt through", async () => {
     const { provider, calls } = makeMockProvider(resolveWith(successResult()));
-    const result = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: fakeClock().now,
-    });
+    const result = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: fakeClock().now }));
 
     expect(result.items).toEqual([{ id: "i0", polished: VALID_ZH_POLISHED }]);
     expect(result.usage).toEqual(usage());
@@ -116,8 +111,16 @@ describe("orchestratePolish — success paths", () => {
     expect(calls).toHaveLength(1);
     const [call] = calls;
     expect(call.options.timeoutMs).toBe(POLISH_TOTAL_DEADLINE_MS);
-    // dynamic max_tokens: 1 item, 24 original chars → ceil(36) + 32 + 24 = 92
-    expect(call.request.maxOutputTokens).toBe(computeMaxOutputTokens(24, 1));
+    // dynamic max_tokens from the contract's single-source helper:
+    // 1 item × 24 chars → min(2400, 36+40)=76 → 76 + 1692 envelope = 1768
+    expect(call.request.maxOutputTokens).toBe(computePolishMaxOutputTokens(makeRequest().items));
+    expect(call.request.maxOutputTokens).toBe(1768);
+    // pinned interface fields: pseudonymous id forwarded unchanged, targets
+    // metadata from the validated request items (fake echo / validation only)
+    expect(call.request.providerUserId).toBe(TEST_PROVIDER_USER_ID);
+    expect(call.request.targets).toEqual(
+      makeRequest().items.map((item) => ({ id: item.id, text: item.text })),
+    );
     expect(call.request.messages).toHaveLength(2);
     expect(call.request.messages[0].role).toBe("system");
     expect(call.request.messages[1].role).toBe("user");
@@ -136,10 +139,7 @@ describe("orchestratePolish — success paths", () => {
     };
     const { provider, calls } = makeMockProvider(resolveWith(invalid), resolveWith(successResult()));
 
-    const result = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: fakeClock().now,
-    });
+    const result = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: fakeClock().now }));
 
     expect(result.attempts).toBe(2);
     expect(calls).toHaveLength(2);
@@ -160,10 +160,7 @@ describe("orchestratePolish — success paths", () => {
       resolveWith(successResult()),
     );
 
-    const result = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: fakeClock().now,
-    });
+    const result = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: fakeClock().now }));
 
     expect(result.attempts).toBe(2);
     expect(calls).toHaveLength(2);
@@ -185,10 +182,7 @@ describe("orchestratePolish — failure paths", () => {
       resolveWith(bad("仍然丢失关键指标的写法。")),
     );
 
-    const error = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: fakeClock().now,
-    }).catch((caught: unknown) => caught);
+    const error = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: fakeClock().now })).catch((caught: unknown) => caught);
 
     expect(calls).toHaveLength(POLISH_MAX_ATTEMPTS);
     expect(error).toMatchObject({
@@ -205,10 +199,7 @@ describe("orchestratePolish — failure paths", () => {
       rejectWith(providerError("UPSTREAM_TIMEOUT", "timed out")),
     );
 
-    const error = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: fakeClock().now,
-    }).catch((caught: unknown) => caught);
+    const error = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: fakeClock().now })).catch((caught: unknown) => caught);
 
     expect(calls).toHaveLength(2);
     expect(error).toMatchObject({ code: "UPSTREAM_TIMEOUT", failureStage: "transport", attempts: 2 });
@@ -218,10 +209,7 @@ describe("orchestratePolish — failure paths", () => {
     const insufficient: PolishProviderResult = { text: "", finishReason: "insufficient_system_resource", usage: usage() };
     const { provider } = makeMockProvider(resolveWith(insufficient), resolveWith(insufficient));
 
-    const error = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: fakeClock().now,
-    }).catch((caught: unknown) => caught);
+    const error = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: fakeClock().now })).catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({ code: "UPSTREAM_ERROR", failureStage: "finish_reason", attempts: 2 });
   });
@@ -238,10 +226,7 @@ describe("orchestratePolish — deadline budget allocation", () => {
       resolveWith(successResult()),
     );
 
-    const result = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: clock.now,
-    });
+    const result = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: clock.now }));
 
     expect(result.attempts).toBe(2);
     expect(calls[0].options.timeoutMs).toBe(45_000);
@@ -256,10 +241,7 @@ describe("orchestratePolish — deadline budget allocation", () => {
       return Promise.reject(providerError("UPSTREAM_TIMEOUT", "timed out"));
     });
 
-    const error = await orchestratePolish(provider, makeRequest(), {
-      signal: new AbortController().signal,
-      now: clock.now,
-    }).catch((caught: unknown) => caught);
+    const error = await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: clock.now })).catch((caught: unknown) => caught);
 
     expect(calls).toHaveLength(1);
     expect(error).toMatchObject({ code: "UPSTREAM_TIMEOUT", attempts: 1 });
@@ -280,7 +262,7 @@ describe("orchestratePolish — deadline budget allocation", () => {
       resolveWith(successResult()),
     );
 
-    await orchestratePolish(provider, makeRequest(), { signal: new AbortController().signal, now: clock.now });
+    await orchestratePolish(provider, makeRequest(), callOpts(new AbortController().signal, { now: clock.now }));
     expect(calls[1].options.timeoutMs).toBe(42_000);
   });
 });
@@ -294,10 +276,7 @@ describe("orchestratePolish — abort propagation", () => {
       return Promise.reject(abortError);
     });
 
-    const error = await orchestratePolish(provider, makeRequest(), {
-      signal: controller.signal,
-      now: fakeClock().now,
-    }).catch((caught: unknown) => caught);
+    const error = await orchestratePolish(provider, makeRequest(), callOpts(controller.signal, { now: fakeClock().now })).catch((caught: unknown) => caught);
 
     expect(calls).toHaveLength(1);
     expect(error).toBe(abortError);
@@ -308,10 +287,7 @@ describe("orchestratePolish — abort propagation", () => {
     controller.abort();
     const { provider, calls } = makeMockProvider(resolveWith(successResult()));
 
-    const error = await orchestratePolish(provider, makeRequest(), {
-      signal: controller.signal,
-      now: fakeClock().now,
-    }).catch((caught: unknown) => caught);
+    const error = await orchestratePolish(provider, makeRequest(), callOpts(controller.signal, { now: fakeClock().now })).catch((caught: unknown) => caught);
 
     expect(calls).toHaveLength(0);
     expect(error).toBeInstanceOf(DOMException);
@@ -333,7 +309,7 @@ describe("orchestratePolish — request shaping", () => {
           ],
         },
       }),
-      { signal: new AbortController().signal, now: fakeClock().now },
+      callOpts(new AbortController().signal, { now: fakeClock().now }),
     );
 
     const userMessage = calls[0].request.messages[1].content;
@@ -341,13 +317,14 @@ describe("orchestratePolish — request shaping", () => {
     expect(userMessage).not.toContain("不应出现的 profile 内容");
   });
 
-  it("caps maxOutputTokens at POLISH_MAX_OUTPUT_TOKENS for a maximal request", async () => {
+  it("clamps maxOutputTokens at the aggregate content ceiling for a maximal request", async () => {
     const bigItems = Array.from({ length: 30 }, (_, index) => ({
       id: `i${index}`,
       kind: "experience_bullet" as const,
       text: "原".repeat(166),
     }));
-    // total 4980 chars → ceil(7470) + 32 + 30×24 = 8222 > 8192 → capped
+    // 30 × min(2400, ceil(249)+40=289) = 8670 → aggregate clamp 7500 →
+    // 7500 + 1692 envelope = 9192 (< POLISH_MAX_OUTPUT_TOKENS 10240)
     const { provider, calls } = makeMockProvider((call) => {
       void call;
       return Promise.resolve({
@@ -357,11 +334,79 @@ describe("orchestratePolish — request shaping", () => {
       });
     });
 
-    await orchestratePolish(provider, makeRequest({ items: bigItems }), {
-      signal: new AbortController().signal,
-      now: fakeClock().now,
+    await orchestratePolish(provider, makeRequest({ items: bigItems }), callOpts(new AbortController().signal, { now: fakeClock().now }));
+    expect(calls[0].request.maxOutputTokens).toBe(9192);
+    expect(calls[0].request.maxOutputTokens).toBe(computePolishMaxOutputTokens(bigItems));
+  });
+
+  it("calls onProviderAttemptStart once per attempt and propagates its failures unchanged", async () => {
+    // Happy path: hook sees 1-based attempt numbers, once per provider call.
+    const started: number[] = [];
+    const { provider, calls } = makeMockProvider(
+      rejectWith(providerError("UPSTREAM_ERROR", "upstream 500")),
+      resolveWith(successResult()),
+    );
+    await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: fakeClock().now,
+        onProviderAttemptStart: async (attempt) => {
+          started.push(attempt);
+        },
+      }),
+    );
+    expect(started).toEqual([1, 2]);
+    expect(calls).toHaveLength(2);
+
+    // Failure path: a hook error (ledger mark_provider_started infra failure)
+    // is an infrastructure failure — it must propagate unchanged, never be
+    // retried and never be misclassified as a transport failure.
+    const infraError = Object.assign(new Error("mark_provider_started RPC failed"), {
+      code: "INTERNAL_ERROR",
     });
-    expect(calls[0].request.maxOutputTokens).toBe(8192);
-    expect(computeMaxOutputTokens(4980, 30)).toBe(8192);
+    const { provider: provider2, calls: calls2 } = makeMockProvider(resolveWith(successResult()));
+    const caught = await orchestratePolish(
+      provider2,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: fakeClock().now,
+        onProviderAttemptStart: async () => {
+          throw infraError;
+        },
+      }),
+    ).catch((error: unknown) => error);
+    expect(caught).toBe(infraError);
+    expect(calls2).toHaveLength(0);
+  });
+
+  it("propagates providerRequestId from the winning result / last failure", async () => {
+    const { provider } = makeMockProvider(
+      resolveWith({ ...successResult(), providerRequestId: "req-win-1" }),
+    );
+    const ok = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, { now: fakeClock().now }),
+    );
+    expect(ok.providerRequestId).toBe("req-win-1");
+
+    const failing = Object.assign(new Error("upstream 503"), {
+      code: "UPSTREAM_ERROR",
+      providerRequestId: "req-fail-7",
+      upstreamStatus: 503,
+    });
+    const { provider: provider2 } = makeMockProvider(rejectWith(failing), rejectWith(failing));
+    const error = await orchestratePolish(
+      provider2,
+      makeRequest(),
+      callOpts(new AbortController().signal, { now: fakeClock().now }),
+    ).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: "PolishOrchestrationError",
+      code: "UPSTREAM_ERROR",
+      providerRequestId: "req-fail-7",
+      upstreamStatus: 503,
+    });
   });
 });
