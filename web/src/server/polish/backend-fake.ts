@@ -48,11 +48,16 @@ export function createFakePolishRouteDeps(options: {
 
     reserve: async () => ({
       reservationId: randomUUID(),
+      limit: 20,
       remaining: 19,
       resetAt: nextUtcMidnightIso(),
     }),
     markProviderStarted: async () => ({ started: true, attemptCount: 1 }),
-    finalize: async () => ({ alreadyFinalized: false }),
+    // Mirrors the real finalize RPC's atomic post-settlement quota snapshot.
+    finalize: async () => ({
+      alreadyFinalized: false,
+      quota: { limit: 20, remaining: 19, resetAt: nextUtcMidnightIso() },
+    }),
     getQuota: async () => ({ limit: 20, remaining: 20, resetAt: nextUtcMidnightIso() }),
 
     provider: options.provider,

@@ -193,6 +193,16 @@ grant select, insert, update, delete on public.ai_global_usage_daily to service_
 -- Returns a jsonb object; 'allowed' false carries a 'reason' matching the
 -- API contract error codes. All times are DB time; resetAt is the next UTC
 -- midnight.
+--
+-- Dedup serialization (relay #9): a transaction-scoped advisory lock on
+-- (user_id, client_request_id) is taken BEFORE the dedup lookup, so a
+-- concurrent duplicate always observes the winner's committed ledger row and
+-- returns REQUEST_IN_PROGRESS/DUPLICATE_REQUEST — never a misleading
+-- QUOTA_EXCEEDED/RATE_LIMITED from a check that raced the winner's insert.
+--
+-- The global daily check here is a cheap pre-filter ONLY; the authoritative
+-- atomic gate (config re-read + FOR UPDATE counter lock) lives in
+-- mark_ai_polish_provider_started (relay #2).
 -- ---------------------------------------------------------------------------
 
 create or replace function public.reserve_ai_polish_request(
@@ -248,8 +258,17 @@ begin
     );
   end if;
 
-  -- Dedup: in-flight reservation -> REQUEST_IN_PROGRESS; settled row ->
-  -- DUPLICATE_REQUEST. The unique index below still guards the race.
+  -- Serialize dedup on (user, client_request_id) BEFORE any quota/rate
+  -- evaluation (relay #9): a concurrent duplicate waits here, then observes
+  -- the winner's committed ledger row below and gets the correct 409 code.
+  -- Released automatically at transaction end.
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_user_id::text || ':' || p_client_request_id::text, 0)
+  );
+
+  -- Dedup (under the advisory lock): in-flight reservation ->
+  -- REQUEST_IN_PROGRESS; settled row -> DUPLICATE_REQUEST. The unique index
+  -- below still guards as a backstop.
   select state into v_existing_state
   from public.ai_request_ledger
   where user_id = p_user_id and client_request_id = p_client_request_id;
@@ -268,7 +287,10 @@ begin
     );
   end if;
 
-  -- Global daily circuit breaker (provider_started count, never refunded).
+  -- Global daily circuit breaker: CHEAP PRE-FILTER only. The count moves in
+  -- mark_ai_polish_provider_started, which re-checks this atomically under a
+  -- row lock (relay #2), so concurrent overshoot is impossible there even
+  -- though it is possible here.
   select provider_started_count into v_global_count
   from public.ai_global_usage_daily
   where day = v_today;
@@ -349,6 +371,7 @@ begin
   return jsonb_build_object(
     'allowed', true,
     'reservationId', v_reservation_id,
+    'limit', c_daily_limit,
     'remaining', c_daily_limit - v_new_count,
     'resetAt', v_reset_at
   );
@@ -360,6 +383,21 @@ $$;
 -- attempt. Increments attempt_count and the global daily counter (the counter
 -- is never decremented - roadmap invariant 7). Returns ok=false when the
 -- reservation is already finalized (caller must treat the request as dead).
+--
+-- This is the AUTHORITATIVE atomic gate for the global daily circuit breaker
+-- (relay #2), not just a counter increment:
+--   1. create + lock today's ai_global_usage_daily row FOR UPDATE;
+--   2. re-read the runtime feature config;
+--   3. recheck enabled state, the allowlist (if any) and
+--      provider_started_count < global_daily_limit;
+--   4. increment only when a slot remains;
+--   5. otherwise return a structured denial (AI_DISABLED /
+--      SERVICE_UNAVAILABLE) WITHOUT touching the counter.
+-- Serializing on the global row means a burst racing the last slot lets
+-- exactly ONE mark succeed. The reserve-time check remains only as a cheap
+-- rejection path. Retries pass through the same gate, so a denied attempt 2
+-- is reported to the caller, which must refund the user quota while keeping
+-- the attempt-1 usage record.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.mark_ai_polish_provider_started(
@@ -373,8 +411,10 @@ set search_path = ''
 as $$
 declare
   v_row public.ai_request_ledger%rowtype;
+  v_config public.ai_feature_config%rowtype;
   v_today date := (now() at time zone 'utc')::date;
   v_attempt_count integer;
+  v_global_count integer;
 begin
   select * into v_row
   from public.ai_request_ledger
@@ -389,6 +429,38 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'ALREADY_FINALIZED');
   end if;
 
+  -- Create + lock today's global counter row. The FOR UPDATE lock serializes
+  -- every concurrent provider start on the capacity check below.
+  insert into public.ai_global_usage_daily (day)
+  values (v_today)
+  on conflict do nothing;
+
+  select provider_started_count into v_global_count
+  from public.ai_global_usage_daily
+  where day = v_today
+  for update;
+
+  -- Re-read the runtime config: the state checked at reserve time may have
+  -- changed (kill switch flipped, allowlist edited, limit lowered).
+  select * into v_config from public.ai_feature_config limit 1;
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'INTERNAL_ERROR');
+  end if;
+
+  if not v_config.ai_polish_enabled then
+    return jsonb_build_object('ok', false, 'reason', 'AI_DISABLED');
+  end if;
+
+  if cardinality(v_config.enabled_user_allowlist) > 0
+     and not (v_row.user_id = any(v_config.enabled_user_allowlist)) then
+    return jsonb_build_object('ok', false, 'reason', 'AI_DISABLED');
+  end if;
+
+  -- The atomic gate itself: increment only while a slot remains.
+  if v_global_count >= v_config.global_daily_limit then
+    return jsonb_build_object('ok', false, 'reason', 'SERVICE_UNAVAILABLE');
+  end if;
+
   update public.ai_request_ledger
   set state = 'provider_started',
       provider_started_at = coalesce(provider_started_at, now()),
@@ -397,10 +469,9 @@ begin
   where reservation_id = p_reservation_id
   returning attempt_count into v_attempt_count;
 
-  insert into public.ai_global_usage_daily (day, provider_started_count)
-  values (v_today, 1)
-  on conflict (day) do update
-  set provider_started_count = ai_global_usage_daily.provider_started_count + 1;
+  update public.ai_global_usage_daily
+  set provider_started_count = provider_started_count + 1
+  where day = v_today;
 
   return jsonb_build_object('ok', true, 'attemptCount', v_attempt_count);
 end;
@@ -412,12 +483,24 @@ $$;
 --   * quota_charged = false   -> the day's request_count is refunded once
 --   * token usage             -> always recorded (per-user + global), even
 --                                when the user quota is refunded
+--   * quota snapshot          -> the post-settlement per-user quota
+--                                (limit/remaining/resetAt) is computed in the
+--                                same transaction and returned, so the route
+--                                can answer WITHOUT a separate quota read
+--                                after irreversible settlement (relay #8)
 -- p_usage keys:    input_cached_tokens, input_uncached_tokens,
 --                  output_tokens, usage_complete
 -- p_metadata keys: granularity, item_count, context_level, language, model,
 --                  prompt_version, validator_version, attempt_count,
 --                  provider_request_id, finish_reason, failure_stage,
 --                  latency_ms
+--
+-- Per-user token usage day attribution (relay #5): the per-user row is an
+-- UPSERT on the FINALIZATION day (v_today), matching the day the global
+-- totals use, so per-user and global cost totals can never disagree and a
+-- request crossing UTC midnight can never drop its token record. (The quota
+-- refund deliberately uses the RESERVATION day instead: that is where the
+-- request consumed its slot.)
 -- ---------------------------------------------------------------------------
 
 create or replace function public.finalize_ai_polish_request(
@@ -434,13 +517,19 @@ security invoker
 set search_path = ''
 as $$
 declare
+  -- Kept in sync with c_daily_limit in reserve_ai_polish_request() /
+  -- get_ai_polish_quota().
+  c_daily_limit constant integer := 20;
   v_row public.ai_request_ledger%rowtype;
   v_today date := (now() at time zone 'utc')::date;
+  v_reset_at timestamptz := (((now() at time zone 'utc')::date + 1) at time zone 'utc');
   v_quota_day date;
   v_cached bigint;
   v_uncached bigint;
   v_output bigint;
   v_usage_complete boolean;
+  v_today_count integer;
+  v_quota jsonb;
 begin
   select * into v_row
   from public.ai_request_ledger
@@ -451,6 +540,17 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'NOT_FOUND');
   end if;
 
+  -- Post-settlement quota snapshot for the response (computed under the
+  -- ledger row lock, in the same transaction as settlement — relay #8).
+  select request_count into v_today_count
+  from public.ai_usage_daily
+  where user_id = v_row.user_id and day = v_today;
+  v_quota := jsonb_build_object(
+    'limit', c_daily_limit,
+    'remaining', c_daily_limit - coalesce(v_today_count, 0),
+    'resetAt', v_reset_at
+  );
+
   -- Idempotent: a second finalize changes nothing and reports the settled
   -- outcome so the caller can log it.
   if v_row.state = 'finalized' then
@@ -458,7 +558,8 @@ begin
       'ok', true,
       'alreadyFinalized', true,
       'status', v_row.status,
-      'quotaCharged', v_row.quota_charged
+      'quotaCharged', v_row.quota_charged,
+      'quota', v_quota
     );
   end if;
 
@@ -507,13 +608,34 @@ begin
   end if;
 
   -- Token usage is a cost fact: recorded even when quota is refunded, and
-  -- the global totals are never decremented (roadmap invariant 7).
+  -- the global totals are never decremented (roadmap invariant 7). Per-user
+  -- usage is attributed to the FINALIZATION day via upsert (relay #5): a
+  -- request reserved before UTC midnight and finalized after it previously
+  -- updated zero rows and silently dropped all known usage.
   if p_usage is not null then
-    update public.ai_usage_daily
-    set input_cached_tokens = input_cached_tokens + v_cached,
-        input_uncached_tokens = input_uncached_tokens + v_uncached,
-        output_tokens = output_tokens + v_output
-    where user_id = v_row.user_id and day = v_today;
+    insert into public.ai_usage_daily (
+      user_id,
+      day,
+      request_count,
+      input_cached_tokens,
+      input_uncached_tokens,
+      output_tokens
+    )
+    values (
+      v_row.user_id,
+      v_today,
+      0,
+      v_cached,
+      v_uncached,
+      v_output
+    )
+    on conflict (user_id, day) do update
+    set input_cached_tokens =
+          ai_usage_daily.input_cached_tokens + excluded.input_cached_tokens,
+        input_uncached_tokens =
+          ai_usage_daily.input_uncached_tokens + excluded.input_uncached_tokens,
+        output_tokens =
+          ai_usage_daily.output_tokens + excluded.output_tokens;
 
     insert into public.ai_global_usage_daily (
       day, input_cached_tokens, input_uncached_tokens, output_tokens
@@ -525,11 +647,23 @@ begin
         output_tokens = ai_global_usage_daily.output_tokens + excluded.output_tokens;
   end if;
 
+  -- The snapshot above was taken before settlement; recompute post-charge /
+  -- post-refund so the response reflects the settled state.
+  select request_count into v_today_count
+  from public.ai_usage_daily
+  where user_id = v_row.user_id and day = v_today;
+  v_quota := jsonb_build_object(
+    'limit', c_daily_limit,
+    'remaining', c_daily_limit - coalesce(v_today_count, 0),
+    'resetAt', v_reset_at
+  );
+
   return jsonb_build_object(
     'ok', true,
     'alreadyFinalized', false,
     'status', p_status,
-    'quotaCharged', p_quota_charged
+    'quotaCharged', p_quota_charged,
+    'quota', v_quota
   );
 end;
 $$;

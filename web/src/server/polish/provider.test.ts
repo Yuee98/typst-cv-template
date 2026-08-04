@@ -84,22 +84,3 @@ describe("PolishProviderError", () => {
     expect(error.upstreamStatus).toBeUndefined();
   });
 });
-
-describe("PolishProviderError", () => {
-  it("carries optional structured metadata (providerRequestId, upstreamStatus)", () => {
-    const error = new PolishProviderError("UPSTREAM_ERROR", "upstream HTTP failure", {
-      providerRequestId: "req-abc",
-      upstreamStatus: 503,
-    });
-    expect(error.name).toBe("PolishProviderError");
-    expect(error.code).toBe("UPSTREAM_ERROR");
-    expect(error.providerRequestId).toBe("req-abc");
-    expect(error.upstreamStatus).toBe(503);
-  });
-
-  it("leaves metadata undefined when not provided", () => {
-    const error = new PolishProviderError("UPSTREAM_TIMEOUT", "hard timeout");
-    expect(error.providerRequestId).toBeUndefined();
-    expect(error.upstreamStatus).toBeUndefined();
-  });
-});

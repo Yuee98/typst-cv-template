@@ -40,6 +40,7 @@ import {
   RUN_DB_TESTS,
   setDailyUsageCount,
   tryReserve,
+  utcDaysAgo,
   type TestUser,
 } from "./helpers";
 
@@ -404,5 +405,95 @@ describe.skipIf(!RUN_DB_TESTS)("finalize idempotency & dedup (real DB)", () => {
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(PolishQuotaError);
     expect((error as PolishQuotaError).code).toBe("INTERNAL_ERROR");
+  });
+
+  it("returns the post-settlement quota snapshot atomically (relay #8)", async () => {
+    const user = await makeUser("fin-quota-snapshot");
+    const reservationId = await reserveFresh(user);
+    // reserve consumed 1 of 20 → charged success leaves 19.
+    const first = await finalizePolishRequest(service, {
+      reservationId,
+      status: "succeeded",
+      quotaCharged: true,
+      providerBillable: true,
+      usage: USAGE,
+    });
+    expect(first.quota).toMatchObject({ limit: 20, remaining: 19 });
+    expect(first.quota?.resetAt).toBeTruthy();
+
+    // The idempotent repeat recomputes the same snapshot.
+    const second = await finalizePolishRequest(service, {
+      reservationId,
+      status: "succeeded",
+      quotaCharged: true,
+    });
+    expect(second.quota).toMatchObject({ limit: 20, remaining: 19 });
+
+    // A refunded outcome reports the count AFTER the refund went back.
+    const user2 = await makeUser("fin-quota-snapshot-refund");
+    const reservationId2 = await reserveFresh(user2);
+    const refunded = await finalizePolishRequest(service, {
+      reservationId: reservationId2,
+      status: "failed_upstream",
+      quotaCharged: false,
+      providerBillable: false,
+    });
+    expect(refunded.quota).toMatchObject({ limit: 20, remaining: 20 });
+  });
+
+  it("upserts per-user token usage when a request crosses UTC midnight (relay #5)", async () => {
+    const user = await makeUser("fin-midnight");
+    // A reservation attributed to the PREVIOUS UTC day (as if reserved just
+    // before midnight): the usage row exists for THAT day, but there is no
+    // row for the finalization day — the finalize must create it via upsert
+    // instead of dropping the tokens with a zero-row UPDATE.
+    const yesterday = utcDaysAgo(1);
+    const { error: usageError } = await service
+      .from("ai_usage_daily")
+      .upsert({ user_id: user.id, day: yesterday, request_count: 1 });
+    expect(usageError).toBeNull();
+
+    const reservationId = crypto.randomUUID();
+    const { error: ledgerError } = await service.from("ai_request_ledger").insert({
+      reservation_id: reservationId,
+      request_id: crypto.randomUUID(),
+      client_request_id: crypto.randomUUID(),
+      user_id: user.id,
+      reserved_at: `${yesterday}T23:59:30+00:00`,
+    });
+    expect(ledgerError).toBeNull();
+
+    const result = await finalizePolishRequest(service, {
+      reservationId,
+      status: "succeeded",
+      quotaCharged: true,
+      providerBillable: true,
+      usage: USAGE,
+    });
+    expect(result.alreadyFinalized).toBe(false);
+
+    // Charged requests are not refunded: yesterday's count is untouched.
+    const { data: yesterdayRow } = await service
+      .from("ai_usage_daily")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("day", yesterday)
+      .maybeSingle();
+    expect(yesterdayRow?.request_count).toBe(1);
+
+    // The finalization-day row was CREATED by the upsert with the full token
+    // cost (usage day attribution: the finalization day — see the migration
+    // comment), never silently dropped.
+    const todayRow = await getUsageRow(service, user.id);
+    expect(todayRow).toMatchObject({
+      request_count: 0,
+      input_cached_tokens: USAGE.inputCachedTokens,
+      input_uncached_tokens: USAGE.inputUncachedTokens,
+      output_tokens: USAGE.outputTokens,
+    });
+
+    // The quota snapshot reflects the finalization day (no reservation was
+    // consumed there) — per-user and global accounting stay consistent.
+    expect(result.quota).toMatchObject({ limit: 20, remaining: 20 });
   });
 });

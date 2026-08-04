@@ -333,6 +333,100 @@ describe("extractProtectedTokens / diffProtectedTokens", () => {
   });
 });
 
+describe("extractProtectedTokens — roadmap-named forms (relay #7)", () => {
+  it("captures leading-dot framework names (.NET) with the dot", () => {
+    expect(extractProtectedTokens("基于 .NET 平台开发。")).toEqual([".NET"]);
+    expect(extractProtectedTokens("Built services on .NET and .NET Core.")).toEqual(
+      [".NET", ".NET"].sort(),
+    );
+  });
+
+  it("captures multiword technical names as a phrase (SQL Server)", () => {
+    expect(extractProtectedTokens("维护 SQL Server 集群。")).toEqual(["SQLServer"]);
+    expect(extractProtectedTokens("Administered SQL Server and SQL Server failover clusters.")).toEqual(
+      ["SQLServer", "SQLServer"].sort(),
+    );
+  });
+
+  it("keeps the currency magnitude suffix (£27bn, never truncated to £27)", () => {
+    expect(extractProtectedTokens("Managed a £27bn portfolio.")).toEqual(["£27bn"]);
+    expect(extractProtectedTokens("处理 £27bn 与 £27bn 两期预算。")).toEqual(["£27bn", "£27bn"].sort());
+  });
+
+  it("pairs lowercase spaced units with their number (200 ms)", () => {
+    expect(extractProtectedTokens("将 P99 延迟降至 200 ms。")).toEqual(["200ms", "P99"].sort());
+    expect(extractProtectedTokens("延迟 200 ms，重试 200 ms。")).toEqual(["200ms", "200ms"].sort());
+  });
+
+  it("pairs data-size units with their number (32 GB)", () => {
+    expect(extractProtectedTokens("处理 32 GB 日志。")).toEqual(["32GB"]);
+    expect(extractProtectedTokens("Ingested 32 GB daily and 32 GB backups.")).toEqual(["32GB", "32GB"].sort());
+  });
+
+  it("detects the named alterations the roadmap promises to block", () => {
+    // .NET → NET (dot lost)
+    expect(diffProtectedTokens("基于 .NET 开发。", "基于 NET 开发。")).toEqual({
+      missing: ['".NET" ×1'],
+      added: ['"NET" ×1'],
+    });
+    // SQL Server → SQL Database (phrase changed)
+    expect(diffProtectedTokens("维护 SQL Server。", "维护 SQL Database。")).toEqual({
+      missing: ['"SQLServer" ×1'],
+      added: ['"SQLDatabase" ×1'],
+    });
+    // £27bn → £27m (magnitude changed)
+    expect(diffProtectedTokens("Managed £27bn.", "Managed £27m.")).toEqual({
+      missing: ['"£27bn" ×1'],
+      added: ['"£27m" ×1'],
+    });
+    // 200 ms → 200 s (unit changed)
+    expect(diffProtectedTokens("延迟 200 ms。", "延迟 200 s。")).toEqual({
+      missing: ['"200ms" ×1'],
+      added: ['"200s" ×1'],
+    });
+    // 32 GB → 32 MB (unit changed)
+    expect(diffProtectedTokens("存储 32 GB。", "存储 32 MB。")).toEqual({
+      missing: ['"32GB" ×1'],
+      added: ['"32MB" ×1'],
+    });
+  });
+
+  it("detects a lost repeated occurrence of each named form (multiset, not set)", () => {
+    expect(diffProtectedTokens(".NET 与 .NET 双栈。", ".NET 单栈。").missing).toEqual(['".NET" ×1']);
+    expect(diffProtectedTokens("SQL Server 与 SQL Server 集群。", "SQL Server 集群。").missing).toEqual([
+      '"SQLServer" ×1',
+    ]);
+    expect(diffProtectedTokens("预算 £27bn，另一期 £27bn。", "预算 £27bn。").missing).toEqual(['"£27bn" ×1']);
+    expect(diffProtectedTokens("延迟 200 ms，峰值 200 ms。", "延迟 200 ms。").missing).toEqual(['"200ms" ×1']);
+    expect(diffProtectedTokens("日志 32 GB，备份 32 GB。", "日志 32 GB。").missing).toEqual(['"32GB" ×1']);
+  });
+});
+
+describe("validatePolishOutput — protected spans checkpoint (roadmap-named forms)", () => {
+  it.each([
+    ["zh" as const, "基于 .NET 平台开发。", "基于 NET 平台开发。"],
+    ["zh" as const, "维护 SQL Server 数据库集群。", "维护 SQL Database 数据库集群。"],
+    ["en" as const, "Managed a £27bn portfolio.", "Managed a £27m portfolio."],
+    ["zh" as const, "将接口延迟稳定在 200 ms。", "将接口延迟稳定在 200 s。"],
+    ["zh" as const, "每日处理 32 GB 数据。", "每日处理 32 MB 数据。"],
+  ])("rejects the alteration: %j → %j", (language, original, polished) => {
+    const items = singleItem(original);
+    const result = validatePolishOutput(raw([{ id: "i0", polished }]), ctx(items, language));
+    expect(result).toMatchObject({ ok: false, stage: "protected_spans" });
+  });
+
+  it.each([
+    ["zh" as const, "基于 .NET 平台开发核心服务。", "主导基于 .NET 平台的核心服务开发工作。"],
+    ["zh" as const, "维护 SQL Server 数据库集群。", "负责 SQL Server 数据库集群的运维与优化。"],
+    ["en" as const, "Managed a £27bn portfolio.", "Managed and grew a £27bn portfolio."],
+    ["zh" as const, "将接口延迟稳定在 200 ms。", "将核心接口延迟稳定控制在 200 ms 水平。"],
+    ["zh" as const, "每日处理 32 GB 数据。", "每日稳定处理 32 GB 规模数据。"],
+  ])("accepts a verbatim-preserved form through rewording: %j", (language, original, polished) => {
+    const items = singleItem(original);
+    expect(validatePolishOutput(raw([{ id: "i0", polished }]), ctx(items, language)).ok).toBe(true);
+  });
+});
+
 describe("validatePolishOutput — protected spans checkpoint", () => {
   it("passes when all spans are preserved verbatim through rewording", () => {
     const items = singleItem("负责后端性能优化，P99 延迟从 200ms 降至 120ms，QPS 提升 40%。");

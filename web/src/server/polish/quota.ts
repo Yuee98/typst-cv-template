@@ -44,6 +44,14 @@ export class PolishQuotaError extends Error {
   }
 }
 
+/**
+ * Fixed client-facing message for INTERNAL_ERROR quota failures (relay #10):
+ * raw PostgREST/DB error text (function names, schema details, connection
+ * errors) is a server-side diagnostic only — it stays in the thrown error's
+ * message for logs and NEVER crosses the API boundary.
+ */
+export const INTERNAL_QUOTA_SERVICE_MESSAGE = "Internal quota service error.";
+
 // ---------------------------------------------------------------------------
 // RPC payload schemas (jsonb returns, camelCase keys)
 // ---------------------------------------------------------------------------
@@ -53,6 +61,7 @@ const reserveResponseSchema = z.object({
   reason: z.string().optional(),
   message: z.string().optional(),
   reservationId: z.uuid().optional(),
+  limit: z.number().int().nonnegative().optional(),
   remaining: z.number().int().nonnegative().optional(),
   resetAt: z.string().optional(),
   retryAfterSeconds: z.number().int().nonnegative().optional(),
@@ -64,18 +73,20 @@ const markResponseSchema = z.object({
   attemptCount: z.number().int().nonnegative().optional(),
 });
 
+const quotaResponseSchema = z.object({
+  limit: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative(),
+  resetAt: z.string(),
+});
+
 const finalizeResponseSchema = z.object({
   ok: z.boolean(),
   reason: z.string().optional(),
   alreadyFinalized: z.boolean().optional(),
   status: z.string().optional(),
   quotaCharged: z.boolean().optional(),
-});
-
-const quotaResponseSchema = z.object({
-  limit: z.number().int().nonnegative(),
-  remaining: z.number().int().nonnegative(),
-  resetAt: z.string(),
+  // Post-settlement quota snapshot, returned atomically since relay #8.
+  quota: quotaResponseSchema.optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -103,6 +114,8 @@ function isReserveDenialCode(reason: string | undefined): reason is ReserveDenia
 
 export interface PolishReservation {
   reservationId: string;
+  /** Daily free-tier limit (DB constant), for snapshot fallbacks. */
+  limit?: number;
   /** Requests left today after this reservation (DB time). */
   remaining: number;
   /** Next UTC midnight, ISO string from DB time. */
@@ -165,6 +178,7 @@ export async function reservePolishRequest(
   }
   return {
     reservationId: result.reservationId,
+    limit: result.limit,
     remaining: result.remaining,
     resetAt: result.resetAt,
   };
@@ -183,8 +197,17 @@ export interface ProviderStartedMark {
 
 /**
  * Transitions a reservation to provider_started (once per provider attempt)
- * and increments the global daily counter, which is never refunded. Throws
- * INTERNAL_ERROR when the reservation is unknown (ledger inconsistency).
+ * and increments the global daily counter, which is never refunded.
+ *
+ * This RPC is the authoritative atomic gate of the global daily circuit
+ * breaker (relay #2): it locks the day's global row, re-reads the runtime
+ * config and rechecks enabled/allowlist/capacity before incrementing.
+ * Denials are raised as PolishQuotaError(SERVICE_UNAVAILABLE) — global
+ * capacity exhausted — or PolishQuotaError(AI_DISABLED) — kill switch /
+ * allowlist flipped after reserve — so the lifecycle can refund the user
+ * quota, keep earlier-attempt usage and answer 503 instead of a generic
+ * 500. ALREADY_FINALIZED returns { started: false } (treat as aborted);
+ * other failures (unknown reservation) throw INTERNAL_ERROR.
  */
 export async function markPolishProviderStarted(
   client: SupabaseClient,
@@ -214,6 +237,18 @@ export async function markPolishProviderStarted(
   if (!result.ok) {
     if (result.reason === "ALREADY_FINALIZED") {
       return { started: false, attemptCount: null };
+    }
+    if (result.reason === "SERVICE_UNAVAILABLE") {
+      throw new PolishQuotaError(
+        "SERVICE_UNAVAILABLE",
+        "AI polish is temporarily unavailable (daily capacity reached).",
+      );
+    }
+    if (result.reason === "AI_DISABLED") {
+      throw new PolishQuotaError(
+        "AI_DISABLED",
+        "AI polish is currently disabled.",
+      );
     }
     throw new PolishQuotaError(
       "INTERNAL_ERROR",
@@ -274,6 +309,24 @@ export interface PolishLedgerMetadata {
 export interface PolishFinalizeResult {
   /** True when the reservation was already settled (idempotent no-op). */
   alreadyFinalized: boolean;
+  /**
+   * Persisted settlement status, returned by the RPC on both fresh and
+   * idempotent-finalized calls. Internal bookkeeping (round-2 #3): the
+   * lifecycle uses it to distinguish a confirmed success commit from a
+   * conflicting prior settlement after a lost finalize response.
+   */
+  status?: string;
+  /**
+   * Whether the persisted settlement charged the user quota. Paired with
+   * `status` for the lost-response retry check (round-2 #3).
+   */
+  quotaCharged?: boolean;
+  /**
+   * Post-settlement per-user quota snapshot, returned atomically by the
+   * finalize RPC (relay #8) so the success path never needs a separate
+   * quota read after irreversible settlement.
+   */
+  quota?: PolishQuotaStatus;
 }
 
 /**
@@ -351,7 +404,12 @@ export async function finalizePolishRequest(
       `finalize rejected the reservation (${result.reason ?? "unknown"}).`,
     );
   }
-  return { alreadyFinalized: result.alreadyFinalized ?? false };
+  return {
+    alreadyFinalized: result.alreadyFinalized ?? false,
+    status: result.status,
+    quotaCharged: result.quotaCharged,
+    quota: result.quota,
+  };
 }
 
 // ---------------------------------------------------------------------------

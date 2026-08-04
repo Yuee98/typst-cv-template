@@ -135,8 +135,7 @@ export class PolishProviderError extends Error {
  * production deployment) allows the fake to serve the smoke suite.
  * Callers (the unit 2.3 handler) must resolve the provider once at module
  * scope so this misconfiguration refuses startup instead of failing
- * per-request. Note the Phase 0 stub handler never calls this function, so
- * the guard has no startup effect until the real handler lands (CP2).
+ * per-request.
  *
  * `env` is injectable for tests; production callers use the default
  * `process.env`.

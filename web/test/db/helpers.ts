@@ -341,12 +341,13 @@ export type ReserveOutcome =
 export async function tryReserve(
   service: SupabaseClient,
   userId: string,
+  clientRequestId?: string,
 ): Promise<ReserveOutcome> {
   try {
     const reservation = await reservePolishRequest(service, {
       userId,
       requestId: crypto.randomUUID(),
-      clientRequestId: crypto.randomUUID(),
+      clientRequestId: clientRequestId ?? crypto.randomUUID(),
     });
     return {
       ok: true,

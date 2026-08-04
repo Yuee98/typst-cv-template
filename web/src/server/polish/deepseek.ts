@@ -15,12 +15,14 @@
  * - thinking: { type: "disabled" } — V4 enables thinking by default
  * - response_format: { type: "json_object" } — JSON mode
  * - max_tokens = request.maxOutputTokens (dynamic cap computed upstream)
- * - user = request.providerUserId — the pseudonymous HMAC identifier,
+ * - user_id = request.providerUserId — the pseudonymous HMAC identifier,
  *   computed once per request by the handler
  *   (HMAC_SHA256(AI_USER_ID_HMAC_SECRET, supabaseUserId), hex) and forwarded
  *   here UNCHANGED: this provider applies no privacy logic of its own
- *   (roadmap「发给 DeepSeek 的 user 标识」). The raw UUID/email never enters
- *   this module.
+ *   (roadmap「发给 DeepSeek 的 user 标识」). DeepSeek documents `user_id`
+ *   (NOT `user`) as the field used for identity distinction, KV-cache
+ *   privacy isolation and scheduling isolation. The raw UUID/email never
+ *   enters this module.
  *
  * `request.targets` is internal validation/fake metadata per the pinned
  * interface: it is NEVER forwarded upstream (the same texts already appear
@@ -113,17 +115,46 @@ function normalizeFinishReason(raw: unknown): PolishProviderResult["finishReason
  * Extract token usage. DeepSeek context caching reports cached reads
  * (`prompt_cache_hit_tokens`) separately from uncached reads
  * (`prompt_cache_miss_tokens`) — a 50x price difference — so they map 1:1
- * onto the pinned usage fields. A missing/partial usage block degrades to
- * zeros (the cost record is degraded rather than failing a request whose
- * tokens were already consumed).
+ * onto the pinned usage fields.
+ *
+ * Conservation (DeepSeek schema: prompt_tokens = hit + miss): any prompt
+ * tokens NOT explained by the cache split are booked as UNCACHED reads —
+ * the cost-conservative classification — so a response that omits the cache
+ * fields can never record a nonzero request as zero billable input.
+ *
+ * A missing usage block, or one missing the required totals
+ * (prompt_tokens / completion_tokens), is NOT degraded to a zero-usage
+ * success: the envelope is rejected with a controlled UPSTREAM_ERROR, which
+ * the orchestrator treats as an ordinary transport failure (retry once,
+ * then failed_upstream). Absence of usage is not proof that no cost was
+ * incurred, so faking a complete zero is never acceptable.
  */
-function normalizeUsage(raw: unknown): PolishProviderUsage {
-  const usage = isRecord(raw) ? raw : {};
+function normalizeUsage(raw: unknown, providerRequestId?: string): PolishProviderUsage {
+  const usage = isRecord(raw) ? raw : undefined;
+  if (
+    usage === undefined ||
+    typeof usage.prompt_tokens !== "number" ||
+    typeof usage.completion_tokens !== "number"
+  ) {
+    throw new PolishProviderError(
+      "UPSTREAM_ERROR",
+      "DeepSeek response is missing the usage block or its required totals",
+      { providerRequestId },
+    );
+  }
+  const promptTokens = toNonNegativeInt(usage.prompt_tokens);
+  const cachedReadTokens = toNonNegativeInt(usage.prompt_cache_hit_tokens);
+  const reportedUncached = toNonNegativeInt(usage.prompt_cache_miss_tokens);
+  const explained = cachedReadTokens + reportedUncached;
   return {
-    promptTokens: toNonNegativeInt(usage.prompt_tokens),
+    promptTokens,
     completionTokens: toNonNegativeInt(usage.completion_tokens),
-    cachedReadTokens: toNonNegativeInt(usage.prompt_cache_hit_tokens),
-    uncachedReadTokens: toNonNegativeInt(usage.prompt_cache_miss_tokens),
+    cachedReadTokens,
+    // Unexplained prompt tokens are uncached (cost-conservative).
+    uncachedReadTokens:
+      explained < promptTokens
+        ? reportedUncached + (promptTokens - explained)
+        : reportedUncached,
   };
 }
 
@@ -196,8 +227,9 @@ export function createDeepSeekPolishProvider(
             response_format: { type: "json_object" },
             max_tokens: request.maxOutputTokens,
             // Pseudonymous id computed by the caller (handler); forwarded
-            // unchanged, never a raw supabase user id.
-            user: request.providerUserId,
+            // unchanged under the documented `user_id` field, never a raw
+            // supabase user id.
+            user_id: request.providerUserId,
           }),
           signal: combinedSignal,
         });
@@ -229,29 +261,38 @@ export function createDeepSeekPolishProvider(
       // Envelope sanity only. Validating the model's *content* (JSON parse of
       // `text`, zod schema, id exact-set, length caps, protected spans) is the
       // orchestrator's job; the raw text is passed through untouched.
+      //
+      // Extraction order matters (round-2 #2): the correlation id and the
+      // token usage are normalized BEFORE the content check, because a
+      // malformed envelope (missing/empty choices, non-string content) still
+      // carries billable usage that must reach the ledger.
+      const providerRequestId =
+        isRecord(payload) && typeof payload.id === "string" && payload.id.length > 0
+          ? payload.id
+          : correlationId;
+      // A missing usage block stays a hard UPSTREAM_ERROR (absence of usage
+      // is not proof that no cost was incurred) — thrown with the request id.
+      const usage = normalizeUsage(isRecord(payload) ? payload.usage : undefined, providerRequestId);
+
       const choices = isRecord(payload) && Array.isArray(payload.choices) ? payload.choices : [];
       const firstChoice = isRecord(choices[0]) ? choices[0] : undefined;
       const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : undefined;
       const content = message?.content;
       if (typeof content !== "string") {
-        throw new PolishProviderError(
-          "UPSTREAM_ERROR",
-          "DeepSeek response envelope is missing choices[0].message.content",
-          { providerRequestId: correlationId },
-        );
+        // Malformed envelope WITH a valid usage block: not a transport
+        // failure. Return an empty text with finishReason "unknown" so the
+        // orchestrator's validator rejects it as invalid output (retryable,
+        // classification invalid_output) while the usage is accumulated and
+        // recorded — never dropped on the floor (round-2 #2).
+        return { text: "", finishReason: "unknown", usage, providerRequestId };
       }
 
       return {
         // May be "" — the orchestrator owns the non-empty check.
         text: content,
         finishReason: normalizeFinishReason(firstChoice?.finish_reason),
-        usage: normalizeUsage(isRecord(payload) ? payload.usage : undefined),
-        // The completion id is the provider-side correlation id; fall back to
-        // the HTTP x-request-id header when the body omits it.
-        providerRequestId:
-          isRecord(payload) && typeof payload.id === "string" && payload.id.length > 0
-            ? payload.id
-            : correlationId,
+        usage,
+        providerRequestId,
       };
     },
   };
