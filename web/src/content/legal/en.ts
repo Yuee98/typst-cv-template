@@ -8,7 +8,9 @@ import type { LegalDocument } from "./types";
 
 export const LEGAL_EFFECTIVE_DATE = "July 3, 2026";
 
-export const AI_TERMS_EFFECTIVE_DATE = "August 2, 2026";
+export const PRIVACY_EFFECTIVE_DATE = "August 4, 2026";
+
+export const AI_TERMS_EFFECTIVE_DATE = "August 4, 2026";
 
 export const termsDocument: LegalDocument = {
   title: "Terms of Use",
@@ -120,7 +122,7 @@ export const termsDocument: LegalDocument = {
 
 export const privacyDocument: LegalDocument = {
   title: "Privacy Policy",
-  effectiveDate: LEGAL_EFFECTIVE_DATE,
+  effectiveDate: PRIVACY_EFFECTIVE_DATE,
   intro: [
     `This Privacy Policy explains how ${SERVICE_OPERATOR} collects, uses, stores, shares, and protects personal data when you use ${SERVICE_NAME} at ${SERVICE_WEBSITE} and related features.`,
   ],
@@ -175,6 +177,7 @@ export const privacyDocument: LegalDocument = {
       body: [
         "We and our service providers may process data in countries other than your country of residence.",
         "Where GDPR applies and personal data is transferred outside the European Economic Area, we rely on appropriate safeguards where required, such as adequacy decisions, standard contractual clauses, or other lawful transfer mechanisms.",
+        "For the AI polish feature specifically, no adequacy decision or contractual safeguard is currently available from the AI provider; the transfer mechanism for that feature is your explicit consent, as described in the \"AI Features\" section and the AI Service Terms.",
       ],
     },
     {
@@ -182,6 +185,7 @@ export const privacyDocument: LegalDocument = {
       body: [
         "If you use the AI polish feature, the resume text you select and the context you choose to include are forwarded in plaintext through our server to a third-party AI provider (DeepSeek). DeepSeek processes that content under its own terms and policies, which we do not control.",
         "Before you use AI polish for the first time, we ask you to separately accept the AI Service Terms. They describe in detail what is sent, the pseudonymous identifier mechanism, DeepSeek's retention and data-use policies, and our own metadata logging and quota rules — please read them before use.",
+        "No data processing agreement or equivalent transfer safeguard is currently available from DeepSeek. Where GDPR or a similar data-protection law applies, the transfer to DeepSeek of the content you choose to send therefore relies on your explicit consent as a derogation. The AI Service Terms consent flow discloses the resulting transfer risks before you accept, and you may withdraw your consent at any time by ceasing to use the feature.",
         "End-to-end encryption, where available, does not apply to content sent to the AI provider; the rest of your encrypted resume remains protected as described in this policy.",
       ],
     },
@@ -196,7 +200,7 @@ export const privacyDocument: LegalDocument = {
         "Local browser data remains on your device until you clear it or delete it through the service.",
         "Support emails are kept for up to 24 months.",
         "Technical and security logs are kept for up to 90 days.",
-        "AI polish request metadata logs (which never contain resume text or AI output) are kept for up to 90 days.",
+        "AI polish request metadata logs (which never contain resume text or AI output) are scheduled for deletion 90 days after the request completes; deletion is performed by a daily cleanup job, so a record may remain until the next scheduled run after it crosses the threshold (up to roughly one additional day).",
         "Backups may retain deleted data for a limited period, typically up to 90 days, before being overwritten or deleted.",
         "We may retain limited data longer where necessary for legal compliance, security, dispute resolution, or abuse prevention.",
       ],
@@ -259,7 +263,7 @@ export const aiTermsDocument: LegalDocument = {
   effectiveDate: AI_TERMS_EFFECTIVE_DATE,
   intro: [
     `These AI Service Terms govern your use of the AI polish feature of ${SERVICE_NAME} at ${SERVICE_WEBSITE}. They supplement the Terms of Use and the Privacy Policy and apply together with them.`,
-    "Before using AI polish for the first time, you must separately accept these terms in the feature interface. Your acceptance (user ID, document version, and timestamp) is recorded so we can demonstrate that consent was given. Our AI provider requires us to disclose its involvement in processing your content and to obtain your consent — these terms serve that purpose.",
+    "Before using AI polish for the first time, you must separately accept these terms in the feature interface. Your acceptance (user ID, document version, and timestamp) is recorded so we can demonstrate that consent was given. Our AI provider's terms require us, as the downstream developer, to disclose our processing rules to you and, where applicable law requires, to obtain your consent or have another lawful basis — we use this separate consent flow for this optional feature.",
   ],
   sections: [
     {
@@ -287,7 +291,7 @@ export const aiTermsDocument: LegalDocument = {
       body: [
         "We do not intentionally store the resume text you send for polishing or the AI-generated output on our servers. Request content is processed in memory and discarded after the response is returned.",
         "We keep metadata logs about each request, such as: request timestamps, your user ID, request IDs, polish granularity, item count, context level, language, model and prompt/validator versions, attempt count, the AI provider's request ID, completion status or failure stage, token usage (cached and uncached input tokens and output tokens), latency, and the quota settlement outcome. These logs never include your resume text, the AI output, or your style instructions.",
-        "Request metadata logs are kept for up to 90 days after the request completes; per-minute rate-limit counters are kept for 2 days; daily usage aggregates are kept for 90 days. Expired data is deleted by a cleanup job that runs automatically every day. Records of your acceptance of these AI Service Terms are kept until you delete your account.",
+        "Request metadata logs are scheduled for deletion 90 days after the request completes, per-minute rate-limit counters after 2 days, and daily usage aggregates after 90 days. Deletion is performed by a cleanup job that runs once per day, so each record is deleted at the first scheduled run after it crosses its retention threshold and may remain for up to roughly one additional day. Records of your acceptance of these AI Service Terms are kept until you delete your account.",
       ],
     },
     {
@@ -301,8 +305,9 @@ export const aiTermsDocument: LegalDocument = {
       heading: "Third-Party AI Provider",
       body: [
         "AI polish is powered by DeepSeek (Hangzhou DeepSeek Artificial Intelligence Co., Ltd.), a third-party AI provider. The content you send is processed by DeepSeek under its own terms and policies, which we do not control.",
-        "As of August 3, 2026, DeepSeek's official documentation and policies (Open Platform Terms of Service, Terms of Use, Privacy Policy, and API documentation) show that: request content is written to a disk cache by default to accelerate subsequent requests, and the cache is automatically cleared \"usually within a few hours to a few days\" after it is no longer in use; its policies commit to no fixed deletion timeline, and data is stored in the People's Republic of China; its Terms of Use allow it to use inputs and outputs to improve its services under strict de-identification, and we could not verify whether its consumer-facing opt-out of model training applies to API requests.",
+        "As of August 4, 2026, DeepSeek's official documentation and policies (Open Platform Terms of Service, Terms of Use, Privacy Policy, and API documentation) show that: its API documentation states that request content is written to a disk cache by default to speed up subsequent requests, and the cache is automatically cleared \"usually within a few hours to a few days\" after it is no longer in use; we did not identify any API-specific commitment covering other retention or deletion of your content. DeepSeek's general Privacy Policy states that the data it governs is stored in the People's Republic of China, but that policy expressly does not govern personal data collected from end users of downstream applications like this one, so we could not verify an API-specific storage location for your content. Its Terms of Use, which cover the API, allow it to use inputs and outputs to improve its services under strict de-identification, and we could not verify whether its consumer-facing opt-out of model training applies to API requests.",
         "Therefore, treat anything sent to DeepSeek as potentially retained by DeepSeek and used for service improvement. Do not include sensitive or confidential information in polish requests; if that is not acceptable to you, do not use the feature. We make no representation or guarantee about how DeepSeek retains, uses, or deletes the content it receives.",
+        "No data processing agreement or equivalent transfer safeguard is currently available from DeepSeek. Where GDPR or a similar data-protection law applies to you, the transfer of the content you choose to send — which may be processed outside your country, at a location we could not verify — therefore relies on your explicit consent as a legal derogation. This consent flow discloses the transfer risks described above before you agree; you may withdraw your consent at any time by ceasing to use the feature (withdrawal does not affect the lawfulness of processing already performed, and your acceptance record is retained as proof that consent was given).",
         "The pseudonymous identifier sent with each request is only a hash of your account ID and contains neither your email address nor your username. DeepSeek's documentation states that this identifier is used for content safety review, cache isolation, and scheduling isolation.",
         "We may change the AI provider in the future. If we do, we will update these terms and, where required, ask you to accept the updated version before continuing to use the feature.",
       ],
