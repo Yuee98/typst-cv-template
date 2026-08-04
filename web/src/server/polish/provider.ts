@@ -16,6 +16,7 @@
  */
 
 import type { PolishErrorCode } from "@/lib/polish/contract";
+import { createDeepSeekPolishProvider } from "./deepseek";
 import { createFakePolishProvider } from "./provider-fake";
 
 export interface PolishProviderRequest {
@@ -119,15 +120,22 @@ export class PolishProviderError extends Error {
  *
  * - `POLISH_FAKE_LLM=true` → the deterministic fake (unit 0.4), for tests
  *   and local/CI runs without a real DeepSeek key.
- * - otherwise → throws until the real provider lands (unit 2.1).
+ * - otherwise → the real DeepSeek provider (unit 2.1). The upstream `user`
+ *   field is derived from the verified supabase user id by the CALLER
+ *   (HMAC_SHA256(AI_USER_ID_HMAC_SECRET, userId)) and arrives on
+ *   `PolishProviderRequest.providerUserId` — the raw id is never sent in
+ *   clear (roadmap「发给 DeepSeek 的 user 标识」).
  *
  * Fail-loud in production: `POLISH_FAKE_LLM=true` combined with
  * `NODE_ENV=production` throws here, before any request can be served by a
  * fake (the fake returns synthetic output and must never run in production).
+ * The single exemption is the CI smoke: `next start` always runs with
+ * NODE_ENV=production, so GitHub Actions' `CI=true` marker (exact string,
+ * set automatically on every Actions runner — never set on Vercel or in any
+ * production deployment) allows the fake to serve the smoke suite.
  * Callers (the unit 2.3 handler) must resolve the provider once at module
  * scope so this misconfiguration refuses startup instead of failing
- * per-request. Note the Phase 0 stub handler never calls this function, so
- * the guard has no startup effect until the real handler lands (CP2).
+ * per-request.
  *
  * `env` is injectable for tests; production callers use the default
  * `process.env`.
@@ -137,7 +145,7 @@ export function getPolishProvider(
 ): PolishProvider {
   const fakeRequested = env.POLISH_FAKE_LLM === "true";
   if (fakeRequested) {
-    if (env.NODE_ENV === "production") {
+    if (env.NODE_ENV === "production" && env.CI !== "true") {
       throw new Error(
         "POLISH_FAKE_LLM=true is forbidden with NODE_ENV=production: the fake polish provider " +
           "returns synthetic output. Refusing to start.",
@@ -145,8 +153,5 @@ export function getPolishProvider(
     }
     return createFakePolishProvider();
   }
-  throw new Error(
-    "No polish LLM provider is wired yet (the real DeepSeek provider lands in unit 2.1). " +
-      "Set POLISH_FAKE_LLM=true to use the deterministic fake in non-production environments.",
-  );
+  return createDeepSeekPolishProvider({ env });
 }

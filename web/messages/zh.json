@@ -179,6 +179,11 @@
     "signInRequired": "接受条款与隐私通知前请先登录。",
     "checkBoxRequired": "接受前请先勾选复选框。"
   },
+  "AiTermsConsent": {
+    "agreeTo": "我已阅读并同意",
+    "aiTerms": "AI 服务条款",
+    "required": "使用 AI 润色前请先同意 AI 服务条款。"
+  },
   "PreviewPane": {
     "title": "预览",
     "status": {

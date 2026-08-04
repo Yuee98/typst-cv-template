@@ -1,0 +1,60 @@
+name: DB integration tests
+
+# Real-DB suite for the AI polish quota ledger, terms RLS and retention jobs
+# (tmp/ai-polish-plan.md unit 1.4). Runs against a throwaway local Supabase
+# inside the runner — never against a hosted project.
+#
+# Manual trigger only, by decision: this suite needs the Supabase Docker
+# stack, whose image pulls would add several minutes to every PR run of
+# ci.yml, while its coverage target (migration/RPC semantics) changes rarely.
+# It is the gate to run for migration/quota-touching PRs and for the CP2
+# server-branch checkpoint. Local equivalent:
+#   pnpm supabase:start && pnpm supabase:reset && pnpm --filter web test:db
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  db-tests:
+    name: Web (real-DB tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The suite only needs postgres + PostgREST + GoTrue (+kong); excluding
+      # the heavyweight extras keeps the manual run fast.
+      - name: Start local Supabase
+        run: pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler
+
+      - name: Apply migrations from scratch
+        run: pnpm exec supabase db reset
+
+      # scripts/run-db-tests.mjs auto-detects the instance via
+      # `supabase status -o env` and streams SUPABASE_TEST_* to vitest.
+      - name: Run real-DB suite
+        run: pnpm --filter web test:db
