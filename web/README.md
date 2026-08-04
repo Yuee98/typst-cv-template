@@ -1,6 +1,6 @@
 # Typst CV Builder
 
-Static Next.js app for editing structured CV data and previewing the shared Typst template in the browser.
+Next.js app for editing structured CV data and previewing the shared Typst template in the browser. It has a server build for Vercel and a separate static export for GitHub Pages.
 
 ## Scripts
 
@@ -102,9 +102,14 @@ rejects everything — deliberate config, not an idle day). This is a
 local/manual inspection alert only; wiring alerting into an online channel is
 a post-roadmap item.
 
-## Vercel
+## Hosting
 
-Use the repository root as the Vercel root directory.
+Vercel must use the server build:
 
-- Build command: `pnpm --filter web build`
-- Output directory: `web/out`
+- Root Directory: `web`
+- Framework Preset: `Next.js`
+- Build Command: `pnpm build:server`
+- Output Directory: leave unset; Next.js owns `.next/`
+- Production Branch: `release` (`main` is the canonical staging Preview)
+
+GitHub Pages is deployed separately by `.github/workflows/promote-release.yml` from `pnpm build:static`; its artifact is `web/out` and contains no AI routes or UI entry point. See the root `README.md` / `README_CN.md` deployment-topology section for the Vercel and Supabase environment matrix, feature-gate semantics, and staged rollout procedure.
