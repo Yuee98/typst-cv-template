@@ -170,13 +170,16 @@ function deferred<T>(): Deferred<T> {
 }
 
 function makeClient() {
-  const polishCalls: Array<{ request: PolishRequest; deferred: Deferred<PolishSuccessResponse> }> =
-    [];
+  const polishCalls: Array<{
+    request: PolishRequest;
+    deferred: Deferred<PolishSuccessResponse>;
+    signal: AbortSignal | undefined;
+  }> = [];
   const quotaCalls: Array<Deferred<PolishQuotaResponse>> = [];
   const client: PolishApiClient = {
-    polish: vi.fn((request: PolishRequest) => {
+    polish: vi.fn((request: PolishRequest, options?: { signal?: AbortSignal }) => {
       const call = deferred<PolishSuccessResponse>();
-      polishCalls.push({ request, deferred: call });
+      polishCalls.push({ request, deferred: call, signal: options?.signal });
       return call.promise;
     }),
     getQuota: vi.fn(() => {
@@ -1350,5 +1353,193 @@ describe("round 2: effect-tiered write-back barriers", () => {
     });
     expect(h.form().getValues(items[0].path as never)).toBe(original);
     expect(h.flow().state.items.every((item) => item.state === "rejected")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12. round 4: unmount invalidation is commit-synchronous too
+// ---------------------------------------------------------------------------
+
+interface UnmountRaceChildHandle {
+  flow: PolishFlow | null;
+  form: UseFormReturn<CvData> | null;
+}
+
+interface UnmountRaceHandle {
+  flow: PolishFlow | null;
+  form: UseFormReturn<CvData> | null;
+  unmountChild: () => void;
+}
+
+function UnmountRaceChild({
+  childRef,
+  client,
+  termsGateway,
+}: {
+  childRef: RefObject<UnmountRaceChildHandle | null>;
+  client: PolishApiClient;
+  termsGateway: PolishTermsGateway;
+}) {
+  const [session] = useState(() => makeSession("user-a"));
+  const form = useForm<CvData>({ defaultValues: makeCvData() });
+  const flow = usePolishFlow({
+    form,
+    documentId: "doc-1",
+    language: "zh",
+    session,
+    supabase: null,
+    client,
+    termsGateway,
+  });
+  useImperativeHandle(childRef, () => ({ flow, form }));
+  return null;
+}
+
+/**
+ * Parallel to RaceParent, but the raced boundary is REMOVAL: the parent
+ * conditionally renders the hook host and fires onCommit from a layout
+ * effect in the very commit that unmounts the child. Child layout-effect
+ * cleanups run before the parent's layout effects (children-first), so a
+ * commit-synchronous child is already dead here; a passive-cleanup child
+ * (the pre-fix hook) is still mounted/owned until the passive flush — the
+ * continuation resolved below lands exactly in that window.
+ */
+function UnmountRaceParent({
+  handleRef,
+  onCommit,
+  client,
+  termsGateway,
+}: {
+  handleRef: RefObject<UnmountRaceHandle | null>;
+  onCommit: () => void;
+  client: PolishApiClient;
+  termsGateway: PolishTermsGateway;
+}) {
+  const [childMounted, setChildMounted] = useState(true);
+  const childRef = useRef<UnmountRaceChildHandle | null>(null);
+  const wasMountedRef = useRef(true);
+  useLayoutEffect(() => {
+    const wasMounted = wasMountedRef.current;
+    wasMountedRef.current = childMounted;
+    if (wasMounted && !childMounted) {
+      onCommit();
+      const deadline = Date.now() + 25;
+      while (Date.now() < deadline) {
+        // busy-wait: force the Scheduler to yield before passive effects
+      }
+    }
+  });
+  useImperativeHandle(handleRef, () => ({
+    // Live accessors: the parent does not re-render on child state changes,
+    // so a value copied here at parent commit time would go stale.
+    get flow() {
+      return childRef.current?.flow ?? null;
+    },
+    get form() {
+      return childRef.current?.form ?? null;
+    },
+    unmountChild: () => setChildMounted(false),
+  }));
+  return childMounted ? (
+    <UnmountRaceChild childRef={childRef} client={client} termsGateway={termsGateway} />
+  ) : null;
+}
+
+function renderUnmountRace() {
+  const handleRef = createRef<UnmountRaceHandle>();
+  const { client, polishCalls, quotaCalls } = makeClient();
+  const { termsGateway, hasAcceptedCalls, acceptCalls } = makeTermsGateway();
+  const onCommitRef: { current: (() => void) | null } = { current: null };
+  render(
+    <UnmountRaceParent
+      handleRef={handleRef}
+      onCommit={() => onCommitRef.current?.()}
+      client={client}
+      termsGateway={termsGateway}
+    />,
+  );
+  return {
+    handleRef,
+    onCommitRef,
+    polishCalls,
+    quotaCalls,
+    hasAcceptedCalls,
+    acceptCalls,
+    flow: () => {
+      const flow = handleRef.current?.flow;
+      if (!flow) throw new Error("flow not captured");
+      return flow;
+    },
+  };
+}
+
+describe("round 4: commit-synchronous unmount invalidation", () => {
+  it("unmount while acceptance pending: resolving inside the unmount commit sends nothing", async () => {
+    const h = renderUnmountRace();
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    await act(async () => {
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+      h.hasAcceptedCalls[0].resolve(false);
+    });
+    act(() => {
+      h.flow().terms.setChecked(true);
+    });
+    act(() => {
+      h.flow().confirm();
+    });
+    expect(h.acceptCalls).toHaveLength(1);
+    expect(h.flow().terms.status).toBe("accepting");
+    // Resolve the acceptance INSIDE the unmount commit: the continuation
+    // races the child's (passive, pre-fix) cleanup.
+    h.onCommitRef.current = () => h.acceptCalls[0].resolve();
+    const actWarning = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.handleRef.current!.unmountChild();
+      await flushRealScheduling();
+    } finally {
+      actWarning.mockRestore();
+    }
+    // No request after unmount, no follow-up quota read, no terms side
+    // effects (the gate's continuations were generation-killed at removal).
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.quotaCalls).toHaveLength(1);
+  });
+
+  it("unmount while request in flight: the operation is already aborted inside the unmount commit", async () => {
+    const h = renderUnmountRace();
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    await act(async () => {
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+      h.hasAcceptedCalls[0].resolve(true);
+    });
+    act(() => {
+      h.flow().confirm();
+    });
+    expect(h.polishCalls).toHaveLength(1);
+    expect(h.flow().state.phase).toBe("loading");
+    const signal = h.polishCalls[0].signal;
+    expect(signal?.aborted).toBe(false);
+    // Inside the unmount commit the child must ALREADY be invalidated: with
+    // a passive cleanup (pre-fix) the controller is not aborted yet when the
+    // parent's layout effect runs.
+    let abortedAtCommit: boolean | null = null;
+    h.onCommitRef.current = () => {
+      abortedAtCommit = signal?.aborted ?? null;
+      h.polishCalls[0].deferred.resolve(successResponse(h.polishCalls[0].request, 4, "srv-A"));
+    };
+    const actWarning = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.handleRef.current!.unmountChild();
+      await flushRealScheduling();
+    } finally {
+      actWarning.mockRestore();
+    }
+    expect(abortedAtCommit).toBe(true);
+    // The late response applied nothing and triggered no follow-up reads.
+    expect(h.quotaCalls).toHaveLength(1);
   });
 });

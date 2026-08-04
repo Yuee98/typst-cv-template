@@ -35,9 +35,12 @@
  * superseded operations are invalidated inside a (isomorphic) layout effect
  * — a passive effect would leave a post-commit window in which a resolving
  * acceptance/request continuation still sees the OLD account or document
- * and an owned operation (relay round 2). Terms queries/acceptances and
- * quota reads additionally carry generation counters so a superseded
- * same-account continuation can never overwrite a newer one.
+ * and an owned operation (relay round 2). The mounted flag and the unmount
+ * invalidation use a layout-effect cleanup for the same reason: it runs
+ * BEFORE the host is removed, not after (relay round 4). Terms
+ * queries/acceptances and quota reads additionally carry generation
+ * counters so a superseded same-account continuation can never overwrite a
+ * newer one.
  *
  * Snapshot freezing: confirm() sends the snapshot the user REVIEWED
  * (state.snapshot); the terms-acceptance await never triggers a rebuild from
@@ -371,10 +374,18 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     setTermsChecked(false);
   }, []);
 
-  useEffect(() => {
+  // Commit-synchronous unmount invalidation (relay round 4): a passive
+  // cleanup would leave a removal→passive window in which a resolving
+  // acceptance/response still sees mountedRef true and an owned operation —
+  // the layout-effect cleanup runs BEFORE the host is removed, closing the
+  // window the same way the identity publication above does for switches.
+  useIsomorphicLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      // Kill every pending terms/quota continuation along with the operation.
+      termsGenerationRef.current += 1;
+      quotaGenerationRef.current += 1;
       invalidateActiveOperation();
     };
   }, [invalidateActiveOperation]);
