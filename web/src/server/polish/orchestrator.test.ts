@@ -474,11 +474,11 @@ describe("orchestratePolish — terminal progress & post-mark rechecks (relay #3
     expect(calls).toHaveLength(0);
     expect(error).toBeInstanceOf(DOMException);
     expect((error as DOMException).name).toBe("AbortError");
-    // A ledger mark is NOT provider-call evidence: nothing was published.
-    expect(progress.every((p) => !p.providerCallEntered)).toBe(true);
+    // A ledger mark is NOT provider-call evidence: no call was entered.
+    expect(progress.every((p) => p.enteredAttempts === 0)).toBe(true);
   });
 
-  it("publishes providerCallEntered at call entry and cumulative usage after every provider result", async () => {
+  it("publishes call entry, cumulative usage and accounting state after every provider result", async () => {
     const invalid: PolishProviderResult = {
       text: JSON.stringify({ items: [{ id: "i0", polished: "将延迟降低 99%。" }] }),
       finishReason: "stop",
@@ -498,21 +498,108 @@ describe("orchestratePolish — terminal progress & post-mark rechecks (relay #3
     );
 
     expect(result.attempts).toBe(2);
-    // Entry events (providerCallEntered, no usage yet / attempt-1 usage) and
-    // post-result events (cumulative usage) were published in order.
+    // Entry events (in flight, no usage returned yet) and post-result events
+    // (usage returned + cumulative) were published in order.
     expect(progress.length).toBeGreaterThanOrEqual(4);
-    expect(progress[0]).toMatchObject({ providerCallEntered: true, completedAttempts: 0 });
+    expect(progress[0]).toMatchObject({
+      enteredAttempts: 1,
+      usageReturnedAttempts: 0,
+      providerCallInFlight: true,
+      usageComplete: true,
+    });
     expect(progress[1]).toMatchObject({
-      providerCallEntered: true,
-      completedAttempts: 1,
+      enteredAttempts: 1,
+      usageReturnedAttempts: 1,
+      providerCallInFlight: false,
+      usageComplete: true,
       cumulativeUsage: usage(),
       lastProviderRequestId: "req-attempt-1",
     });
     const last = progress[progress.length - 1];
     expect(last).toMatchObject({
-      providerCallEntered: true,
-      completedAttempts: 2,
+      enteredAttempts: 2,
+      usageReturnedAttempts: 2,
+      providerCallInFlight: false,
+      usageComplete: true,
       cumulativeUsage: addPolishUsage(usage(), usage()),
+    });
+  });
+
+  it("publishes usageComplete=false + the transport request id after a usage-less transport failure (and never recovers)", async () => {
+    const failing = Object.assign(new Error("upstream 503"), {
+      code: "UPSTREAM_ERROR",
+      providerRequestId: "req-fail-1",
+    });
+    const progress: import("./orchestrator").PolishOrchestrationProgress[] = [];
+    const { provider } = makeMockProvider(rejectWith(failing), resolveWith(successResult()));
+
+    const result = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: fakeClock().now,
+        onProgress: (update) => progress.push({ ...update }),
+      }),
+    );
+
+    expect(result.attempts).toBe(2);
+    // The transport failure was published too: call no longer in flight, no
+    // usage returned, usageComplete permanently false, request id merged (#5).
+    expect(progress[1]).toMatchObject({
+      enteredAttempts: 1,
+      usageReturnedAttempts: 0,
+      providerCallInFlight: false,
+      usageComplete: false,
+      lastProviderRequestId: "req-fail-1",
+    });
+    // A later success does NOT restore usageComplete (round-2 #1), and the
+    // result without a request id does not overwrite the transport one.
+    const last = progress[progress.length - 1];
+    expect(last).toMatchObject({
+      enteredAttempts: 2,
+      usageReturnedAttempts: 1,
+      providerCallInFlight: false,
+      usageComplete: false,
+      lastProviderRequestId: "req-fail-1",
+    });
+  });
+
+  it("rechecks MIN_RETRY_BUDGET_MS after the mark: a 1s mark on attempt 2 with 5.5s left prevents the retry (#4)", async () => {
+    const clock = fakeClock();
+    const invalid: PolishProviderResult = {
+      text: JSON.stringify({ items: [{ id: "i0", polished: "将延迟降低 99%。" }] }),
+      finishReason: "stop",
+      usage: usage(),
+    };
+    const { provider, calls } = makeMockProvider(
+      () => {
+        clock.advance(39_500); // attempt 1 burns 39.5s → 5.5s ≥ 5s pre-mark
+        return Promise.resolve(invalid);
+      },
+      resolveWith(successResult()),
+    );
+
+    const error = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: clock.now,
+        onProviderAttemptStart: async (attempt) => {
+          if (attempt === 2) clock.advance(1_000); // the mark RPC burns 1s → 4.5s < 5s
+        },
+      }),
+    ).catch((caught: unknown) => caught);
+
+    // The retry passed the PRE-mark budget check (5.5s ≥ 5s) but the mark
+    // consumed 1s, leaving 4.5s < MIN_RETRY_BUDGET_MS: provider called once.
+    // error.attempts counts ledger MARKS (attempt 2 was really marked — the
+    // global counter was incremented), so it reads 2 while the provider was
+    // entered only once.
+    expect(calls).toHaveLength(1);
+    expect(error).toMatchObject({
+      name: "PolishOrchestrationError",
+      code: "INVALID_MODEL_OUTPUT",
+      attempts: 2,
     });
   });
 });

@@ -254,7 +254,7 @@ describe("finalizePolishRequest", () => {
       },
     });
 
-    expect(result).toEqual({ alreadyFinalized: false });
+    expect(result).toEqual({ alreadyFinalized: false, status: "succeeded", quotaCharged: true });
     expect(rpc).toHaveBeenCalledWith("finalize_ai_polish_request", {
       p_reservation_id: RESERVATION_ID,
       p_status: "succeeded",
@@ -311,7 +311,12 @@ describe("finalizePolishRequest", () => {
         status: "succeeded",
         quotaCharged: true,
       }),
-    ).resolves.toEqual({ alreadyFinalized: true, quota: undefined });
+    ).resolves.toEqual({
+      alreadyFinalized: true,
+      status: "succeeded",
+      quotaCharged: true,
+      quota: undefined,
+    });
   });
 
   it("passes the atomic post-settlement quota snapshot through (relay #8)", async () => {
@@ -334,6 +339,8 @@ describe("finalizePolishRequest", () => {
 
     expect(result).toEqual({
       alreadyFinalized: false,
+      status: "succeeded",
+      quotaCharged: true,
       quota: { limit: 20, remaining: 19, resetAt: "2026-08-03T00:00:00+00:00" },
     });
   });

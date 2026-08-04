@@ -394,14 +394,57 @@ describe("createDeepSeekPolishProvider — transport error normalization", () =>
     ["missing choices", {}],
     ["empty choices", { choices: [] }],
     ["non-string content", { choices: [{ message: { content: null }, finish_reason: "stop" }] }],
-  ])("maps a malformed envelope (%s) to UPSTREAM_ERROR", async (_label, body) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
+  ])(
+    "maps a malformed envelope WITHOUT a usage block (%s) to UPSTREAM_ERROR",
+    async (_label, body) => {
+      // Usage is extracted before the content check (round-2 #2): these
+      // payloads carry no usage block, so the controlled UPSTREAM_ERROR comes
+      // from normalizeUsage — absence of usage is never faked as zero.
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
 
-    await expect(makeProvider().complete(makeRequest(), callOptions())).rejects.toMatchObject({
-      name: "PolishProviderError",
-      code: "UPSTREAM_ERROR",
-    });
-  });
+      await expect(makeProvider().complete(makeRequest(), callOptions())).rejects.toMatchObject({
+        name: "PolishProviderError",
+        code: "UPSTREAM_ERROR",
+      });
+    },
+  );
+
+  it.each([
+    ["missing choices", {}],
+    ["empty choices", { choices: [] }],
+    ["non-string content", { choices: [{ message: { content: null }, finish_reason: "stop" }] }],
+  ])(
+    "keeps the usage block on a malformed envelope (%s): empty text + unknown finish reason (#2)",
+    async (_label, malformed) => {
+      // A malformed envelope WITH valid usage is NOT a transport failure: the
+      // provider returns text "" + finishReason "unknown" so the orchestrator
+      // validator classifies it as invalid output (retryable) while the
+      // billable usage is accumulated and recorded — never dropped.
+      const payload = {
+        id: "chatcmpl-malformed",
+        ...malformed,
+        usage: {
+          prompt_tokens: 12,
+          completion_tokens: 3,
+          prompt_cache_hit_tokens: 4,
+          prompt_cache_miss_tokens: 8,
+        },
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(payload)));
+
+      const result = await makeProvider().complete(makeRequest(), callOptions());
+
+      expect(result.text).toBe("");
+      expect(result.finishReason).toBe("unknown");
+      expect(result.usage).toEqual({
+        promptTokens: 12,
+        completionTokens: 3,
+        cachedReadTokens: 4,
+        uncachedReadTokens: 8,
+      });
+      expect(result.providerRequestId).toBe("chatcmpl-malformed");
+    },
+  );
 
   it("maps the single-call hard timeout to UPSTREAM_TIMEOUT", async () => {
     vi.stubGlobal("fetch", pendingUntilAbortFetch());

@@ -522,7 +522,7 @@ describe("POST /api/polish — success path", () => {
     });
   });
 
-  it("retry succeeds: transport failure then success — charged once, usage summed, 2 marks", async () => {
+  it("retry succeeds after a usage-less transport failure: 200, attempt-2 tokens charged, usageComplete=false (#1)", async () => {
     const mocks = makeDeps([
       rejectWith(new PolishProviderError("UPSTREAM_ERROR", "upstream 500")),
       echoSuccess,
@@ -531,27 +531,139 @@ describe("POST /api/polish — success path", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.providerCalls).toHaveLength(2);
-    // one user-visible request == one quota charge (Invariant 6)
+    // one user-visible request == one quota charge (Invariant 6); every
+    // provider attempt was marked (global cost accounting, Invariant 7)
+    expect(mocks.markProviderStarted).toHaveBeenCalledTimes(2);
+    // Only attempt 2 returned usage; attempt 1 may still have generated
+    // tokens upstream that we cannot account for → usageComplete=false
+    // permanently, even though the run SUCCEEDED (round-2 #1).
     expect(mocks.finalize).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "succeeded",
         quotaCharged: true,
+        usage: {
+          inputCachedTokens: 60,
+          inputUncachedTokens: 40,
+          outputTokens: 50,
+          usageComplete: false,
+        },
         metadata: expect.objectContaining({ attemptCount: 2 }),
       }),
     );
-    // every provider attempt was marked (global cost accounting, Invariant 7)
-    expect(mocks.markProviderStarted).toHaveBeenCalledTimes(2);
   });
 
-  it("500 when finalize fails after a successful polish (reconciler refunds)", async () => {
-    const mocks = makeDeps([echoSuccess], {
-      finalize: vi.fn(async () => {
-        throw new PolishQuotaError("INTERNAL_ERROR", "finalize RPC failed");
+  it("retry succeeds after a missing usage block (UPSTREAM_ERROR): 200, usageComplete=false (#1)", async () => {
+    // The DeepSeek layer rejects a 200 response without a usage block as a
+    // controlled UPSTREAM_ERROR (covered in deepseek.test.ts); at the route
+    // level it settles exactly like any other usage-less transport failure.
+    const mocks = makeDeps([
+      rejectWith(
+        new PolishProviderError(
+          "UPSTREAM_ERROR",
+          "DeepSeek response is missing the usage block or its required totals",
+        ),
+      ),
+      echoSuccess,
+    ]);
+    const response = await handlersOf(mocks).POST(postRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.providerCalls).toHaveLength(2);
+    expect(mocks.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "succeeded",
+        quotaCharged: true,
+        usage: {
+          inputCachedTokens: 60,
+          inputUncachedTokens: 40,
+          outputTokens: 50,
+          usageComplete: false,
+        },
       }),
+    );
+  });
+
+  it("200 when the finalize response is lost but the idempotent retry confirms succeeded+charged (#3)", async () => {
+    const mocks = makeDeps([echoSuccess], {
+      finalize: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new PolishQuotaError("INTERNAL_ERROR", "finalize RPC failed: connection reset"),
+        )
+        .mockResolvedValueOnce({
+          alreadyFinalized: true,
+          status: "succeeded",
+          quotaCharged: true,
+          quota: { limit: 20, remaining: 18, resetAt: RESET_AT },
+        }),
+    });
+    const response = await handlersOf(mocks).POST(postRequest());
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { quota: unknown; items: unknown };
+    expect(body.items).toEqual([{ id: "i0", polished: VALID_ZH_TEXT }]);
+    // The quota snapshot comes from the retry's atomic response.
+    expect(body.quota).toEqual({ limit: 20, remaining: 18, resetAt: RESET_AT_Z });
+    expect(mocks.finalize).toHaveBeenCalledTimes(2);
+    expect(mocks.getQuota).not.toHaveBeenCalled();
+  });
+
+  it("200 when the first finalize never landed and the retry commits fresh (alreadyFinalized=false) (#3)", async () => {
+    const mocks = makeDeps([echoSuccess], {
+      finalize: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new PolishQuotaError("INTERNAL_ERROR", "finalize RPC failed: connection reset"),
+        )
+        .mockResolvedValueOnce({
+          alreadyFinalized: false,
+          quota: { limit: 20, remaining: 18, resetAt: RESET_AT },
+        }),
+    });
+    const response = await handlersOf(mocks).POST(postRequest());
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { quota: unknown };
+    expect(body.quota).toEqual({ limit: 20, remaining: 18, resetAt: RESET_AT_Z });
+    expect(mocks.finalize).toHaveBeenCalledTimes(2);
+  });
+
+  it("500 when the finalize retry reports a conflicting persisted state (not succeeded/charged) (#3)", async () => {
+    const mocks = makeDeps([echoSuccess], {
+      finalize: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new PolishQuotaError("INTERNAL_ERROR", "finalize RPC failed: connection reset"),
+        )
+        .mockResolvedValueOnce({ alreadyFinalized: true, status: "released", quotaCharged: false }),
     });
     const response = await handlersOf(mocks).POST(postRequest());
 
     await expectErrorShape(response, 500, "INTERNAL_ERROR");
+    expect(mocks.finalize).toHaveBeenCalledTimes(2);
+    expect(mocks.logs.some((log) => log.event === "polish.finalize_failed")).toBe(true);
+  });
+
+  it("200 when both finalize attempts fail: verified output + reserve-snapshot quota, reconciler settles later (#3)", async () => {
+    const mocks = makeDeps([echoSuccess], {
+      finalize: vi.fn(async () => {
+        throw new PolishQuotaError("INTERNAL_ERROR", "finalize RPC failed");
+      }),
+      getQuota: vi.fn(async () => {
+        throw new PolishQuotaError("INTERNAL_ERROR", "get quota RPC failed: connection reset");
+      }),
+    });
+    const response = await handlersOf(mocks).POST(postRequest());
+
+    // Settlement state is unknown, but "charged + no output" is the one
+    // outcome that must never happen: the verified result IS returned, the
+    // quota falls back to the reserve-time snapshot, and the failure is
+    // logged loudly for the reconciler (verdict option b).
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { quota: unknown; items: unknown };
+    expect(body.items).toEqual([{ id: "i0", polished: VALID_ZH_TEXT }]);
+    expect(body.quota).toEqual({ limit: 20, remaining: 19, resetAt: RESET_AT_Z });
+    expect(mocks.finalize).toHaveBeenCalledTimes(2); // one idempotent retry
     expect(mocks.logs.some((log) => log.event === "polish.finalize_failed")).toBe(true);
   });
 
@@ -706,7 +818,7 @@ describe("POST /api/polish — cancellation settlement", () => {
         // The call was entered but aborted before any usage came back:
         // billability is UNKNOWN (null), not provably free and not provable cost.
         providerBillable: null,
-        metadata: expect.objectContaining({ failureStage: "canceled" }),
+        metadata: expect.objectContaining({ failureStage: "canceled", attemptCount: 1 }),
       }),
     );
     expect(mocks.logs.some((log) => log.event === "polish.request.canceled")).toBe(true);
@@ -740,7 +852,7 @@ describe("POST /api/polish — terminal progress settlement (relay #3)", () => {
     providerRequestId: "provider-req-1",
   };
 
-  it("attempt 1 invalid with usage → abort before attempt 2: canceled, charged once, attempt-1 usage recorded", async () => {
+  it("attempt 1 invalid with usage → abort before attempt 2: canceled, charged once, attempt-1 usage recorded COMPLETE (#1)", async () => {
     const controller = new AbortController();
     const mocks = makeDeps([
       () => {
@@ -764,11 +876,79 @@ describe("POST /api/polish — terminal progress settlement (relay #3)", () => {
           inputCachedTokens: 60,
           inputUncachedTokens: 40,
           outputTokens: 50,
-          usageComplete: false, // a later attempt's tokens are unknowable
+          // Round-2 #1: the only entered attempt RETURNED its usage, so the
+          // accounting is complete — cancellation alone does not degrade it.
+          usageComplete: true,
         },
-        metadata: expect.objectContaining({ failureStage: "canceled" }),
+        metadata: expect.objectContaining({
+          failureStage: "canceled",
+          attemptCount: 1,
+          providerRequestId: "provider-req-1",
+        }),
       }),
     );
+  });
+
+  it("attempt 1 transport failure WITHOUT usage → attempt 2 invalid WITH usage: usageComplete=false (#1)", async () => {
+    const mocks = makeDeps([
+      rejectWith(new PolishProviderError("UPSTREAM_ERROR", "upstream 500")),
+      resolveWith(INVALID_WITH_USAGE),
+    ]);
+    const response = await handlersOf(mocks).POST(postRequest());
+
+    await expectErrorShape(response, 502, "INVALID_MODEL_OUTPUT");
+    expect(mocks.providerCalls).toHaveLength(2);
+    expect(mocks.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "invalid_output",
+        quotaCharged: false,
+        providerBillable: true,
+        // Only attempt 2's tokens are known; attempt 1 may have generated
+        // untracked tokens upstream → incomplete despite the later result.
+        usage: {
+          inputCachedTokens: 60,
+          inputUncachedTokens: 40,
+          outputTokens: 50,
+          usageComplete: false,
+        },
+        metadata: expect.objectContaining({ attemptCount: 2 }),
+      }),
+    );
+  });
+
+  it("cancel while attempt 2 is in flight: usageComplete=false, attemptCount + providerRequestId in metadata/log (#1/#5)", async () => {
+    const controller = new AbortController();
+    const mocks = makeDeps([
+      resolveWith(INVALID_WITH_USAGE),
+      (call) => {
+        controller.abort();
+        return Promise.reject(call.options.signal.reason);
+      },
+    ]);
+    const response = await handlersOf(mocks).POST(postRequest({ signal: controller.signal }));
+
+    await expectErrorShape(response, 500, "INTERNAL_ERROR");
+    expect(mocks.providerCalls).toHaveLength(2);
+    expect(mocks.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "canceled",
+        quotaCharged: true,
+        providerBillable: true,
+        usage: {
+          inputCachedTokens: 60,
+          inputUncachedTokens: 40,
+          outputTokens: 50,
+          usageComplete: false, // attempt 2 was in flight: its tokens unknowable
+        },
+        metadata: expect.objectContaining({
+          failureStage: "canceled",
+          attemptCount: 2,
+          providerRequestId: "provider-req-1",
+        }),
+      }),
+    );
+    const canceled = mocks.logs.find((log) => log.event === "polish.request.canceled");
+    expect(canceled).toMatchObject({ attempts: 2, providerRequestId: "provider-req-1" });
   });
 
   it("attempt 1 invalid with usage → attempt-2 mark fails: refunded, attempt-1 usage still recorded and billable", async () => {
@@ -798,6 +978,12 @@ describe("POST /api/polish — terminal progress settlement (relay #3)", () => {
           outputTokens: 50,
           usageComplete: true,
         },
+        // #5: infra-failure settlements also carry the attempt count and the
+        // last provider request id from the progress snapshot.
+        metadata: expect.objectContaining({
+          attemptCount: 1,
+          providerRequestId: "provider-req-1",
+        }),
       }),
     );
   });
@@ -857,6 +1043,11 @@ describe("POST /api/polish — terminal progress settlement (relay #3)", () => {
           outputTokens: 50,
           usageComplete: true,
         },
+        // #5: the global-gate path also reports attempt count + request id.
+        metadata: expect.objectContaining({
+          attemptCount: 1,
+          providerRequestId: "provider-req-1",
+        }),
       }),
     );
   });
@@ -879,6 +1070,8 @@ describe("POST /api/polish — terminal progress settlement (relay #3)", () => {
         status: "released",
         quotaCharged: false,
         providerBillable: false,
+        // #5: no attempt was ever entered — the count is reported as 0.
+        metadata: expect.objectContaining({ attemptCount: 0 }),
       }),
     );
   });

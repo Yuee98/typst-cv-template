@@ -310,6 +310,18 @@ export interface PolishFinalizeResult {
   /** True when the reservation was already settled (idempotent no-op). */
   alreadyFinalized: boolean;
   /**
+   * Persisted settlement status, returned by the RPC on both fresh and
+   * idempotent-finalized calls. Internal bookkeeping (round-2 #3): the
+   * lifecycle uses it to distinguish a confirmed success commit from a
+   * conflicting prior settlement after a lost finalize response.
+   */
+  status?: string;
+  /**
+   * Whether the persisted settlement charged the user quota. Paired with
+   * `status` for the lost-response retry check (round-2 #3).
+   */
+  quotaCharged?: boolean;
+  /**
    * Post-settlement per-user quota snapshot, returned atomically by the
    * finalize RPC (relay #8) so the success path never needs a separate
    * quota read after irreversible settlement.
@@ -392,7 +404,12 @@ export async function finalizePolishRequest(
       `finalize rejected the reservation (${result.reason ?? "unknown"}).`,
     );
   }
-  return { alreadyFinalized: result.alreadyFinalized ?? false, quota: result.quota };
+  return {
+    alreadyFinalized: result.alreadyFinalized ?? false,
+    status: result.status,
+    quotaCharged: result.quotaCharged,
+    quota: result.quota,
+  };
 }
 
 // ---------------------------------------------------------------------------

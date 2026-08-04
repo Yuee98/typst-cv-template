@@ -261,31 +261,37 @@ export function createDeepSeekPolishProvider(
       // Envelope sanity only. Validating the model's *content* (JSON parse of
       // `text`, zod schema, id exact-set, length caps, protected spans) is the
       // orchestrator's job; the raw text is passed through untouched.
+      //
+      // Extraction order matters (round-2 #2): the correlation id and the
+      // token usage are normalized BEFORE the content check, because a
+      // malformed envelope (missing/empty choices, non-string content) still
+      // carries billable usage that must reach the ledger.
+      const providerRequestId =
+        isRecord(payload) && typeof payload.id === "string" && payload.id.length > 0
+          ? payload.id
+          : correlationId;
+      // A missing usage block stays a hard UPSTREAM_ERROR (absence of usage
+      // is not proof that no cost was incurred) — thrown with the request id.
+      const usage = normalizeUsage(isRecord(payload) ? payload.usage : undefined, providerRequestId);
+
       const choices = isRecord(payload) && Array.isArray(payload.choices) ? payload.choices : [];
       const firstChoice = isRecord(choices[0]) ? choices[0] : undefined;
       const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : undefined;
       const content = message?.content;
       if (typeof content !== "string") {
-        throw new PolishProviderError(
-          "UPSTREAM_ERROR",
-          "DeepSeek response envelope is missing choices[0].message.content",
-          { providerRequestId: correlationId },
-        );
+        // Malformed envelope WITH a valid usage block: not a transport
+        // failure. Return an empty text with finishReason "unknown" so the
+        // orchestrator's validator rejects it as invalid output (retryable,
+        // classification invalid_output) while the usage is accumulated and
+        // recorded — never dropped on the floor (round-2 #2).
+        return { text: "", finishReason: "unknown", usage, providerRequestId };
       }
-
-      // The completion id is the provider-side correlation id; fall back to
-      // the HTTP x-request-id header when the body omits it. Computed BEFORE
-      // usage extraction so a rejected usage block carries it too.
-      const providerRequestId =
-        isRecord(payload) && typeof payload.id === "string" && payload.id.length > 0
-          ? payload.id
-          : correlationId;
 
       return {
         // May be "" — the orchestrator owns the non-empty check.
         text: content,
         finishReason: normalizeFinishReason(firstChoice?.finish_reason),
-        usage: normalizeUsage(isRecord(payload) ? payload.usage : undefined, providerRequestId),
+        usage,
         providerRequestId,
       };
     },
