@@ -21,13 +21,23 @@
  *
  * Async ownership (the reducer cannot guard hook-level side effects):
  * every confirm() claims an ActivePolishOperation — a token holding the
- * attempt's clientRequestId, its AbortController and cancel settlement
- * flags. open/close/cancel/unmount/account change/document change and any
+ * attempt's immutable owner identity (userId + documentId + language), its
+ * clientRequestId, its AbortController and cancel settlement flags.
+ * open/close/cancel/unmount/account change/document change and any
  * disclosure rebuild REPLACE or clear the token, which kills every pending
  * continuation: after each await the continuation verifies it still owns the
- * token (object identity) before dispatching or touching quota/terms state,
- * and clears the controller only while it is still the owner. A canceled
- * operation's late settle therefore never disturbs a newer request.
+ * token (object identity) AND still belongs to the current owner before
+ * dispatching or touching quota/terms state, and clears the controller only
+ * while it is still the owner. A canceled operation's late settle therefore
+ * never disturbs a newer request.
+ *
+ * Commit-synchronous invalidation: identity refs are published and
+ * superseded operations are invalidated inside a (isomorphic) layout effect
+ * — a passive effect would leave a post-commit window in which a resolving
+ * acceptance/request continuation still sees the OLD account or document
+ * and an owned operation (relay round 2). Terms queries/acceptances and
+ * quota reads additionally carry generation counters so a superseded
+ * same-account continuation can never overwrite a newer one.
  *
  * Snapshot freezing: confirm() sends the snapshot the user REVIEWED
  * (state.snapshot); the terms-acceptance await never triggers a rebuild from
@@ -40,17 +50,31 @@
  * checkbox, clears quota and closes/resets the dialog; terms/quota
  * continuations verify they still belong to the same user before applying.
  *
+ * Loading-stage dismissal (footer cancel AND X/Escape/overlay close) shares
+ * one settlement semantics: the displayed quota is discarded, confirm stays
+ * blocked (settlementPending) until the canceled request's settle-point
+ * quota re-read — or any read started after it — completes.
+ *
  * All request/response content stays inside the dialog: the hook returns
  * state and intents only, no editor coupling beyond the RHF instance.
  *
  * Ref discipline: only genuinely mutable non-render state lives in refs (the
  * active operation token, the snapshot baseline, identity snapshots for
- * async continuations, the mounted flag); identity refs are written only
- * inside effects, never during render (react-hooks/refs).
+ * async continuations, generation counters, the mounted flag); identity refs
+ * are written only inside the layout effect, never during render
+ * (react-hooks/refs).
  */
 
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import type { FieldPath, UseFormReturn } from "react-hook-form";
 
 import type { CvData } from "@/lib/cv/schema";
@@ -183,6 +207,12 @@ export interface PolishFlow {
  * clearing means "you were superseded — stop".
  */
 interface ActivePolishOperation {
+  /** Immutable owner: the account that clicked confirm. */
+  userId: string;
+  /** Immutable owner: the document the reviewed snapshot belongs to. */
+  documentId: string;
+  /** Immutable owner: the request language at confirm time. */
+  language: PolishLanguage;
   /** Dedup key minted at CONFIRM time; null during terms acceptance. */
   clientRequestId: string | null;
   /** In-flight request controller; null until the request fires. */
@@ -206,6 +236,17 @@ interface SnapshotBaseline {
   language: PolishLanguage;
   pathValues: SnapshotPathValues;
 }
+
+/**
+ * CvBuilder is prerendered for the static export: bare useLayoutEffect would
+ * warn on the server, so fall back to useEffect there. Commit-race safety
+ * only matters in the browser, where this IS useLayoutEffect.
+ */
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/** Sentinel: a cancellation settlement is owed but its re-read has not
+ * started yet — no started read may lift the settlement-pending block. */
+const SETTLEMENT_UNRESOLVED = Number.MAX_SAFE_INTEGER;
 
 export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
   const {
@@ -237,6 +278,12 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
   const [configChangedHint, setConfigChangedHint] = useState(false);
   const [staleItemIds, setStaleItemIds] = useState<ReadonlySet<string>>(() => new Set());
   const [referencesStale, setReferencesStale] = useState(false);
+  /**
+   * A canceled request's server-side settlement is still owed: confirm stays
+   * blocked until the settle-point quota re-read (or a read started after
+   * it) completes — even across a dialog reopen.
+   */
+  const [settlementPending, setSettlementPending] = useState(false);
 
   // Mutable non-render state only.
   const activeOperationRef = useRef<ActivePolishOperation | null>(null);
@@ -247,6 +294,13 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
   const documentIdRef = useRef(documentId);
   const languageRef = useRef(language);
   const sessionUserIdRef = useRef(session?.user.id ?? null);
+  // Generation counters: a superseded same-account terms/quota continuation
+  // must never overwrite a newer one.
+  const termsGenerationRef = useRef(0);
+  const quotaGenerationRef = useRef(0);
+  // Generation of the cancellation settle-point quota read; only reads with
+  // generation >= this value may lift settlementPending.
+  const settleGenerationRef = useRef(0);
 
   const sessionUserId = session?.user.id ?? null;
 
@@ -303,6 +357,20 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     }
   }, []);
 
+  /**
+   * Reset the terms gate to "unknown" and invalidate every in-flight terms
+   * continuation (query or acceptance) by bumping the generation. Used when
+   * the account changes, when an "accepting" operation is invalidated
+   * (close, document switch, param change) and defensively on open —
+   * QUERY_START intentionally no-ops while "accepting", so without this a
+   * superseded acceptance would lock the gate until it settles.
+   */
+  const resetTermsGate = useCallback(() => {
+    termsGenerationRef.current += 1;
+    dispatchTerms({ type: "RESET" });
+    setTermsChecked(false);
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -311,28 +379,54 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     };
   }, [invalidateActiveOperation]);
 
-  // Keep the identity refs current for async continuations. Runs after every
-  // render; this effect is the ONLY writer of these refs.
-  useEffect(() => {
+  // Commit-synchronous identity publication + invalidation (relay round 2):
+  // a passive effect would leave a post-commit window in which a resolving
+  // acceptance/request continuation still sees the OLD account or document
+  // and an owned operation. Publishing identity and killing superseded work
+  // here closes that window. This layout effect is the ONLY writer of the
+  // identity refs — they hold the previously published values on entry.
+  useIsomorphicLayoutEffect(() => {
+    const accountChanged = sessionUserIdRef.current !== sessionUserId;
+    const documentChanged = documentIdRef.current !== documentId;
+    sessionUserIdRef.current = sessionUserId;
     documentIdRef.current = documentId;
     languageRef.current = language;
-    sessionUserIdRef.current = sessionUserId;
-  });
+    if (!accountChanged && !documentChanged) return;
 
-  // Account switch (including sign-out) underneath the hook: the terms gate
-  // and quota are user-scoped, so everything derived from the previous
-  // account is invalidated — in-flight work aborts, the dialog closes and
-  // the next open re-queries terms + quota for the NEW user.
-  const previousSessionUserIdRef = useRef(sessionUserId);
-  useEffect(() => {
-    if (previousSessionUserIdRef.current === sessionUserId) return;
-    previousSessionUserIdRef.current = sessionUserId;
+    // Account or document switch underneath the hook: the terms gate and
+    // quota are user-scoped and the snapshot is tied to its document, so
+    // everything derived from the previous identity is invalidated —
+    // in-flight work aborts, the dialog closes and the next open re-queries
+    // terms + quota for the NEW identity.
+    const operation = activeOperationRef.current;
+    if (operation?.controller) {
+      // An in-flight request is being invalidated: it owes the UI the same
+      // settlement quota refresh cancel()/close() would schedule.
+      operation.refreshQuotaOnSettle = true;
+      if (!accountChanged) {
+        // The account reset below already discards quota/pending; a document
+        // switch keeps the account, so block confirm explicitly until the
+        // settle-point re-read lands.
+        setSettlementPending(true);
+        settleGenerationRef.current = SETTLEMENT_UNRESOLVED;
+        setQuota(null);
+        setQuotaStatus("loading");
+      }
+    }
     invalidateActiveOperation();
     baselineRef.current = null;
-    dispatchTerms({ type: "RESET" });
-    setTermsChecked(false);
-    setQuota(null);
-    setQuotaStatus("idle");
+
+    if (accountChanged) {
+      resetTermsGate();
+      setQuota(null);
+      setQuotaStatus("idle");
+      setSettlementPending(false);
+      settleGenerationRef.current = 0;
+    } else if (termsState.status === "accepting") {
+      // The acceptance write belongs to the previous dialog; unlock the gate
+      // so the next open can own a fresh query.
+      resetTermsGate();
+    }
     dispatch({ type: "RESET" });
     setIsOpen(false);
     setScope(null);
@@ -340,26 +434,14 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     setConfigChangedHint(false);
     setStaleItemIds(new Set());
     setReferencesStale(false);
-  }, [sessionUserId, invalidateActiveOperation]);
-
-  // Document switch underneath the hook: the snapshot is tied to its
-  // document, so anything built for the previous one is invalidated — abort
-  // in flight, reset the machine, close the dialog. (The modal usually traps
-  // focus; this is the hard guarantee, documentMismatch below the soft one.)
-  const previousDocumentIdRef = useRef(documentId);
-  useEffect(() => {
-    if (previousDocumentIdRef.current === documentId) return;
-    previousDocumentIdRef.current = documentId;
-    invalidateActiveOperation();
-    baselineRef.current = null;
-    dispatch({ type: "RESET" });
-    setIsOpen(false);
-    setScope(null);
-    setScopeFailure(null);
-    setConfigChangedHint(false);
-    setStaleItemIds(new Set());
-    setReferencesStale(false);
-  }, [documentId, invalidateActiveOperation]);
+  }, [
+    sessionUserId,
+    documentId,
+    language,
+    termsState.status,
+    invalidateActiveOperation,
+    resetTermsGate,
+  ]);
 
   // ── snapshot building ──────────────────────────────────────────────
 
@@ -423,44 +505,73 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
 
   // ── quota & terms fetching ─────────────────────────────────────────
 
-  const refreshQuota = useCallback(async () => {
-    const userId = session?.user.id ?? null;
-    if (!userId) {
-      setQuota(null);
-      setQuotaStatus("idle");
-      return;
-    }
-    setQuotaStatus("loading");
-    try {
-      const response = await client.getQuota();
-      // Apply only while still mounted AND still the same account.
-      if (!mountedRef.current || sessionUserIdRef.current !== userId) return;
-      setQuota(response.quota);
-      setQuotaStatus("ready");
-    } catch {
-      if (!mountedRef.current || sessionUserIdRef.current !== userId) return;
-      setQuotaStatus("error");
-    }
-  }, [client, session]);
+  const refreshQuota = useCallback(
+    async (options?: { settleCancellation?: boolean }) => {
+      const userId = session?.user.id ?? null;
+      if (!userId) {
+        setQuota(null);
+        setQuotaStatus("idle");
+        return;
+      }
+      // A stale closure (the account changed after this callback rendered —
+      // e.g. a canceled operation's settle point firing under the NEW
+      // account) must not touch the new account's quota state: verify the
+      // account BEFORE setting "loading" or issuing the request.
+      if (sessionUserIdRef.current !== userId) return;
+      const generation = ++quotaGenerationRef.current;
+      if (options?.settleCancellation) {
+        // Only reads started at or after this settlement point may lift the
+        // settlement-pending confirm block.
+        settleGenerationRef.current = generation;
+      }
+      setQuotaStatus("loading");
+      const applyCompletion = () => {
+        if (options?.settleCancellation || generation >= settleGenerationRef.current) {
+          setSettlementPending(false);
+        }
+      };
+      try {
+        const response = await client.getQuota();
+        // Apply only while still mounted, still the same account AND still
+        // the newest read — an older same-account read resolving late must
+        // not overwrite a newer one.
+        if (!mountedRef.current || sessionUserIdRef.current !== userId) return;
+        if (quotaGenerationRef.current !== generation) return;
+        setQuota(response.quota);
+        setQuotaStatus("ready");
+        applyCompletion();
+      } catch {
+        if (!mountedRef.current || sessionUserIdRef.current !== userId) return;
+        if (quotaGenerationRef.current !== generation) return;
+        setQuotaStatus("error");
+        applyCompletion();
+      }
+    },
+    [client, session],
+  );
 
   const queryTerms = useCallback(async () => {
     const userId = session?.user.id ?? null;
     if (!userId || !termsGateway) {
-      dispatchTerms({ type: "RESET" });
+      resetTermsGate();
       return;
     }
+    const generation = ++termsGenerationRef.current;
     dispatchTerms({ type: "QUERY_START" });
     try {
       const accepted = await termsGateway.hasAccepted();
       // A previous account's query must never resolve into the new account's
-      // gate (the reducer's QUERY_START no-op while "accepted" is deliberate).
+      // gate (the reducer's QUERY_START no-op while "accepted" is deliberate);
+      // a superseded same-account query must not overwrite a newer one.
       if (!mountedRef.current || sessionUserIdRef.current !== userId) return;
+      if (termsGenerationRef.current !== generation) return;
       dispatchTerms({ type: "QUERY_RESOLVE", accepted });
     } catch {
       if (!mountedRef.current || sessionUserIdRef.current !== userId) return;
+      if (termsGenerationRef.current !== generation) return;
       dispatchTerms({ type: "FAIL" });
     }
-  }, [session, termsGateway]);
+  }, [session, termsGateway, resetTermsGate]);
 
   // ── open / close ───────────────────────────────────────────────────
 
@@ -475,6 +586,12 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       setStaleItemIds(new Set());
       setReferencesStale(false);
       setTermsChecked(false);
+      if (termsState.status === "accepting") {
+        // Defensive: an acceptance write still in flight from a previous
+        // dialog holds the gate locked (QUERY_START no-ops while
+        // "accepting"); reset so the fresh query below can own it.
+        resetTermsGate();
+      }
       dispatch({ type: "RESET" });
       // RESET keeps the params; the CONFIGURE below is batched after it and
       // lands on the fresh initial (config) state.
@@ -482,10 +599,37 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       void refreshQuota();
       void queryTerms();
     },
-    [configure, documentId, invalidateActiveOperation, queryTerms, refreshQuota, state.params],
+    [
+      configure,
+      documentId,
+      invalidateActiveOperation,
+      queryTerms,
+      refreshQuota,
+      resetTermsGate,
+      state.params,
+      termsState.status,
+    ],
   );
 
   const close = useCallback(() => {
+    const operation = activeOperationRef.current;
+    if (state.phase === "loading" && operation?.controller) {
+      // X/Escape/overlay share the footer cancel's settlement semantics
+      // (relay round 2): the server may still be settling the aborted
+      // request, so the displayed count is unreliable until the settle-point
+      // re-read — fired from the request's settlement, not from here —
+      // completes, even across a reopen.
+      operation.refreshQuotaOnSettle = true;
+      setSettlementPending(true);
+      settleGenerationRef.current = SETTLEMENT_UNRESOLVED;
+      setQuota(null);
+      setQuotaStatus("loading");
+    }
+    if (termsState.status === "accepting") {
+      // Unlock the gate: the in-flight acceptance is invalidated below, and
+      // its late continuation must not move a reopened dialog.
+      resetTermsGate();
+    }
     // Every close path invalidates the active operation: the in-flight
     // request aborts, and a terms-acceptance continuation resolving after
     // close finds no token and never sends (relay: no request after
@@ -500,7 +644,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     setConfigChangedHint(false);
     setStaleItemIds(new Set());
     setReferencesStale(false);
-  }, [invalidateActiveOperation]);
+  }, [invalidateActiveOperation, resetTermsGate, state.phase, termsState.status]);
 
   // The snapshot is tied to its document: a document switch also hides the
   // dialog immediately (derived, no effect) while the effect above performs
@@ -514,9 +658,18 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     (params: PolishParams) => {
       if (state.phase !== "config" || !scope) return;
       setConfigChangedHint(false);
+      if (termsState.status === "accepting") {
+        // The param change invalidates the in-flight acceptance (configure
+        // below); unlock the gate and immediately re-query so the dialog is
+        // not stuck in "accepting" until the old write settles.
+        resetTermsGate();
+        configure(params, scope);
+        void queryTerms();
+        return;
+      }
       configure(params, scope);
     },
-    [configure, scope, state.phase],
+    [configure, queryTerms, resetTermsGate, scope, state.phase, termsState.status],
   );
 
   const setLevel = useCallback(
@@ -578,12 +731,14 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     // account/document changes and disclosure rebuilds replace or clear the
     // token; every continuation below re-verifies ownership after each await.
     const operation: ActivePolishOperation = {
+      userId: session.user.id,
+      documentId,
+      language,
       clientRequestId: null,
       controller: null,
       refreshQuotaOnSettle: false,
     };
     activeOperationRef.current = operation;
-    const confirmedByUserId = session.user.id;
 
     // Progressive consent: write the acceptance BEFORE the polish request.
     if (termsState.status === "required") {
@@ -591,13 +746,19 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
         clearOperationIfOwned(operation);
         return;
       }
+      const termsGeneration = ++termsGenerationRef.current;
       dispatchTerms({ type: "ACCEPT_START" });
       try {
         await termsGateway.accept();
       } catch {
-        // The write failed for the user who clicked confirm; only that user
-        // may see the failure state.
-        if (mountedRef.current && sessionUserIdRef.current === confirmedByUserId) {
+        // The write failed: report the failure only while this attempt still
+        // owns the continuation for the same account — a superseded failure
+        // must not move a newer dialog's gate (relay round 2).
+        if (
+          mountedRef.current &&
+          activeOperationRef.current === operation &&
+          sessionUserIdRef.current === operation.userId
+        ) {
           dispatchTerms({ type: "FAIL" });
         }
         clearOperationIfOwned(operation);
@@ -605,16 +766,20 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       }
       if (!mountedRef.current) return;
       // The acceptance record is user-scoped, not operation-scoped: the user
-      // DID accept, so record it even when this attempt was superseded
-      // (no-ops harmlessly after an account change reset the gate).
-      if (sessionUserIdRef.current === confirmedByUserId) {
+      // DID accept, so record it even when this attempt was superseded — but
+      // never overwrite a newer query/acceptance (generation-scoped).
+      if (
+        sessionUserIdRef.current === operation.userId &&
+        termsGenerationRef.current === termsGeneration
+      ) {
         dispatchTerms({ type: "ACCEPT_RESOLVE" });
       }
-      // Ownership + identity: closing, unmounting, switching account or
-      // document, or changing level/style/form during acceptance kills the
-      // continuation — no request may be sent for a dismissed dialog.
+      // Ownership + owner identity: closing, unmounting, switching account
+      // or document, or changing level/style/form during acceptance kills
+      // the continuation — no request may be sent for a dismissed dialog.
       if (activeOperationRef.current !== operation) return;
-      if (sessionUserIdRef.current !== confirmedByUserId) return;
+      if (sessionUserIdRef.current !== operation.userId) return;
+      if (documentIdRef.current !== operation.documentId) return;
       if (isBaselineStaleAfterAwait()) {
         clearOperationIfOwned(operation);
         if (phase === "error") dispatch({ type: "RERUN" });
@@ -648,9 +813,15 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     // settlement point — the quota re-read (fired from HERE, not from
     // abort() time, so it cannot return the pre-request count of a
     // still-settling server-side deduction). Every other late effect dies.
+    // Account-owned: if the account changed since confirm, the canceled
+    // operation must not touch the new account's quota state (relay round 2).
     const settleCanceledOperation = () => {
-      if (operation.refreshQuotaOnSettle && mountedRef.current) {
-        void refreshQuota();
+      if (
+        operation.refreshQuotaOnSettle &&
+        mountedRef.current &&
+        sessionUserIdRef.current === operation.userId
+      ) {
+        void refreshQuota({ settleCancellation: true });
       }
     };
     try {
@@ -713,6 +884,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     documentId,
     getValue,
     isBaselineStale,
+    language,
     refreshQuota,
     scope,
     scopeFailure,
@@ -733,9 +905,9 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       operation.controller?.abort();
       activeOperationRef.current = null;
     } else {
-      // Loading without an owned operation should not happen; never leave
-      // the quota stuck in the stale/loading state if it does.
-      void refreshQuota();
+      // Loading without an owned operation should not happen; settle the
+      // quota display immediately instead of waiting for a settlement point.
+      void refreshQuota({ settleCancellation: true });
     }
     dispatch({ type: "ABORT" });
     // The displayed remaining count is now unreliable: drop it and block
@@ -743,6 +915,8 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     // completes.
     setQuota(null);
     setQuotaStatus("loading");
+    setSettlementPending(true);
+    settleGenerationRef.current = SETTLEMENT_UNRESOLVED;
   }, [refreshQuota, state.phase]);
 
   const retry = useCallback(() => {
@@ -773,41 +947,40 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       const snapshot = state.snapshot;
       const plan = planWriteBack(item, next);
 
-      // Snapshot-identity barrier BEFORE any state change: never write first
-      // and warn afterward. Accepting AI text requires the active document
-      // to be the snapshot's document, the current language to equal the
-      // sent request language, and every sent reference path to still hold
-      // its captured value. Undoing an accept is exempt from the reference/
-      // language legs: restoring the original must stay possible so users
-      // can always back out a write-back (the document leg stays — the path
-      // now belongs to a different document otherwise).
-      const undoAccept = actionType === "UNDO_ACCEPT_ITEM";
-      const identityStale =
-        !snapshot ||
-        !documentId ||
-        documentId !== snapshot.documentId ||
-        (!undoAccept && language !== snapshot.apiRequest.language);
-      const referencesDrifted =
-        !undoAccept &&
-        isSnapshotStale(
-          baselineRef.current?.pathValues ?? {},
-          getValue,
-          snapshot?.referencePaths ?? [],
-        );
-      if (identityStale || referencesDrifted) {
-        // Block the transition, flag the item, surface the rerun hint.
-        setStaleItemIds((previous) => new Set(previous).add(id));
-        if (referencesDrifted) setReferencesStale(true);
-        return;
-      }
-
-      const check = checkWriteBack(plan, getValue(item.path));
-      if (!check.ok) {
-        // The field drifted underneath: block the transition, flag the item.
-        setStaleItemIds((previous) => new Set(previous).add(id));
-        return;
-      }
+      // Barriers match the transition's actual effect (relay round 2):
+      // - INTO accepted (writes AI text): document + language + references +
+      //   expectedCurrent, all BEFORE any state change — never write first
+      //   and warn afterward;
+      // - AWAY from accepted (restores the original): document +
+      //   expectedCurrent only — reference/language drift is irrelevant to a
+      //   restore, and backing out a write-back must always stay possible;
+      // - no-write transitions (pending ↔ rejected): reducer transition
+      //   only, no barrier — they never touch the editor.
       if (plan.write) {
+        const intoAccepted = next === "accepted";
+        const documentStale =
+          !snapshot || !documentId || documentId !== snapshot.documentId;
+        const languageDrifted =
+          intoAccepted && (!snapshot || language !== snapshot.apiRequest.language);
+        const referencesDrifted =
+          intoAccepted &&
+          isSnapshotStale(
+            baselineRef.current?.pathValues ?? {},
+            getValue,
+            snapshot?.referencePaths ?? [],
+          );
+        if (documentStale || languageDrifted || referencesDrifted) {
+          // Block the transition, flag the item, surface the rerun hint.
+          setStaleItemIds((previous) => new Set(previous).add(id));
+          if (referencesDrifted) setReferencesStale(true);
+          return;
+        }
+        const check = checkWriteBack(plan, getValue(item.path));
+        if (!check.ok) {
+          // The field drifted underneath: block the transition, flag the item.
+          setStaleItemIds((previous) => new Set(previous).add(id));
+          return;
+        }
         form.setValue(item.path as FieldPath<CvData>, plan.value, {
           shouldDirty: true,
           shouldValidate: true,
@@ -877,7 +1050,27 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       if (referencesDrifted) setReferencesStale(true);
       return;
     }
-    for (const item of state.items) {
+    // Validate EVERY target before the first write (relay round 2): one
+    // stale candidate blocks the whole batch — no partial application.
+    // Already-accepted items are validated too: if their live field no
+    // longer equals the polished value, reducer state and form state have
+    // diverged and "Accept All" cannot truthfully report a full batch.
+    const candidates = state.items.map((item) => ({
+      item,
+      plan: planWriteBack(item, "accepted"),
+    }));
+    const stale = candidates.filter(
+      ({ item, plan }) => !checkWriteBack(plan, getValue(item.path)).ok,
+    );
+    if (stale.length > 0) {
+      setStaleItemIds((previous) => {
+        const nextSet = new Set(previous);
+        for (const { item } of stale) nextSet.add(item.id);
+        return nextSet;
+      });
+      return;
+    }
+    for (const { item } of candidates) {
       if (item.state !== "accepted") transitionItem(item.id, "accepted", "ACCEPT_ITEM");
     }
   }, [documentId, getValue, language, state.items, state.snapshot, transitionItem]);
@@ -907,6 +1100,10 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     // A quota re-read in flight (initial load, or the post-cancel refresh)
     // means the remaining count is unknown/stale: no confirm until it lands.
     quotaStatus !== "loading" &&
+    // A canceled request's settlement re-read has not completed yet — the
+    // server-side deduction may still be in flight, so confirm stays blocked
+    // even if an ordinary (pre-settlement) read already landed.
+    !settlementPending &&
     (termsState.status === "accepted" || termsState.status === "required") &&
     aiTermsAllowConfirm(termsState, termsChecked) &&
     (quota === null || quota.remaining > 0);

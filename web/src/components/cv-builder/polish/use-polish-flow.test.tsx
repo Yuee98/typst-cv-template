@@ -16,11 +16,33 @@
  * - account keying: terms/quota state never leaks across session.user.id;
  * - cancel discards the quota display and blocks confirm until the re-read
  *   fired from the canceled request's settlement point completes.
+ *
+ * Round 2 additions:
+ * - commit-synchronous invalidation: a parent layout effect resolving the
+ *   pending acceptance/response right as an account/document switch commits
+ *   must find the hook already invalidated (no send, no apply);
+ * - acceptAll validates EVERY target (including already-accepted items)
+ *   before the first write;
+ * - a superseded terms acceptance (failure OR success) never moves a newer
+ *   dialog; an invalidated "accepting" gate is unlocked, never stuck;
+ * - quota/terms continuations are generation-scoped and account-owned;
+ * - X/close during loading shares cancel's settlement semantics: confirm
+ *   stays blocked across a reopen until the settle-point re-read lands;
+ * - write-back barriers are tiered by the transition's actual effect:
+ *   reference/language drift never blocks reject / undo-reject / reject-all
+ *   restores.
  */
 
 import type { Session } from "@supabase/supabase-js";
 import { act, cleanup, render } from "@testing-library/react";
-import { createRef, useImperativeHandle, type RefObject } from "react";
+import {
+  createRef,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -839,5 +861,494 @@ describe("cancel quota refresh", () => {
     });
     expect(h.flow().quota?.remaining).toBe(3);
     expect(h.flow().canConfirm).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. round 2: commit-synchronous invalidation (parent layout-effect race)
+// ---------------------------------------------------------------------------
+
+interface RaceParentHandle {
+  flow: PolishFlow | null;
+  form: UseFormReturn<CvData> | null;
+  switchSession: (userId: string) => void;
+  switchDocument: (documentId: string) => void;
+}
+
+/**
+ * Owns session/document state itself and fires onCommit from a layout effect
+ * exactly when a commit publishes a NEW account or document. Combined with
+ * triggering the switch outside act(), this reproduces production ordering:
+ * commit → layout effects (onCommit resolves the pending promise) → promise
+ * continuations (microtasks) → passive effects. The hook must already have
+ * published the new identity and invalidated the old operation by the time
+ * the continuation runs — a passive-effect hook fails these tests.
+ */
+function RaceParent({
+  handleRef,
+  onCommit,
+  client,
+  termsGateway,
+}: {
+  handleRef: RefObject<RaceParentHandle | null>;
+  onCommit: () => void;
+  client: PolishApiClient;
+  termsGateway: PolishTermsGateway;
+}) {
+  const [session, setSession] = useState<Session>(() => makeSession("user-a"));
+  const [documentId, setDocumentId] = useState("doc-1");
+  const form = useForm<CvData>({ defaultValues: makeCvData() });
+  const flow = usePolishFlow({
+    form,
+    documentId,
+    language: "zh",
+    session,
+    supabase: null,
+    client,
+    termsGateway,
+  });
+  const committedRef = useRef<{ userId: string; documentId: string } | null>(null);
+  useLayoutEffect(() => {
+    const committed = { userId: session.user.id, documentId };
+    const previous = committedRef.current;
+    committedRef.current = committed;
+    if (
+      previous !== null &&
+      (previous.userId !== committed.userId || previous.documentId !== committed.documentId)
+    ) {
+      onCommit();
+      // Keep this commit task above the Scheduler's 5ms frame budget so the
+      // work loop yields to the host before flushing the child's passive
+      // effects — the promise continuation (a microtask) then runs in the
+      // exact layout→passive window the round-2 fix closes. Without the
+      // burn, React flushes passive effects inside the same work-loop turn
+      // and the window never materializes in tests.
+      const deadline = Date.now() + 25;
+      while (Date.now() < deadline) {
+        // busy-wait: force the Scheduler to yield before passive effects
+      }
+    }
+  });
+  useImperativeHandle(handleRef, () => ({
+    flow,
+    form,
+    switchSession: (userId: string) => setSession(makeSession(userId)),
+    switchDocument: (next: string) => setDocumentId(next),
+  }));
+  return null;
+}
+
+function renderRaceParent() {
+  const handleRef = createRef<RaceParentHandle>();
+  const { client, polishCalls, quotaCalls } = makeClient();
+  const { termsGateway, hasAcceptedCalls, acceptCalls } = makeTermsGateway();
+  const onCommitRef: { current: (() => void) | null } = { current: null };
+  render(
+    <RaceParent
+      handleRef={handleRef}
+      onCommit={() => onCommitRef.current?.()}
+      client={client}
+      termsGateway={termsGateway}
+    />,
+  );
+  return {
+    handleRef,
+    onCommitRef,
+    polishCalls,
+    quotaCalls,
+    hasAcceptedCalls,
+    acceptCalls,
+    flow: () => {
+      const flow = handleRef.current?.flow;
+      if (!flow) throw new Error("flow not captured");
+      return flow;
+    },
+  };
+}
+
+/**
+ * Flush the work an outside-act update schedules the way the browser would:
+ * the commit's layout effects run (onCommit resolves the promise), the
+ * busy-wait in RaceParent's layout effect pushes the commit task over the
+ * Scheduler's frame budget so the work loop yields, and the promise
+ * continuation (a microtask) then runs BEFORE the child's passive effects.
+ *
+ * The leading microtask checkpoint OUTSIDE act is load-bearing: without it
+ * the commit lands inside act's synchronous flushActQueue, which always
+ * flushes passive effects before any microtask can run — hiding the window
+ * these tests exist to exercise (verified against the pre-fix hook).
+ */
+async function flushRealScheduling() {
+  await Promise.resolve();
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+describe("round 2: commit-synchronous invalidation", () => {
+  it("account switch committed while acceptance pending: the in-layout resolve sends no request", async () => {
+    const h = renderRaceParent();
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    await act(async () => {
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+      h.hasAcceptedCalls[0].resolve(false);
+    });
+    act(() => {
+      h.flow().terms.setChecked(true);
+    });
+    act(() => {
+      h.flow().confirm();
+    });
+    expect(h.acceptCalls).toHaveLength(1);
+    expect(h.flow().terms.status).toBe("accepting");
+    // Resolve A's acceptance the instant the account switch commits — the
+    // continuation races the hook's identity publication.
+    h.onCommitRef.current = () => h.acceptCalls[0].resolve();
+    const actWarning = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.handleRef.current!.switchSession("user-b");
+      await flushRealScheduling();
+    } finally {
+      actWarning.mockRestore();
+    }
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.flow().terms.status).toBe("unknown");
+    expect(h.flow().isOpen).toBe(false);
+  });
+
+  it("document switch committed while request in flight: the in-layout response applies nothing", async () => {
+    const h = renderRaceParent();
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    await act(async () => {
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+      h.hasAcceptedCalls[0].resolve(true);
+    });
+    act(() => {
+      h.flow().confirm();
+    });
+    expect(h.polishCalls).toHaveLength(1);
+    expect(h.flow().state.phase).toBe("loading");
+    h.onCommitRef.current = () =>
+      h.polishCalls[0].deferred.resolve(successResponse(h.polishCalls[0].request, 4, "srv-A"));
+    const actWarning = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.handleRef.current!.switchDocument("doc-2");
+      await flushRealScheduling();
+    } finally {
+      actWarning.mockRestore();
+    }
+    expect(h.flow().state.phase).toBe("config");
+    expect(h.flow().state.items).toHaveLength(0);
+    expect(h.flow().isOpen).toBe(false);
+    // The late response must not become the displayed quota; the invalidated
+    // in-flight request owes a settle-point re-read instead.
+    expect(h.flow().quota?.remaining ?? null).not.toBe(4);
+    expect(h.quotaCalls).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. round 2: acceptAll validates every target before the first write
+// ---------------------------------------------------------------------------
+
+describe("round 2: acceptAll full-batch preflight", () => {
+  it("target drift on a later item blocks the whole batch (first target untouched)", async () => {
+    const h = renderHarness();
+    await openAndReachPreview(h);
+    const items = h.flow().state.items;
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    const beforeFirst = h.form().getValues(items[0].path as never);
+    act(() => {
+      h.form().setValue(items[1].path as never, "第二项被外部改动过，内容足够长。" as never);
+    });
+    act(() => {
+      h.flow().acceptAll();
+    });
+    expect(h.form().getValues(items[0].path as never)).toBe(beforeFirst);
+    expect(h.flow().state.items.every((item) => item.state === "pending")).toBe(true);
+    expect(h.flow().staleItemIds.has(items[1].id)).toBe(true);
+  });
+
+  it("an externally reverted accepted item blocks the whole batch", async () => {
+    const h = renderHarness();
+    await openAndReachPreview(h);
+    const items = h.flow().state.items;
+    act(() => {
+      h.flow().acceptItem(items[0].id);
+    });
+    expect(h.form().getValues(items[0].path as never)).toBe(items[0].polished);
+    // External edit clobbers the accepted write-back: reducer and form diverged.
+    act(() => {
+      h.form().setValue(items[0].path as never, "外部还原成了别的内容，长度足够。" as never);
+    });
+    const beforeSecond = h.form().getValues(items[1].path as never);
+    act(() => {
+      h.flow().acceptAll();
+    });
+    expect(h.form().getValues(items[1].path as never)).toBe(beforeSecond);
+    expect(h.flow().state.items[1].state).toBe("pending");
+    expect(h.flow().staleItemIds.has(items[0].id)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. round 2: a superseded terms acceptance never moves a newer dialog
+// ---------------------------------------------------------------------------
+
+describe("round 2: superseded terms acceptance", () => {
+  async function closeAndReopenWhileAcceptPending(h: ReturnType<typeof renderHarness>) {
+    await openRequiredAndConfirm(h);
+    act(() => {
+      h.flow().close();
+    });
+    // Reopen on the same account before the old acceptance settles: the gate
+    // must be unlocked (never stuck in "accepting") and a fresh query runs.
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    expect(h.hasAcceptedCalls).toHaveLength(2);
+    expect(h.flow().terms.status).toBe("checking");
+    await act(async () => {
+      h.quotaCalls[1].resolve({ requestId: "q-2", quota: makeQuota(5) });
+      h.hasAcceptedCalls[1].resolve(false);
+    });
+    expect(h.flow().terms.status).toBe("required");
+  }
+
+  it("old accept failure after close+reopen does not error the new dialog", async () => {
+    const h = renderHarness();
+    await closeAndReopenWhileAcceptPending(h);
+    await act(async () => {
+      h.acceptCalls[0].reject(new Error("network"));
+    });
+    expect(h.flow().terms.status).toBe("required");
+    expect(h.polishCalls).toHaveLength(0);
+  });
+
+  it("old accept success after close+reopen does not overwrite the new query", async () => {
+    const h = renderHarness();
+    await closeAndReopenWhileAcceptPending(h);
+    await act(async () => {
+      h.acceptCalls[0].resolve();
+    });
+    // The new query said "required"; the superseded acceptance must not flip it.
+    expect(h.flow().terms.status).toBe("required");
+    expect(h.polishCalls).toHaveLength(0);
+  });
+
+  it("param change during acceptance unlocks the gate and re-queries", async () => {
+    const h = renderHarness();
+    await openRequiredAndConfirm(h);
+    act(() => {
+      h.flow().setLevel(2);
+    });
+    expect(h.hasAcceptedCalls).toHaveLength(2);
+    await act(async () => {
+      h.hasAcceptedCalls[1].resolve(false);
+      h.acceptCalls[0].resolve();
+    });
+    // The new query owns the gate: required, not stuck accepting, not
+    // flipped by the superseded success.
+    expect(h.flow().terms.status).toBe("required");
+    expect(h.polishCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. round 2: quota/terms continuations are generation-scoped + account-owned
+// ---------------------------------------------------------------------------
+
+describe("round 2: quota/terms generation and account ownership", () => {
+  it("A cancels, account switches to B, A settles: B's quota state untouched", async () => {
+    const h = renderHarness();
+    await openAccepted(h);
+    act(() => {
+      h.flow().confirm();
+    });
+    act(() => {
+      h.flow().cancel();
+    });
+    act(() => {
+      h.rerender({ session: makeSession("user-b") });
+    });
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    expect(h.quotaCalls).toHaveLength(2);
+    expect(h.hasAcceptedCalls).toHaveLength(2);
+    // A's canceled request settles: no settle-point re-read under B.
+    await act(async () => {
+      h.polishCalls[0].deferred.reject(abortError());
+    });
+    expect(h.quotaCalls).toHaveLength(2);
+    // B's own read completes normally — never stuck in the loading state an
+    // old-account settle could otherwise leave behind.
+    await act(async () => {
+      h.quotaCalls[1].resolve({ requestId: "q-2", quota: makeQuota(9) });
+      h.hasAcceptedCalls[1].resolve(true);
+    });
+    expect(h.flow().quotaStatus).toBe("ready");
+    expect(h.flow().quota?.remaining).toBe(9);
+  });
+
+  it("two same-account quota reads resolving out of order: the newer wins", async () => {
+    const h = renderHarness();
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    expect(h.quotaCalls).toHaveLength(1);
+    act(() => {
+      h.flow().quotaRetry();
+    });
+    expect(h.quotaCalls).toHaveLength(2);
+    await act(async () => {
+      h.quotaCalls[1].resolve({ requestId: "q-2", quota: makeQuota(9) });
+    });
+    expect(h.flow().quota?.remaining).toBe(9);
+    // The older read resolves late: dropped, never overwrites the newer one.
+    await act(async () => {
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(1) });
+    });
+    expect(h.flow().quota?.remaining).toBe(9);
+  });
+
+  it("two same-account terms queries resolving out of order: the newer result stands", async () => {
+    const h = renderHarness();
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    expect(h.hasAcceptedCalls).toHaveLength(1);
+    act(() => {
+      h.flow().refreshTerms();
+    });
+    expect(h.hasAcceptedCalls).toHaveLength(2);
+    await act(async () => {
+      h.hasAcceptedCalls[1].resolve(true);
+    });
+    expect(h.flow().terms.status).toBe("accepted");
+    await act(async () => {
+      h.hasAcceptedCalls[0].resolve(false);
+    });
+    expect(h.flow().terms.status).toBe("accepted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. round 2: X/close during loading shares cancel's settlement semantics
+// ---------------------------------------------------------------------------
+
+describe("round 2: unified loading-close settlement", () => {
+  it("close during loading: a pre-settlement reopen read cannot unblock confirm", async () => {
+    const h = renderHarness();
+    await openAccepted(h);
+    act(() => {
+      h.flow().confirm();
+    });
+    expect(h.flow().state.phase).toBe("loading");
+    act(() => {
+      h.flow().close();
+    });
+    // Same as cancel(): quota discarded, settlement owed.
+    expect(h.flow().quota).toBeNull();
+    expect(h.flow().quotaStatus).toBe("loading");
+    // Reopen before the canceled request settles: the ordinary open read
+    // lands first, but must NOT unblock confirm.
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    expect(h.quotaCalls).toHaveLength(2);
+    await act(async () => {
+      h.quotaCalls[1].resolve({ requestId: "q-2", quota: makeQuota(5) });
+      h.hasAcceptedCalls[1].resolve(true);
+    });
+    expect(h.flow().quotaStatus).toBe("ready");
+    expect(h.flow().quota?.remaining).toBe(5);
+    expect(h.flow().canConfirm).toBe(false);
+    // The canceled request settles → settle-point re-read → confirm unblocks.
+    await act(async () => {
+      h.polishCalls[0].deferred.reject(abortError());
+    });
+    expect(h.quotaCalls).toHaveLength(3);
+    await act(async () => {
+      h.quotaCalls[2].resolve({ requestId: "q-3", quota: makeQuota(4) });
+    });
+    expect(h.flow().quota?.remaining).toBe(4);
+    expect(h.flow().canConfirm).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11. round 2: write-back barriers tiered by the transition's actual effect
+// ---------------------------------------------------------------------------
+
+describe("round 2: effect-tiered write-back barriers", () => {
+  it("reference drift does not block rejecting a pending item", async () => {
+    const h = renderHarness();
+    await openAndReachPreview(h);
+    const snapshot = h.flow().state.snapshot!;
+    const item = h.flow().state.items[0];
+    act(() => {
+      h.form().setValue(snapshot.referencePaths[0] as never, "漂移后的引用文本" as never);
+    });
+    act(() => {
+      h.flow().rejectItem(item.id);
+    });
+    expect(h.flow().state.items[0].state).toBe("rejected");
+    expect(h.flow().staleItemIds.has(item.id)).toBe(false);
+  });
+
+  it("language drift does not block rejecting a pending item", async () => {
+    const h = renderHarness();
+    await openAndReachPreview(h);
+    const item = h.flow().state.items[0];
+    act(() => {
+      h.rerender({ language: "en" });
+    });
+    act(() => {
+      h.flow().rejectItem(item.id);
+    });
+    expect(h.flow().state.items[0].state).toBe("rejected");
+  });
+
+  it("reference drift does not block undoing a rejection", async () => {
+    const h = renderHarness();
+    await openAndReachPreview(h);
+    const snapshot = h.flow().state.snapshot!;
+    const item = h.flow().state.items[0];
+    act(() => {
+      h.flow().rejectItem(item.id);
+    });
+    act(() => {
+      h.form().setValue(snapshot.referencePaths[0] as never, "漂移后的引用文本" as never);
+    });
+    act(() => {
+      h.flow().undoRejectItem(item.id);
+    });
+    expect(h.flow().state.items[0].state).toBe("pending");
+  });
+
+  it("Reject All restores accepted values despite reference drift", async () => {
+    const h = renderHarness();
+    await openAndReachPreview(h);
+    const snapshot = h.flow().state.snapshot!;
+    const items = h.flow().state.items;
+    const original = h.form().getValues(items[0].path as never);
+    act(() => {
+      h.flow().acceptItem(items[0].id);
+    });
+    expect(h.form().getValues(items[0].path as never)).toBe(items[0].polished);
+    act(() => {
+      h.form().setValue(snapshot.referencePaths[0] as never, "漂移后的引用文本" as never);
+    });
+    act(() => {
+      h.flow().rejectAll();
+    });
+    expect(h.form().getValues(items[0].path as never)).toBe(original);
+    expect(h.flow().state.items.every((item) => item.state === "rejected")).toBe(true);
   });
 });
