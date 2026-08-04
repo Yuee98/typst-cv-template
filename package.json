@@ -8,6 +8,8 @@
     "build:server": "pnpm --filter web build:server",
     "build:static": "pnpm --filter web build:static",
     "test": "pnpm --filter web test",
+    "test:integration": "pnpm --filter web test:integration",
+    "metrics:ai": "pnpm --filter web metrics:ai",
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm --filter web typecheck",
     "sync:typst-assets": "pnpm --filter web sync:typst-assets",
