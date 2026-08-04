@@ -17,9 +17,23 @@
  *   409 → cancel-while-in-flight settlement (status=canceled, charged;
  *   billability null/unknown when the abort lands before usage returns).
  *
- * Cost discipline: every request uses a single very short item; the whole run
- * makes AT MOST 2 provider transmissions (one success, one canceled). Token
- * usage and a rough cost estimate are printed at the end from ledger rows.
+ * Cost discipline: the run makes 2 USER-VISIBLE polish requests (one success,
+ * one canceled); each may use up to 2 internal provider attempts, so the
+ * budget is ≤4 provider transmissions (typical: 2). Token usage and a rough
+ * cost estimate (pinned price snapshot) are printed at the end.
+ *
+ * Release-gate integrity (CP4 round-1):
+ *   - NEXT_PUBLIC_SUPABASE_URL must be loopback http, AND must match the
+ *     URL/keys reported by `supabase status` — the script creates users and
+ *     flips runtime config with the service key, so it must never touch a
+ *     hosted project.
+ *   - the server build is REBUILT by default every run (testing the current
+ *     head); --reuse-build is an explicit iteration-only opt-in.
+ *   - build and start both get explicit POLISH_FAKE_LLM=false /
+ *     POLISH_FAKE_BACKEND=false / CI=false (process.env beats .env.local).
+ *   - a non-official DEEPSEEK_BASE_URL is rejected; --allow-custom-upstream
+ *     permits it with a loud "NOT proof of direct official DeepSeek
+ *     integration" disclaimer.
  *
  * Red lines (roadmap 禁存清单): this script never prints request/response
  * bodies, polished text, access tokens, or any key. Only statuses, error
@@ -39,17 +53,40 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { createClient } from "@supabase/supabase-js";
+import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
 
-// Rough list-price estimate (USD per 1M tokens) for the end-of-run cost line.
-// Order-of-magnitude only — verify against the current DeepSeek pricing page.
-const PRICE_PER_MTOK_USD = { inputCached: 0.07, inputUncached: 0.28, output: 1.42 };
+// DeepSeek V4 Flash list-price snapshot (USD per 1M tokens), pinned from the
+// official pricing page on 2026-08-04. Rough estimate only — token counts are
+// the authoritative numbers.
+const PRICE_SNAPSHOT_DATE = "2026-08-04";
+const PRICE_PER_MTOK_USD = { inputCached: 0.0028, inputUncached: 0.14, output: 0.28 };
 
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+
+// Explicit opt-ins (both off by default — the defaults are release-gate safe).
+//   --reuse-build            skip build:server and reuse the existing .next
+//   --allow-custom-upstream  permit a non-official DEEPSEEK_BASE_URL (the run
+//                            is then NOT proof of official DeepSeek access)
+let reuseBuild = false;
+let allowCustomUpstream = false;
+for (const arg of process.argv.slice(2)) {
+  if (arg === "--reuse-build") {
+    reuseBuild = true;
+  } else if (arg === "--allow-custom-upstream") {
+    allowCustomUpstream = true;
+  } else {
+    console.error(`[test:integration] unknown argument: ${arg}`);
+    console.error(
+      "usage: node scripts/run-integration-tests.mjs [--reuse-build] [--allow-custom-upstream]",
+    );
+    process.exit(1);
+  }
+}
 
 let failures = 0;
 
@@ -129,8 +166,50 @@ function preflightEnv() {
   }
 }
 
-function preflightSupabase() {
-  const status = spawnSync("pnpm exec supabase status", {
+/**
+ * P0-1: the configured Supabase URL must be loopback http BEFORE any client
+ * is constructed — the smoke creates users and flips runtime config with the
+ * service-role key, so a hosted/staging URL here is a destructive-safety bug.
+ */
+function preflightLocalSupabaseUrl(supabaseUrl) {
+  const result = checkLocalSupabaseUrl(supabaseUrl);
+  if (!result.ok) {
+    fatal(
+      `refusing non-local Supabase URL (${result.reason}).`,
+      "The real-key integration smoke creates users and changes AI runtime configuration; " +
+        "NEXT_PUBLIC_SUPABASE_URL must be http://127.0.0.1 / localhost / [::1].",
+    );
+  }
+}
+
+/**
+ * P0-2.3: a custom DEEPSEEK_BASE_URL can swap the upstream for a proxy/mock
+ * while the run still reports "real DeepSeek". The release gate forces the
+ * official origin; --allow-custom-upstream opts out WITH a loud disclaimer.
+ */
+function preflightUpstream() {
+  const baseUrl = getEnv("DEEPSEEK_BASE_URL");
+  if (!baseUrl || isOfficialDeepSeekBaseUrl(baseUrl)) {
+    return false; // official origin (default or explicit) — full proof
+  }
+  if (!allowCustomUpstream) {
+    fatal(
+      "DEEPSEEK_BASE_URL is set to a non-official origin — the release smoke must " +
+        "prove the DIRECT official DeepSeek integration.",
+      "Unset it for the release run, or pass --allow-custom-upstream (that run is " +
+        "explicitly NOT proof of official DeepSeek access).",
+    );
+  }
+  return true;
+}
+
+/**
+ * P0-1 (strong form): the configured URL/keys must match the LOCAL instance
+ * the Supabase CLI reports — otherwise the service key belongs to a DIFFERENT
+ * project than the verified-local one. Never prints key material, only names.
+ */
+function preflightSupabaseCliMatch() {
+  const status = spawnSync("pnpm exec supabase status -o env", {
     cwd: repoRoot,
     shell: true,
     encoding: "utf8",
@@ -140,6 +219,34 @@ function preflightSupabase() {
     fatal(
       "local Supabase is not running (`supabase status` failed).",
       "Start it with `pnpm supabase:start` at the repo root, then re-run.",
+    );
+  }
+  const reported = {};
+  for (const line of status.stdout.split(/\r?\n/)) {
+    const match = /^([A-Z_]+)="([^"]*)"$/.exec(line.trim());
+    if (match) reported[match[1]] = match[2];
+  }
+  if (!reported.API_URL || !reported.PUBLISHABLE_KEY || !reported.SECRET_KEY) {
+    fatal("could not parse `supabase status -o env` output (API_URL/keys missing).");
+  }
+  const stripSlash = (value) => value.replace(/\/+$/, "");
+  if (stripSlash(reported.API_URL) !== stripSlash(getEnv("NEXT_PUBLIC_SUPABASE_URL"))) {
+    fatal(
+      `NEXT_PUBLIC_SUPABASE_URL (${stripSlash(getEnv("NEXT_PUBLIC_SUPABASE_URL"))}) does not ` +
+        `match the local instance's API_URL (${stripSlash(reported.API_URL)}).`,
+      "Refusing to run: the smoke would mutate a different project than the CLI-verified local one.",
+    );
+  }
+  if (reported.PUBLISHABLE_KEY !== getEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")) {
+    fatal(
+      "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY does not match the publishable key reported " +
+        "by `supabase status` for the local instance (value never printed).",
+    );
+  }
+  if (reported.SECRET_KEY !== getEnv("SUPABASE_SERVICE_ROLE_KEY")) {
+    fatal(
+      "SUPABASE_SERVICE_ROLE_KEY does not match the secret key reported by `supabase status` " +
+        "for the local instance (value never printed).",
     );
   }
 }
@@ -153,22 +260,67 @@ async function preflightReachable(supabaseUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// Server build + start (real mode — fake flags are stripped explicitly)
+// Server build + start (real mode — fake flags are overridden explicitly)
 // ---------------------------------------------------------------------------
+
+/**
+ * P0-2.2: deleting POLISH_FAKE_* from the child env is NOT enough — Next
+ * reloads absent variables from .env.local, and a CI=true line there would
+ * activate the fake-in-production CI exemption. process.env beats .env
+ * files, so build AND start get explicit "false" values. CI is forced to
+ * "false" for the same reason (the guard checks exact-string "true").
+ */
+function realModeEnv() {
+  return {
+    POLISH_FAKE_LLM: "false",
+    POLISH_FAKE_BACKEND: "false",
+    CI: "false",
+  };
+}
+
+/** The server config shared by build and start, from .env.local/process.env. */
+function forwardedServerEnv() {
+  const env = {};
+  for (const name of [
+    "DEEPSEEK_API_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "AI_USER_ID_HMAC_SECRET",
+    "AI_POLISH_ENABLED",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+  ]) {
+    const value = getEnv(name);
+    if (value) env[name] = value;
+  }
+  // Only forwarded when --allow-custom-upstream explicitly permits a
+  // non-official origin; an official one is the provider default anyway.
+  if (allowCustomUpstream && getEnv("DEEPSEEK_BASE_URL")) {
+    env.DEEPSEEK_BASE_URL = getEnv("DEEPSEEK_BASE_URL");
+  }
+  return env;
+}
 
 function ensureServerBuild() {
   const buildId = path.join(webRoot, ".next", "BUILD_ID");
   const polishRoute = path.join(webRoot, ".next", "server", "app", "api", "polish");
-  if (existsSync(buildId) && existsSync(polishRoute)) {
-    log("server build found; skipping build:server");
+  // P0-2.1: a reused .next can belong to a previous commit and produce a
+  // false green — the default is ALWAYS to rebuild the current head;
+  // --reuse-build stays as an explicit iteration-only opt-in.
+  if (reuseBuild && existsSync(buildId) && existsSync(polishRoute)) {
+    log("--reuse-build: reusing the existing .next build (iteration opt-in, not a release proof)");
     return;
   }
-  log("server build missing — running `pnpm build:server` (one-off, may take minutes)…");
+  log(
+    reuseBuild
+      ? "--reuse-build requested but no server build found — running `pnpm build:server`…"
+      : "building the current head (default; may take minutes — --reuse-build opts out for iteration)…",
+  );
   const build = spawnSync("pnpm build:server", {
     cwd: webRoot,
     shell: true,
     stdio: "inherit",
     timeout: 900_000,
+    env: { ...process.env, ...realModeEnv(), ...forwardedServerEnv() },
   });
   if (build.error || build.status !== 0) {
     fatal("`pnpm build:server` failed; see the build output above.");
@@ -186,23 +338,11 @@ function startServer() {
     "bin",
     "next",
   );
-  const childEnv = { ...process.env };
-  // Guarantee REAL provider + REAL backend even if the caller's shell exports
-  // the fake flags — this smoke exists to exercise the production wiring.
-  delete childEnv.POLISH_FAKE_LLM;
-  delete childEnv.POLISH_FAKE_BACKEND;
-  for (const name of [
-    "DEEPSEEK_API_KEY",
-    "DEEPSEEK_BASE_URL",
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "AI_USER_ID_HMAC_SECRET",
-    "AI_POLISH_ENABLED",
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-  ]) {
-    const value = getEnv(name);
-    if (value) childEnv[name] = value;
-  }
+  const childEnv = {
+    ...process.env,
+    ...realModeEnv(),
+    ...forwardedServerEnv(),
+  };
   const serverOutput = [];
   const child = spawn(process.execPath, [nextBin, "start", "-p", String(PORT)], {
     cwd: webRoot,
@@ -356,6 +496,7 @@ let service = null;
 let server = null;
 let userId = null;
 let featureConfigRestore = null;
+let customUpstream = false;
 let fatalError = null;
 
 try {
@@ -364,7 +505,13 @@ try {
   const SERVICE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   const PUBLISHABLE_KEY = getEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
 
-  preflightSupabase();
+  preflightLocalSupabaseUrl(SUPABASE_URL);
+  customUpstream = preflightUpstream();
+  if (customUpstream) {
+    log("⚠ --allow-custom-upstream: DEEPSEEK_BASE_URL points at a CUSTOM upstream —");
+    log("  此运行不构成对官方 DeepSeek 直连的证明 (NOT proof of official DeepSeek integration).");
+  }
+  preflightSupabaseCliMatch();
   await preflightReachable(SUPABASE_URL);
   ensureServerBuild();
 
@@ -377,7 +524,11 @@ try {
   server = startServer();
   try {
     await waitForServer(server);
-  log(`server ready on ${BASE_URL} (real DeepSeek provider + real local Supabase)`);
+  log(
+    customUpstream
+      ? `server ready on ${BASE_URL} (CUSTOM upstream — NOT official DeepSeek proof — + real local Supabase)`
+      : `server ready on ${BASE_URL} (real official DeepSeek provider + real local Supabase)`,
+  );
 
   // DB-side runtime switch (distinct from the AI_POLISH_ENABLED env): the
   // reserve RPC denies with 503 AI_DISABLED while it is off, and test:db
@@ -635,8 +786,9 @@ try {
       (uncached / 1e6) * PRICE_PER_MTOK_USD.inputUncached +
       (output / 1e6) * PRICE_PER_MTOK_USD.output;
     log(
-      `provider transmissions: ${providerCalls} (budget ≤4) | tokens — cached in: ${cached}, ` +
-        `uncached in: ${uncached}, out: ${output} | rough cost ≈ $${usd.toFixed(6)}`,
+      `provider transmissions: ${providerCalls} (2 user requests × ≤2 attempts; budget ≤4) | ` +
+        `tokens — cached in: ${cached}, uncached in: ${uncached}, out: ${output} | ` +
+        `rough cost ≈ $${usd.toFixed(6)} (price snapshot ${PRICE_SNAPSHOT_DATE})`,
     );
     check("provider transmission budget respected (≤4)", providerCalls <= 4, `got ${providerCalls}`);
   }
@@ -648,7 +800,27 @@ try {
         failures += 1;
         console.error(`FAIL cleanup: deleteUser — ${error.message}`);
       } else {
-        log("smoke user deleted (cascades its ledger/usage/terms rows)");
+        log("smoke user deleted");
+        // P2-9: the cascade itself is a smoke assertion — verify zero
+        // leftover rows in every user-scoped table instead of trusting prose.
+        for (const table of [
+          "ai_request_ledger",
+          "ai_usage_daily",
+          "ai_rate_minutes",
+          "user_terms_acceptances",
+        ]) {
+          const zeroed = await pollUntil(
+            async () => {
+              const { count, error: countError } = await service
+                .from(table)
+                .select("*", { count: "exact", head: true })
+                .eq("user_id", userId);
+              return countError === null && count === 0;
+            },
+            { timeoutMs: 10_000, intervalMs: 100 },
+          );
+          check(`cleanup: no ${table} rows left for the smoke user`, zeroed === true);
+        }
       }
     }
     if (featureConfigRestore !== null) {
@@ -687,6 +859,13 @@ if (fatalError !== null || failures > 0) {
       : `\n${failures} integration assertion(s) failed`,
   );
   process.exitCode = 1;
+} else if (customUpstream) {
+  console.log(
+    "\nAll integration smoke assertions passed — ⚠ CUSTOM upstream: " +
+      "此运行不构成对官方 DeepSeek 直连的证明 (real local Supabase only).",
+  );
 } else {
-  console.log("\nAll integration smoke assertions passed (real DeepSeek + real local Supabase)");
+  console.log(
+    "\nAll integration smoke assertions passed (real official DeepSeek + real local Supabase)",
+  );
 }

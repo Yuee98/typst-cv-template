@@ -29,6 +29,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { createClient } from "@supabase/supabase-js";
+import {
+  classifyGlobalUsage,
+  collectAllPages,
+  summarizeTokenUsage,
+} from "./lib/metrics-logic.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
@@ -124,22 +129,29 @@ function utcToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * P1-6: Supabase caps a single page at 1000 rows by default — a bare
+ * .limit(10_000) silently truncates (the global circuit breaker allows 2000
+ * attempts/day, so a busy day ALWAYS exceeds one page). Paginate
+ * deterministically on (reserved_at, reservation_id) until a short page.
+ */
 async function fetchLedgerRows(cutoffIso) {
-  const { data, error } = await service
-    .from("ai_request_ledger")
-    .select(
-      "status,state,attempt_count,latency_ms,usage_complete," +
-        "input_cached_tokens,input_uncached_tokens,output_tokens",
-    )
-    .gte("reserved_at", cutoffIso)
-    .limit(10_000);
-  if (error) {
-    failUsage(`ai_request_ledger read failed: ${error.message}`);
-  }
-  if (data.length === 10_000) {
-    console.error("[metrics:ai] WARNING: row cap (10000) hit — window metrics are truncated.");
-  }
-  return data;
+  return collectAllPages(async (offset, end) => {
+    const { data, error } = await service
+      .from("ai_request_ledger")
+      .select(
+        "reservation_id,reserved_at,status,state,attempt_count,latency_ms," +
+          "usage_complete,input_cached_tokens,input_uncached_tokens,output_tokens",
+      )
+      .gte("reserved_at", cutoffIso)
+      .order("reserved_at", { ascending: true })
+      .order("reservation_id", { ascending: true })
+      .range(offset, end);
+    if (error) {
+      failUsage(`ai_request_ledger read failed: ${error.message}`);
+    }
+    return data;
+  });
 }
 
 function printMetrics(rows, hours) {
@@ -156,16 +168,18 @@ function printMetrics(rows, hours) {
     .filter((value) => Number.isInteger(value))
     .sort((a, b) => a - b);
 
-  // Cache hit rate and token sums: succeeded rows with COMPLETE usage only —
-  // partial accounting (usage_complete=false) must not skew cost metrics.
-  const usageCohort = succeeded.filter((row) => row.usage_complete === true);
-  const sum = (cohort, column) =>
-    cohort.reduce((total, row) => total + (row[column] ?? 0), 0);
-  const cached = sum(usageCohort, "input_cached_tokens");
-  const uncached = sum(usageCohort, "input_uncached_tokens");
-  const output = sum(usageCohort, "output_tokens");
-  const cacheHitRate =
-    cached + uncached === 0 ? "n/a" : `${((cached / (cached + uncached)) * 100).toFixed(1)}%`;
+  // P1-7 cost cohorts — never discard KNOWN tokens: the server records every
+  // known retry token even when the user quota is refunded (invalid_output is
+  // explicitly billable; failed_upstream/canceled rows can carry usage; an
+  // incomplete row's recorded totals remain a valid LOWER bound).
+  const tokenLine = ({ inputCached, inputUncached, output }) =>
+    `input_cached=${inputCached} input_uncached=${inputUncached} output=${output}`;
+  const cacheRate = ({ inputCached, inputUncached }) => {
+    const cached = inputCached;
+    const uncached = inputUncached;
+    return cached + uncached === 0 ? "n/a" : `${((cached / (cached + uncached)) * 100).toFixed(1)}%`;
+  };
+  const usage = summarizeTokenUsage(finalized);
 
   console.log(`\n== AI polish metrics — last ${hours}h ==`);
   console.log(`requests total: ${rows.length} (finalized: ${finalized.length})`);
@@ -186,12 +200,24 @@ function printMetrics(rows, hours) {
       `(${pct(byStatus.invalid_output, finalized.length)})`,
   );
   console.log(
-    `cache hit rate (succeeded, usage_complete; n=${usageCohort.length}): ${cacheHitRate} ` +
-      `(cached ${cached} / total in ${cached + uncached})`,
+    `token usage — known cost, finalized rows with recorded usage (n=${usage.known.count}): ` +
+      tokenLine(usage.known.totals),
   );
   console.log(
-    `token usage (succeeded, usage_complete): input_cached=${cached} ` +
-      `input_uncached=${uncached} output=${output}`,
+    `token usage — complete accounting (usage_complete=true, n=${usage.complete.count}): ` +
+      tokenLine(usage.complete.totals),
+  );
+  console.log(
+    `token usage — known LOWER BOUND from incomplete rows (n=${usage.incompleteKnown.count}): ` +
+      tokenLine(usage.incompleteKnown.totals),
+  );
+  console.log(
+    `cache hit rate (all complete rows with input usage, n=${usage.completeWithInput.count}): ` +
+      cacheRate(usage.completeWithInput.totals),
+  );
+  console.log(
+    `cache hit rate (succeeded, complete, n=${usage.succeededCompleteWithInput.count}): ` +
+      cacheRate(usage.succeededCompleteWithInput.totals),
   );
 }
 
@@ -219,22 +245,34 @@ async function globalCostAlert() {
 
   const used = usageRow?.provider_started_count ?? 0;
   const limit = configRow.global_daily_limit;
-  // limit=0 means "nothing allowed today": any usage is over-limit.
-  const ratio = limit > 0 ? used / limit : used > 0 ? Number.POSITIVE_INFINITY : 0;
   console.log(
     `\n== Global cost circuit breaker (UTC today) ==\n` +
-      `provider transmissions: ${used} / global_daily_limit ${limit} ` +
-      `(${(ratio * 100).toFixed(1)}%)`,
+      `provider transmissions: ${used} / global_daily_limit ${limit}` +
+      (limit > 0 ? ` (${((used / limit) * 100).toFixed(1)}%)` : ""),
   );
 
-  if (ratio >= 1) {
+  const globalUsage = classifyGlobalUsage(used, limit, ALERT_THRESHOLD);
+
+  // Edge: the DB allows limit=0 (provider gate rejects EVERY attempt). With
+  // used=0 the ratio math would print a misleading OK — say what it means.
+  if (globalUsage.level === "disabled") {
+    console.error(
+      "NOTICE: global_daily_limit is 0 — the provider gate rejects ALL polish attempts " +
+        "today (deliberate config, not an idle day). Set a positive limit to re-enable.",
+    );
+    return 0;
+  }
+
+  const ratio = globalUsage.ratio;
+
+  if (globalUsage.level === "critical") {
     console.error(
       `CRITICAL: global daily provider-call limit reached/exceeded (${used}/${limit}). ` +
         "New polish attempts are being rejected by the circuit breaker.",
     );
     return alert ? EXIT_CRITICAL : 0;
   }
-  if (ratio >= ALERT_THRESHOLD) {
+  if (globalUsage.level === "alert") {
     console.error(
       `ALERT: global daily provider-call usage at ${(ratio * 100).toFixed(1)}% of the limit ` +
         `(${used}/${limit}, threshold ${ALERT_THRESHOLD * 100}%).`,
