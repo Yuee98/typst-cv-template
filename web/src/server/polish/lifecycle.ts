@@ -271,11 +271,18 @@ function toLedgerFailureStage(
 }
 
 function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { name?: unknown }).name === "AbortError"
-  );
+  // "AbortError": DOMException from fetch/AbortSignal cancellation.
+  // "ResponseAborted": the Error subclass Next.js (node runtime) aborts
+  // request.signal with when the client socket closes before the response
+  // finishes (server/web/spec-extension/adapters/next-request.js — its only
+  // distinguishing feature is the name; it is raised exclusively on the
+  // client-disconnect path, so matching it cannot classify ordinary upstream
+  // errors as user cancellations).
+  const name =
+    typeof error === "object" && error !== null
+      ? (error as { name?: unknown }).name
+      : undefined;
+  return name === "AbortError" || name === "ResponseAborted";
 }
 
 function toTokenUsage(usage: PolishProviderUsage, usageComplete: boolean): PolishTokenUsage {

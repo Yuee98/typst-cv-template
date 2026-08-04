@@ -14,12 +14,8 @@
  * Chain under test (roadmap「集成冒烟」):
  *   gotrue password grant (real login) → terms gate → POST /api/polish 200 →
  *   ai_request_ledger / ai_usage_daily side effects → clientRequestId dedup
- *   409 → cancel-while-in-flight settlement. The cancel leg PINS a known
- *   server bug (see the KNOWN-ISSUE note below) instead of the designed
- *   status=canceled settlement: `next start` aborts request.signal with
- *   Next's ResponseAborted (name "ResponseAborted"), which lifecycle's
- *   isAbortError does not recognize, so a real disconnect currently settles
- *   failed_upstream + refunded. Flip those assertions when the bug is fixed.
+ *   409 → cancel-while-in-flight settlement (status=canceled, charged;
+ *   billability null/unknown when the abort lands before usage returns).
  *
  * Cost discipline: every request uses a single very short item; the whole run
  * makes AT MOST 2 provider transmissions (one success, one canceled). Token
@@ -597,35 +593,15 @@ try {
       "cancel settlement",
     );
     if (cancelRow) {
-      // KNOWN-ISSUE (documented in the unit 4.1 report; NOT fixed here — this
-      // unit must not touch src/server): under `next start` a client
-      // disconnect aborts request.signal with Next's ResponseAborted error
-      // (name "ResponseAborted"), which lifecycle's isAbortError
-      // (name === "AbortError") does not recognize. A real user cancel
-      // therefore settles via the infrastructure path (8e) as
-      // failed_upstream + REFUNDED + failure_stage "quota" instead of the
-      // roadmap settlement table's canceled + CHARGED + "canceled". These
-      // assertions pin the CURRENT behavior as a change detector: flip them
-      // to the designed settlement when the server bug is fixed.
-      log(
-        `KNOWN-ISSUE: cancel settles as ${cancelRow.status} ` +
-          `(quota_charged=${cancelRow.quota_charged}, failure_stage=${cancelRow.failure_stage}) ` +
-          "— designed: canceled/quota_charged=true. Root cause: isAbortError does not " +
-          "recognize Next's ResponseAborted (see unit 4.1 report).",
-      );
+      // Designed settlement (roadmap settlement table): a user cancel after
+      // the provider call was entered is CHARGED, settled as canceled. The
+      // mid-flight abort means no usage came back, so billability is UNKNOWN
+      // (null — CP2 round3 honest accounting), never provably free (false).
+      check("cancel ledger: status=canceled", cancelRow.status === "canceled", `got ${cancelRow.status}`);
+      check("cancel ledger: quota_charged=true", cancelRow.quota_charged === true);
       check(
-        "cancel ledger [known-issue]: status=failed_upstream (designed: canceled)",
-        cancelRow.status === "failed_upstream",
-        `got ${cancelRow.status}`,
-      );
-      check(
-        "cancel ledger [known-issue]: quota_charged=false (designed: true)",
-        cancelRow.quota_charged === false,
-        `got ${cancelRow.quota_charged}`,
-      );
-      check(
-        "cancel ledger [known-issue]: failure_stage=quota (designed: canceled)",
-        cancelRow.failure_stage === "quota",
+        "cancel ledger: failure_stage=canceled",
+        cancelRow.failure_stage === "canceled",
         `got ${cancelRow.failure_stage}`,
       );
       check(
@@ -633,8 +609,6 @@ try {
         cancelRow.attempt_count === 1,
         `got ${cancelRow.attempt_count}`,
       );
-      // Mid-flight abort means no usage came back: billability must be
-      // UNKNOWN (null), never provably free (false).
       check(
         "cancel ledger: provider_billable=null (billability unknown mid-flight)",
         cancelRow.provider_billable === null,
