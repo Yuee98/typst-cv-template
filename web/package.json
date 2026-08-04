@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:db": "node scripts/run-db-tests.mjs",
+    "test:integration": "node scripts/run-integration-tests.mjs",
+    "metrics:ai": "node scripts/ai-metrics.mjs",
     "smoke:api": "node scripts/smoke-polish-api.mjs",
     "sync:typst-assets": "node scripts/sync-typst-assets.mjs"
   },
