@@ -22,6 +22,7 @@ export function useCvLibraryBootstrap({
   loadCollapsedPreference,
   localFallbackTitle,
   setActiveDocumentId,
+  setPersistedBaseline,
   setOrderedDocuments,
 }: {
   form: UseFormReturn<CvData>;
@@ -30,6 +31,7 @@ export function useCvLibraryBootstrap({
   loadCollapsedPreference: () => void;
   localFallbackTitle: string;
   setActiveDocumentId: (id: string | null) => void;
+  setPersistedBaseline: (id: string, data: CvData) => void;
   setOrderedDocuments: SetOrderedDocuments;
 }) {
   useEffect(() => {
@@ -72,6 +74,9 @@ export function useCvLibraryBootstrap({
       saveActiveCvDocumentId(documentToLoad.id);
       loadCollapsedPreference();
       form.reset(documentToLoad.data);
+      // The freshly loaded local document is persisted by definition, so it
+      // becomes the dirty-check baseline (dirty=false) right away.
+      setPersistedBaseline(documentToLoad.id, documentToLoad.data);
       initializedRef.current = true;
     });
 

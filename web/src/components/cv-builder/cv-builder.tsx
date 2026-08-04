@@ -2,8 +2,8 @@
 
 import { Circle, FilePlus2, Loader2, RotateCcw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useRef } from "react";
-import { FormProvider } from "react-hook-form";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { FormProvider, useWatch } from "react-hook-form";
 
 import { AppShell, Workspace } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
@@ -18,15 +18,72 @@ import { DocumentActionDialogs } from "@/components/cv-builder/document-action-d
 import { CvLibrarySidebar } from "@/components/cv-builder/sidebar/cv-library-sidebar";
 import { PreviewPane } from "@/components/cv-builder/preview-pane";
 import { useCvBuilder } from "@/components/cv-builder/hooks/use-cv-builder";
+import { PolishDialog } from "@/components/cv-builder/polish/polish-dialog";
+import { isAiPolishUiEnabled } from "@/components/cv-builder/polish/polish-entry";
+import { PolishEntryProvider } from "@/components/cv-builder/polish/polish-entry-context";
+import {
+  savePendingPolishIntent,
+  takePendingPolishIntent,
+} from "@/components/cv-builder/polish/polish-intent";
+import type { PolishScope } from "@/components/cv-builder/polish/scope-builder";
+import { usePolishFlow } from "@/components/cv-builder/polish/use-polish-flow";
 
 export function CvBuilder() {
   const t = useTranslations("CvBuilder");
   const deleteRestoreFocusRef = useRef<HTMLElement | null>(null);
   const h = useCvBuilder();
 
+  // ── AI polish wiring (unit 3.5: the only integration point) ────────
+  // The entries render only when NEXT_PUBLIC_AI_POLISH_ENABLED === "true"
+  // (never in the static export); the dialog stays mounted-but-closed so
+  // the flow hook identity is stable.
+  const polishUiEnabled = isAiPolishUiEnabled();
+  const typstLang = useWatch({ control: h.form.control, name: "typstLang" }) ?? "en";
+  const session = h.session;
+  const polishFlow = usePolishFlow({
+    form: h.form,
+    documentId: h.activeDocumentId,
+    encrypted: h.activeDocument?.storageKind === "encrypted",
+    language: typstLang,
+    session,
+    supabase: h.supabase,
+  });
+  const { open: openPolishFlow } = polishFlow;
+
+  // Entry click: signed in → open the dialog with the declared scope;
+  // signed out → stash the intent and guide through the existing auth modal.
+  const requestPolish = useCallback(
+    (scope: PolishScope) => {
+      if (session) {
+        openPolishFlow(scope);
+        return;
+      }
+      if (h.activeDocumentId) {
+        savePendingPolishIntent({
+          documentId: h.activeDocumentId,
+          scope,
+          createdAt: Date.now(),
+        });
+      }
+      h.authModal.openModal("signIn");
+    },
+    [session, h.activeDocumentId, h.authModal, openPolishFlow],
+  );
+
+  // Restore the stashed intent once a session appears (form sign-in or an
+  // OAuth round-trip): the dialog re-opens with the originally clicked scope.
+  useEffect(() => {
+    if (!polishUiEnabled || !session || !h.activeDocumentId) return;
+    const scope = takePendingPolishIntent(h.activeDocumentId);
+    if (scope) openPolishFlow(scope);
+  }, [polishUiEnabled, session, h.activeDocumentId, openPolishFlow]);
+
+  const polishEntryValue = useMemo(() => ({ requestPolish }), [requestPolish]);
+
   return (
     <FormProvider {...h.form}>
-      <AppShell>
+      <PolishEntryProvider value={polishEntryValue}>
+        <AppShell>
         <CvToolbar
           session={h.session}
           cloudStatus={h.cloudStatus}
@@ -173,7 +230,9 @@ export function CvBuilder() {
           onConfirmDeleteDialog={() => void h.confirmDeleteDialog()}
           deleteRestoreFocusRef={deleteRestoreFocusRef}
         />
-      </AppShell>
+        </AppShell>
+      </PolishEntryProvider>
+      {polishUiEnabled && <PolishDialog flow={polishFlow} language={typstLang} />}
     </FormProvider>
   );
 }

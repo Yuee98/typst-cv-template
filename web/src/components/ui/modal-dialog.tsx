@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode, RefObject } from "react";
+import type { ComponentPropsWithoutRef, ReactNode, RefObject } from "react";
 import { useRef } from "react";
 import {
   Close,
@@ -16,6 +16,8 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+type ContentProps = ComponentPropsWithoutRef<typeof Content>;
+
 export function ModalDialog({
   open,
   title,
@@ -27,6 +29,11 @@ export function ModalDialog({
   closeLabel = "Close",
   initialFocusRef,
   restoreFocusRef,
+  bodyClassName,
+  footerClassName,
+  closeDisabled = false,
+  onEscapeKeyDown,
+  onPointerDownOutside,
 }: {
   open: boolean;
   title: string;
@@ -38,13 +45,22 @@ export function ModalDialog({
   closeLabel?: string;
   initialFocusRef?: RefObject<HTMLElement | null>;
   restoreFocusRef?: RefObject<HTMLElement | null>;
+  /** Extra classes for the scrollable body region. */
+  bodyClassName?: string;
+  /** Extra classes for the footer row. */
+  footerClassName?: string;
+  /** When true, the X button, Escape key and overlay clicks cannot close the dialog. */
+  closeDisabled?: boolean;
+  /** Radix control points; call event.preventDefault() to veto that close path. */
+  onEscapeKeyDown?: ContentProps["onEscapeKeyDown"];
+  onPointerDownOutside?: ContentProps["onPointerDownOutside"];
 }) {
   const triggerRef = useRef<HTMLElement | null>(null);
 
   const descriptionAriaProps = description ? {} : { "aria-describedby": undefined };
 
   return (
-    <Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+    <Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen && !closeDisabled) onClose(); }}>
       <Portal>
         <Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm print:hidden" />
         <Content
@@ -63,13 +79,15 @@ export function ModalDialog({
               target.focus();
             }
           }}
+          onEscapeKeyDown={onEscapeKeyDown}
+          onPointerDownOutside={onPointerDownOutside}
           {...descriptionAriaProps}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface shadow-xl outline-none",
+            "fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-surface shadow-xl outline-none",
             className,
           )}
         >
-          <div className="flex items-start justify-between gap-4 px-4 py-3">
+          <div className="flex shrink-0 items-start justify-between gap-4 px-4 py-3">
             <div className="min-w-0">
               <Title className="text-sm font-semibold text-foreground">
                 {title}
@@ -81,14 +99,14 @@ export function ModalDialog({
               )}
             </div>
             <Close asChild>
-              <Button type="button" variant="ghost" size="icon" aria-label={closeLabel}>
+              <Button type="button" variant="ghost" size="icon" aria-label={closeLabel} disabled={closeDisabled}>
                 <X />
               </Button>
             </Close>
           </div>
-          <div className="space-y-4 px-4 py-4">{children}</div>
+          <div className={cn("min-h-0 space-y-4 overflow-y-auto px-4 py-4", bodyClassName)}>{children}</div>
           {footer && (
-            <div className="flex items-center justify-end gap-2 px-4 py-3">
+            <div className={cn("flex shrink-0 items-center justify-end gap-2 px-4 py-3", footerClassName)}>
               {footer}
             </div>
           )}

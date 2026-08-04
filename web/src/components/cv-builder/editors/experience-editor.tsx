@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { SortableAccordionList } from "@/components/ui/sortable-list";
 import type { CvData } from "@/lib/cv/schema";
 
+import { PolishEntryButton } from "../polish/polish-entry-button";
 import { BulletEditor } from "./text-items-editor";
 import { companyItem, fieldPath, projectItem, useCvFieldArray, WatchedTitle } from "./shared";
 
@@ -42,7 +43,10 @@ function ProjectEditor({
           <Input {...register(fieldPath(`${base}.date`))} />
         </Field>
       </FieldGrid>
-      <BulletEditor name={`${base}.bullets`} />
+      <BulletEditor
+        name={`${base}.bullets`}
+        polish={{ sectionId: "experience", entryId: `${companyIndex}.${projectIndex}` }}
+      />
     </div>
   );
 }
@@ -81,6 +85,13 @@ function CompanyEditor({ companyIndex }: { companyIndex: number }) {
                     fallback={t("projectFallback", { index: projectIndex + 1 })}
                   />
                 </AccordionTrigger>
+                <PolishEntryButton
+                  scope={{
+                    sectionId: "experience",
+                    granularity: "entry",
+                    entryId: `${companyIndex}.${projectIndex}`,
+                  }}
+                />
               </div>
               <AccordionContent>
                 <div className="space-y-3">
