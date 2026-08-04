@@ -16,14 +16,23 @@ import { SortableAccordionList } from "@/components/ui/sortable-list";
 import { Textarea } from "@/components/ui/textarea";
 import type { CvData } from "@/lib/cv/schema";
 
+import { polishItemId, type PolishItemScopeBase } from "../polish/polish-entry";
+import { PolishItemEntryButton } from "../polish/polish-entry-button";
 import { fieldPath, skillItem, useCvFieldArray, WatchedTitle } from "./shared";
 
 export function SkillItemsEditor({
   name,
   addLabel,
+  polish,
 }: {
   name: string;
   addLabel: string;
+  /**
+   * Item-granularity polish entry: when set, every item's trigger row gets
+   * an AI button scoped to that item's body (visibility still gated by
+   * flag + matrix).
+   */
+  polish?: PolishItemScopeBase;
 }) {
   const { register } = useFormContext<CvData>();
   const t = useTranslations("Editors.Skills");
@@ -44,6 +53,16 @@ export function SkillItemsEditor({
               <AccordionTrigger>
                 <WatchedTitle name={`${name}.${index}.label`} fallback={t("fallback", { index: index + 1 })} />
               </AccordionTrigger>
+              {polish && (
+                <PolishItemEntryButton
+                  textPath={`${name}.${index}.body`}
+                  scope={{
+                    sectionId: polish.sectionId,
+                    granularity: "item",
+                    itemId: polishItemId(polish.entryId, index),
+                  }}
+                />
+              )}
             </div>
             <AccordionContent>
               <div className="space-y-3">

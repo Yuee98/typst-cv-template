@@ -381,8 +381,8 @@
     },
     "terms": {
       "agreePrefix": "I have read and agree to the",
-      "aiTerms": "AI Service Terms",
-      "required": "Please accept the AI Service Terms first.",
+      "aiTerms": "AI Features Terms",
+      "required": "Please accept the AI terms first.",
       "checking": "Checking terms status…",
       "accepting": "Recording…",
       "error": "Could not check the terms status.",
@@ -438,5 +438,11 @@
       "retryAfter": "Please wait {seconds} seconds before retrying.",
       "requestId": "Request ID: {requestId}"
     }
+  },
+  "PolishEntry": {
+    "item": "Polish this item with AI",
+    "entry": "Polish this entry with AI",
+    "section": "Polish this section with AI",
+    "tooShort": "Too short to polish (needs at least 10 characters)"
   }
 }

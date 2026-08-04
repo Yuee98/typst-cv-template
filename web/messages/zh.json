@@ -381,8 +381,8 @@
     },
     "terms": {
       "agreePrefix": "我已阅读并同意",
-      "aiTerms": "《AI 服务条款》",
-      "required": "请先勾选同意 AI 服务条款。",
+      "aiTerms": "《AI 功能使用条款》",
+      "required": "请先勾选同意 AI 功能条款。",
       "checking": "正在检查条款接受状态…",
       "accepting": "正在记录…",
       "error": "条款状态查询失败。",
@@ -438,5 +438,11 @@
       "retryAfter": "请等待 {seconds} 秒后重试。",
       "requestId": "请求 ID：{requestId}"
     }
+  },
+  "PolishEntry": {
+    "item": "AI 润色此条",
+    "entry": "AI 润色此条目",
+    "section": "AI 润色整个板块",
+    "tooShort": "内容不足 10 字，暂无法润色"
   }
 }

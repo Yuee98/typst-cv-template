@@ -413,6 +413,7 @@ export function useCvBuilder() {
     exportingFormat: cvExport.exportingFormat,
     libraryCollapsed,
     session,
+    supabase,
     cloudStatus,
     supabaseConfigured,
     cloudActionsEnabled,

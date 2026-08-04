@@ -39,6 +39,8 @@ import { ResumeEntriesEditor } from "./education-editor";
 import { OneLineEntriesEditor } from "./research-editor";
 import { PublicationsEditor } from "./publications-editor";
 import { FontSettingsEditor } from "./settings-editor";
+import { PolishEntryButton } from "../polish/polish-entry-button";
+import { isAiPolishUiEnabled } from "../polish/polish-entry";
 
 type EditorTabId = "header" | "settings" | CvSectionId;
 
@@ -52,14 +54,27 @@ const tabNavigationKeysDuringDrag = new Set(["ArrowLeft", "ArrowRight", "Home", 
 
 export function CvEditor({ actions }: { actions?: ReactNode }) {
   const t = useTranslations("Editors");
+  // Feature-off builds must be layout-neutral: the actions prop itself is
+  // omitted (not a truthy element that renders null), so SectionHeader keeps
+  // its original column structure and no empty action slot appears.
+  const polishUiEnabled = isAiPolishUiEnabled();
   const sectionTabs: SectionTab[] = [
     {
       id: "profile",
       label: t("tabs.profile"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="profile" />
-          <TextItemsEditor name="profile" addLabel={t("TextItems.add")} />
+          <SectionHeader
+            name="profile"
+            actions={
+              polishUiEnabled ? (
+                // The whole profile is its "entry" granularity (capability
+                // matrix: profile's entry level == its section level).
+                <PolishEntryButton scope={{ sectionId: "profile", granularity: "entry" }} />
+              ) : undefined
+            }
+          />
+          <TextItemsEditor name="profile" addLabel={t("TextItems.add")} polish={{ sectionId: "profile" }} />
         </div>
       ),
     },
@@ -68,8 +83,15 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.skills"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="skills" />
-          <SkillItemsEditor name="skills" addLabel={t("Skills.add")} />
+          <SectionHeader
+            name="skills"
+            actions={
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "skills", granularity: "section" }} />
+              ) : undefined
+            }
+          />
+          <SkillItemsEditor name="skills" addLabel={t("Skills.add")} polish={{ sectionId: "skills" }} />
         </div>
       ),
     },
@@ -78,7 +100,14 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.experience"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="experience" />
+          <SectionHeader
+            name="experience"
+            actions={
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "experience", granularity: "section" }} />
+              ) : undefined
+            }
+          />
           <ExperienceEditor />
         </div>
       ),
@@ -88,8 +117,19 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.education"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="education" />
-          <ResumeEntriesEditor name="education" addLabel={t("Education.add")} />
+          <SectionHeader
+            name="education"
+            actions={
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "education", granularity: "section" }} />
+              ) : undefined
+            }
+          />
+          <ResumeEntriesEditor
+            name="education"
+            addLabel={t("Education.add")}
+            polishSectionId="education"
+          />
         </div>
       ),
     },
@@ -98,8 +138,19 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.research"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="research" />
-          <OneLineEntriesEditor name="research" addLabel={t("Research.add")} />
+          <SectionHeader
+            name="research"
+            actions={
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "research", granularity: "section" }} />
+              ) : undefined
+            }
+          />
+          <OneLineEntriesEditor
+            name="research"
+            addLabel={t("Research.add")}
+            polishSectionId="research"
+          />
         </div>
       ),
     },
@@ -119,8 +170,19 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       label: t("tabs.additional"),
       content: (
         <div className="space-y-4">
-          <SectionHeader name="additional" />
-          <SkillItemsEditor name="additional" addLabel={t("Additional.add")} />
+          <SectionHeader
+            name="additional"
+            actions={
+              polishUiEnabled ? (
+                <PolishEntryButton scope={{ sectionId: "additional", granularity: "section" }} />
+              ) : undefined
+            }
+          />
+          <SkillItemsEditor
+            name="additional"
+            addLabel={t("Additional.add")}
+            polish={{ sectionId: "additional" }}
+          />
         </div>
       ),
     },
