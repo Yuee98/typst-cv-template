@@ -137,3 +137,22 @@ describe("PolishDialog terms-acceptance lock", () => {
     expect(flow.close).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("PolishDialog E2EE plaintext warning", () => {
+  it("renders the warning prominently for an encrypted document", () => {
+    renderDialog(makeStubFlow({ encrypted: true }));
+
+    const warningText = screen.getByText(messages.PolishDialog.e2eeWarning);
+    const warning = warningText.parentElement;
+    expect(warning).not.toBeNull();
+    expect(warning?.className).toContain("border-warning-border");
+    expect(warning?.className).toContain("bg-warning-soft");
+    expect(warning?.className).toContain("text-warning-foreground");
+  });
+
+  it("does not render the E2EE-specific warning for an unencrypted document", () => {
+    renderDialog(makeStubFlow({ encrypted: false }));
+
+    expect(screen.queryByText(messages.PolishDialog.e2eeWarning)).toBeNull();
+  });
+});
