@@ -124,48 +124,60 @@ pnpm typecheck
 
 （以上均为根目录对 `web/` 包脚本的透传。）
 
-server 构建完成后，可对 polish API stub 做生产冒烟检查：
-
-```powershell
-pnpm --filter web start          # 在 :3000 上启动 .next 构建产物
-pnpm --filter web smoke:api      # 断言 /api/polish 与 /api/polish/quota 返回 503 AI_DISABLED 契约
-```
+`.github/workflows/ci.yml` 的 server-build job 会用仅限 CI 的 fake 鉴权/配额/provider 依赖启动构建产物，在不访问托管服务的情况下验证完整 API envelope。真实 DeepSeek + 本地 Supabase 的 release smoke 与 metrics 命令见 `web/README.md`；该 smoke 会产生费用并修改隔离的本地数据库，因此不会进入 CI。
 
 在 dev 和 build 之前，Web 应用会先将根目录的 `style.typ` 同步到 `web/public/typst/style.typ`，因此根目录的 Typst 样式始终保持唯一数据源。
 
 ### AI 润色（仅 server 部署）
 
-针对白名单内自由文本字段的 AI 润色功能正在按 flag 逐步上线：
+AI 润色已经覆盖受支持的自由文本字段，并通过三层相互独立的开关逐步开放：
 
-- API 路由（`/api/polish`、`/api/polish/quota`）只存在于 **server 构建**；静态 Pages 导出既不含路由也不含任何 UI 入口（Invariant 9）。服务端各阶段落地之前，Phase 0 handler 一律返回 `503 AI_DISABLED`。
-- `NEXT_PUBLIC_AI_POLISH_ENABLED` 只控制 UI 入口显隐，**不是**安全开关。静态导出时把它设为 `true` 会直接构建失败（`run-next-mode.mjs` 的 flag 一致性检查）。
-- 完整环境变量清单见 `web/.env.example`。
+| 开关 | 生效范围 | 用途 |
+|---|---|---|
+| `NEXT_PUBLIC_AI_POLISH_ENABLED` | 浏览器构建期 | 显示或移除 AI 入口，不是安全开关。`build:static` 会拒绝值为 `true` 的构建，因此 Pages 产物不可能包含 AI 入口。 |
+| `AI_POLISH_ENABLED` | Vercel deployment | 在鉴权、数据库访问和 provider 调用之前禁用两个 AI API 路由。值不是精确的 `true` 时返回 `503 AI_DISABLED`；修改 Vercel env 后需要重新部署。 |
+| `public.ai_feature_config.ai_polish_enabled` | Supabase 运行时 | 即时生效的运维 kill switch。reserve 和 provider-start RPC 还会在无需重新部署的情况下执行非空 canary allowlist 与全局日限。 |
 
-### 部署到 Vercel
+API 路由（`/api/polish`、`/api/polish/quota`）只存在于 **server 构建**；静态 Pages 导出既不含路由，也不会获得任何 server-only secret。完整环境变量契约见 `web/.env.example`。
 
-Vercel 部署 **server 构建**；GitHub Pages 通过 `promote-release` workflow 部署**静态导出**。
+### 部署拓扑
 
-> **人工 gate**——以下步骤由人在 Vercel dashboard 手工执行，不经 CI。
+`main` 是 staging 线，`release` 是 production 线；生产 promotion 始终由人手动发起：
 
-一次性项目设置（保持项目根目录为仓库根目录）：
+| 交付面 | Git 来源 | 构建 | 数据库配置 | 触发方式 |
+|---|---|---|---|---|
+| Vercel Preview | `main` | Server | 独立测试 Supabase 项目 | push 或 merge 到 `main` |
+| Test Supabase | `main` | `supabase/` migrations | 独立项目；GitHub Integration working directory 为 `.` | push 或 merge 到 `main` |
+| Vercel Production | `release` | Server | 独立生产 Supabase 项目 | promotion 更新 `release` |
+| Production Supabase | `release` | `supabase/` migrations | 独立项目；GitHub Integration working directory 为 `.` | promotion 更新 `release` |
+| GitHub Pages | `Promote Release` 选定的 commit | 静态导出 | 仅使用公开 Supabase 变量；无 AI API 或 service-role key | 手动 promotion workflow |
 
-1. **Build command**：`pnpm build:server`（等价于 `pnpm --filter web build:server`）。
-2. **Output directory**：**清除 `out` 覆盖**——server 构建产物是 `.next/` 而非 `out/`，残留旧的 `web/out` 覆盖会导致部署失败。
-3. **环境变量**（Production）：
+`Promote Release` workflow 会验证来自 `main` 的选定 commit、构建静态产物、以可选生产 tag 原子前移 `release`，并部署 Pages。随后 `release` push 会分别触发 Vercel Production 与 Production Supabase；这些下游部署互不等待，也不会等待 Pages。
 
-   | 变量 | 值 | 说明 |
-   |---|---|---|
-   | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 已有 | 已配置 |
-   | `NEXT_PUBLIC_AI_POLISH_ENABLED` | `true` | 仅 Vercel——不要设置到 CI 或 Pages |
-   | `DEEPSEEK_API_KEY` | secret | 真实 provider（单元 2.1）落地后必需 |
-   | `SUPABASE_SERVICE_ROLE_KEY` | secret | 真实 handler（单元 2.3）落地后必需 |
+#### 一次性环境配置
 
-   生产环境绝不设置 `POLISH_FAKE_LLM`——`getPolishProvider()` 在与 `NODE_ENV=production` 组合时会抛错。Phase 0 stub 不解析 provider，该 guard 在真实 handler 于模块作用域装配 provider 后（CP2）才生效。服务端硬开关（`AI_POLISH_ENABLED`，默认关闭）随单元 2.3 的真实 handler 引入；不设置即保持 API 关闭。
-4. **部署后验证**：
+Vercel 项目设置为 **Root Directory** `web`、**Framework Preset** `Next.js`、**Build Command** `pnpm build:server`、不设置 **Output Directory** override，并将 **Production Branch** 设为 `release`。
 
-   ```
-   curl -X POST https://<your-vercel-domain>/api/polish
-   curl https://<your-vercel-domain>/api/polish/quota
-   ```
+各环境使用独立配置，不要让 Preview 与 Production 共用生产数据库或 HMAC secret：
 
-   两者都必须返回 `503`，body 为 `{"requestId": ..., "error": {"code": "AI_DISABLED", ...}}`（Phase 0 stub；单元 2.3 之后无 token 请求应返回 `401 UNAUTHORIZED`）。
+| 变量 | Preview | Production | 说明 |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 测试项目 | 生产项目 | 可公开的项目连接信息 |
+| `SUPABASE_SERVICE_ROLE_KEY` | 测试项目 | 生产项目 | Sensitive；仅服务端 |
+| `DEEPSEEK_API_KEY` | 非生产 key，可与本地共用 | 最好使用独立生产 key | Sensitive；仅服务端 |
+| `AI_USER_ID_HMAC_SECRET` | 独立随机 secret | 独立随机 secret | Sensitive；绝不使用 `NEXT_PUBLIC_` 前缀 |
+| `AI_POLISH_ENABLED` | 首次关闭态部署为 `false` | 第一次生产 promotion 前为 `false` | 部署级 API 总闸 |
+| `NEXT_PUBLIC_AI_POLISH_ENABLED` | 首次关闭态部署为 `false` | 第一次生产 promotion 前为 `false` | 构建期 UI 开关 |
+
+托管环境不要设置 `POLISH_FAKE_LLM`、`POLISH_FAKE_BACKEND` 或 `NEXT_PUBLIC_AI_POLISH_MOCK`。`AI_POLISH_MODEL` 与 `AI_POLISH_GLOBAL_DAILY_LIMIT` 不是应用环境变量：模型固定在代码中，全局日限位于 `public.ai_feature_config`。
+
+无法使用数据库 branching 时采用两个独立 Supabase 项目：测试项目 watch `main`，生产项目 watch `release`。应用 migrations 前，先在 `pg_catalog` schema 启用 `pg_cron`；migration 会创建 `ai-polish-retention-cleanup` 和 `ai-polish-stale-reconciliation`。每个项目的 GitHub Integration 中，“production branch”只表示部署到该项目的 Git 分支，并不意味着测试项目是面向用户的生产数据库。
+
+#### 首次上线与后续发布
+
+1. 保持两个 Vercel 开关为 `false`，合并一个 commit 到 `main`。要求 GitHub CI、Test Supabase deployment 和 Vercel Preview deployment 全部成功；确认 Preview 首页为 `200`、AI UI 不存在、已登录与未登录的 AI API 请求均被部署级开关阻止、两个 cron job active，且没有 provider 请求。
+2. 配置非空测试账号 allowlist，开启测试数据库 runtime switch，将两个 **Preview** Vercel 开关改为 `true` 并重新部署。针对测试项目完成中英文浏览器、terms、E2EE 提醒、配额、取消、stale-write、删除、metrics 和真实 provider 验收。
+3. 仅在 Preview 验收通过后运行 `Promote Release`。生产 migrations 和首次 server deployment 完成期间，两个 **Production** Vercel 开关继续保持 `false`；先验证关闭状态，再设置非空生产 canary allowlist。
+4. 开启两个 Production Vercel 开关并重新部署，同时保持数据库 runtime switch 关闭。精确 deployment 验证通过后，仅为 allowlist canary 账号开启数据库开关；清空 allowlist、全局开放仍是独立人工决策。
+
+首次上线完成后，Vercel 开关可以持续保持 `true`。如果 migration 不向后兼容，应在 promotion 前关闭数据库 runtime switch，精确生产 deployment 验证后再开启；普通发布无需反复修改 Vercel env。
