@@ -381,7 +381,7 @@
     },
     "terms": {
       "agreePrefix": "I have read and agree to the",
-      "aiTerms": "AI Features Terms",
+      "aiTerms": "AI Service Terms",
       "required": "Please accept the AI terms first.",
       "checking": "Checking terms status…",
       "accepting": "Recording…",
