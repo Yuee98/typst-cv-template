@@ -179,6 +179,11 @@
     "signInRequired": "Sign in before accepting the Terms and Privacy Notice.",
     "checkBoxRequired": "Check the box before accepting."
   },
+  "AiTermsConsent": {
+    "agreeTo": "I have read and agree to the",
+    "aiTerms": "AI Service Terms",
+    "required": "Accept the AI Service Terms before using AI polish."
+  },
   "PreviewPane": {
     "title": "Preview",
     "status": {

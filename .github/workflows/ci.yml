@@ -87,6 +87,14 @@ jobs:
 
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      # CI smoke configuration (unit 2.3): the fake LLM + fake backend let
+      # `next build`/`next start` serve the full polish lifecycle without
+      # Supabase or a DeepSeek key. NODE_ENV=production inside next build/start
+      # is exempted by the CI=true marker GitHub Actions sets automatically
+      # (see src/server/polish/provider.ts).
+      POLISH_FAKE_LLM: "true"
+      POLISH_FAKE_BACKEND: "true"
+      AI_POLISH_ENABLED: "true"
 
     steps:
       - name: Checkout
@@ -116,7 +124,7 @@ jobs:
       - name: Build (server)
         run: pnpm build:server
 
-      - name: Smoke — assert stub 503 AI_DISABLED contract
+      - name: Smoke — 401 without token + fake-backend full chain
         run: |
           set -euo pipefail
 
@@ -144,8 +152,8 @@ jobs:
           fi
           echo "Server ready (HTTP ${status})."
 
-          # Phase 0 stub: both polish routes answer 503 AI_DISABLED. Unit 2.3
-          # replaces the stub with the real request lifecycle — then update
-          # the smoke to assert 401 UNAUTHORIZED for token-less requests
-          # (see scripts/smoke-polish-api.mjs).
+          # Unit 2.3 lifecycle: token-less requests → 401 UNAUTHORIZED; with
+          # the fake backend (POLISH_FAKE_LLM + POLISH_FAKE_BACKEND, job env)
+          # a Bearer token drives the full chain to a 200 success shape
+          # (scripts/smoke-polish-api.mjs).
           node scripts/smoke-polish-api.mjs http://localhost:3100

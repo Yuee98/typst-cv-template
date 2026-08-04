@@ -28,19 +28,41 @@ describe("getPolishProvider", () => {
     });
   });
 
-  it("throws when no provider is configured (real provider not wired yet)", () => {
+  it("throws when the real provider is misconfigured (missing DEEPSEEK_API_KEY)", () => {
     expect(() =>
       getPolishProvider({ POLISH_FAKE_LLM: undefined, NODE_ENV: "development" }),
-    ).toThrow(/wired yet/);
+    ).toThrow(/DEEPSEEK_API_KEY/);
     expect(() => getPolishProvider({ POLISH_FAKE_LLM: "false", NODE_ENV: "test" })).toThrow(
-      /wired yet/,
+      /DEEPSEEK_API_KEY/,
     );
   });
 
-  it("refuses to start with POLISH_FAKE_LLM=true in production", () => {
+  it("returns the DeepSeek provider for a non-fake configuration", () => {
+    const provider = getPolishProvider({
+      NODE_ENV: "production",
+      DEEPSEEK_API_KEY: "k",
+      AI_USER_ID_HMAC_SECRET: "s",
+    });
+    expect(typeof provider.complete).toBe("function");
+  });
+
+  it("refuses to start with POLISH_FAKE_LLM=true in production without the CI marker", () => {
     expect(() =>
       getPolishProvider({ POLISH_FAKE_LLM: "true", NODE_ENV: "production" }),
     ).toThrow(/Refusing to start/);
+    // Only the exact GitHub Actions marker "true" exempts; Vercel's CI=1 does not.
+    expect(() =>
+      getPolishProvider({ POLISH_FAKE_LLM: "true", NODE_ENV: "production", CI: "1" }),
+    ).toThrow(/Refusing to start/);
+  });
+
+  it("allows POLISH_FAKE_LLM=true in production under the GitHub Actions CI marker", () => {
+    const provider = getPolishProvider({
+      POLISH_FAKE_LLM: "true",
+      NODE_ENV: "production",
+      CI: "true",
+    });
+    expect(typeof provider.complete).toBe("function");
   });
 });
 
