@@ -1,7 +1,7 @@
 /**
  * Scope builder for the AI polish flow.
  *
- * Turns a UI scope ({ sectionId, granularity, entryId?, itemId? }) plus the
+ * Turns a UI scope ({ sectionId, granularity, groupId?, entryId?, itemId? }) plus the
  * current form data into one immutable snapshot:
  *
  *   { documentId, targets, referencePaths, apiRequest, disclosure }
@@ -29,6 +29,7 @@
  * inside the section, mirroring the form structure (CvData items carry no
  * stable ids of their own):
  * - profile / skills / additional: itemId "<item>"
+ * - experience: groupId "<company>"
  * - experience: entryId "<company>.<project>", itemId "<company>.<project>.<bullet>"
  * - education / research: entryId "<entry>", itemId "<entry>.<bullet>"
  * Ids the granularity does not need are ignored; profile "entry" granularity
@@ -76,6 +77,7 @@ export function isPolishableText(text: string): boolean {
 export interface PolishScope {
   sectionId: CvSectionId;
   granularity: PolishGranularity;
+  groupId?: string;
   entryId?: string;
   itemId?: string;
 }
@@ -365,6 +367,20 @@ function selectScopeItems(all: LocatedItem[], scope: PolishScope): LocatedItem[]
   switch (scope.granularity) {
     case "section":
       return all;
+    case "group": {
+      if (scope.groupId === undefined) return null;
+      const groupPath = parseIndexPath(scope.groupId);
+      // v1 exposes group scope only for experience, where one company is a
+      // one-segment path and its bullets live two index levels below it:
+      // company -> project -> bullet.
+      if (!groupPath || groupPath.length !== 1) return null;
+      const selected = all.filter(
+        (item) =>
+          item.indexPath.length === groupPath.length + 2 &&
+          groupPath.every((value, index) => item.indexPath[index] === value),
+      );
+      return selected.length > 0 ? selected : null;
+    }
     case "entry": {
       // Flat sections (profile) have a single virtual entry: entry-level
       // means the whole list and entryId is neither needed nor used.
@@ -413,14 +429,15 @@ function metadataEntriesOf(targets: LocatedItem[]): EntryContext[] {
  *   or the same flat list (profile/skills/additional)
  * - entry granularity: non-target items of sibling entries in the same
  *   parent container (same company for experience, same section otherwise)
- * - section granularity: none — every sibling is already a target
+ * - group / section granularity: none — the natural sibling set is already
+ *   inside the target scope
  */
 function siblingItemsOf(
   all: LocatedItem[],
   targets: LocatedItem[],
   granularity: PolishGranularity,
 ): LocatedItem[] {
-  if (granularity === "section" || targets.length === 0) return [];
+  if (granularity === "group" || granularity === "section" || targets.length === 0) return [];
   const targetSet = new Set(targets);
   const anchor = targets[0];
   if (granularity === "item") {

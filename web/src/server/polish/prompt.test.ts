@@ -190,6 +190,7 @@ describe("buildUserPrompt — items, granularity, retry feedback", () => {
   it.each([
     ["item", "a single text item"],
     ["entry", "all text items of one entry"],
+    ["group", "all text items grouped under one company"],
     ["section", "all text items of one section"],
   ] as const)("describes the %s granularity scope", (granularity, scope) => {
     expect(buildUserPrompt(makeInput({ granularity }))).toContain(scope);

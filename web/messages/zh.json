@@ -442,6 +442,7 @@
   "PolishEntry": {
     "item": "AI 润色此条",
     "entry": "AI 润色此条目",
+    "group": "AI 润色该公司的全部经历",
     "section": "AI 润色整个板块",
     "tooShort": "内容不足 10 字，暂无法润色"
   }

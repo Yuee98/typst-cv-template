@@ -18,7 +18,7 @@ import { ORDERED_SECTION_IDS, type CvSectionId } from "@/lib/cv/schema";
 // Polishable sections, field kinds, and the capability matrix
 // ---------------------------------------------------------------------------
 
-export const POLISH_GRANULARITIES = ["item", "entry", "section"] as const;
+export const POLISH_GRANULARITIES = ["item", "entry", "group", "section"] as const;
 export type PolishGranularity = (typeof POLISH_GRANULARITIES)[number];
 
 /** Free-text field kinds that v1 is allowed to polish (whitelist). */
@@ -46,13 +46,17 @@ export interface PolishSectionCapability {
  *   UI only offers two levels)
  * - skills / additional: item + section (entry-level has no independent
  *   meaning); `label` is context only
- * - experience / education / research: all three levels
+ * - experience: item + project entry + company group + section
+ * - education / research: item + entry + section
  * - publications: absent on purpose — bibliographic facts, never polishable
  */
 export const POLISH_CAPABILITY_MATRIX = {
   profile: { kind: "profile", granularities: ["item", "entry"] },
   skills: { kind: "skill_body", granularities: ["item", "section"] },
-  experience: { kind: "experience_bullet", granularities: ["item", "entry", "section"] },
+  experience: {
+    kind: "experience_bullet",
+    granularities: ["item", "entry", "group", "section"],
+  },
   education: { kind: "education_bullet", granularities: ["item", "entry", "section"] },
   research: { kind: "research_bullet", granularities: ["item", "entry", "section"] },
   additional: { kind: "additional_body", granularities: ["item", "section"] },
@@ -242,7 +246,7 @@ export const polishRequestSchema = z
       });
     }
 
-    // "item" granularity targets exactly one item; entry/section stay
+    // "item" granularity targets exactly one item; entry/group/section stay
     // variable-length because the wire format deliberately does not encode
     // project/entry grouping.
     if (request.granularity === "item" && request.items.length !== 1) {

@@ -142,6 +142,13 @@ export function ExperienceEditor() {
               <AccordionTrigger>
                 <WatchedTitle name={`${name}.${index}.org`} fallback={t("companyFallback", { index: index + 1 })} />
               </AccordionTrigger>
+              <PolishEntryButton
+                scope={{
+                  sectionId: "experience",
+                  granularity: "group",
+                  groupId: `${index}`,
+                }}
+              />
             </div>
             <AccordionContent>
               <div className="space-y-3">

@@ -16,6 +16,7 @@ import { DEFAULT_SECTION_ORDER, ORDERED_SECTION_IDS, type CvData } from "@/lib/c
 
 import messages from "../../../../messages/en.json";
 import { PolishEntryProvider } from "../polish/polish-entry-context";
+import type { PolishScope } from "../polish/scope-builder";
 import { CvEditor } from "./index";
 
 afterEach(() => {
@@ -38,7 +39,20 @@ function makeCvData(): CvData {
     ) as CvData["sectionTitles"],
     profile: [bullet("五年后端开发经验，专注高并发分布式系统。")],
     skills: [{ label: "编程语言", body: "TypeScript、Go、Rust，熟悉函数式编程范式。" }],
-    experience: [],
+    experience: [
+      {
+        org: "Example Corp",
+        date: "2020-2024",
+        projects: [
+          {
+            title: "Platform",
+            detail: "Core services",
+            date: "2020-2024",
+            bullets: [bullet("Built and operated the core platform services at scale.")],
+          },
+        ],
+      },
+    ],
     education: [],
     research: [],
     publications: [],
@@ -49,16 +63,18 @@ function makeCvData(): CvData {
 function Wrapper({
   form,
   withPolishEntry,
+  requestPolish,
 }: {
   form: UseFormReturn<CvData>;
   withPolishEntry: boolean;
+  requestPolish: (scope: PolishScope) => void;
 }) {
   const content = <CvEditor />;
   return (
     <NextIntlClientProvider locale="en" messages={messages}>
       <FormProvider {...form}>
         {withPolishEntry ? (
-          <PolishEntryProvider value={{ requestPolish: vi.fn() }}>{content}</PolishEntryProvider>
+          <PolishEntryProvider value={{ requestPolish }}>{content}</PolishEntryProvider>
         ) : (
           content
         )}
@@ -67,9 +83,15 @@ function Wrapper({
   );
 }
 
-function Harness({ withPolishEntry }: { withPolishEntry: boolean }) {
+function Harness({
+  withPolishEntry,
+  requestPolish = vi.fn(),
+}: {
+  withPolishEntry: boolean;
+  requestPolish?: (scope: PolishScope) => void;
+}) {
   const form = useForm<CvData>({ defaultValues: makeCvData() });
-  return <Wrapper form={form} withPolishEntry={withPolishEntry} />;
+  return <Wrapper form={form} withPolishEntry={withPolishEntry} requestPolish={requestPolish} />;
 }
 
 /** Activate the profile section tab and return its section-header grid. */
@@ -83,6 +105,17 @@ function openProfileSectionHeader(container: HTMLElement): HTMLElement {
   const grid = container.querySelector("div.grid.gap-3");
   if (!(grid instanceof HTMLElement)) throw new Error("section header grid not found");
   return grid;
+}
+
+function openExperienceSection(): void {
+  const tab = screen.getByRole("tab", {
+    name: messages.Editors.aria.dragSection.replace(
+      "{label}",
+      messages.Editors.tabs.experience,
+    ),
+  });
+  fireEvent.mouseDown(tab, { button: 0 });
+  fireEvent.click(tab);
 }
 
 const THREE_COL = "sm:grid-cols-[minmax(0,1fr)_auto_auto]";
@@ -108,5 +141,19 @@ describe("CvEditor section headers and the AI entry flag", () => {
 
     expect(grid.className).toContain(FOUR_COL);
     expect(screen.getByRole("button", { name: messages.PolishEntry.entry })).not.toBeNull();
+  });
+
+  it("flag on: company action dispatches the explicit group scope", () => {
+    vi.stubEnv("NEXT_PUBLIC_AI_POLISH_ENABLED", "true");
+    const requestPolish = vi.fn();
+    render(<Harness withPolishEntry={true} requestPolish={requestPolish} />);
+    openExperienceSection();
+
+    fireEvent.click(screen.getByRole("button", { name: messages.PolishEntry.group }));
+    expect(requestPolish).toHaveBeenCalledWith({
+      sectionId: "experience",
+      granularity: "group",
+      groupId: "0",
+    });
   });
 });

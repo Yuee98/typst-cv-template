@@ -112,6 +112,7 @@ const STYLE_PRESET_DIRECTIVES: Record<PolishStylePreset, string> = {
 const GRANULARITY_SCOPE: Record<PolishGranularity, string> = {
   item: "a single text item",
   entry: "all text items of one entry",
+  group: "all text items grouped under one company",
   section: "all text items of one section",
 };
 
