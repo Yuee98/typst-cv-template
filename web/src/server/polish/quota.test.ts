@@ -244,8 +244,8 @@ describe("finalizePolishRequest", () => {
         usageComplete: true,
       },
       metadata: {
-        granularity: "item",
-        itemCount: 1,
+        granularity: "group",
+        itemCount: 3,
         contextLevel: 1,
         language: "zh",
         model: "deepseek-v4-flash",
@@ -267,8 +267,8 @@ describe("finalizePolishRequest", () => {
         usage_complete: true,
       },
       p_metadata: {
-        granularity: "item",
-        item_count: 1,
+        granularity: "group",
+        item_count: 3,
         context_level: 1,
         language: "zh",
         model: "deepseek-v4-flash",

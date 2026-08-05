@@ -18,6 +18,7 @@ import { z } from "zod";
 import {
   POLISH_ERROR_HTTP_STATUS,
   type PolishErrorCode,
+  type PolishGranularity,
 } from "@/lib/polish/contract";
 
 // ---------------------------------------------------------------------------
@@ -292,7 +293,7 @@ export interface PolishTokenUsage {
 
 /** Optional ledger bookkeeping fields recorded at finalize time. */
 export interface PolishLedgerMetadata {
-  granularity?: "item" | "entry" | "section";
+  granularity?: PolishGranularity;
   itemCount?: number;
   contextLevel?: 0 | 1 | 2;
   language?: "zh" | "en";

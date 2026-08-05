@@ -88,6 +88,9 @@ function isPolishScope(value: unknown): value is PolishScope {
   if (scope.entryId !== undefined) {
     if (typeof scope.entryId !== "string" || !SCOPE_ID_PATTERN.test(scope.entryId)) return false;
   }
+  if (scope.groupId !== undefined) {
+    if (typeof scope.groupId !== "string" || !SCOPE_ID_PATTERN.test(scope.groupId)) return false;
+  }
   if (scope.itemId !== undefined) {
     if (typeof scope.itemId !== "string" || !SCOPE_ID_PATTERN.test(scope.itemId)) return false;
   }

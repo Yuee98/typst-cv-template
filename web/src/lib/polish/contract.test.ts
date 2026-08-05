@@ -151,6 +151,11 @@ describe("polishRequestSchema — capability matrix (cross-field)", () => {
     ["skills", "entry"],
     ["additional", "entry"],
     ["profile", "section"],
+    ["profile", "group"],
+    ["skills", "group"],
+    ["education", "group"],
+    ["research", "group"],
+    ["additional", "group"],
   ] as const)("rejects %s at %s granularity (not in matrix)", (sectionId, granularity) => {
     const request = makeRequest();
     request.sectionId = sectionId;
@@ -207,7 +212,7 @@ describe("polishRequestSchema — item granularity cardinality", () => {
     expect(accepts(request)).toBe(false);
   });
 
-  it.each(["entry", "section"] as const)(
+  it.each(["entry", "group", "section"] as const)(
     "keeps %s granularity variable-length",
     (granularity) => {
       const request = makeRequest();
@@ -434,11 +439,11 @@ describe("capability matrix & constants", () => {
     expect([...matrixKinds].sort()).toEqual([...POLISHABLE_FIELD_KINDS].sort());
   });
 
-  it("matrix granularities are a subset of item/entry/section and non-empty", () => {
+  it("matrix granularities are a subset of item/entry/group/section and non-empty", () => {
     for (const capability of Object.values(POLISH_CAPABILITY_MATRIX)) {
       expect(capability.granularities.length).toBeGreaterThan(0);
       for (const granularity of capability.granularities) {
-        expect(["item", "entry", "section"]).toContain(granularity);
+        expect(["item", "entry", "group", "section"]).toContain(granularity);
       }
     }
   });

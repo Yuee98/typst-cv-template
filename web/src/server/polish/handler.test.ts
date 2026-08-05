@@ -140,10 +140,13 @@ describe("handler.ts — valid configurations boot", () => {
         },
         body: JSON.stringify({
           clientRequestId: "123e4567-e89b-42d3-a456-426614174000",
-          granularity: "item",
+          granularity: "group",
           sectionId: "experience",
           language: "zh",
-          items: [{ id: "i0", kind: "experience_bullet", text: "负责后端服务开发，将 P99 延迟降低 40%。" }],
+          items: [
+            { id: "i0", kind: "experience_bullet", text: "负责后端服务开发，将 P99 延迟降低 40%。" },
+            { id: "i1", kind: "experience_bullet", text: "建设内部平台，将部署时间缩短 30%。" },
+          ],
           context: { level: 0, references: [] },
         }),
       }),

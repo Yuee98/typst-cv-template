@@ -132,6 +132,8 @@ The web app syncs the root `style.typ` into `web/public/typst/style.typ` before 
 
 AI polish is implemented for the supported free-text CV fields and is rolled out through three independent gates:
 
+Experience text can be polished at four scopes: one bullet, one project, every project at one company, or the entire experience section. Other supported sections expose only the scopes that match their data hierarchy.
+
 | Gate | Scope | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_AI_POLISH_ENABLED` | Build-time browser flag | Shows or removes the AI entry points. It is not a security switch. `build:static` refuses `true`, so the Pages artifact can never contain an AI entry point. |

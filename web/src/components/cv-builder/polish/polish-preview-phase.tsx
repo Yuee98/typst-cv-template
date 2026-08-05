@@ -23,7 +23,7 @@ import { WordDiffTokens } from "./word-diff-view";
 /**
  * Phase 3 (preview): per-item review cards in a top/bottom comparison
  * layout (muted original above, polished below, changed words highlighted).
- * Section granularity groups cards by entry in an accordion; flatter scopes
+ * Group/section granularity groups cards by entry in an accordion; flatter scopes
  * render a plain list. Accept writes back immediately; undo is available
  * until the dialog closes (accepted values stay in the form either way).
  */

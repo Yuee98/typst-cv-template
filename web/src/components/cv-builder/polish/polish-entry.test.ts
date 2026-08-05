@@ -27,7 +27,7 @@ describe("canOfferPolishEntry (capability matrix)", () => {
   const expected: Record<CvSectionId, readonly PolishGranularity[]> = {
     profile: ["item", "entry"],
     skills: ["item", "section"],
-    experience: ["item", "entry", "section"],
+    experience: ["item", "entry", "group", "section"],
     education: ["item", "entry", "section"],
     research: ["item", "entry", "section"],
     publications: [],

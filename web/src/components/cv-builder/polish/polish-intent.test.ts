@@ -50,8 +50,20 @@ describe("savePendingPolishIntent / takePendingPolishIntent", () => {
     const storage = createFakeStorage();
     const scope: PolishScope = {
       sectionId: "education",
-      granularity: "entry",
+      granularity: "item",
       entryId: "3",
+      itemId: "3.1",
+    };
+    savePendingPolishIntent(intent({ scope }), storage);
+    expect(takePendingPolishIntent("doc-1", { now: 1_000_001, storage })).toEqual(scope);
+  });
+
+  it("preserves groupId exactly", () => {
+    const storage = createFakeStorage();
+    const scope: PolishScope = {
+      sectionId: "experience",
+      granularity: "group",
+      groupId: "3",
     };
     savePendingPolishIntent(intent({ scope }), storage);
     expect(takePendingPolishIntent("doc-1", { now: 1_000_001, storage })).toEqual(scope);
@@ -95,6 +107,7 @@ describe("savePendingPolishIntent / takePendingPolishIntent", () => {
     ["unknown granularity", { sectionId: "profile", granularity: "document" }],
     ["malformed itemId", { sectionId: "profile", granularity: "item", itemId: "a.b" }],
     ["non-string entryId", { sectionId: "profile", granularity: "entry", entryId: 3 }],
+    ["malformed groupId", { sectionId: "experience", granularity: "group", groupId: "company" }],
   ])("returns null for an off-shape scope (%s)", (_label, scope) => {
     const storage = createFakeStorage();
     storage.setItem(

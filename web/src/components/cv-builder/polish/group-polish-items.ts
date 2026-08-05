@@ -56,8 +56,8 @@ function groupKeyOf(item: PolishItem): { key: string; labelPaths: string[] } {
 
 /**
  * Group items in document order. A flat section (or an item/entry scope)
- * yields exactly one group; nested sections at section granularity yield one
- * group per entry.
+ * yields exactly one group; nested sections at group/section granularity
+ * yield one preview group per entry.
  */
 export function groupPolishItems(
   items: ReadonlyArray<PolishItem>,

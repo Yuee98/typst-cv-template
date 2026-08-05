@@ -442,6 +442,7 @@
   "PolishEntry": {
     "item": "Polish this item with AI",
     "entry": "Polish this entry with AI",
+    "group": "Polish all experience at this company with AI",
     "section": "Polish this section with AI",
     "tooShort": "Too short to polish (needs at least 10 characters)"
   }

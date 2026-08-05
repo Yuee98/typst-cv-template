@@ -194,6 +194,15 @@ const MATRIX_CASES: Array<{
     ],
   },
   {
+    name: "experience company group",
+    scope: { sectionId: "experience", granularity: "group", groupId: "0" },
+    expectedPaths: [
+      "experience.0.projects.0.bullets.0.body",
+      "experience.0.projects.0.bullets.1.body",
+      "experience.0.projects.1.bullets.0.body",
+    ],
+  },
+  {
     name: "experience section",
     scope: { sectionId: "experience", granularity: "section" },
     expectedPaths: [
@@ -284,7 +293,7 @@ describe("scope -> targets mapping (capability matrix)", () => {
     },
   );
 
-  it.each(["item", "entry", "section"] as const)(
+  it.each(["item", "entry", "group", "section"] as const)(
     "rejects publications at granularity %s",
     (granularity) => {
       const result = build({ scope: { sectionId: "publications", granularity } });
@@ -296,6 +305,7 @@ describe("scope -> targets mapping (capability matrix)", () => {
     { sectionId: "profile", granularity: "section" },
     { sectionId: "skills", granularity: "entry" },
     { sectionId: "additional", granularity: "entry" },
+    { sectionId: "education", granularity: "group" },
   ] as const)("rejects unsupported $sectionId/$granularity", (scope) => {
     expect(build({ scope })).toEqual({ ok: false, code: "granularity_not_supported" });
   });
@@ -327,6 +337,18 @@ describe("scope resolution failures", () => {
     {
       name: "experience entry at company depth",
       scope: { sectionId: "experience", granularity: "entry", entryId: "0" },
+    },
+    {
+      name: "group without groupId",
+      scope: { sectionId: "experience", granularity: "group" },
+    },
+    {
+      name: "group with project-depth groupId",
+      scope: { sectionId: "experience", granularity: "group", groupId: "0.0" },
+    },
+    {
+      name: "group with out-of-bounds groupId",
+      scope: { sectionId: "experience", granularity: "group", groupId: "9" },
     },
   ] as const)("returns invalid_scope for $name", ({ scope }) => {
     expect(build({ scope })).toEqual({ ok: false, code: "invalid_scope" });
@@ -466,6 +488,22 @@ describe("context levels", () => {
     // Blank metadata fields (营销平台 detail) are not sent; the target entry's
     // metadata is.
     expect(references).toContainEqual({ role: "scope_metadata", label: "公司", text: "阿里巴巴" });
+  });
+
+  it("level 1 company group sends every project metadata field and no siblings", () => {
+    const snapshot = expectOk(
+      build({
+        scope: { sectionId: "experience", granularity: "group", groupId: "0" },
+      }),
+    );
+    const references = snapshot.apiRequest.context.references;
+    expect(references.filter((reference) => reference.role === "sibling")).toEqual([]);
+    expect(references).toEqual([
+      { role: "scope_metadata", label: "公司", text: "阿里巴巴" },
+      { role: "scope_metadata", label: "项目", text: "订单中台" },
+      { role: "scope_metadata", label: "项目详情", text: "核心交易链路重构" },
+      { role: "scope_metadata", label: "项目", text: "营销平台" },
+    ]);
   });
 
   it("level 1 section scope sends per-entry metadata and no siblings", () => {
