@@ -2,10 +2,11 @@ import { webcrypto } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { sampleCvDataEn } from "@/lib/cv/sample-data";
-import { decryptCvData, encryptCvData } from "@/lib/cv/encryption";
-import type { CvData } from "@/lib/cv/schema";
+import { decryptCvData, encryptCvData, type EncryptedPayload } from "@/lib/cv/encryption";
 
-beforeAll(() => {
+let payload: EncryptedPayload;
+
+beforeAll(async () => {
   vi.stubGlobal("crypto", webcrypto);
 
   if (typeof globalThis.btoa !== "function") {
@@ -14,6 +15,8 @@ beforeAll(() => {
   if (typeof globalThis.atob !== "function") {
     vi.stubGlobal("atob", (value: string) => Buffer.from(value, "base64").toString("binary"));
   }
+
+  payload = await encryptCvData(sampleCvDataEn, "test-passphrase", "en");
 });
 
 afterAll(() => {
@@ -22,8 +25,6 @@ afterAll(() => {
 
 describe("CV encryption", () => {
   it("round-trips current CV data through the Web Crypto envelope", async () => {
-    const payload = await encryptCvData(sampleCvDataEn, "test-passphrase", "en");
-
     expect(payload).toMatchObject({
       version: 1,
       algorithm: "AES-GCM",
@@ -37,8 +38,6 @@ describe("CV encryption", () => {
   });
 
   it("rejects an empty or incorrect passphrase without exposing the CV contents", async () => {
-    const payload = await encryptCvData(sampleCvDataEn, "test-passphrase", "en");
-
     await expect(encryptCvData(sampleCvDataEn, "", "en")).rejects.toThrow(
       "Encryption password is required",
     );
@@ -68,11 +67,16 @@ describe("CV encryption", () => {
   });
 
   it("rejects decrypted JSON that does not satisfy the persisted CV schema", async () => {
-    const invalidData = { ...sampleCvDataEn, header: undefined } as unknown as CvData;
-    const payload = await encryptCvData(invalidData, "test-passphrase", "en");
-
-    await expect(decryptCvData(payload, "test-passphrase", "en")).rejects.toThrow(
-      "does not match the current CV schema",
+    const decryptSpy = vi.spyOn(crypto.subtle, "decrypt").mockResolvedValue(
+      new TextEncoder().encode("{}").buffer,
     );
+
+    try {
+      await expect(decryptCvData(payload, "test-passphrase", "en")).rejects.toThrow(
+        "does not match the current CV schema",
+      );
+    } finally {
+      decryptSpy.mockRestore();
+    }
   });
 });
