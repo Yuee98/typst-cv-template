@@ -19,6 +19,7 @@ import { useCvPersistence } from "@/components/cv-builder/hooks/use-cv-persisten
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal } from "@/components/cv-builder/hooks/use-encryption-modal";
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
+import { parseImportedCvFile } from "@/components/cv-builder/hooks/import-cv";
 import type { Locale } from "@/i18n/routing";
 import {
   baselineOnFormLoad,
@@ -26,14 +27,10 @@ import {
   createCvBaseline,
   type CvBaseline,
 } from "@/lib/cv/baseline";
-import {
-  cloneCvData,
-  errorMessage,
-  titleFromImportedData,
-} from "@/lib/cv/cv-utils";
+import { cloneCvData, errorMessage, titleFromImportedData } from "@/lib/cv/cv-utils";
 import { clearCvDraft, loadCvDraft, saveCvDraft } from "@/lib/cv/draft-storage";
 import { loadEncryptionPassword } from "@/lib/cv/encryption-storage";
-import { cvSchema, persistedCvSchema, type CvData } from "@/lib/cv/schema";
+import { cvSchema, type CvData } from "@/lib/cv/schema";
 import { getSampleCvData } from "@/lib/cv/sample-data";
 import {
   type CvCloudAccessAction,
@@ -378,18 +375,16 @@ export function useCvBuilder() {
   }
 
   async function importJson(file: File | undefined) {
-    if (!file) {
-      return;
-    }
-
     try {
-      const parsed = persistedCvSchema.safeParse(JSON.parse(await file.text()));
-      if (!parsed.success) {
-        setImportExportError(tImportExport("importSchemaError"));
+      const parsed = await parseImportedCvFile(file, tImportExport("importFallbackTitle"));
+      if (!parsed) {
+        if (file) {
+          setImportExportError(tImportExport("importSchemaError"));
+        }
         return;
       }
 
-      await documentActions.createDocumentFromData(parsed.data, titleFromImportedData(parsed.data, tImportExport("importFallbackTitle")));
+      await documentActions.createDocumentFromData(parsed.data, parsed.title);
     } catch (importError) {
       setImportExportError(errorMessage(importError));
     }
