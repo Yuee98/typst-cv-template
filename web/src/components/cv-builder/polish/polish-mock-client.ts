@@ -1,6 +1,6 @@
 import { polishRequestSchema } from "@/lib/polish/contract";
 import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
-import { PolishApiError } from "./polish-client";
+import { PolishApiError } from "./polish-api-error";
 import type { PolishApiClient } from "./polish-client";
 
 // ---------------------------------------------------------------------------

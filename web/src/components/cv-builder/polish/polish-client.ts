@@ -14,6 +14,7 @@ import {
   MOCK_CLIENT_CODEWORDS,
   mockPolishText,
 } from "./polish-mock-client";
+import { PolishApiError } from "./polish-api-error";
 import type {
   PolishQuotaResponse,
   PolishRequest,
@@ -27,30 +28,7 @@ export interface PolishApiClient {
   ): Promise<PolishSuccessResponse>;
   getQuota(options?: { signal?: AbortSignal }): Promise<PolishQuotaResponse>;
 }
-export class PolishApiError extends Error {
-  readonly code: string;
-  readonly status?: number;
-  readonly resetAt?: string;
-  readonly retryAfterSeconds?: number;
-  readonly requestId?: string;
-
-  constructor(init: {
-    code: string;
-    message?: string;
-    status?: number;
-    resetAt?: string;
-    retryAfterSeconds?: number;
-    requestId?: string;
-  }) {
-    super(init.message ?? init.code);
-    this.name = "PolishApiError";
-    this.code = init.code;
-    this.status = init.status;
-    this.resetAt = init.resetAt;
-    this.retryAfterSeconds = init.retryAfterSeconds;
-    this.requestId = init.requestId;
-  }
-}
+export { PolishApiError };
 
 export { createPolishHttpClient, DEFAULT_POLISH_CLIENT_TIMEOUT_MS };
 export type { CreatePolishHttpClientOptions } from "./polish-http-client";
