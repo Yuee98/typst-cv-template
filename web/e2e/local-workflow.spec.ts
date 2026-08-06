@@ -14,11 +14,15 @@ test.describe("local server-mode CV workflow", () => {
     await expect(page.getByRole("heading", { name: "CV Library" })).toBeVisible();
     await expect(page.locator("[data-cv-card-select]").first()).toBeVisible();
 
+    await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+    const previewPage = page.locator(".preview-pane .typst-page-shell").first();
+    await expect(previewPage).toBeVisible();
+    const initialPreviewMarkup = await previewPage.innerHTML();
+
     const nameInput = page.locator('input[name="header.name"]');
     await page.getByRole("tab", { name: "Header", exact: true }).click();
     await expect(nameInput).toBeVisible();
     await nameInput.fill("E2E Candidate");
-    await expect(page.getByText("Ready", { exact: true })).toBeVisible();
     await expect.poll(
       () =>
         page.evaluate(() => {
@@ -34,6 +38,8 @@ test.describe("local server-mode CV workflow", () => {
         }),
       { timeout: 60_000 },
     ).toBe("E2E Candidate");
+    await expect.poll(() => previewPage.innerHTML(), { timeout: 60_000 }).not.toBe(initialPreviewMarkup);
+    await expect(page.getByText("Ready", { exact: true })).toBeVisible();
 
     // Local storage is the recovery boundary: a full page reload must restore
     // the edited form without a cloud session or API dependency.
@@ -41,11 +47,40 @@ test.describe("local server-mode CV workflow", () => {
     await expect(nameInput).toHaveValue("E2E Candidate");
     await expect(page.getByText("Ready", { exact: true })).toBeVisible();
 
+    const readStoredSectionOrder = () =>
+      page.evaluate(() => {
+        const activeId = window.localStorage.getItem("typst-cv-builder:documents:active");
+        if (!activeId) return null;
+        const raw = window.localStorage.getItem(`typst-cv-builder:documents:${activeId}`);
+        if (!raw) return null;
+        try {
+          const storedDocument = JSON.parse(raw) as { data?: { sectionOrder?: string[] } };
+          return storedDocument.data?.sectionOrder ?? null;
+        } catch {
+          return null;
+        }
+      });
+    await expect.poll(readStoredSectionOrder, { timeout: 60_000 }).not.toBeNull();
+    const initialSectionOrder = await readStoredSectionOrder();
+    if (!initialSectionOrder) {
+      throw new Error("The local document section order did not initialize.");
+    }
+
+    // With no drag active, Radix tab navigation should move focus/selection
+    // without changing the persisted section order.
+    const profileTab = page.getByRole("tab", { name: "Profile. Drag to reorder section." });
+    const skillsTab = page.getByRole("tab", { name: "Skills. Drag to reorder section." });
+    await page.getByRole("tab", { name: "Header", exact: true }).click();
+    await profileTab.focus();
+    await expect(profileTab).toBeFocused();
+    await profileTab.press("ArrowRight");
+    await expect(skillsTab).toHaveAttribute("data-state", "active");
+    await expect.poll(readStoredSectionOrder, { timeout: 60_000 }).toEqual(initialSectionOrder);
+
     // DnD-Kit's KeyboardSensor uses Space to start/end and ArrowRight to move
     // horizontally. Select Profile before focusing its drag activator so the
     // keyboard drag itself is the only interaction under test; a regression in
     // the sortable tab wiring would make the drag change the selected editor tab.
-    const profileTab = page.getByRole("tab", { name: "Profile. Drag to reorder section." });
     await profileTab.click();
     await expect(profileTab).toHaveAttribute("data-state", "active");
     const profileIndexBefore = await profileTab.evaluate((element) =>
