@@ -12,7 +12,7 @@ import {
   openRequiredAndConfirm,
   renderHarness,
   SCOPE,
-} from "./use-polish-flow.test-harness";
+} from "./harness";
 
 afterEach(() => {
   cleanup();

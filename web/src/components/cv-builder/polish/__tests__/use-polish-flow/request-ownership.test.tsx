@@ -4,8 +4,8 @@
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PolishApiError } from "./polish-client";
-import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
+import { PolishApiError } from "../../polish-client";
+import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
 import {
   abortError,
   flushRealScheduling,
@@ -17,7 +17,7 @@ import {
   renderUnmountRace,
   SCOPE,
   successResponse,
-} from "./use-polish-flow.test-harness";
+} from "./harness";
 
 afterEach(() => {
   cleanup();

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { polishQuotaResponseSchema } from "@/lib/polish/contract";
-import { PolishQuotaError } from "./quota";
-import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "./lifecycle";
-import { VALID_TOKEN, REQUEST_ID, RESET_AT_Z, quotaRequest, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { PolishQuotaError } from "../../quota";
+import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "../../lifecycle";
+import { VALID_TOKEN, REQUEST_ID, RESET_AT_Z, quotaRequest, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("GET /api/polish/quota", () => {
   it("200 quota shape: login checked, AI terms NOT required", async () => {

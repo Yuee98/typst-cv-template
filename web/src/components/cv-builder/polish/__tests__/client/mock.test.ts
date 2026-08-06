@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { polishSuccessResponseSchema, type PolishRequest } from "@/lib/polish/contract";
-import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
-import { createMockPolishClient, mockPolishText, PolishApiError } from "./polish-client";
-import { makeRequest } from "./polish-client-test-fixtures";
+import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
+import { createMockPolishClient, mockPolishText, PolishApiError } from "../../polish-client";
+import { makeRequest } from "./fixtures";
 
 describe("mockPolishText", () => {
   it("collapses redundant whitespace when that changes the text", () => {

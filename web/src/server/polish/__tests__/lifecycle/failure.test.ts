@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { PolishProviderError, type PolishProviderResult } from "./provider";
-import { postRequest, usage, echoSuccess, rejectWith, resolveWith, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { PolishProviderError, type PolishProviderResult } from "../../provider";
+import { postRequest, usage, echoSuccess, rejectWith, resolveWith, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("POST /api/polish — failure settlement (refund paths)", () => {
   it("504 UPSTREAM_TIMEOUT after two timed-out attempts: refunded, billability unknown", async () => {

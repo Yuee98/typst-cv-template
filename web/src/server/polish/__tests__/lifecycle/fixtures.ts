@@ -1,7 +1,7 @@
 import { expect, vi } from "vitest";
 import type { PolishErrorCode } from "@/lib/polish/contract";
-import { type PolishProviderResult } from "./provider";
-import { createPolishHandlers, type PolishLogEvent, type PolishRouteDeps } from "./lifecycle";
+import { type PolishProviderResult } from "../../provider";
+import { createPolishHandlers, type PolishLogEvent, type PolishRouteDeps } from "../../lifecycle";
 
 export const VALID_TOKEN = "valid-access-token";
 export const USER_ID = "user-uuid-1";

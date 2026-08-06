@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PolishErrorCode } from "@/lib/polish/contract";
-import { PolishQuotaError } from "./quota";
-import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "./lifecycle";
-import { RESET_AT, RESET_AT_Z, postRequest, echoSuccess, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { PolishQuotaError } from "../../quota";
+import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "../../lifecycle";
+import { RESET_AT, RESET_AT_Z, postRequest, echoSuccess, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("POST /api/polish — reserve denials (dedup, quota, rate limit, kill switch)", () => {
   function reserveDenial(code: PolishErrorCode, extras: { resetAt?: string; retryAfterSeconds?: number } = {}) {

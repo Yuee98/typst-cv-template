@@ -4,7 +4,7 @@
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { openAndReachPreview, renderHarness } from "./use-polish-flow.test-harness";
+import { openAndReachPreview, renderHarness } from "./harness";
 
 afterEach(() => {
   cleanup();
