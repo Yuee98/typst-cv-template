@@ -100,11 +100,21 @@ import {
   PolishApiError,
   type PolishApiClient,
 } from "./polish-client";
-import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
+import {
+  assessPreviewTransition,
+} from "./polish-flow-preview";
+import {
+  runPolishRequest,
+  toPolishError,
+} from "./polish-flow-request";
+import {
+  SETTLEMENT_UNRESOLVED,
+  type ActivePolishOperation,
+  type SnapshotBaseline,
+} from "./polish-flow-types";
 import {
   createInitialState,
   polishReducer,
-  type PolishError,
   type PolishItemStatus,
   type PolishParams,
   type PolishState,
@@ -120,7 +130,6 @@ import {
   checkWriteBack,
   isSnapshotStale,
   planWriteBack,
-  type SnapshotPathValues,
 } from "./stale-guard";
 
 /** Terms-acceptance backend; the default talks to Supabase, tests/dev inject. */
@@ -205,51 +214,11 @@ export interface PolishFlow {
 }
 
 /**
- * Ownership token of one confirm attempt (see the file header). Continuations
- * compare the ref against THEIR token before any side effect; replacement or
- * clearing means "you were superseded — stop".
- */
-interface ActivePolishOperation {
-  /** Immutable owner: the account that clicked confirm. */
-  userId: string;
-  /** Immutable owner: the document the reviewed snapshot belongs to. */
-  documentId: string;
-  /** Immutable owner: the request language at confirm time. */
-  language: PolishLanguage;
-  /** Dedup key minted at CONFIRM time; null during terms acceptance. */
-  clientRequestId: string | null;
-  /** In-flight request controller; null until the request fires. */
-  controller: AbortController | null;
-  /**
-   * cancel() marks the operation so its settlement point (the catch branch)
-   * re-reads quota — the server may still be settling the canceled request
-   * at abort() time, so reading there could return the pre-request count.
-   */
-  refreshQuotaOnSettle: boolean;
-}
-
-/**
- * Everything a snapshot's validity depends on beyond its path values: the
- * document it was built from and the request language (cv.typstLang). A
- * same-document cloud reset can flip typstLang while leaving every target/
- * reference string identical — the path-only check would miss it.
- */
-interface SnapshotBaseline {
-  documentId: string;
-  language: PolishLanguage;
-  pathValues: SnapshotPathValues;
-}
-
-/**
  * CvBuilder is prerendered for the static export: bare useLayoutEffect would
  * warn on the server, so fall back to useEffect there. Commit-race safety
  * only matters in the browser, where this IS useLayoutEffect.
  */
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
-
-/** Sentinel: a cancellation settlement is owed but its re-read has not
- * started yet — no started read may lift the settlement-pending block. */
-const SETTLEMENT_UNRESOLVED = Number.MAX_SAFE_INTEGER;
 
 export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
   const {
@@ -820,74 +789,45 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
 
     const controller = new AbortController();
     operation.controller = controller;
-    // A canceled operation owes the UI exactly one side effect at its
-    // settlement point — the quota re-read (fired from HERE, not from
-    // abort() time, so it cannot return the pre-request count of a
-    // still-settling server-side deduction). Every other late effect dies.
-    // Account-owned: if the account changed since confirm, the canceled
-    // operation must not touch the new account's quota state (relay round 2).
-    const settleCanceledOperation = () => {
-      if (
-        operation.refreshQuotaOnSettle &&
-        mountedRef.current &&
-        sessionUserIdRef.current === operation.userId
-      ) {
-        void refreshQuota({ settleCancellation: true });
-      }
-    };
-    try {
-      const response = await client.polish(requestSnapshot.apiRequest, {
-        signal: controller.signal,
-      });
-      if (!mountedRef.current) return;
-      if (controller.signal.aborted || activeOperationRef.current !== operation) {
-        // Superseded while in flight (cancel → re-confirm, close, switch):
-        // no reducer/quota/terms effects, even if the response raced the abort.
-        settleCanceledOperation();
-        return;
-      }
-      activeOperationRef.current = null;
-      setQuota(response.quota);
-      setQuotaStatus("ready");
-      // Whole-snapshot guard: document/language/targets/sent context drifted
-      // while in flight → degrade to SNAPSHOT_STALE instead of applying.
-      if (isBaselineStaleAfterAwait()) {
-        dispatch({ type: "MARK_SNAPSHOT_STALE" });
-      }
-      dispatch({
-        type: "REQUEST_SUCCESS",
-        clientRequestId,
-        serverRequestId: response.requestId,
-        items: response.items,
-      });
-    } catch (error) {
-      if (
-        error instanceof PolishApiError &&
-        error.code === POLISH_TRANSPORT_ERROR_CODES.requestAborted
-      ) {
-        settleCanceledOperation();
-        return; // cancel()/close() already moved the reducer on
-      }
-      if (!mountedRef.current) return;
-      if (activeOperationRef.current !== operation) {
-        settleCanceledOperation();
-        return;
-      }
-      activeOperationRef.current = null;
-      if (error instanceof PolishApiError && error.code === "AI_TERMS_REQUIRED") {
+    await runPolishRequest({
+      operation,
+      requestSnapshot,
+      controller,
+      client,
+      isMounted: () => mountedRef.current,
+      activeOperation: () => activeOperationRef.current,
+      currentUserId: () => sessionUserIdRef.current,
+      clearOperationIfOwned,
+      isBaselineStaleAfterAwait,
+      refreshQuotaOnSettle: () => void refreshQuota({ settleCancellation: true }),
+      onSuccess: (response, snapshotStale) => {
+        setQuota(response.quota);
+        setQuotaStatus("ready");
+        if (snapshotStale) {
+          dispatch({ type: "MARK_SNAPSHOT_STALE" });
+        }
+        dispatch({
+          type: "REQUEST_SUCCESS",
+          clientRequestId,
+          serverRequestId: response.requestId,
+          items: response.items,
+        });
+      },
+      onTermsRequired: () => {
         // Local view said accepted but the server disagrees: back to config
         // with the checkbox re-shown in red — never the generic error phase.
         dispatchTerms({ type: "SERVER_REJECTED" });
         dispatch({ type: "ABORT" });
-        return;
-      }
-      dispatch({
-        type: "REQUEST_FAILURE",
-        clientRequestId,
-        serverRequestId: error instanceof PolishApiError ? error.requestId : undefined,
-        error: toPolishError(error),
-      });
-    }
+      },
+      onFailure: (error) => {
+        dispatch({
+          type: "REQUEST_FAILURE",
+          clientRequestId,
+          serverRequestId: error instanceof PolishApiError ? error.requestId : undefined,
+          error: toPolishError(error),
+        });
+      },
+    });
   }, [
     clearOperationIfOwned,
     client,
@@ -956,7 +896,15 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       const item = state.items.find((candidate) => candidate.id === id);
       if (!item) return;
       const snapshot = state.snapshot;
-      const plan = planWriteBack(item, next);
+      const assessment = assessPreviewTransition({
+        item,
+        next,
+        snapshot,
+        documentId,
+        language,
+        baselinePathValues: baselineRef.current?.pathValues ?? {},
+        getValue,
+      });
 
       // Barriers match the transition's actual effect (relay round 2):
       // - INTO accepted (writes AI text): document + language + references +
@@ -967,32 +915,19 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       //   restore, and backing out a write-back must always stay possible;
       // - no-write transitions (pending ↔ rejected): reducer transition
       //   only, no barrier — they never touch the editor.
-      if (plan.write) {
-        const intoAccepted = next === "accepted";
-        const documentStale =
-          !snapshot || !documentId || documentId !== snapshot.documentId;
-        const languageDrifted =
-          intoAccepted && (!snapshot || language !== snapshot.apiRequest.language);
-        const referencesDrifted =
-          intoAccepted &&
-          isSnapshotStale(
-            baselineRef.current?.pathValues ?? {},
-            getValue,
-            snapshot?.referencePaths ?? [],
-          );
-        if (documentStale || languageDrifted || referencesDrifted) {
+      if (assessment.needsIdentityGuard) {
+        if (
+          assessment.documentStale ||
+          assessment.languageDrifted ||
+          assessment.referencesDrifted ||
+          assessment.fieldDrifted
+        ) {
           // Block the transition, flag the item, surface the rerun hint.
           setStaleItemIds((previous) => new Set(previous).add(id));
-          if (referencesDrifted) setReferencesStale(true);
+          if (assessment.referencesDrifted) setReferencesStale(true);
           return;
         }
-        const check = checkWriteBack(plan, getValue(item.path));
-        if (!check.ok) {
-          // The field drifted underneath: block the transition, flag the item.
-          setStaleItemIds((previous) => new Set(previous).add(id));
-          return;
-        }
-        form.setValue(item.path as FieldPath<CvData>, plan.value, {
+        form.setValue(item.path as FieldPath<CvData>, assessment.plan.value, {
           shouldDirty: true,
           shouldValidate: true,
         });
@@ -1157,16 +1092,4 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     refreshTerms,
     quotaRetry,
   };
-}
-
-function toPolishError(error: unknown): PolishError {
-  if (error instanceof PolishApiError) {
-    return {
-      code: error.code,
-      message: error.message,
-      resetAt: error.resetAt,
-      retryAfterSeconds: error.retryAfterSeconds,
-    };
-  }
-  return { code: POLISH_TRANSPORT_ERROR_CODES.networkError };
 }
