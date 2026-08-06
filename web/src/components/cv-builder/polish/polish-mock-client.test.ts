@@ -82,4 +82,3 @@ describe("createMockPolishClient", () => {
     expect(error.code).toBe(POLISH_TRANSPORT_ERROR_CODES.requestAborted);
   });
 });
-
