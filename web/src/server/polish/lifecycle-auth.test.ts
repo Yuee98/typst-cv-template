@@ -42,4 +42,3 @@ describe("POST /api/polish — deployment switch and auth", () => {
     expect(mocks.reserve).not.toHaveBeenCalled();
   });
 });
-

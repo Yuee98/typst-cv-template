@@ -251,8 +251,3 @@ describe("POST /api/polish — terminal progress settlement (relay #3)", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// POST /api/polish — level-role trimming end to end (CP2 mandatory proof)
-// ---------------------------------------------------------------------------
-

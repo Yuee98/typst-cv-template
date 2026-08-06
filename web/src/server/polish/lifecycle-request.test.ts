@@ -101,4 +101,3 @@ describe("POST /api/polish — bounded reader and request validation", () => {
     await expectErrorShape(response, 400, "INVALID_REQUEST");
   });
 });
-

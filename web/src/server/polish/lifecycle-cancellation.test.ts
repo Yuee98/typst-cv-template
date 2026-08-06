@@ -91,8 +91,3 @@ describe("POST /api/polish — cancellation settlement", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// POST /api/polish — terminal progress settlement (relay #3/#2):
-// usage and providerCallEntered survive EVERY exit path
-// ---------------------------------------------------------------------------

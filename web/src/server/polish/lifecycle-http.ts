@@ -10,7 +10,6 @@ export const POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS = 300;
 export function baseHeaders(requestId: string): Record<string, string> {
   return { "Cache-Control": "no-store", "X-Request-Id": requestId };
 }
-
 export function errorResponse(
   requestId: string,
   code: PolishErrorCode,
@@ -82,4 +81,3 @@ export function toIsoUtc(iso: string): string {
   const parsed = new Date(iso);
   return Number.isNaN(parsed.getTime()) ? iso : parsed.toISOString();
 }
-

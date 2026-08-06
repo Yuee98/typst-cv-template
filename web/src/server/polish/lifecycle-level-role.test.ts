@@ -56,8 +56,3 @@ describe("POST /api/polish — server-side level-role trimming (Invariant 3)", (
     expect(sent).toContain(SKILL);
   });
 });
-
-// ---------------------------------------------------------------------------
-// GET /api/polish/quota
-// ---------------------------------------------------------------------------
-

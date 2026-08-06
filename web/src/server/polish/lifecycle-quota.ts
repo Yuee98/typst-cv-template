@@ -50,5 +50,3 @@ export async function handleQuotaGet(request: Request, deps: PolishRouteDeps): P
     return deny("INTERNAL_ERROR", "Failed to read the remaining quota.", { userId: auth.userId });
   }
 }
-
-

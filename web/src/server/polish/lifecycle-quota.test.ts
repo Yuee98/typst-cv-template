@@ -56,4 +56,3 @@ describe("GET /api/polish/quota", () => {
     await expectErrorShape(response, 500, "INTERNAL_ERROR");
   });
 });
-

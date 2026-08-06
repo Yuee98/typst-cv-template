@@ -81,7 +81,3 @@ describe("POST /api/polish — reserve denials (dedup, quota, rate limit, kill s
     expect(body.error.message).toBe("Internal quota service error.");
   });
 });
-
-// ---------------------------------------------------------------------------
-// POST /api/polish — orchestration outcomes and settlement
-// ---------------------------------------------------------------------------
