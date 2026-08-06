@@ -11,9 +11,23 @@ pnpm --filter web dev
 pnpm --filter web build
 pnpm --filter web lint
 pnpm --filter web typecheck
+pnpm --filter web test:e2e
 ```
 
 `dev` and `build` run `sync:typst-assets` first. The sync script copies the root `style.typ` and the typst.ts WASM files into `web/public/typst/`, which is intentionally ignored because those files are generated from the workspace and installed packages.
+
+### Local server-mode browser E2E
+
+The Chromium workflow exercises the real Next server build on the fixed loopback port `4173`. It creates and edits a local CV, verifies reload recovery, moves a section with keyboard drag-and-drop without changing the selected editor tab, switches locale, and validates the downloaded JSON schema. It runs with fake polish flags and empty Supabase/DeepSeek variables; it does not require or use `web/.env.local`, hosted credentials, or `/api/polish` requests.
+
+Install the pinned browser once, then run the journey from the repository root:
+
+```powershell
+pnpm --filter web test:e2e:install
+pnpm --filter web test:e2e
+```
+
+On CI, failures retain Playwright traces, screenshots, videos, and the HTML report as the `web-e2e-artifacts` workflow artifact.
 
 ## AI polish local smoke & metrics
 

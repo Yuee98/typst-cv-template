@@ -14,9 +14,8 @@ import {
   SortableContext,
   horizontalListSortingStrategy,
   sortableKeyboardCoordinates,
-  useSortable,
 } from "@dnd-kit/sortable";
-import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
 import { useTranslations } from "next-intl";
 
@@ -28,29 +27,15 @@ import {
   type CvData,
   type CvSectionId,
 } from "@/lib/cv/schema";
-import { cn } from "@/lib/utils";
 
+import { buildSectionTabs, type SectionTab } from "./section-content";
+import { reorderSectionOrder, writeSectionOrder } from "./section-order";
+import { SortableSectionTab } from "./sortable-section-tab";
 import { HeaderEditor } from "./header-editor";
-import { SectionHeader, SelfNameField } from "./section-header";
-import { TextItemsEditor } from "./text-items-editor";
-import { SkillItemsEditor } from "./skill-items-editor";
-import { ExperienceEditor } from "./experience-editor";
-import { ResumeEntriesEditor } from "./education-editor";
-import { OneLineEntriesEditor } from "./research-editor";
-import { PublicationsEditor } from "./publications-editor";
 import { FontSettingsEditor } from "./settings-editor";
-import { PolishEntryButton } from "../polish/polish-entry-button";
 import { isAiPolishUiEnabled } from "../polish/polish-entry";
 
 type EditorTabId = "header" | "settings" | CvSectionId;
-
-type SectionTab = {
-  id: CvSectionId;
-  label: string;
-  content: ReactNode;
-};
-
-const tabNavigationKeysDuringDrag = new Set(["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
 
 export function CvEditor({ actions }: { actions?: ReactNode }) {
   const t = useTranslations("Editors");
@@ -58,135 +43,7 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
   // omitted (not a truthy element that renders null), so SectionHeader keeps
   // its original column structure and no empty action slot appears.
   const polishUiEnabled = isAiPolishUiEnabled();
-  const sectionTabs: SectionTab[] = [
-    {
-      id: "profile",
-      label: t("tabs.profile"),
-      content: (
-        <div className="space-y-4">
-          <SectionHeader
-            name="profile"
-            actions={
-              polishUiEnabled ? (
-                // The whole profile is its "entry" granularity (capability
-                // matrix: profile's entry level == its section level).
-                <PolishEntryButton scope={{ sectionId: "profile", granularity: "entry" }} />
-              ) : undefined
-            }
-          />
-          <TextItemsEditor name="profile" addLabel={t("TextItems.add")} polish={{ sectionId: "profile" }} />
-        </div>
-      ),
-    },
-    {
-      id: "skills",
-      label: t("tabs.skills"),
-      content: (
-        <div className="space-y-4">
-          <SectionHeader
-            name="skills"
-            actions={
-              polishUiEnabled ? (
-                <PolishEntryButton scope={{ sectionId: "skills", granularity: "section" }} />
-              ) : undefined
-            }
-          />
-          <SkillItemsEditor name="skills" addLabel={t("Skills.add")} polish={{ sectionId: "skills" }} />
-        </div>
-      ),
-    },
-    {
-      id: "experience",
-      label: t("tabs.experience"),
-      content: (
-        <div className="space-y-4">
-          <SectionHeader
-            name="experience"
-            actions={
-              polishUiEnabled ? (
-                <PolishEntryButton scope={{ sectionId: "experience", granularity: "section" }} />
-              ) : undefined
-            }
-          />
-          <ExperienceEditor />
-        </div>
-      ),
-    },
-    {
-      id: "education",
-      label: t("tabs.education"),
-      content: (
-        <div className="space-y-4">
-          <SectionHeader
-            name="education"
-            actions={
-              polishUiEnabled ? (
-                <PolishEntryButton scope={{ sectionId: "education", granularity: "section" }} />
-              ) : undefined
-            }
-          />
-          <ResumeEntriesEditor
-            name="education"
-            addLabel={t("Education.add")}
-            polishSectionId="education"
-          />
-        </div>
-      ),
-    },
-    {
-      id: "research",
-      label: t("tabs.research"),
-      content: (
-        <div className="space-y-4">
-          <SectionHeader
-            name="research"
-            actions={
-              polishUiEnabled ? (
-                <PolishEntryButton scope={{ sectionId: "research", granularity: "section" }} />
-              ) : undefined
-            }
-          />
-          <OneLineEntriesEditor
-            name="research"
-            addLabel={t("Research.add")}
-            polishSectionId="research"
-          />
-        </div>
-      ),
-    },
-    {
-      id: "publications",
-      label: t("tabs.publications"),
-      content: (
-        <div className="space-y-4">
-          <SectionHeader name="publications" />
-          <SelfNameField />
-          <PublicationsEditor name="publications" />
-        </div>
-      ),
-    },
-    {
-      id: "additional",
-      label: t("tabs.additional"),
-      content: (
-        <div className="space-y-4">
-          <SectionHeader
-            name="additional"
-            actions={
-              polishUiEnabled ? (
-                <PolishEntryButton scope={{ sectionId: "additional", granularity: "section" }} />
-              ) : undefined
-            }
-          />
-          <SkillItemsEditor
-            name="additional"
-            addLabel={t("Additional.add")}
-            polish={{ sectionId: "additional" }}
-          />
-        </div>
-      ),
-    },
-  ];
+  const sectionTabs = buildSectionTabs(t, polishUiEnabled);
   const sectionTabById = new Map(sectionTabs.map((tab) => [tab.id, tab]));
 
   const { control, setValue } = useFormContext<CvData>();
@@ -211,19 +68,11 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
     }),
   );
 
-  function moveSectionTab(fromIndex: number, toIndex: number) {
-    const nextOrder = [...sectionOrder];
-    const [moved] = nextOrder.splice(fromIndex, 1);
-    if (!moved) {
-      return;
-    }
+  function moveSectionTab(activeId: string, overId: string) {
+    const nextOrder = reorderSectionOrder(sectionOrder, activeId, overId);
+    if (!nextOrder) return;
 
-    nextOrder.splice(toIndex, 0, moved);
-    setValue("sectionOrder", nextOrder, {
-      shouldDirty: true,
-      shouldTouch: true,
-      shouldValidate: true,
-    });
+    writeSectionOrder(setValue, nextOrder);
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -241,13 +90,7 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
       return;
     }
 
-    const fromIndex = sectionOrder.indexOf(String(active.id) as CvSectionId);
-    const toIndex = sectionOrder.indexOf(String(over.id) as CvSectionId);
-    if (fromIndex === -1 || toIndex === -1) {
-      return;
-    }
-
-    moveSectionTab(fromIndex, toIndex);
+    moveSectionTab(String(active.id), String(over.id));
   }
 
   function handleDragCancel() {
@@ -298,69 +141,5 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
         </div>
       </Tabs>
     </Panel>
-  );
-}
-
-function SortableSectionTab({
-  id,
-  label,
-  keyboardDragActive,
-}: {
-  id: CvSectionId;
-  label: string;
-  keyboardDragActive: boolean;
-}) {
-  const t = useTranslations("Editors");
-  const {
-    attributes,
-    isDragging,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    transform,
-    transition,
-  } = useSortable({ id });
-  const { onKeyDown, ...dragListeners } = listeners ?? {};
-  const setRefs = useCallback(
-    (node: HTMLButtonElement | null) => {
-      setNodeRef(node);
-      setActivatorNodeRef(node);
-    },
-    [setActivatorNodeRef, setNodeRef],
-  );
-  const dragAttributes = {
-    "aria-describedby": attributes["aria-describedby"],
-    "aria-roledescription": attributes["aria-roledescription"],
-  };
-  const style: CSSProperties = {
-    transform: transform ? `translate3d(${transform.x}px, 0, 0)` : undefined,
-    transition,
-    zIndex: isDragging ? 20 : undefined,
-  };
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLButtonElement>) => {
-      onKeyDown?.(event);
-
-      if (keyboardDragActive && tabNavigationKeysDuringDrag.has(event.key)) {
-        event.preventDefault();
-      }
-    },
-    [keyboardDragActive, onKeyDown],
-  );
-
-  return (
-    <TabsTrigger
-      ref={setRefs}
-      value={id}
-      style={style}
-      className={cn("touch-none cursor-grab active:cursor-grabbing", isDragging && "opacity-70")}
-      title={t("dragTitle")}
-      {...dragAttributes}
-      aria-label={t("aria.dragSection", { label })}
-      {...dragListeners}
-      onKeyDown={handleKeyDown}
-    >
-      {label}
-    </TabsTrigger>
   );
 }
