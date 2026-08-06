@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const port = process.env.E2E_PORT?.trim() || "4173";
+const port = "4173";
 
 const env = {
   ...process.env,
