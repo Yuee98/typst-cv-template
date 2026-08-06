@@ -70,11 +70,19 @@ test.describe("local server-mode CV workflow", () => {
     // without changing the persisted section order.
     const profileTab = page.getByRole("tab", { name: "Profile. Drag to reorder section." });
     const skillsTab = page.getByRole("tab", { name: "Skills. Drag to reorder section." });
+    const sortableTabOrder = page.locator('button[role="tab"][aria-label]');
+    const sortableTabLabelsBeforeNavigation = await sortableTabOrder.evaluateAll((tabs) =>
+      tabs.map((tab) => tab.getAttribute("aria-label")),
+    );
+    expect(sortableTabLabelsBeforeNavigation.length).toBeGreaterThan(1);
     await page.getByRole("tab", { name: "Header", exact: true }).click();
     await profileTab.focus();
     await expect(profileTab).toBeFocused();
     await profileTab.press("ArrowRight");
     await expect(skillsTab).toHaveAttribute("data-state", "active");
+    expect(await sortableTabOrder.evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label")))).toEqual(
+      sortableTabLabelsBeforeNavigation,
+    );
     await expect.poll(readStoredSectionOrder, { timeout: 60_000 }).toEqual(initialSectionOrder);
 
     // DnD-Kit's KeyboardSensor uses Space to start/end and ArrowRight to move
