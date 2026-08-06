@@ -102,6 +102,7 @@ import {
 } from "./polish-client";
 import {
   assessPreviewTransition,
+  hasIdentityStaleTransition,
 } from "./polish-flow-preview";
 import {
   runPolishRequest,
@@ -916,12 +917,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       // - no-write transitions (pending ↔ rejected): reducer transition
       //   only, no barrier — they never touch the editor.
       if (assessment.needsIdentityGuard) {
-        if (
-          assessment.documentStale ||
-          assessment.languageDrifted ||
-          assessment.referencesDrifted ||
-          assessment.fieldDrifted
-        ) {
+        if (hasIdentityStaleTransition(assessment)) {
           // Block the transition, flag the item, surface the rerun hint.
           setStaleItemIds((previous) => new Set(previous).add(id));
           if (assessment.referencesDrifted) setReferencesStale(true);

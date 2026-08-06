@@ -80,5 +80,3 @@ export function hasIdentityStaleTransition(assessment: PreviewTransitionAssessme
       assessment.fieldDrifted)
   );
 }
-
-export { checkWriteBack, isSnapshotStale, planWriteBack };
