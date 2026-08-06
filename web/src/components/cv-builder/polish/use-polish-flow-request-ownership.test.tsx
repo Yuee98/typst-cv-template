@@ -446,5 +446,3 @@ describe("round 4: commit-synchronous unmount invalidation", () => {
     expect(h.quotaCalls).toHaveLength(1);
   });
 });
-
-

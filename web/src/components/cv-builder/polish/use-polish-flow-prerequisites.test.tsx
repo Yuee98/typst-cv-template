@@ -307,4 +307,3 @@ describe("round 2: quota/terms generation and account ownership", () => {
     expect(h.flow().terms.status).toBe("accepted");
   });
 });
-
