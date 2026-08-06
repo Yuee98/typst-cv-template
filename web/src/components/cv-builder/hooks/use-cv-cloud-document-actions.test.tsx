@@ -187,6 +187,10 @@ describe("useCvCloudDocumentActions save gates", () => {
     expect(h.saveCurrentDocument).toHaveBeenCalledWith({ silent: true });
     expect(h.createEncryptedCloudDocument).not.toHaveBeenCalled();
     expect(h.setOrderedDocuments).not.toHaveBeenCalled();
+    // The current enable path returns early from enableEncryption, then the
+    // outer submit handler closes the modal. This is characterized rather
+    // than normalized because unlock/duplicate have different error paths.
+    expect(h.closeEncryptionModal).toHaveBeenCalledTimes(1);
   });
 
   it("does not mutate a target when terms are not accepted", async () => {
@@ -238,6 +242,23 @@ describe("handleEncryptionSubmit path-specific modal behavior", () => {
       passphraseOverride: "test-password",
     });
     expect(h.closeEncryptionModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an unlock access error and keeps the modal open", async () => {
+    const h = renderCloudActions();
+
+    let result: unknown;
+    await act(async () => {
+      result = await h.result.current.handleEncryptionSubmit({
+        mode: "unlock",
+        documentId: "active",
+        password: "test-password",
+        trustDevice: false,
+      });
+    });
+
+    expect(result).toEqual({ error: expect.any(String) });
+    expect(h.closeEncryptionModal).not.toHaveBeenCalled();
   });
 
   it("keeps injected source data and action state untouched when encryption is deferred", async () => {

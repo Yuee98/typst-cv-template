@@ -62,7 +62,6 @@ function renderActions({
   };
   const saveCurrentDocument = vi.fn().mockResolvedValue(true);
   const handleStorageDeferredError = vi.fn().mockReturnValue(false);
-  const openUnlockModal = vi.fn();
   const loadDataIntoForm = vi.fn();
   const loadDraft = vi.fn().mockReturnValue(null);
   const onError = vi.fn();
@@ -107,7 +106,6 @@ function renderActions({
   return {
     adapters,
     handleStorageDeferredError,
-    openUnlockModal,
     loadDataIntoForm,
     onError,
     replaceLocalDocumentSummary,
@@ -203,20 +201,13 @@ describe("useCvDocumentActions deferred storage failures", () => {
     const target = summary("target", "encrypted");
     const h = renderActions({ activeDocument: active, documents: [active, target] });
     h.adapters.encrypted.load.mockRejectedValueOnce(new MissingPassphraseError(target.id, "en"));
-    h.handleStorageDeferredError.mockImplementationOnce((error: unknown) => {
-      if (error instanceof MissingPassphraseError) {
-        h.openUnlockModal("unlock", error.documentId);
-        return true;
-      }
-      return false;
-    });
+    h.handleStorageDeferredError.mockReturnValueOnce(true);
 
     await act(async () => {
       await h.result.current.actions.selectDocument(target.id);
     });
 
     expect(h.handleStorageDeferredError).toHaveBeenCalledWith(expect.any(MissingPassphraseError), "unlock");
-    expect(h.openUnlockModal).toHaveBeenCalledWith("unlock", target.id);
     expect(h.loadDataIntoForm).not.toHaveBeenCalled();
     expect(h.upsertDocumentSummary).not.toHaveBeenCalled();
     expect(h.setActiveDocumentId).not.toHaveBeenCalled();

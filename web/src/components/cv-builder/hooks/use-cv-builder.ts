@@ -18,6 +18,7 @@ import { useCvLibraryBootstrap } from "@/components/cv-builder/hooks/use-cv-libr
 import { useCvPersistence } from "@/components/cv-builder/hooks/use-cv-persistence";
 import { useCvPreview } from "@/components/cv-builder/hooks/use-cv-preview";
 import { useEncryptionModal } from "@/components/cv-builder/hooks/use-encryption-modal";
+import { handleCvStorageDeferredError } from "@/components/cv-builder/hooks/storage-deferred-error";
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import { parseImportedCvFile } from "@/components/cv-builder/hooks/import-cv";
 import type { Locale } from "@/i18n/routing";
@@ -35,8 +36,6 @@ import { getSampleCvData } from "@/lib/cv/sample-data";
 import {
   type CvCloudAccessAction,
   createCvStorageAdapters,
-  isMissingPassphraseError,
-  isTermsNotAcceptedError,
   TermsNotAcceptedError,
 } from "@/lib/cv/storage-adapters";
 import { saveActiveCvDocumentId } from "@/lib/cv/storage";
@@ -271,16 +270,7 @@ export function useCvBuilder() {
   }
 
   function handleStorageDeferredError(error: unknown, mode: "unlock" | "duplicate") {
-    if (isTermsNotAcceptedError(error)) {
-      return true;
-    }
-
-    if (isMissingPassphraseError(error)) {
-      encryptionModal.openModal(mode, error.documentId);
-      return true;
-    }
-
-    return false;
+    return handleCvStorageDeferredError(error, mode, encryptionModal.openModal);
   }
 
   // Single synchronous entry point for changing the active document: the ref
