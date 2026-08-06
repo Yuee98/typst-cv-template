@@ -157,3 +157,57 @@ jobs:
           # a Bearer token drives the full chain to a 200 success shape
           # (scripts/smoke-polish-api.mjs).
           node scripts/smoke-polish-api.mjs http://localhost:3100
+
+  web-e2e:
+    name: Web E2E (server/Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Keep the browser journey deterministic and credential-free. The
+      # launcher also applies these values so local runs cannot inherit hosted
+      # Supabase or DeepSeek credentials from a developer environment.
+      POLISH_FAKE_LLM: "true"
+      POLISH_FAKE_BACKEND: "true"
+      AI_POLISH_ENABLED: "true"
+      NEXT_PUBLIC_AI_POLISH_ENABLED: "false"
+      NEXT_PUBLIC_SUPABASE_URL: ""
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ""
+      SUPABASE_SERVICE_ROLE_KEY: ""
+      DEEPSEEK_API_KEY: ""
+      DEEPSEEK_BASE_URL: ""
+      AI_USER_ID_HMAC_SECRET: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Chromium
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: Run server-mode browser E2E
+        run: pnpm --filter web test:e2e
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-artifacts
+          path: |
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
