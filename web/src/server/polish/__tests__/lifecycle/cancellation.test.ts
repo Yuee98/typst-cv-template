@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { postRequest, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { postRequest, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("POST /api/polish — cancellation settlement", () => {
   it("cancel after provider call entry: charged, billability unknown without usage (取消照扣)", async () => {    const controller = new AbortController();

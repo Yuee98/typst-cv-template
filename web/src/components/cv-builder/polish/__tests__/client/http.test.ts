@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
-import { createPolishHttpClient, PolishApiError } from "./polish-client";
-import { CLIENT_REQUEST_ID, SUCCESS_BODY, fetchReturning, jsonResponse, makeRequest } from "./polish-client-test-fixtures";
+import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
+import { createPolishHttpClient, PolishApiError } from "../../polish-client";
+import { CLIENT_REQUEST_ID, SUCCESS_BODY, fetchReturning, jsonResponse, makeRequest } from "./fixtures";
 
 function httpClient(fetchImpl: typeof fetch, overrides = {}) {
   return createPolishHttpClient({

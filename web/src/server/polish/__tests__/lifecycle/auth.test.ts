@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "./lifecycle";
-import { postRequest, echoSuccess, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "../../lifecycle";
+import { postRequest, echoSuccess, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("POST /api/polish — deployment switch and auth", () => {
   it("503 AI_DISABLED when the deployment switch is off, before any auth work", async () => {

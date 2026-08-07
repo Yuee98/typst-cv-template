@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validRequestBody, postRequest, DepMocks, makeDeps, handlersOf } from "./lifecycle-fixtures";
+import { validRequestBody, postRequest, DepMocks, makeDeps, handlersOf } from "./fixtures";
 
 describe("POST /api/polish — server-side level-role trimming (Invariant 3)", () => {
   const SIBLING = "SIBLING-SENTINEL-ALLOWED";

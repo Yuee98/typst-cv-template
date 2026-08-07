@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { PolishProviderError, type PolishProviderResult } from "./provider";
-import { PolishQuotaError } from "./quota";
-import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "./lifecycle";
-import { postRequest, usage, echoSuccess, rejectWith, resolveWith, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { PolishProviderError, type PolishProviderResult } from "../../provider";
+import { PolishQuotaError } from "../../quota";
+import { POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS } from "../../lifecycle";
+import { postRequest, usage, echoSuccess, rejectWith, resolveWith, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("POST /api/polish — terminal progress settlement (relay #3)", () => {
   const INVALID_WITH_USAGE: PolishProviderResult = {

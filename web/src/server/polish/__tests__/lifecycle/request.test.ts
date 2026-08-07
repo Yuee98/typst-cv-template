@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_BODY_BYTES } from "@/lib/polish/contract";
-import { VALID_ZH_TEXT, validRequestBody, postRequest, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { VALID_ZH_TEXT, validRequestBody, postRequest, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("POST /api/polish — bounded reader and request validation", () => {
   it("400 INVALID_REQUEST for a non-JSON content type", async () => {

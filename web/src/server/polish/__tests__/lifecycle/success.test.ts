@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { polishSuccessResponseSchema } from "@/lib/polish/contract";
-import { PolishProviderError } from "./provider";
-import { PolishQuotaError } from "./quota";
-import { USER_ID, REQUEST_ID, RESERVATION_ID, RESET_AT, RESET_AT_Z, VALID_ZH_TEXT, postRequest, echoSuccess, rejectWith, makeDeps, handlersOf, expectErrorShape } from "./lifecycle-fixtures";
+import { PolishProviderError } from "../../provider";
+import { PolishQuotaError } from "../../quota";
+import { USER_ID, REQUEST_ID, RESERVATION_ID, RESET_AT, RESET_AT_Z, VALID_ZH_TEXT, postRequest, echoSuccess, rejectWith, makeDeps, handlersOf, expectErrorShape } from "./fixtures";
 
 describe("POST /api/polish — success path", () => {
   it("200 success: response shape, headers, settlement, and structured log", async () => {

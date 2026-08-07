@@ -9,7 +9,7 @@ import {
   openAccepted,
   renderHarness,
   successResponse,
-} from "./use-polish-flow.test-harness";
+} from "./harness";
 
 afterEach(() => {
   cleanup();

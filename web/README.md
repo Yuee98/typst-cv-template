@@ -16,6 +16,10 @@ pnpm --filter web test:e2e
 
 `dev` and `build` run `sync:typst-assets` first. The sync script copies the root `style.typ` and the typst.ts WASM files into `web/public/typst/`, which is intentionally ignored because those files are generated from the workspace and installed packages.
 
+### Test layout
+
+Keep a one-to-one unit test next to its production module. When one feature needs multiple behavioral suites or shared test support, group those files under a feature-scoped `__tests__/<feature>/` directory; name support modules `fixtures` or `harness` without a `.test` suffix.
+
 ### Local server-mode browser E2E
 
 The Chromium workflow exercises the real Next server build on the fixed loopback port `4173`. It creates and edits a local CV, verifies reload recovery, moves a section with keyboard drag-and-drop without changing the selected editor tab, switches locale, and validates the downloaded JSON schema. It runs with fake polish flags and empty Supabase/DeepSeek variables; it does not require or use `web/.env.local`, hosted credentials, or `/api/polish` requests.

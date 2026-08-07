@@ -55,14 +55,14 @@ import type {
   PolishSuccessResponse,
 } from "@/lib/polish/contract";
 
-import { PolishApiError, type PolishApiClient } from "./polish-client";
-import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
-import type { PolishScope } from "./scope-builder";
+import { PolishApiError, type PolishApiClient } from "../../polish-client";
+import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
+import type { PolishScope } from "../../scope-builder";
 import {
   usePolishFlow,
   type PolishFlow,
   type PolishTermsGateway,
-} from "./use-polish-flow";
+} from "../../use-polish-flow";
 
 
 // ---------------------------------------------------------------------------
