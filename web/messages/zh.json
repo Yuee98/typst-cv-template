@@ -42,7 +42,9 @@
   "CvBuilder": {
     "discardChanges": "放弃更改",
     "save": "保存",
-    "emptyState": "选择或创建一份简历后开始编辑"
+    "emptyState": "创建一份简历，开始编辑并实时预览。",
+    "createEmpty": "创建空白简历",
+    "createSample": "从示例开始"
   },
   "ExportMenu": {
     "export": "导出",

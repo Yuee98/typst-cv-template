@@ -1,6 +1,6 @@
 "use client";
 
-import { Circle, FilePlus2, Loader2, RotateCcw, Save } from "lucide-react";
+import { Circle, FilePlus2, FileText, Loader2, RotateCcw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { FormProvider, useWatch } from "react-hook-form";
@@ -140,10 +140,24 @@ export function CvBuilder() {
                 }
               />
             ) : (
-              <div className="flex h-full min-h-[720px] items-center justify-center rounded-xl border border-border glass-panel shadow-sm">
-                <div className="flex flex-col items-center gap-3 text-foreground-subtle">
-                  <FilePlus2 className="size-10" />
-                  <p className="text-sm">{t("emptyState")}</p>
+              <div className="flex h-full min-h-0 items-center justify-center overflow-hidden rounded-xl border border-border glass-panel shadow-sm">
+                <div className="flex max-w-sm flex-col items-center gap-4 px-6 text-center">
+                  <FilePlus2 className="size-10 text-foreground-subtle" />
+                  <p className="text-sm text-foreground-muted">{t("emptyState")}</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button type="button" onClick={() => void h.createEmptyDocument()}>
+                      <FilePlus2 />
+                      {t("createEmpty")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => void h.createSampleDocument()}
+                    >
+                      <FileText />
+                      {t("createSample")}
+                    </Button>
+                  </div>
                 </div>
               </div>
             )

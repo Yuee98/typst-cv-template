@@ -42,7 +42,9 @@
   "CvBuilder": {
     "discardChanges": "Discard changes",
     "save": "Save",
-    "emptyState": "Select or create a CV to start editing"
+    "emptyState": "Create a CV to start editing with a live preview.",
+    "createEmpty": "Create blank CV",
+    "createSample": "Start from sample"
   },
   "ExportMenu": {
     "export": "Export",
