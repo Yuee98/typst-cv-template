@@ -35,7 +35,7 @@ type AuthActionsModal = {
 
 type AuthActionsTermsGate = {
   clearPendingAcceptance: () => void;
-  markPendingAcceptance: (pending: PendingTermsAcceptance) => void;
+  markPendingAcceptance: (pending: PendingTermsAcceptance) => Promise<void>;
   recordAccepted: (client: SupabaseClient, acceptedUserId?: string) => Promise<void>;
 };
 
@@ -135,7 +135,7 @@ export function useCvAuthActions({
 
     if (!data.session) {
       if (data.user?.id) {
-        termsGate.markPendingAcceptance({ userId: data.user.id });
+        await termsGate.markPendingAcceptance({ userId: data.user.id });
       } else {
         termsGate.clearPendingAcceptance();
       }
@@ -167,7 +167,7 @@ export function useCvAuthActions({
       }
 
       termsAcceptanceFlowId = createTermsAcceptanceFlowId();
-      termsGate.markPendingAcceptance({ oauthFlowId: termsAcceptanceFlowId });
+      await termsGate.markPendingAcceptance({ oauthFlowId: termsAcceptanceFlowId });
     } else {
       termsGate.clearPendingAcceptance();
     }

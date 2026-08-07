@@ -93,7 +93,7 @@ export function useTermsGate({
         return false;
       }
 
-      if (!accepted && consumePendingTermsAcceptance(ownerId)) {
+      if (!accepted && await consumePendingTermsAcceptance(ownerId)) {
         await acceptCurrentTerms(client);
         if (!ownsOperation(ownerId, operation)) {
           return false;

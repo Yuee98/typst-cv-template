@@ -113,9 +113,10 @@ describe("useTermsGate direct behavior", () => {
     vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
     const h = renderTerms();
 
-    act(() => {
-      h.result.current.markPendingAcceptance({ userId: "user-a" });
+    await act(async () => {
+      await h.result.current.markPendingAcceptance({ userId: "user-a" });
     });
+    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).not.toContain("user-a");
     await act(async () => {
       await h.result.current.refresh(fakeSupabase, { showModal: false });
     });
@@ -187,8 +188,8 @@ describe("useTermsGate direct behavior", () => {
     vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
     const h = renderTerms();
 
-    act(() => {
-      h.result.current.markPendingAcceptance({ userId: "user-a" });
+    await act(async () => {
+      await h.result.current.markPendingAcceptance({ userId: "user-a" });
     });
     h.rerender({ currentUserId: "user-b" });
     await act(async () => {
@@ -204,9 +205,12 @@ describe("useTermsGate direct behavior", () => {
     vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
     const h = renderTerms();
 
-    act(() => {
-      h.result.current.markPendingAcceptance({ oauthFlowId: "signup-flow-a" });
+    await act(async () => {
+      await h.result.current.markPendingAcceptance({ oauthFlowId: "signup-flow-a" });
     });
+    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).not.toContain(
+      "signup-flow-a",
+    );
     window.history.replaceState({}, "", "/en?terms_acceptance_flow=signin-flow-b");
     await act(async () => {
       await h.result.current.refresh(fakeSupabase, { showModal: false });

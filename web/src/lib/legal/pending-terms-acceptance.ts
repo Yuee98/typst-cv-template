@@ -9,19 +9,24 @@ export type PendingTermsAcceptance =
   | { userId: string };
 
 type StoredPendingTermsAcceptance =
-  | { kind: "oauth"; oauthFlowId: string; version: string }
-  | { kind: "password"; userId: string; version: string };
+  | { kind: "oauth"; oauthFlowHash: string; version: string }
+  | { kind: "password"; userIdHash: string; version: string };
+
+async function sha256(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 export function createTermsAcceptanceFlowId() {
   return crypto.randomUUID();
 }
 
-export function markPendingTermsAcceptance(pending: PendingTermsAcceptance) {
+export async function markPendingTermsAcceptance(pending: PendingTermsAcceptance) {
   if (typeof window === "undefined") return;
 
   const stored: StoredPendingTermsAcceptance = "userId" in pending
-    ? { kind: "password", userId: pending.userId, version: TERMS_VERSION }
-    : { kind: "oauth", oauthFlowId: pending.oauthFlowId, version: TERMS_VERSION };
+    ? { kind: "password", userIdHash: await sha256(pending.userId), version: TERMS_VERSION }
+    : { kind: "oauth", oauthFlowHash: await sha256(pending.oauthFlowId), version: TERMS_VERSION };
   window.sessionStorage.setItem(PENDING_TERMS_ACCEPTANCE_KEY, JSON.stringify(stored));
 }
 
@@ -31,7 +36,7 @@ export function clearPendingTermsAcceptance() {
   window.sessionStorage.removeItem(PENDING_TERMS_ACCEPTANCE_KEY);
 }
 
-export function consumePendingTermsAcceptance(userId: string) {
+export async function consumePendingTermsAcceptance(userId: string) {
   if (typeof window === "undefined") {
     return false;
   }
@@ -54,9 +59,10 @@ export function consumePendingTermsAcceptance(userId: string) {
     return false;
   }
 
+  const oauthFlowId = new URLSearchParams(window.location.search).get(TERMS_ACCEPTANCE_FLOW_PARAM);
   const matches = pending.kind === "password"
-    ? pending.userId === userId
-    : new URLSearchParams(window.location.search).get(TERMS_ACCEPTANCE_FLOW_PARAM) === pending.oauthFlowId;
+    ? pending.userIdHash === await sha256(userId)
+    : Boolean(oauthFlowId && pending.oauthFlowHash === await sha256(oauthFlowId));
   if (!matches) {
     return false;
   }
