@@ -147,6 +147,27 @@ test.describe("local server-mode CV workflow", () => {
     expect(exported.sectionOrder?.slice(0, 2)).toEqual(["skills", "profile"]);
     expect(exported.header?.name).toBe("E2E Candidate");
 
+    const packageDownloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export" }).click();
+    await page.getByRole("menuitem", { name: "Typst package", exact: true }).click();
+    const packageDownload = await packageDownloadPromise;
+    const packagePath = await packageDownload.path();
+    expect(packagePath).not.toBeNull();
+    const packageBytes = await readFile(packagePath!);
+    expect(packageBytes.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    expect(packageBytes.includes(Buffer.from("resume.typ"))).toBe(true);
+    expect(packageBytes.includes(Buffer.from("style.typ"))).toBe(true);
+    expect(packageBytes.includes(Buffer.from("data.json"))).toBe(true);
+
+    const pdfDownloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export" }).click();
+    await page.getByRole("menuitem", { name: "PDF", exact: true }).click();
+    const pdfDownload = await pdfDownloadPromise;
+    const pdfPath = await pdfDownload.path();
+    expect(pdfPath).not.toBeNull();
+    const pdfBytes = await readFile(pdfPath!);
+    expect(pdfBytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+
     expect(polishRequests).toEqual([]);
   });
 });
