@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { NextIntlClientProvider, useTranslations } from "next-intl";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +17,7 @@ vi.mock("@/lib/legal/terms-acceptance", () => ({
 
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 beforeEach(() => {
@@ -216,6 +216,54 @@ describe("useTermsGate direct behavior", () => {
       await h.result.current.refresh(fakeSupabase, { showModal: false });
     });
 
+    expect(h.result.current.status).toBe("required");
+    expect(acceptCurrentTerms).not.toHaveBeenCalled();
+  });
+
+  it("clears a matching OAuth intent when the callback account already accepted", async () => {
+    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(true);
+    const h = renderTerms();
+    window.history.replaceState({}, "", "/en?terms_acceptance_flow=signup-flow-a");
+    await act(async () => {
+      await h.result.current.markPendingAcceptance({ oauthFlowId: "signup-flow-a" });
+      await h.result.current.refresh(fakeSupabase, { showModal: false });
+    });
+
+    expect(h.result.current.status).toBe("accepted");
+    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).toBeNull();
+    expect(acceptCurrentTerms).not.toHaveBeenCalled();
+  });
+
+  it("lets the first callback account claim OAuth intent before its terms query settles", async () => {
+    let resolveAccountA!: (accepted: boolean) => void;
+    vi.mocked(hasAcceptedCurrentTerms)
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveAccountA = resolve;
+      }))
+      .mockResolvedValueOnce(false);
+    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
+    const h = renderTerms();
+    window.history.replaceState({}, "", "/en?terms_acceptance_flow=shared-flow");
+    await act(async () => {
+      await h.result.current.markPendingAcceptance({ oauthFlowId: "shared-flow" });
+    });
+    let accountARefresh!: Promise<boolean>;
+    act(() => {
+      accountARefresh = h.result.current.refresh(fakeSupabase, { showModal: false });
+    });
+    await waitFor(() => expect(hasAcceptedCurrentTerms).toHaveBeenCalledTimes(1));
+    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).toBeNull();
+
+    h.rerender({ currentUserId: "user-b" });
+    await act(async () => {
+      await h.result.current.refresh(fakeSupabase, { showModal: false });
+    });
+    expect(h.result.current.status).toBe("required");
+
+    await act(async () => {
+      resolveAccountA(false);
+      await accountARefresh;
+    });
     expect(h.result.current.status).toBe("required");
     expect(acceptCurrentTerms).not.toHaveBeenCalled();
   });

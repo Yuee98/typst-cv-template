@@ -6,7 +6,7 @@ import { errorMessage } from "@/lib/cv/cv-utils";
 import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
 import {
   clearPendingTermsAcceptance,
-  consumePendingTermsAcceptance,
+  claimPendingTermsAcceptance,
   markPendingTermsAcceptance,
   type PendingTermsAcceptance,
 } from "@/lib/legal/pending-terms-acceptance";
@@ -88,12 +88,17 @@ export function useTermsGate({
     const operation = beginOperation();
 
     try {
+      const hasPendingAcceptance = await claimPendingTermsAcceptance(ownerId);
+      if (!ownsOperation(ownerId, operation)) {
+        return false;
+      }
+
       let accepted = await hasAcceptedCurrentTerms(client);
       if (!ownsOperation(ownerId, operation)) {
         return false;
       }
 
-      if (!accepted && await consumePendingTermsAcceptance(ownerId)) {
+      if (!accepted && hasPendingAcceptance) {
         await acceptCurrentTerms(client);
         if (!ownsOperation(ownerId, operation)) {
           return false;

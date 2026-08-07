@@ -60,12 +60,21 @@ export function useCvCloudSync({
   const syncOwnerRef = useRef(sessionUserId);
   const syncGenerationRef = useRef(0);
   const cloudOperationRef = useRef(0);
+  const accountResetGenerationRef = useRef(-1);
   useLayoutEffect(() => {
     if (syncOwnerRef.current !== sessionUserId) {
       syncOwnerRef.current = sessionUserId;
       syncGenerationRef.current += 1;
       cloudOperationRef.current += 1;
+      removeCloudSummaries();
+      termsGate.reset();
+      setTermsAccepted(false);
+      setCloudStatus("idle");
+      accountResetGenerationRef.current = syncGenerationRef.current;
     }
+    // Account-owned UI must be cleared before paint; these callbacks are
+    // stable within a builder session and owner changes are the only trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionUserId]);
 
   function ownsSync(generation: number, ownerId: string | null) {
@@ -193,18 +202,18 @@ export function useCvCloudSync({
     const ownerId = sessionUserId;
     const operation = beginCloudOperation();
 
-    if (!ownerId) {
+    if (accountResetGenerationRef.current !== generation) {
       removeCloudSummaries();
       termsGate.reset();
       setTermsAccepted(false);
       setCloudStatus("idle");
+      accountResetGenerationRef.current = generation;
+    }
+
+    if (!ownerId) {
       return;
     }
 
-    removeCloudSummaries();
-    termsGate.reset();
-    setTermsAccepted(false);
-    setCloudStatus("idle");
     setTrustDevice(loadTrustDevice(ownerId));
     void (async () => {
       const accepted = await termsGate.refresh(client);

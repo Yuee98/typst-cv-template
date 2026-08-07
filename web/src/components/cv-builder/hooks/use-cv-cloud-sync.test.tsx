@@ -2,6 +2,7 @@
 
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useCvCloudActiveDocumentQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
@@ -85,9 +86,10 @@ function renderCloudSync({
     status: "accepted" as const,
   };
   const upsertDocumentSummary = vi.fn();
+  const layoutBoundaryObservations: number[] = [];
 
-  const hook = renderHook(({ currentSession }: { currentSession: Session | null }) =>
-    useCvCloudSync({
+  const hook = renderHook(({ currentSession }: { currentSession: Session | null }) => {
+    const cloudSync = useCvCloudSync({
       locale: "en",
       activeDocumentId,
       clearDraft,
@@ -106,7 +108,12 @@ function renderCloudSync({
       supabase: supabaseValue,
       termsGate,
       upsertDocumentSummary,
-    }),
+    });
+    useLayoutEffect(() => {
+      layoutBoundaryObservations.push(removeCloudSummaries.mock.calls.length);
+    }, [currentSession]);
+    return cloudSync;
+  },
     { initialProps: { currentSession: sessionValue } },
   );
 
@@ -115,6 +122,7 @@ function renderCloudSync({
     hook,
     loadDataIntoForm,
     loadDraft,
+    layoutBoundaryObservations,
     onError,
     refetchDocuments,
     rerenderSession(currentSession: Session | null) {
@@ -178,11 +186,13 @@ describe("useCvCloudSync session boundaries", () => {
     const h = renderCloudSync({ termsRefresh: false });
     await waitFor(() => expect(h.termsGate.refresh).toHaveBeenCalledTimes(1));
     h.removeCloudSummaries.mockClear();
+    h.layoutBoundaryObservations.length = 0;
     h.termsGate.reset.mockClear();
     h.setCloudStatus.mockClear();
 
     h.rerenderSession(sessionB);
 
+    expect(h.layoutBoundaryObservations[0]).toBe(1);
     expect(h.removeCloudSummaries).toHaveBeenCalled();
     expect(h.termsGate.reset).toHaveBeenCalledTimes(1);
     expect(h.setTermsAccepted).toHaveBeenLastCalledWith(false);

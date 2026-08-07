@@ -36,7 +36,9 @@ export function clearPendingTermsAcceptance() {
   window.sessionStorage.removeItem(PENDING_TERMS_ACCEPTANCE_KEY);
 }
 
-export async function consumePendingTermsAcceptance(userId: string) {
+let claimQueue: Promise<void> = Promise.resolve();
+
+async function claimPendingTermsAcceptanceNow(userId: string) {
   if (typeof window === "undefined") {
     return false;
   }
@@ -69,4 +71,10 @@ export async function consumePendingTermsAcceptance(userId: string) {
 
   clearPendingTermsAcceptance();
   return true;
+}
+
+export function claimPendingTermsAcceptance(userId: string) {
+  const claim = claimQueue.then(() => claimPendingTermsAcceptanceNow(userId));
+  claimQueue = claim.then(() => undefined, () => undefined);
+  return claim;
 }
