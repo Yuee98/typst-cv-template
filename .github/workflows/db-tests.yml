@@ -13,7 +13,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/db-tests.yml"
+      - "supabase/config.toml"
       - "supabase/migrations/**"
+      - "supabase/seed.sql"
       - "web/scripts/run-db-tests.mjs"
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/terms-acceptance.ts"

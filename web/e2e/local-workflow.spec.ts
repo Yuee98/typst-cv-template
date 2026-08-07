@@ -166,7 +166,11 @@ test.describe("local server-mode CV workflow", () => {
     const pdfPath = await pdfDownload.path();
     expect(pdfPath).not.toBeNull();
     const pdfBytes = await readFile(pdfPath!);
-    expect(pdfBytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(pdfBytes.byteLength).toBeGreaterThan(1_000);
+    const pdfText = pdfBytes.toString("latin1");
+    expect(pdfText.startsWith("%PDF-")).toBe(true);
+    expect(pdfText).toContain("startxref");
+    expect(pdfBytes.subarray(-2_048).toString("latin1")).toContain("%%EOF");
 
     expect(polishRequests).toEqual([]);
   });
