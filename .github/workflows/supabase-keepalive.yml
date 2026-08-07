@@ -1,0 +1,141 @@
+name: Keep Supabase active
+
+on:
+  schedule:
+    # GitHub cron uses UTC. Monday/Thursday 02:17 UTC = 10:17 Asia/Shanghai.
+    - cron: "17 2 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    name: Query ${{ matrix.target }} database
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - production
+          - preview
+
+    steps:
+      - name: Select project configuration
+        env:
+          TARGET: ${{ matrix.target }}
+          PRODUCTION_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          PRODUCTION_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          PREVIEW_SUPABASE_URL: ${{ vars.PREVIEW_SUPABASE_URL }}
+          PREVIEW_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PREVIEW_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+
+          production_url="${PRODUCTION_SUPABASE_URL%/}"
+          preview_url="${PREVIEW_SUPABASE_URL%/}"
+
+          if [ -n "${production_url}" ] &&
+             [ -n "${preview_url}" ] &&
+             [ "${production_url,,}" = "${preview_url,,}" ]; then
+            echo "::error::Production and Preview Supabase URLs point to the same configured endpoint."
+            exit 1
+          fi
+
+          case "${TARGET}" in
+            production)
+              supabase_url="${production_url}"
+              publishable_key="${PRODUCTION_SUPABASE_PUBLISHABLE_KEY}"
+              url_variable="NEXT_PUBLIC_SUPABASE_URL"
+              key_variable="NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
+              ;;
+            preview)
+              supabase_url="${preview_url}"
+              publishable_key="${PREVIEW_SUPABASE_PUBLISHABLE_KEY}"
+              url_variable="PREVIEW_SUPABASE_URL"
+              key_variable="PREVIEW_SUPABASE_PUBLISHABLE_KEY"
+              ;;
+            *)
+              echo "::error::Unknown Supabase target '${TARGET}'."
+              exit 1
+              ;;
+          esac
+
+          if [ -z "${supabase_url}" ]; then
+            echo "::error::Repository variable ${url_variable} is not configured."
+            exit 1
+          fi
+          if [ -z "${publishable_key}" ]; then
+            echo "::error::Repository variable ${key_variable} is not configured."
+            exit 1
+          fi
+          if [[ ! "${publishable_key}" =~ ^sb_publishable_[A-Za-z0-9_-]+$ ]]; then
+            case "${publishable_key}" in
+              sb_secret_*)
+                echo "::error::Repository variable ${key_variable} contains a Supabase secret key, not a publishable key."
+                ;;
+              eyJ*)
+                echo "::error::Repository variable ${key_variable} contains a legacy JWT key; configure a modern sb_publishable_ key."
+                ;;
+              *)
+                echo "::error::Repository variable ${key_variable} is not a recognized Supabase publishable key."
+                ;;
+            esac
+            exit 1
+          fi
+
+          echo "SUPABASE_URL=${supabase_url}" >> "${GITHUB_ENV}"
+          echo "SUPABASE_PUBLISHABLE_KEY=${publishable_key}" >> "${GITHUB_ENV}"
+
+      - name: Generate database activity
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+
+          endpoint="${SUPABASE_URL%/}/rest/v1/rpc/keep_project_active"
+
+          # Supabase looks for user database activity, so make a few small,
+          # read-only RPC calls rather than pinging an HTTP-only health route.
+          for request_number in 1 2 3; do
+            response_file="${RUNNER_TEMP}/supabase-keepalive-${request_number}.json"
+            http_status="$(
+              curl --silent --show-error \
+                --output "${response_file}" \
+                --write-out "%{http_code}" \
+                --request POST \
+                --header "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+                --header "Content-Type: application/json" \
+                --data '{}' \
+                --connect-timeout 8 \
+                --max-time 15 \
+                --retry 3 \
+                --retry-all-errors \
+                --retry-delay 5 \
+                --retry-max-time 60 \
+                "${endpoint}"
+            )"
+
+            if [ "${http_status}" -lt 200 ] || [ "${http_status}" -ge 300 ]; then
+              echo "::error::Supabase ${TARGET} keepalive request ${request_number} failed with HTTP ${http_status}."
+              cat "${response_file}"
+              exit 1
+            fi
+
+            if ! jq -e 'type == "string" and length > 0' "${response_file}" >/dev/null; then
+              echo "::error::Supabase ${TARGET} keepalive request ${request_number} returned an unexpected response."
+              cat "${response_file}"
+              exit 1
+            fi
+
+            echo "Supabase ${TARGET} database request ${request_number}/3 succeeded."
+          done
+
+          echo "### Supabase keepalive (${TARGET})" >> "${GITHUB_STEP_SUMMARY}"
+          echo >> "${GITHUB_STEP_SUMMARY}"
+          echo "Three read-only database requests completed successfully." >> "${GITHUB_STEP_SUMMARY}"
