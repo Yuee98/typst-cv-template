@@ -19,7 +19,7 @@ export function useCvCloudDocumentListQuery({
 }) {
   const userId = session?.user.id;
 
-  return useQuery<CvDocumentSummary[]>({
+  const query = useQuery<CvDocumentSummary[]>({
     enabled: Boolean(enabled && supabase && userId),
     queryKey: cvCloudDocumentListQueryKey(userId),
     queryFn: async () => {
@@ -30,4 +30,9 @@ export function useCvCloudDocumentListQuery({
       return listCloudCvDocuments(supabase);
     },
   });
+
+  return {
+    ...query,
+    refetch: () => query.refetch({ throwOnError: true }),
+  };
 }

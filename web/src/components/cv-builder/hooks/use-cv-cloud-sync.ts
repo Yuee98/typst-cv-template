@@ -1,5 +1,5 @@
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
-import { useEffect, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
 import { useCvCloudActiveDocumentQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
@@ -14,6 +14,7 @@ type CloudSyncTermsGate = {
   ensure: (client?: SupabaseClient | null) => Promise<boolean>;
   refresh: (client: SupabaseClient) => Promise<boolean>;
   reset: () => void;
+  status: "unknown" | "accepted" | "required";
 };
 
 export function useCvCloudSync({
@@ -55,23 +56,50 @@ export function useCvCloudSync({
   termsGate: CloudSyncTermsGate;
   upsertDocumentSummary: (summary: CvDocumentSummary) => void;
 }) {
+  const sessionUserId = session?.user.id ?? null;
+  const syncOwnerRef = useRef(sessionUserId);
+  const syncGenerationRef = useRef(0);
+  const cloudOperationRef = useRef(0);
+  const accountResetGenerationRef = useRef(-1);
+  useLayoutEffect(() => {
+    if (syncOwnerRef.current !== sessionUserId) {
+      syncOwnerRef.current = sessionUserId;
+      syncGenerationRef.current += 1;
+      cloudOperationRef.current += 1;
+      removeCloudSummaries();
+      termsGate.reset();
+      setTermsAccepted(false);
+      setCloudStatus("idle");
+      accountResetGenerationRef.current = syncGenerationRef.current;
+    }
+    // Account-owned UI must be cleared before paint; these callbacks are
+    // stable within a builder session and owner changes are the only trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUserId]);
+
+  function ownsSync(generation: number, ownerId: string | null) {
+    return syncGenerationRef.current === generation && syncOwnerRef.current === ownerId;
+  }
+
+  function beginCloudOperation() {
+    cloudOperationRef.current += 1;
+    return cloudOperationRef.current;
+  }
+
+  function ownsCloudOperation(generation: number, ownerId: string | null, operation: number) {
+    return ownsSync(generation, ownerId) && cloudOperationRef.current === operation;
+  }
+
   const { data: activeCloudDocument, error: activeDocumentError } = useCvCloudActiveDocumentQuery({
     activeDocumentId,
-    documentsData: documentsData ?? [],
+    documentsData: termsGate.status === "accepted" ? (documentsData ?? []) : [],
     locale,
     session,
     supabase,
   });
 
-  async function refreshCloudDocuments(
-    { skipTermsCheck = false }: { skipTermsCheck?: boolean } = {},
-  ) {
-    if (!supabase) {
-      return;
-    }
-
-    if (!skipTermsCheck && !(await termsGate.ensure(supabase))) {
-      setCloudStatus("idle");
+  async function refetchForOwner(generation: number, ownerId: string, operation: number) {
+    if (!ownsCloudOperation(generation, ownerId, operation)) {
       return;
     }
 
@@ -79,30 +107,65 @@ export function useCvCloudSync({
 
     try {
       await refetchDocuments();
+      if (!ownsCloudOperation(generation, ownerId, operation)) {
+        return;
+      }
       setCloudStatus("ready");
     } catch (cloudError) {
+      if (!ownsCloudOperation(generation, ownerId, operation)) {
+        return;
+      }
       setCloudStatus("error");
       onError(errorMessage(cloudError));
     }
+  }
+
+  async function refreshCloudDocuments(
+    { skipTermsCheck = false }: { skipTermsCheck?: boolean } = {},
+  ) {
+    const ownerId = sessionUserId;
+    const generation = syncGenerationRef.current;
+    const operation = beginCloudOperation();
+    if (!supabase || !ownerId) {
+      return;
+    }
+
+    if (!skipTermsCheck) {
+      const accepted = await termsGate.ensure(supabase);
+      if (!ownsCloudOperation(generation, ownerId, operation)) {
+        return;
+      }
+      if (!accepted) {
+        setCloudStatus("idle");
+        return;
+      }
+    }
+
+    await refetchForOwner(generation, ownerId, operation);
   }
 
   // Sync cloud summaries when list data changes.
   // documentsData is undefined before the first fetch; null check distinguishes
   // "not loaded yet" from "server returned empty list".
   useEffect(() => {
-    if (documentsData == null) {
+    if (documentsData == null || !sessionUserId || termsGate.status !== "accepted") {
       return;
     }
 
     replaceCloudSummaries(documentsData);
     // replaceCloudSummaries is stable within a session
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentsData]);
+  }, [documentsData, sessionUserId, termsGate.status]);
 
   // Load active cloud document into form when query data arrives.
   // Skipped when activeDocumentId already matches (selectDocument already loaded it).
   useEffect(() => {
-    if (!activeCloudDocument || activeCloudDocument.id === activeDocumentId) {
+    if (
+      termsGate.status !== "accepted" ||
+      !sessionUserId ||
+      !activeCloudDocument ||
+      activeCloudDocument.id === activeDocumentId
+    ) {
       return;
     }
 
@@ -119,14 +182,14 @@ export function useCvCloudSync({
     });
     // loadDataIntoForm, loadDraft, etc. are stable within a session
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCloudDocument, activeDocumentId]);
+  }, [activeCloudDocument, activeDocumentId, sessionUserId, termsGate.status]);
 
   // Surface active document query errors to the user.
   useEffect(() => {
-    if (activeDocumentError) {
+    if (activeDocumentError && sessionUserId && termsGate.status === "accepted") {
       onError(errorMessage(activeDocumentError));
     }
-  }, [activeDocumentError, onError]);
+  }, [activeDocumentError, onError, sessionUserId, termsGate.status]);
 
   useEffect(() => {
     if (!sessionInitialized || !supabase) {
@@ -135,24 +198,31 @@ export function useCvCloudSync({
 
     const client = supabase;
     let cancelled = false;
+    const generation = syncGenerationRef.current;
+    const ownerId = sessionUserId;
+    const operation = beginCloudOperation();
 
-    if (!session) {
+    if (accountResetGenerationRef.current !== generation) {
       removeCloudSummaries();
       termsGate.reset();
       setTermsAccepted(false);
       setCloudStatus("idle");
+      accountResetGenerationRef.current = generation;
+    }
+
+    if (!ownerId) {
       return;
     }
 
-    setTrustDevice(loadTrustDevice(session.user.id));
+    setTrustDevice(loadTrustDevice(ownerId));
     void (async () => {
       const accepted = await termsGate.refresh(client);
-      if (cancelled) {
+      if (cancelled || !ownsCloudOperation(generation, ownerId, operation)) {
         return;
       }
 
       if (accepted) {
-        await refreshCloudDocuments({ skipTermsCheck: true });
+        await refetchForOwner(generation, ownerId, operation);
       } else {
         removeCloudSummaries();
         setCloudStatus("idle");
@@ -164,7 +234,7 @@ export function useCvCloudSync({
     };
     // refreshCloudDocuments is intentionally not a dependency; this reacts only to auth session changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionInitialized, session, supabase]);
+  }, [sessionInitialized, sessionUserId, supabase]);
 
   return {
     refreshCloudDocuments,

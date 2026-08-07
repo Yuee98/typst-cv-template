@@ -121,7 +121,7 @@ export async function loadCloudCvDocument(
     .from("cv_documents")
     .select(cloudDocumentColumns)
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw error;
@@ -139,7 +139,7 @@ export async function loadEncryptedCloudCvDocument(
     .from("cv_documents")
     .select(cloudDocumentColumns)
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw error;

@@ -2,21 +2,13 @@
 
 import { useEffect } from "react";
 
-function preferredLocale() {
-  const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
-  const normalized = languages.map((language) => language.toLowerCase());
-
-  if (normalized.some((language) => language.startsWith("en"))) {
-    return "en";
-  }
-
-  return "zh";
-}
+import { preferredLocale, rootLocaleRedirectLocation } from "@/i18n/root-redirect";
 
 export default function RootRedirectPage() {
   useEffect(() => {
-    const localePath = preferredLocale() === "en" ? "/en/" : "/zh/";
-    window.location.replace(`${localePath}${window.location.search}${window.location.hash}`);
+    const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
+    const locale = preferredLocale(languages);
+    window.location.replace(rootLocaleRedirectLocation(locale, window.location.search, window.location.hash));
   }, []);
 
   return (
