@@ -1,12 +1,12 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useFormContext, useWatch, type FieldPath } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
 import type { CvData } from "@/lib/cv/schema";
 
+import { AiPolishIcon } from "./ai-polish-icon";
 import { isPolishEntryVisible } from "./polish-entry";
 import { usePolishEntry } from "./polish-entry-context";
 import { isPolishableText, type PolishScope } from "./scope-builder";
@@ -42,11 +42,12 @@ export function PolishEntryButton({
       type="button"
       variant="ghost"
       size="icon"
+      className="ai-polish-entry-button"
       aria-label={label}
       {...(disabled ? { disabled: true } : { title: label })}
       onClick={() => entry.requestPolish(scope)}
     >
-      <Sparkles />
+      <AiPolishIcon />
     </Button>
   );
   // Disabled buttons emit no mouse events, so the tooltip needs a wrapper.
