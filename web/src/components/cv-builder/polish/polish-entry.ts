@@ -20,13 +20,9 @@
 
 import type { CvSectionId } from "@/lib/cv/schema";
 import { getSectionCapability, type PolishGranularity } from "@/lib/polish/contract";
+import { isAiPolishUiEnabled } from "@/lib/polish/feature-flags";
 
-/** True only for the exact string "true"; everything else hides the entries. */
-export function isAiPolishUiEnabled(
-  flagValue: string | undefined = process.env.NEXT_PUBLIC_AI_POLISH_ENABLED,
-): boolean {
-  return flagValue === "true";
-}
+export { isAiPolishUiEnabled };
 
 /** The capability matrix is the single source for which scopes a section offers. */
 export function canOfferPolishEntry(

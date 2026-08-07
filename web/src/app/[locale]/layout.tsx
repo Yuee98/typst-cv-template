@@ -7,6 +7,7 @@ import { QueryProvider } from "@/app/query-provider";
 import { HtmlLangSync } from "@/components/layout/html-lang-sync";
 import { getMessages } from "@/i18n/messages";
 import { isLocale, locales } from "@/i18n/routing";
+import { getSiteMetadata } from "@/i18n/site-metadata";
 
 type LocaleParams = Promise<{ locale: string }>;
 
@@ -18,12 +19,7 @@ export function generateStaticParams() {
 
 export async function generateMetadata({ params }: { params: LocaleParams }): Promise<Metadata> {
   const { locale } = await params;
-  const messages = getMessages(isLocale(locale) ? locale : "zh");
-
-  return {
-    title: messages.Metadata.title,
-    description: messages.Metadata.description,
-  };
+  return getSiteMetadata(isLocale(locale) ? locale : "zh");
 }
 
 export default async function LocaleLayout({

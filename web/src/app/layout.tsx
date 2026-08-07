@@ -4,6 +4,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 
 import { ThemeProvider } from "@/components/theme/theme-provider";
+import { getSiteMetadata } from "@/i18n/site-metadata";
 
 import "./globals.css";
 
@@ -17,10 +18,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Online CV Builder | Typst CV Maker",
-  description: "Create, preview, export, and optionally sync CV documents.",
-};
+export const metadata: Metadata = getSiteMetadata("en");
 
 const enableVercelInsights = process.env.VERCEL === "1";
 

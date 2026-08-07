@@ -7,11 +7,15 @@
   },
   "Metadata": {
     "title": "在线简历生成器 | Typst CV Maker",
-    "description": "创建、预览、导出并可选同步简历文档。"
+    "description": "创建、预览、导出并可选同步简历文档。",
+    "aiTitle": "AI 简历生成器 | Typst CV Maker",
+    "aiDescription": "使用结构化编辑与 Typst 实时预览创建专业简历，并通过 AI 润色优化表达；支持 PDF 导出与可选云端同步。"
   },
   "ToolbarTitle": {
     "title": "在线简历生成器",
-    "subtitle": "编辑结构化数据，预览 Typst SVG，并导出 PDF。"
+    "subtitle": "编辑结构化数据，预览 Typst SVG，并导出 PDF。",
+    "aiTitle": "Typst AI 简历生成器",
+    "aiSubtitle": "结构化编辑、Typst 实时预览、AI 润色与 PDF 导出。"
   },
   "LocaleSwitcher": {
     "label": "界面语言",

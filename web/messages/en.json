@@ -7,11 +7,15 @@
   },
   "Metadata": {
     "title": "Online CV Builder | Typst CV Maker",
-    "description": "Create, preview, export, and optionally sync CV documents."
+    "description": "Create, preview, export, and optionally sync CV documents.",
+    "aiTitle": "AI CV Builder | Typst CV Maker",
+    "aiDescription": "Build professional CVs with structured editing, live Typst preview, AI-powered polishing, PDF export, and optional cloud sync."
   },
   "ToolbarTitle": {
     "title": "Typst CV Maker",
-    "subtitle": "Edit structured data, preview Typst SVG, print to PDF."
+    "subtitle": "Edit structured data, preview Typst SVG, print to PDF.",
+    "aiTitle": "Typst AI CV Maker",
+    "aiSubtitle": "Structured editing, live Typst preview, AI polish, and PDF export."
   },
   "LocaleSwitcher": {
     "label": "Interface language",

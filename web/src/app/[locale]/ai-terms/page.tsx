@@ -4,8 +4,8 @@ import { notFound } from "next/navigation";
 
 import { LegalDocumentPage } from "@/components/legal/legal-document-page";
 import { getLegalContent } from "@/content/legal";
-import { getMessages } from "@/i18n/messages";
 import { isLocale } from "@/i18n/routing";
+import { getSiteMetadata } from "@/i18n/site-metadata";
 
 type PageProps = {
   params: Promise<{ locale: string }>;
@@ -14,11 +14,11 @@ type PageProps = {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { locale } = await params;
   const validLocale = isLocale(locale) ? locale : "zh";
-  const messages = getMessages(validLocale);
   const legal = getLegalContent(validLocale);
+  const siteMetadata = getSiteMetadata(validLocale);
 
   return {
-    title: `${legal.aiTermsDocument.title} | ${messages.Metadata.title}`,
+    title: `${legal.aiTermsDocument.title} | ${siteMetadata.title}`,
   };
 }
 
