@@ -106,4 +106,23 @@ describe("useCloudSession", () => {
     expect(h.unsubscribe).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
   });
+
+  it("does not let a late initial session overwrite a newer auth event", async () => {
+    let resolveSession!: (value: { data: { session: Session | null }; error: null }) => void;
+    const pending = new Promise<{ data: { session: Session | null }; error: null }>((resolve) => {
+      resolveSession = resolve;
+    });
+    const h = createClient(pending);
+    vi.mocked(getSupabaseBrowserClient).mockReturnValue(h.client);
+    const onError = vi.fn();
+
+    const hook = renderHook(() => useCloudSession({ onError }));
+    act(() => h.emit("SIGNED_IN", sessionB));
+    expect(hook.result.current.session).toBe(sessionB);
+
+    await act(async () => resolveSession({ data: { session: sessionA }, error: null }));
+
+    expect(hook.result.current.session).toBe(sessionB);
+    expect(hook.result.current.sessionInitialized).toBe(true);
+  });
 });

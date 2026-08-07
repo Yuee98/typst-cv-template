@@ -26,14 +26,14 @@ beforeEach(() => {
 
 const fakeSupabase = {} as SupabaseClient;
 
-function renderTerms({ hasSession = true } = {}) {
+function renderTerms({ userId = "user-a" as string | null } = {}) {
   const onError = vi.fn();
-  const result = renderHook(
-    () => {
+  const hook = renderHook(
+    ({ currentUserId }: { currentUserId: string | null }) => {
       const tTermsGate = useTranslations("TermsGate");
       return useTermsGate({
         tTermsGate,
-        hasSession,
+        userId: currentUserId,
         onError,
         supabase: fakeSupabase,
       });
@@ -44,14 +44,15 @@ function renderTerms({ hasSession = true } = {}) {
           {children}
         </NextIntlClientProvider>
       ),
+      initialProps: { currentUserId: userId },
     },
   );
-  return { onError, result: result.result };
+  return { ...hook, onError };
 }
 
 describe("useTermsGate direct behavior", () => {
   it("does not query without a signed-in session/client", async () => {
-    const h = renderTerms({ hasSession: false });
+    const h = renderTerms({ userId: null });
 
     let accepted = true;
     await act(async () => {
@@ -77,8 +78,13 @@ describe("useTermsGate direct behavior", () => {
   });
 
   it("accepts current terms only after the checkbox is checked", async () => {
+    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
     vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
     const h = renderTerms();
+
+    await act(async () => {
+      await h.result.current.refresh(fakeSupabase);
+    });
 
     let accepted = true;
     await act(async () => {
@@ -128,5 +134,50 @@ describe("useTermsGate direct behavior", () => {
 
     expect(h.result.current.status).toBe("unknown");
     expect(h.onError).toHaveBeenCalledWith("terms unavailable");
+  });
+
+  it("makes an accepted status unknown immediately when the account changes", async () => {
+    vi.mocked(hasAcceptedCurrentTerms)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const h = renderTerms();
+
+    await act(async () => {
+      await h.result.current.refresh(fakeSupabase);
+    });
+    expect(h.result.current.status).toBe("accepted");
+
+    h.rerender({ currentUserId: "user-b" });
+    expect(h.result.current.status).toBe("unknown");
+
+    await act(async () => {
+      await h.result.current.refresh(fakeSupabase, { showModal: false });
+    });
+    expect(h.result.current.status).toBe("required");
+  });
+
+  it("ignores a terms result that settles after the account changes", async () => {
+    let resolveAccepted!: (accepted: boolean) => void;
+    vi.mocked(hasAcceptedCurrentTerms).mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveAccepted = resolve;
+      }),
+    );
+    const h = renderTerms();
+    let refreshPromise!: Promise<boolean>;
+
+    act(() => {
+      refreshPromise = h.result.current.refresh(fakeSupabase);
+    });
+    h.rerender({ currentUserId: "user-b" });
+    expect(h.result.current.status).toBe("unknown");
+
+    await act(async () => {
+      resolveAccepted(true);
+      await refreshPromise;
+    });
+
+    expect(h.result.current.status).toBe("unknown");
+    expect(h.onError).not.toHaveBeenCalled();
   });
 });

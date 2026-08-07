@@ -76,7 +76,7 @@ export function useCvBuilder() {
 
   const termsGate = useTermsGate({
     tTermsGate,
-    hasSession: Boolean(session),
+    userId: session?.user.id ?? null,
     onError: setLibraryError,
     supabase,
   });

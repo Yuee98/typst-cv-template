@@ -27,6 +27,8 @@ export function useCloudSession({ onError }: { onError: (message: string) => voi
 
     const client = supabase;
     let cancelled = false;
+    let authRevision = 0;
+    let currentUserId: string | null = null;
 
     async function loadInitialSession() {
       const redirectError = readAuthRedirectError();
@@ -35,8 +37,9 @@ export function useCloudSession({ onError }: { onError: (message: string) => voi
         onError(redirectError);
       }
 
+      const startingRevision = authRevision;
       const { data, error } = await client.auth.getSession();
-      if (cancelled) {
+      if (cancelled || authRevision !== startingRevision) {
         return;
       }
 
@@ -47,6 +50,7 @@ export function useCloudSession({ onError }: { onError: (message: string) => voi
         return;
       }
 
+      currentUserId = data.session?.user.id ?? null;
       setSession(data.session);
     }
 
@@ -55,6 +59,12 @@ export function useCloudSession({ onError }: { onError: (message: string) => voi
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((_event, nextSession) => {
+      authRevision += 1;
+      const nextUserId = nextSession?.user.id ?? null;
+      if (currentUserId !== nextUserId) {
+        setCloudStatus("idle");
+      }
+      currentUserId = nextUserId;
       setSessionInitialized(true);
       setSession(nextSession);
     });

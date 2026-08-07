@@ -34,6 +34,7 @@ beforeEach(() => {
 });
 
 const session = { user: { id: "user-1" } } as Session;
+const sessionB = { user: { id: "user-2" } } as Session;
 const supabase = {} as SupabaseClient;
 
 function summary(id: string, storageKind: CvDocumentSummary["storageKind"] = "cloud"): CvDocumentSummary {
@@ -81,10 +82,11 @@ function renderCloudSync({
     ensure: vi.fn().mockResolvedValue(true),
     refresh: vi.fn().mockReturnValue(Promise.resolve(termsRefresh)),
     reset: vi.fn(),
+    status: "accepted" as const,
   };
   const upsertDocumentSummary = vi.fn();
 
-  const hook = renderHook(() =>
+  const hook = renderHook(({ currentSession }: { currentSession: Session | null }) =>
     useCvCloudSync({
       locale: "en",
       activeDocumentId,
@@ -96,7 +98,7 @@ function renderCloudSync({
       refetchDocuments,
       removeCloudSummaries,
       replaceCloudSummaries,
-      session: sessionValue,
+      session: currentSession,
       sessionInitialized,
       setCloudStatus,
       setTermsAccepted,
@@ -105,6 +107,7 @@ function renderCloudSync({
       termsGate,
       upsertDocumentSummary,
     }),
+    { initialProps: { currentSession: sessionValue } },
   );
 
   return {
@@ -114,6 +117,9 @@ function renderCloudSync({
     loadDraft,
     onError,
     refetchDocuments,
+    rerenderSession(currentSession: Session | null) {
+      hook.rerender({ currentSession });
+    },
     removeCloudSummaries,
     replaceCloudSummaries,
     setCloudStatus,
@@ -151,7 +157,7 @@ describe("useCvCloudSync session boundaries", () => {
   it("removes cloud summaries when current terms are not accepted", async () => {
     const h = renderCloudSync({ termsRefresh: false });
 
-    await waitFor(() => expect(h.removeCloudSummaries).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(h.removeCloudSummaries).toHaveBeenCalledTimes(2));
     expect(h.refetchDocuments).not.toHaveBeenCalled();
     expect(h.setCloudStatus).toHaveBeenCalledWith("idle");
   });
@@ -166,6 +172,56 @@ describe("useCvCloudSync session boundaries", () => {
 
     await act(async () => resolveTerms(true));
     expect(h.refetchDocuments).not.toHaveBeenCalled();
+  });
+
+  it("resets account-owned state on a direct signed-in user switch", async () => {
+    const h = renderCloudSync({ termsRefresh: false });
+    await waitFor(() => expect(h.termsGate.refresh).toHaveBeenCalledTimes(1));
+    h.removeCloudSummaries.mockClear();
+    h.termsGate.reset.mockClear();
+    h.setCloudStatus.mockClear();
+
+    h.rerenderSession(sessionB);
+
+    expect(h.removeCloudSummaries).toHaveBeenCalled();
+    expect(h.termsGate.reset).toHaveBeenCalledTimes(1);
+    expect(h.setTermsAccepted).toHaveBeenLastCalledWith(false);
+    expect(h.setCloudStatus).toHaveBeenCalledWith("idle");
+    expect(loadTrustDevice).toHaveBeenLastCalledWith("user-2");
+  });
+
+  it("ignores user A terms completion after switching directly to user B", async () => {
+    let resolveTerms!: (accepted: boolean) => void;
+    const pendingTerms = new Promise<boolean>((resolve) => {
+      resolveTerms = resolve;
+    });
+    const h = renderCloudSync({ termsRefresh: pendingTerms });
+
+    h.termsGate.refresh.mockResolvedValueOnce(false);
+    h.rerenderSession(sessionB);
+    await act(async () => resolveTerms(true));
+
+    expect(h.refetchDocuments).not.toHaveBeenCalled();
+    expect(h.setCloudStatus).not.toHaveBeenCalledWith("ready");
+    expect(h.onError).not.toHaveBeenCalled();
+  });
+
+  it("ignores user A document refresh completion after switching directly to user B", async () => {
+    let rejectRefetch!: (error: Error) => void;
+    const pendingRefetch = new Promise<never>((_resolve, reject) => {
+      rejectRefetch = reject;
+    });
+    const h = renderCloudSync();
+    h.refetchDocuments.mockImplementationOnce(() => pendingRefetch);
+
+    await waitFor(() => expect(h.refetchDocuments).toHaveBeenCalledTimes(1));
+    h.termsGate.refresh.mockResolvedValueOnce(false);
+    h.rerenderSession(sessionB);
+    await act(async () => rejectRefetch(new Error("stale user A refresh")));
+
+    expect(h.setCloudStatus).not.toHaveBeenCalledWith("error");
+    expect(h.onError).not.toHaveBeenCalledWith("stale user A refresh");
+    expect(h.setCloudStatus).not.toHaveBeenCalledWith("ready");
   });
 });
 
