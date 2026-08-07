@@ -143,6 +143,27 @@ body {
   animation: none;
 }
 
+.accordion-item:has(> div:first-child > .ai-polish-entry-button) > div:first-child {
+  position: relative;
+}
+
+.accordion-item:has(> div:first-child > .ai-polish-entry-button)
+  > div:first-child
+  .accordion-trigger
+  > span {
+  padding-right: 3rem;
+}
+
+.accordion-item:has(> div:first-child > .ai-polish-entry-button)
+  > div:first-child
+  > .ai-polish-entry-button {
+  position: absolute;
+  right: 1.5rem;
+  top: 50%;
+  z-index: 1;
+  transform: translateY(-50%);
+}
+
 .ai-polish-icon {
   stroke-width: 2;
 }
