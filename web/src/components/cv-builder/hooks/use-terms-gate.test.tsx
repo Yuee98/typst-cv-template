@@ -22,6 +22,7 @@ afterEach(() => {
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  window.history.replaceState({}, "", "/en");
 });
 
 const fakeSupabase = {} as SupabaseClient;
@@ -113,7 +114,7 @@ describe("useTermsGate direct behavior", () => {
     const h = renderTerms();
 
     act(() => {
-      h.result.current.markPendingAcceptance();
+      h.result.current.markPendingAcceptance({ userId: "user-a" });
     });
     await act(async () => {
       await h.result.current.refresh(fakeSupabase, { showModal: false });
@@ -179,5 +180,107 @@ describe("useTermsGate direct behavior", () => {
 
     expect(h.result.current.status).toBe("unknown");
     expect(h.onError).not.toHaveBeenCalled();
+  });
+
+  it("does not let another account consume a pending password acceptance", async () => {
+    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
+    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
+    const h = renderTerms();
+
+    act(() => {
+      h.result.current.markPendingAcceptance({ userId: "user-a" });
+    });
+    h.rerender({ currentUserId: "user-b" });
+    await act(async () => {
+      await h.result.current.refresh(fakeSupabase, { showModal: false });
+    });
+
+    expect(h.result.current.status).toBe("required");
+    expect(acceptCurrentTerms).not.toHaveBeenCalled();
+  });
+
+  it("requires the matching OAuth flow before consuming pending acceptance", async () => {
+    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
+    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
+    const h = renderTerms();
+
+    act(() => {
+      h.result.current.markPendingAcceptance({ oauthFlowId: "signup-flow-a" });
+    });
+    window.history.replaceState({}, "", "/en?terms_acceptance_flow=signin-flow-b");
+    await act(async () => {
+      await h.result.current.refresh(fakeSupabase, { showModal: false });
+    });
+
+    expect(h.result.current.status).toBe("required");
+    expect(acceptCurrentTerms).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer recorded acceptance when an older refresh settles last", async () => {
+    let resolveRefresh!: (accepted: boolean) => void;
+    vi.mocked(hasAcceptedCurrentTerms).mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveRefresh = resolve;
+      }),
+    );
+    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
+    const h = renderTerms();
+    let oldRefresh!: Promise<boolean>;
+
+    act(() => {
+      oldRefresh = h.result.current.refresh(fakeSupabase);
+    });
+    await act(async () => {
+      await h.result.current.recordAccepted(fakeSupabase, "user-a");
+    });
+    expect(h.result.current.status).toBe("accepted");
+
+    await act(async () => {
+      resolveRefresh(false);
+      await oldRefresh;
+    });
+
+    expect(h.result.current.status).toBe("accepted");
+    expect(h.result.current.modalOpen).toBe(false);
+  });
+
+  it("does not let an older acceptance clear a newer acceptance's busy state", async () => {
+    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
+    let resolveFirst!: () => void;
+    let resolveSecond!: () => void;
+    vi.mocked(acceptCurrentTerms)
+      .mockReturnValueOnce(new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      }))
+      .mockReturnValueOnce(new Promise<void>((resolve) => {
+        resolveSecond = resolve;
+      }));
+    const h = renderTerms();
+    await act(async () => {
+      await h.result.current.refresh(fakeSupabase);
+    });
+    act(() => h.result.current.setModalChecked(true));
+
+    let firstAcceptance!: Promise<boolean>;
+    let secondAcceptance!: Promise<boolean>;
+    act(() => {
+      firstAcceptance = h.result.current.accept();
+    });
+    act(() => {
+      secondAcceptance = h.result.current.accept();
+    });
+
+    await act(async () => {
+      resolveFirst();
+      await firstAcceptance;
+    });
+    expect(h.result.current.accepting).toBe(true);
+
+    await act(async () => {
+      resolveSecond();
+      await secondAcceptance;
+    });
+    expect(h.result.current.accepting).toBe(false);
+    expect(h.result.current.status).toBe("accepted");
   });
 });

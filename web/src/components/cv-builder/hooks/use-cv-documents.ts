@@ -11,7 +11,13 @@ import {
   type LocalCvDocument,
 } from "@/lib/cv/storage";
 
-export function useCvDocuments({ initializedRef }: { initializedRef: MutableRefObject<boolean> }) {
+export function useCvDocuments({
+  activeDocumentIdRef,
+  initializedRef,
+}: {
+  activeDocumentIdRef?: MutableRefObject<string | null>;
+  initializedRef: MutableRefObject<boolean>;
+}) {
   const [documents, setDocuments] = useState<CvDocumentSummary[]>([]);
   const [activeDocumentId, setActiveDocumentIdRaw] = useState<string | null>(null);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
@@ -22,6 +28,9 @@ export function useCvDocuments({ initializedRef }: { initializedRef: MutableRefO
   );
 
   function setActiveDocumentId(id: string | null) {
+    if (activeDocumentIdRef) {
+      activeDocumentIdRef.current = id;
+    }
     setActiveDocumentIdRaw(id);
   }
 
@@ -68,7 +77,12 @@ export function useCvDocuments({ initializedRef }: { initializedRef: MutableRefO
   }
 
   function removeCloudSummaries() {
+    const activeIsCloudBacked = activeDocument?.storageKind === "cloud" || activeDocument?.storageKind === "encrypted";
     setOrderedDocuments((current) => current.filter((document) => document.storageKind === "local"));
+    if (activeIsCloudBacked) {
+      setActiveDocumentId(null);
+    }
+    return activeIsCloudBacked;
   }
 
   function loadCollapsedPreference() {

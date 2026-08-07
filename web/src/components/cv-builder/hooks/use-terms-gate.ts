@@ -2,37 +2,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { TERMS_VERSION } from "@/content/legal";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
+import {
+  clearPendingTermsAcceptance,
+  consumePendingTermsAcceptance,
+  markPendingTermsAcceptance,
+  type PendingTermsAcceptance,
+} from "@/lib/legal/pending-terms-acceptance";
 
 export type TermsStatus = "unknown" | "accepted" | "required";
-
-const PENDING_TERMS_ACCEPTANCE_KEY = "typst-cv-builder:pending-terms-acceptance";
-
-function markPendingTermsAcceptance() {
-  if (typeof window === "undefined") return;
-
-  window.sessionStorage.setItem(PENDING_TERMS_ACCEPTANCE_KEY, TERMS_VERSION);
-}
-
-function consumePendingTermsAcceptance() {
-  if (
-    typeof window === "undefined" ||
-    window.sessionStorage.getItem(PENDING_TERMS_ACCEPTANCE_KEY) !== TERMS_VERSION
-  ) {
-    return false;
-  }
-
-  window.sessionStorage.removeItem(PENDING_TERMS_ACCEPTANCE_KEY);
-  return true;
-}
-
-function clearPendingTermsAcceptance() {
-  if (typeof window === "undefined") return;
-
-  window.sessionStorage.removeItem(PENDING_TERMS_ACCEPTANCE_KEY);
-}
 
 export function useTermsGate({
   tTermsGate,
@@ -54,8 +33,12 @@ export function useTermsGate({
   const [modalError, setModalError] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
   const userIdRef = useRef(userId);
+  const operationRef = useRef(0);
   useLayoutEffect(() => {
-    userIdRef.current = userId;
+    if (userIdRef.current !== userId) {
+      userIdRef.current = userId;
+      operationRef.current += 1;
+    }
   }, [userId]);
   const ownsVisibleState = ownedStatus?.ownerId === userId;
   const status = ownsVisibleState ? ownedStatus.status : "unknown";
@@ -64,8 +47,17 @@ export function useTermsGate({
     return Boolean(ownerId && userIdRef.current === ownerId);
   }
 
-  function promptForAcceptance(ownerId: string | null = userId) {
-    if (!isCurrentOwner(ownerId)) {
+  function beginOperation() {
+    operationRef.current += 1;
+    return operationRef.current;
+  }
+
+  function ownsOperation(ownerId: string | null, operation: number): ownerId is string {
+    return isCurrentOwner(ownerId) && operationRef.current === operation;
+  }
+
+  function promptForAcceptance(ownerId: string | null, operation: number) {
+    if (!ownsOperation(ownerId, operation)) {
       return;
     }
 
@@ -77,6 +69,7 @@ export function useTermsGate({
   }
 
   function reset() {
+    beginOperation();
     setOwnedStatus(null);
     setModalOpen(false);
     setModalChecked(false);
@@ -92,16 +85,17 @@ export function useTermsGate({
     if (!ownerId) {
       return false;
     }
+    const operation = beginOperation();
 
     try {
       let accepted = await hasAcceptedCurrentTerms(client);
-      if (!isCurrentOwner(ownerId)) {
+      if (!ownsOperation(ownerId, operation)) {
         return false;
       }
 
-      if (!accepted && consumePendingTermsAcceptance()) {
+      if (!accepted && consumePendingTermsAcceptance(ownerId)) {
         await acceptCurrentTerms(client);
-        if (!isCurrentOwner(ownerId)) {
+        if (!ownsOperation(ownerId, operation)) {
           return false;
         }
         accepted = true;
@@ -109,11 +103,11 @@ export function useTermsGate({
 
       setOwnedStatus({ ownerId, status: accepted ? "accepted" : "required" });
       if (!accepted && showModal) {
-        promptForAcceptance(ownerId);
+        promptForAcceptance(ownerId, operation);
       }
       return accepted;
     } catch (termsError) {
-      if (isCurrentOwner(ownerId)) {
+      if (ownsOperation(ownerId, operation)) {
         setOwnedStatus({ ownerId, status: "unknown" });
         onError(errorMessage(termsError));
       }
@@ -131,11 +125,7 @@ export function useTermsGate({
       return true;
     }
 
-    const accepted = await refresh(client);
-    if (!accepted) {
-      promptForAcceptance(ownerId);
-    }
-    return accepted;
+    return refresh(client);
   }
 
   async function accept() {
@@ -150,12 +140,13 @@ export function useTermsGate({
       return false;
     }
 
+    const operation = beginOperation();
     setAccepting(true);
     setModalError(null);
 
     try {
       await acceptCurrentTerms(supabase);
-      if (!isCurrentOwner(ownerId)) {
+      if (!ownsOperation(ownerId, operation)) {
         return false;
       }
       setOwnedStatus({ ownerId, status: "accepted" });
@@ -163,24 +154,27 @@ export function useTermsGate({
       setModalChecked(false);
       return true;
     } catch (termsError) {
-      if (isCurrentOwner(ownerId)) {
+      if (ownsOperation(ownerId, operation)) {
         setModalError(errorMessage(termsError));
       }
       return false;
     } finally {
-      setAccepting(false);
+      if (ownsOperation(ownerId, operation)) {
+        setAccepting(false);
+      }
     }
   }
 
-  async function recordAccepted(client: SupabaseClient) {
-    const ownerId = userId;
+  async function recordAccepted(client: SupabaseClient, acceptedUserId?: string) {
+    const ownerId = acceptedUserId ?? userId;
     if (!ownerId) {
       return;
     }
+    const operation = beginOperation();
 
     await acceptCurrentTerms(client);
     clearPendingTermsAcceptance();
-    if (!isCurrentOwner(ownerId)) {
+    if (!ownsOperation(ownerId, operation)) {
       return;
     }
     setOwnedStatus({ ownerId, status: "accepted" });
@@ -195,7 +189,7 @@ export function useTermsGate({
     accept,
     clearPendingAcceptance: clearPendingTermsAcceptance,
     ensure,
-    markPendingAcceptance: markPendingTermsAcceptance,
+    markPendingAcceptance: (pending: PendingTermsAcceptance) => markPendingTermsAcceptance(pending),
     recordAccepted,
     refresh,
     reset,

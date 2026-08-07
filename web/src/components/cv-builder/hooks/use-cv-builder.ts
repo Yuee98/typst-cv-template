@@ -51,6 +51,9 @@ export function useCvBuilder() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [importExportError, setImportExportError] = useState<string | null>(null);
   const initializedRef = useRef(false);
+  // Kept in sync by useCvDocuments before state updates so async save
+  // completions never observe a removed account-owned document as active.
+  const activeDocumentIdRef = useRef<string | null>(null);
 
   const {
     activeDocument,
@@ -66,7 +69,7 @@ export function useCvBuilder() {
     setOrderedDocuments,
     toggleLibraryCollapsed,
     upsertDocumentSummary,
-  } = useCvDocuments({ initializedRef });
+  } = useCvDocuments({ activeDocumentIdRef, initializedRef });
 
   const { cloudStatus, session, sessionInitialized, setCloudStatus, supabase } = useCloudSession({
     onError: setLibraryError,
@@ -86,10 +89,6 @@ export function useCvBuilder() {
   // Dirty state is derived by comparing the form data against the persisted
   // baseline of the same document (see lib/cv/baseline.ts).
   const baselineRef = useRef<CvBaseline | null>(null);
-  // Updated synchronously by the setActiveDocumentId wrapper below, so an
-  // async save completion can always tell whether the saved document is
-  // still the active one before rebasing.
-  const activeDocumentIdRef = useRef<string | null>(null);
 
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),

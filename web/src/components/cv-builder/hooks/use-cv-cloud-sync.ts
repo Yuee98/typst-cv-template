@@ -59,15 +59,26 @@ export function useCvCloudSync({
   const sessionUserId = session?.user.id ?? null;
   const syncOwnerRef = useRef(sessionUserId);
   const syncGenerationRef = useRef(0);
+  const cloudOperationRef = useRef(0);
   useLayoutEffect(() => {
     if (syncOwnerRef.current !== sessionUserId) {
       syncOwnerRef.current = sessionUserId;
       syncGenerationRef.current += 1;
+      cloudOperationRef.current += 1;
     }
   }, [sessionUserId]);
 
   function ownsSync(generation: number, ownerId: string | null) {
     return syncGenerationRef.current === generation && syncOwnerRef.current === ownerId;
+  }
+
+  function beginCloudOperation() {
+    cloudOperationRef.current += 1;
+    return cloudOperationRef.current;
+  }
+
+  function ownsCloudOperation(generation: number, ownerId: string | null, operation: number) {
+    return ownsSync(generation, ownerId) && cloudOperationRef.current === operation;
   }
 
   const { data: activeCloudDocument, error: activeDocumentError } = useCvCloudActiveDocumentQuery({
@@ -78,8 +89,8 @@ export function useCvCloudSync({
     supabase,
   });
 
-  async function refetchForOwner(generation: number, ownerId: string) {
-    if (!ownsSync(generation, ownerId)) {
+  async function refetchForOwner(generation: number, ownerId: string, operation: number) {
+    if (!ownsCloudOperation(generation, ownerId, operation)) {
       return;
     }
 
@@ -87,12 +98,12 @@ export function useCvCloudSync({
 
     try {
       await refetchDocuments();
-      if (!ownsSync(generation, ownerId)) {
+      if (!ownsCloudOperation(generation, ownerId, operation)) {
         return;
       }
       setCloudStatus("ready");
     } catch (cloudError) {
-      if (!ownsSync(generation, ownerId)) {
+      if (!ownsCloudOperation(generation, ownerId, operation)) {
         return;
       }
       setCloudStatus("error");
@@ -105,13 +116,14 @@ export function useCvCloudSync({
   ) {
     const ownerId = sessionUserId;
     const generation = syncGenerationRef.current;
+    const operation = beginCloudOperation();
     if (!supabase || !ownerId) {
       return;
     }
 
     if (!skipTermsCheck) {
       const accepted = await termsGate.ensure(supabase);
-      if (!ownsSync(generation, ownerId)) {
+      if (!ownsCloudOperation(generation, ownerId, operation)) {
         return;
       }
       if (!accepted) {
@@ -120,7 +132,7 @@ export function useCvCloudSync({
       }
     }
 
-    await refetchForOwner(generation, ownerId);
+    await refetchForOwner(generation, ownerId, operation);
   }
 
   // Sync cloud summaries when list data changes.
@@ -179,6 +191,7 @@ export function useCvCloudSync({
     let cancelled = false;
     const generation = syncGenerationRef.current;
     const ownerId = sessionUserId;
+    const operation = beginCloudOperation();
 
     if (!ownerId) {
       removeCloudSummaries();
@@ -195,12 +208,12 @@ export function useCvCloudSync({
     setTrustDevice(loadTrustDevice(ownerId));
     void (async () => {
       const accepted = await termsGate.refresh(client);
-      if (cancelled || !ownsSync(generation, ownerId)) {
+      if (cancelled || !ownsCloudOperation(generation, ownerId, operation)) {
         return;
       }
 
       if (accepted) {
-        await refetchForOwner(generation, ownerId);
+        await refetchForOwner(generation, ownerId, operation);
       } else {
         removeCloudSummaries();
         setCloudStatus("idle");

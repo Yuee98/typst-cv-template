@@ -226,6 +226,43 @@ describe("useCvCloudSync session boundaries", () => {
 });
 
 describe("useCvCloudSync data and error handling", () => {
+  it("lets the newest same-user refresh win when requests settle in reverse order", async () => {
+    let rejectFirst!: (error: Error) => void;
+    let resolveSecond!: () => void;
+    const first = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const second = new Promise<void>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const h = renderCloudSync({ sessionInitialized: false });
+    h.refetchDocuments
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+    let firstRefresh!: Promise<void>;
+    let secondRefresh!: Promise<void>;
+
+    act(() => {
+      firstRefresh = h.hook.result.current.refreshCloudDocuments({ skipTermsCheck: true });
+    });
+    act(() => {
+      secondRefresh = h.hook.result.current.refreshCloudDocuments({ skipTermsCheck: true });
+    });
+
+    await act(async () => {
+      resolveSecond();
+      await secondRefresh;
+    });
+    expect(h.setCloudStatus).toHaveBeenLastCalledWith("ready");
+
+    await act(async () => {
+      rejectFirst(new Error("older refresh failed"));
+      await firstRefresh;
+    });
+    expect(h.setCloudStatus).toHaveBeenLastCalledWith("ready");
+    expect(h.onError).not.toHaveBeenCalled();
+  });
+
   it("loads a restored draft while retaining server data as the baseline", () => {
     const serverData = cloneCvData(sampleCvDataEn);
     const draft = cloneCvData(sampleCvDataEn);

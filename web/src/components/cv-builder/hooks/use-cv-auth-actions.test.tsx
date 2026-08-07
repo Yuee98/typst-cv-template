@@ -63,7 +63,10 @@ function renderAuthActions({
 } = {}) {
   const auth = {
     signInWithPassword: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
-    signUp: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+    signUp: vi.fn().mockResolvedValue({
+      data: { session: null, user: { id: "pending-user" } },
+      error: null,
+    }),
     signInWithOAuth: vi.fn().mockResolvedValue({ data: {}, error: null }),
     signOut: vi.fn().mockResolvedValue({ error: null }),
   };
@@ -157,6 +160,7 @@ describe("useCvAuthActions sign-in and sign-up", () => {
       email: "person@example.com",
       password: "test-password",
     });
+    expect(h.termsGate.clearPendingAcceptance).toHaveBeenCalledTimes(1);
     expect(h.authModal.closeAfterAuth).toHaveBeenCalledTimes(1);
   });
 
@@ -170,7 +174,7 @@ describe("useCvAuthActions sign-in and sign-up", () => {
 
     expect(unchecked.authModal.setError).toHaveBeenCalledWith(messages.CvAuthActions.termsRequired);
     expect(unchecked.termsGate.markPendingAcceptance).not.toHaveBeenCalled();
-    expect(failed.termsGate.markPendingAcceptance).toHaveBeenCalledTimes(1);
+    expect(failed.termsGate.markPendingAcceptance).not.toHaveBeenCalled();
     expect(failed.termsGate.clearPendingAcceptance).toHaveBeenCalledTimes(1);
     expect(failed.authModal.setError).toHaveBeenCalledWith("email rejected");
   });
@@ -186,7 +190,7 @@ describe("useCvAuthActions sign-in and sign-up", () => {
       password: "test-password",
       options: { emailRedirectTo: `${window.location.origin}/en` },
     });
-    expect(h.termsGate.recordAccepted).toHaveBeenCalledWith(h.supabase);
+    expect(h.termsGate.recordAccepted).toHaveBeenCalledWith(h.supabase, "user-1");
     expect(h.authModal.closeAfterAuth).toHaveBeenCalledTimes(1);
   });
 
@@ -197,6 +201,7 @@ describe("useCvAuthActions sign-in and sign-up", () => {
 
     expect(h.authModal.setError).toHaveBeenCalledWith(null);
     expect(h.authModal.setSuccessMessage).toHaveBeenCalledWith(messages.CvAuthActions.accountCreated);
+    expect(h.termsGate.markPendingAcceptance).toHaveBeenCalledWith({ userId: "pending-user" });
     expect(h.termsGate.recordAccepted).not.toHaveBeenCalled();
     expect(h.authModal.closeAfterAuth).not.toHaveBeenCalled();
   });
@@ -209,13 +214,29 @@ describe("useCvAuthActions OAuth and sign-out boundaries", () => {
 
     await act(async () => h.result.current.actions.signInWithGithub());
 
-    expect(h.termsGate.markPendingAcceptance).toHaveBeenCalledTimes(1);
+    const pending = h.termsGate.markPendingAcceptance.mock.calls[0]?.[0];
+    expect(pending).toEqual({ oauthFlowId: expect.any(String) });
+    expect(h.auth.signInWithOAuth).toHaveBeenCalledWith({
+      provider: "github",
+      options: {
+        redirectTo: `${window.location.origin}/en?terms_acceptance_flow=${pending.oauthFlowId}`,
+      },
+    });
+    expect(h.termsGate.clearPendingAcceptance).toHaveBeenCalledTimes(1);
+    expect(h.authModal.setError).toHaveBeenCalledWith("oauth unavailable");
+  });
+
+  it("clears an abandoned sign-up acceptance before a normal GitHub sign-in", async () => {
+    const h = renderAuthActions({ mode: "signIn" });
+
+    await act(async () => h.result.current.actions.signInWithGithub());
+
+    expect(h.termsGate.clearPendingAcceptance).toHaveBeenCalledTimes(1);
+    expect(h.termsGate.markPendingAcceptance).not.toHaveBeenCalled();
     expect(h.auth.signInWithOAuth).toHaveBeenCalledWith({
       provider: "github",
       options: { redirectTo: `${window.location.origin}/en` },
     });
-    expect(h.termsGate.clearPendingAcceptance).toHaveBeenCalledTimes(1);
-    expect(h.authModal.setError).toHaveBeenCalledWith("oauth unavailable");
   });
 
   it("does not clear local secrets or documents when sign-out fails", async () => {

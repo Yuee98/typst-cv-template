@@ -14,6 +14,11 @@ import { clearEncryptionPasswords } from "@/lib/cv/encryption-storage";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import { getSampleCvData } from "@/lib/cv/sample-data";
 import {
+  createTermsAcceptanceFlowId,
+  TERMS_ACCEPTANCE_FLOW_PARAM,
+  type PendingTermsAcceptance,
+} from "@/lib/legal/pending-terms-acceptance";
+import {
   createLocalCvDocument,
   type CvDocumentSummary,
 } from "@/lib/cv/storage";
@@ -30,16 +35,20 @@ type AuthActionsModal = {
 
 type AuthActionsTermsGate = {
   clearPendingAcceptance: () => void;
-  markPendingAcceptance: () => void;
-  recordAccepted: (client: SupabaseClient) => Promise<void>;
+  markPendingAcceptance: (pending: PendingTermsAcceptance) => void;
+  recordAccepted: (client: SupabaseClient, acceptedUserId?: string) => Promise<void>;
 };
 
 type SetOrderedDocuments = (
   documents: CvDocumentSummary[] | ((current: CvDocumentSummary[]) => CvDocumentSummary[]),
 ) => void;
 
-function currentPageRedirectUrl() {
-  return `${window.location.origin}${window.location.pathname}`;
+function currentPageRedirectUrl(termsAcceptanceFlowId?: string) {
+  const url = new URL(window.location.pathname, window.location.origin);
+  if (termsAcceptanceFlowId) {
+    url.searchParams.set(TERMS_ACCEPTANCE_FLOW_PARAM, termsAcceptanceFlowId);
+  }
+  return url.toString();
 }
 
 export function useCvAuthActions({
@@ -80,6 +89,8 @@ export function useCvAuthActions({
       return;
     }
 
+    termsGate.clearPendingAcceptance();
+
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: authModal.email,
       password: authModal.password,
@@ -108,8 +119,6 @@ export function useCvAuthActions({
       return;
     }
 
-    termsGate.markPendingAcceptance();
-
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: authModal.email,
       password: authModal.password,
@@ -125,11 +134,16 @@ export function useCvAuthActions({
     }
 
     if (!data.session) {
+      if (data.user?.id) {
+        termsGate.markPendingAcceptance({ userId: data.user.id });
+      } else {
+        termsGate.clearPendingAcceptance();
+      }
       authModal.setError(null);
       authModal.setSuccessMessage(t("accountCreated"));
     } else {
       try {
-        await termsGate.recordAccepted(supabase);
+        await termsGate.recordAccepted(supabase, data.user?.id ?? data.session.user.id);
       } catch (termsError) {
         authModal.setError(errorMessage(termsError));
         return;
@@ -145,19 +159,23 @@ export function useCvAuthActions({
       return;
     }
 
+    let termsAcceptanceFlowId: string | undefined;
     if (authModal.mode === "signUp") {
       if (!authModal.termsAccepted) {
         authModal.setError(t("termsRequired"));
         return;
       }
 
-      termsGate.markPendingAcceptance();
+      termsAcceptanceFlowId = createTermsAcceptanceFlowId();
+      termsGate.markPendingAcceptance({ oauthFlowId: termsAcceptanceFlowId });
+    } else {
+      termsGate.clearPendingAcceptance();
     }
 
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "github",
       options: {
-        redirectTo: currentPageRedirectUrl(),
+        redirectTo: currentPageRedirectUrl(termsAcceptanceFlowId),
       },
     });
 
