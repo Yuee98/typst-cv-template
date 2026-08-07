@@ -4,13 +4,24 @@ name: DB integration tests
 # (tmp/ai-polish-plan.md unit 1.4). Runs against a throwaway local Supabase
 # inside the runner — never against a hosted project.
 #
-# Manual trigger only, by decision: this suite needs the Supabase Docker
-# stack, whose image pulls would add several minutes to every PR run of
-# ci.yml, while its coverage target (migration/RPC semantics) changes rarely.
-# It is the gate to run for migration/quota-touching PRs and for the CP2
-# server-branch checkpoint. Local equivalent:
+# The Supabase Docker stack is too expensive for every web-only PR, so this
+# workflow runs automatically only when migrations or their production/test
+# adapters change. workflow_dispatch remains available for release checkpoints.
+# Local equivalent:
 #   pnpm supabase:start && pnpm supabase:reset && pnpm --filter web test:db
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/db-tests.yml"
+      - "supabase/migrations/**"
+      - "web/scripts/run-db-tests.mjs"
+      - "web/src/lib/cv/cloud-storage.ts"
+      - "web/src/lib/legal/terms-acceptance.ts"
+      - "web/src/server/polish/auth.ts"
+      - "web/src/server/polish/lifecycle*.ts"
+      - "web/src/server/polish/quota.ts"
+      - "web/test/db/**"
+      - "web/vitest.db.config.mts"
   workflow_dispatch:
 
 permissions:
