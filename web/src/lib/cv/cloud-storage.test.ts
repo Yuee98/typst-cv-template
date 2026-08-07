@@ -19,7 +19,7 @@ import { sampleCvDataEn } from "@/lib/cv/sample-data";
 
 type QueryResponse = { data: unknown; error: unknown };
 
-type QueryMethod = "delete" | "eq" | "insert" | "order" | "select" | "single" | "update";
+type QueryMethod = "delete" | "eq" | "insert" | "maybeSingle" | "order" | "select" | "single" | "update";
 
 type QueryOperation = {
   args: unknown[];
@@ -38,7 +38,7 @@ function loadOperations(id: string): QueryOperation[] {
   return [
     operation("select", [cloudDocumentColumns]),
     operation("eq", ["id", id]),
-    operation("single", [], true),
+    operation("maybeSingle", [], true),
   ];
 }
 
@@ -66,7 +66,7 @@ function createSupabaseQuery(response: QueryResponse, expectedOperations: QueryO
       return query;
     });
   }
-  for (const method of ["order", "single"] as const) {
+  for (const method of ["maybeSingle", "order", "single"] as const) {
     query[method] = vi.fn(async (...args: unknown[]) => {
       const expected = consume(method, args);
       if (!expected.terminal) {

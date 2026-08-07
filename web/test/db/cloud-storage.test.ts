@@ -117,5 +117,8 @@ describe.skipIf(!RUN_DB_TESTS)("cloud storage production adapter (real DB)", () 
 
     await deleteCloudCvDocument(client, created.id);
     await expect(listCloudCvDocuments(client)).resolves.toEqual([]);
+    await expect(loadCloudCvDocument(client, created.id, "en")).rejects.toThrow(
+      "Cloud CV was not found.",
+    );
   });
 });
