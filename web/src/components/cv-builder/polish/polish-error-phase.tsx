@@ -51,7 +51,7 @@ export function PolishErrorPhase({ flow }: { flow: PolishFlow }) {
           {error.resetAt && (
             <p className="text-xs">{t("errors.resetAt", { resetAt: formatResetAt(error.resetAt, locale) })}</p>
           )}
-          {error.retryAfterSeconds !== undefined && (
+          {error.code !== "AI_DISABLED" && error.retryAfterSeconds !== undefined && (
             <p className="text-xs">
               {t("errors.retryAfter", { seconds: error.retryAfterSeconds })}
             </p>
