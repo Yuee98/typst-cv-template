@@ -156,3 +156,38 @@ describe("PolishDialog E2EE plaintext warning", () => {
     expect(screen.queryByText(messages.PolishDialog.e2eeWarning)).toBeNull();
   });
 });
+
+describe("PolishDialog retry guidance", () => {
+  it("does not imply that waiting will unlock an AI-disabled account", () => {
+    renderDialog(
+      makeStubFlow({
+        state: {
+          ...createInitialState(),
+          phase: "error",
+          error: { code: "AI_DISABLED", retryAfterSeconds: 300 },
+        },
+      }),
+    );
+
+    expect(screen.getByText(messages.PolishDialog.errors.disabled)).toBeTruthy();
+    expect(
+      screen.queryByText(messages.PolishDialog.errors.retryAfter.replace("{seconds}", "300")),
+    ).toBeNull();
+  });
+
+  it("keeps retry guidance for a genuinely temporary service outage", () => {
+    renderDialog(
+      makeStubFlow({
+        state: {
+          ...createInitialState(),
+          phase: "error",
+          error: { code: "SERVICE_UNAVAILABLE", retryAfterSeconds: 300 },
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(messages.PolishDialog.errors.retryAfter.replace("{seconds}", "300")),
+    ).toBeTruthy();
+  });
+});
