@@ -337,6 +337,9 @@ function isPortableRepoPath(value: string): boolean {
 
 function assertExactDataArray(value: unknown, field: string): asserts value is unknown[] {
   if (!Array.isArray(value)) throw new LegalFingerprintV1Error(`${field} must be an array`);
+  if (value.length > LEGAL_FINGERPRINT_MAX_ARRAY_ITEMS) {
+    throw new LegalFingerprintV1Error(`${field} exceeds the item limit`);
+  }
   if (Object.getPrototypeOf(value) !== Array.prototype) {
     throw new LegalFingerprintV1Error(`${field} must not use an inherited or custom array prototype`);
   }
@@ -505,7 +508,6 @@ function normalizeDescriptor(input: unknown): { schemaVersion: LegalFingerprintS
       continue;
     }
     assertExactDataArray(raw, field);
-    if (raw.length > LEGAL_FINGERPRINT_MAX_ARRAY_ITEMS) throw new LegalFingerprintV1Error(`${field} exceeds the item limit`);
     if (definition.nonEmptyArrays.includes(field) && raw.length === 0) throw new LegalFingerprintV1Error(`${field} must not be empty`);
     const array = raw.map((item, index) => canonicalString(item, `${field}.${index}`, false));
     if (definition.setLike.includes(field)) {

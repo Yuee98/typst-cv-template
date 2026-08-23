@@ -156,6 +156,23 @@ describe("legal fingerprint v1 canonicalizer", () => {
     })).toThrow(/item limit/);
   });
 
+  it("rejects an oversized sparse array before own-key enumeration or index inspection", () => {
+    const target = new Array<string>(LEGAL_FINGERPRINT_MAX_ARRAY_ITEMS + 1);
+    const oversized = new Proxy(target, {
+      ownKeys: () => {
+        throw new Error("oversized array was enumerated");
+      },
+      getOwnPropertyDescriptor: () => {
+        throw new Error("oversized array index was inspected");
+      },
+    });
+
+    expect(() => fingerprintLegalDescriptorV1({
+      ...MULTIBYTE_FACT,
+      qualifiers: oversized,
+    })).toThrow(/item limit/);
+  });
+
   it("rejects sparse arrays, array extra properties, and symbol-keyed descriptor fields", () => {
     const sparse = new Array<string>(1);
     expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: sparse })).toThrow(/every index as an own data property/);
