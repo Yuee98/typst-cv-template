@@ -31,7 +31,8 @@ export type CostCalculationIncompleteReason =
   | "unknown_calculator"
   | "invalid_price_snapshot"
   | "missing_price_component"
-  | "input_cache_write";
+  | "input_cache_write"
+  | "cost_overflow";
 
 export type CostCalculationResultV1 =
   | {
@@ -260,6 +261,17 @@ function componentRate(snapshot: ParsedPriceSnapshot, component: PriceComponent)
   return value;
 }
 
+function completeCost(currency: string, nanos: bigint): CostCalculationResultV1 {
+  if (nanos > MAX_POSTGRES_BIGINT) {
+    return incomplete("cost_overflow");
+  }
+  return {
+    status: "complete",
+    estimatedCost: { currency, nanos: nanos.toString() },
+    incompleteReasons: [],
+  };
+}
+
 function calculateLinear(
   usage: NormalizedUsageV2,
   snapshot: ParsedPriceSnapshot,
@@ -281,14 +293,7 @@ function calculateLinear(
     numerator += BigInt(usage.inputCacheWriteTokens) * writeRate;
   }
 
-  return {
-    status: "complete",
-    estimatedCost: {
-      currency: snapshot.currency,
-      nanos: ceilDiv(numerator, TOKENS_PER_MILLION).toString(),
-    },
-    incompleteReasons: [],
-  };
+  return completeCost(snapshot.currency, ceilDiv(numerator, TOKENS_PER_MILLION));
 }
 
 function calculateGptStyle(
@@ -321,14 +326,10 @@ function calculateGptStyle(
   const numerator =
     inputNumerator * inputMultiplier + outputNumerator * outputMultiplier;
 
-  return {
-    status: "complete",
-    estimatedCost: {
-      currency: snapshot.currency,
-      nanos: ceilDiv(numerator, TOKENS_PER_MILLION * BASIS_POINTS).toString(),
-    },
-    incompleteReasons: [],
-  };
+  return completeCost(
+    snapshot.currency,
+    ceilDiv(numerator, TOKENS_PER_MILLION * BASIS_POINTS),
+  );
 }
 
 /**

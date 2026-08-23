@@ -3,6 +3,8 @@ import {
   ProviderRegistryError,
   resolveAdapter,
   resolveCalculator,
+  resolveCapability,
+  resolveCredential,
   resolveCredentialSecret,
   resolveEndpoint,
   validateAdapterConfig,
@@ -64,5 +66,50 @@ describe("adapter registry", () => {
     expect(() =>
       validateAdapterConfig("deepseek_chat_v1", { ...valid, thinking: "enabled" }),
     ).toThrow(/unsupported value/);
+  });
+
+  it("runtime-freezes returned registrations so mutation cannot poison later resolves", () => {
+    const endpoint = resolveEndpoint("deepseek_official");
+    expect(Object.isFrozen(endpoint)).toBe(true);
+    expect(() => {
+      (endpoint as { url: string }).url = "http://attacker.example";
+    }).toThrow(TypeError);
+    expect(resolveEndpoint("deepseek_official").url).toBe(
+      "https://api.deepseek.com/chat/completions",
+    );
+
+    const credentialRegistration = resolveCredential("deepseek_api_key");
+    expect(Object.isFrozen(credentialRegistration)).toBe(true);
+    expect(() => {
+      (credentialRegistration as { envKey: string }).envKey = "ATTACKER_ENV";
+    }).toThrow(TypeError);
+    expect(
+      resolveCredentialSecret("deepseek_api_key", {
+        DEEPSEEK_API_KEY: "still-canonical",
+        ATTACKER_ENV: "wrong",
+      }),
+    ).toBe("still-canonical");
+
+    const capability = resolveCapability("deepseek_chat_json_object_v1");
+    expect(Object.isFrozen(capability)).toBe(true);
+    expect(() => {
+      (capability as { wireApiKind: string }).wireApiKind = "responses_v1";
+    }).toThrow(TypeError);
+    expect(resolveCapability("deepseek_chat_json_object_v1").wireApiKind).toBe(
+      "chat_completions_v1",
+    );
+
+    const calculator = resolveCalculator("openai_gpt56_v1");
+    expect(Object.isFrozen(calculator)).toBe(true);
+    expect(Object.isFrozen(calculator.requiredComponents)).toBe(true);
+    expect(() => {
+      (calculator.requiredComponents as string[]).pop();
+    }).toThrow(TypeError);
+    expect(resolveCalculator("openai_gpt56_v1").requiredComponents).toEqual([
+      "input_standard",
+      "input_cache_read",
+      "input_cache_write",
+      "output",
+    ]);
   });
 });

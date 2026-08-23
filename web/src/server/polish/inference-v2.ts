@@ -81,6 +81,12 @@ function assertNonNegativeSafeInteger(value: number, field: string): void {
   }
 }
 
+function assertPositiveSafeInteger(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new InferenceV2ContractError(`${field} must be a positive safe integer`);
+  }
+}
+
 function assertNonEmpty(value: string, field: string): void {
   if (value.length === 0) {
     throw new InferenceV2ContractError(`${field} must not be empty`);
@@ -222,7 +228,7 @@ export function toInferenceRequestV2(
   request: PolishProviderRequest,
   metadata: LegacyRequestV2Metadata,
 ): PolishInferenceRequestV2 {
-  assertNonNegativeSafeInteger(request.maxOutputTokens, "maxOutputTokens");
+  assertPositiveSafeInteger(request.maxOutputTokens, "maxOutputTokens");
   assertNonEmpty(request.providerUserId, "providerUserId");
   assertNonEmpty(metadata.outputContract.schemaName, "outputContract.schemaName");
   assertNonEmpty(metadata.promptVersion, "promptVersion");
@@ -268,7 +274,7 @@ export function toLegacyProviderRequest(request: PolishInferenceRequestV2): Poli
   if (request.schemaVersion !== "polish_inference_request_v2") {
     throw new InferenceV2ContractError("unknown inference request schemaVersion");
   }
-  assertNonNegativeSafeInteger(request.maxOutputTokens, "maxOutputTokens");
+  assertPositiveSafeInteger(request.maxOutputTokens, "maxOutputTokens");
   assertNonEmpty(request.providerSubjectId, "providerSubjectId");
   if (request.outputContract.kind !== "json_object") {
     throw new InferenceV2ContractError("legacy provider cannot preserve json_schema output contract");
@@ -289,20 +295,35 @@ export function toLegacyProviderRequest(request: PolishInferenceRequestV2): Poli
   if (ids.size !== request.prompt.blocks.length) {
     throw new InferenceV2ContractError("prompt block ids must be unique");
   }
-  if (
-    request.prompt.explicitCacheBoundaryAfter !== undefined &&
-    !ids.has(request.prompt.explicitCacheBoundaryAfter)
-  ) {
-    throw new InferenceV2ContractError("explicit cache boundary must reference a prompt block");
-  }
-  if (request.prompt.explicitCacheBoundaryAfter !== undefined) {
-    const boundaryIndex = request.prompt.blocks.findIndex(
-      (block) => block.id === request.prompt.explicitCacheBoundaryAfter,
-    );
-    const stablePrefix = request.prompt.blocks.slice(0, boundaryIndex + 1);
-    if (stablePrefix.some((block) => block.stability !== "stable")) {
+
+  let firstVariableIndex = request.prompt.blocks.length;
+  let variableContentStarted = false;
+  for (const [index, block] of request.prompt.blocks.entries()) {
+    if (block.stability === "variable") {
+      if (!variableContentStarted) {
+        firstVariableIndex = index;
+        variableContentStarted = true;
+      }
+    } else if (variableContentStarted) {
       throw new InferenceV2ContractError(
-        "explicit cache boundary must end a stable prefix before variable content",
+        "legacy provider requires a stable prefix followed by a variable suffix",
+      );
+    }
+  }
+
+  const stableBlocks = request.prompt.blocks.slice(0, firstVariableIndex);
+  const boundary = request.prompt.explicitCacheBoundaryAfter;
+  if (stableBlocks.length === 0) {
+    if (boundary !== undefined) {
+      throw new InferenceV2ContractError(
+        "a prompt without stable blocks must not declare an explicit cache boundary",
+      );
+    }
+  } else {
+    const expectedBoundary = stableBlocks[stableBlocks.length - 1].id;
+    if (boundary !== expectedBoundary) {
+      throw new InferenceV2ContractError(
+        "explicit cache boundary must reference the final block of the stable prefix",
       );
     }
   }

@@ -144,6 +144,52 @@ describe("linear_token_v1", () => {
       ),
     ).toMatchObject({ estimatedCost: { nanos: "1" } });
   });
+
+  it("accepts the PostgreSQL bigint cost boundary and fails closed above it", () => {
+    const bigintMax = "9223372036854775807";
+    const boundaryUsage = usage({
+      inputTotalTokens: 1_000_000,
+      inputCacheReadTokens: 0,
+      inputStandardTokens: 1_000_000,
+      outputTokens: 0,
+      reasoningTokens: null,
+    });
+    expect(
+      calculateEstimatedCost(
+        boundaryUsage,
+        linearPrice({
+          components: {
+            input_standard: bigintMax,
+            input_cache_read: "0",
+            output: "0",
+          },
+        }),
+      ),
+    ).toMatchObject({ status: "complete", estimatedCost: { nanos: bigintMax } });
+
+    expect(
+      calculateEstimatedCost(
+        usage({
+          inputTotalTokens: Number.MAX_SAFE_INTEGER,
+          inputCacheReadTokens: 0,
+          inputStandardTokens: Number.MAX_SAFE_INTEGER,
+          outputTokens: 0,
+          reasoningTokens: null,
+        }),
+        linearPrice({
+          components: {
+            input_standard: bigintMax,
+            input_cache_read: "0",
+            output: "0",
+          },
+        }),
+      ),
+    ).toEqual({
+      status: "incomplete_usage",
+      estimatedCost: null,
+      incompleteReasons: ["cost_overflow"],
+    });
+  });
 });
 
 describe("openai_gpt56_v1", () => {
@@ -188,6 +234,46 @@ describe("openai_gpt56_v1", () => {
       status: "incomplete_usage",
       estimatedCost: null,
       incompleteReasons: ["input_cache_write"],
+    });
+  });
+
+  it("accepts the PostgreSQL bigint cost boundary and fails closed above it", () => {
+    const bigintMax = "9223372036854775807";
+    const boundaryUsage = usage({
+      inputTotalTokens: 1_000_000,
+      inputCacheReadTokens: 0,
+      inputCacheWriteTokens: 0,
+      inputStandardTokens: 1_000_000,
+      outputTokens: 0,
+      reasoningTokens: null,
+      cacheUsageReporting: "reported",
+    });
+    const boundaryPrice = gptPrice({
+      components: {
+        input_standard: bigintMax,
+        input_cache_read: "0",
+        input_cache_write: "0",
+        output: "0",
+      },
+    });
+    expect(calculateEstimatedCost(boundaryUsage, boundaryPrice)).toMatchObject({
+      status: "complete",
+      estimatedCost: { nanos: bigintMax },
+    });
+
+    expect(
+      calculateEstimatedCost(
+        {
+          ...boundaryUsage,
+          inputTotalTokens: Number.MAX_SAFE_INTEGER,
+          inputStandardTokens: Number.MAX_SAFE_INTEGER,
+        },
+        boundaryPrice,
+      ),
+    ).toEqual({
+      status: "incomplete_usage",
+      estimatedCost: null,
+      incompleteReasons: ["cost_overflow"],
     });
   });
 });

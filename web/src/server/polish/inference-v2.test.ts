@@ -199,6 +199,88 @@ describe("legacy request/result converters", () => {
     ).toThrow(/stable prefix/);
   });
 
+  it("requires the exact stable-prefix boundary and a variable-only suffix", () => {
+    const v2 = toInferenceRequestV2(legacyRequest, {
+      outputContract: { kind: "json_object", schemaName: "polish", schema: {} },
+      promptVersion: "prompt-v1",
+      validatorVersion: "validator-v1",
+      language: "zh",
+    });
+    expect(() =>
+      toLegacyProviderRequest({
+        ...v2,
+        prompt: { ...v2.prompt, explicitCacheBoundaryAfter: undefined },
+      }),
+    ).toThrow(/final block of the stable prefix/);
+    expect(() =>
+      toLegacyProviderRequest({
+        ...v2,
+        prompt: { ...v2.prompt, explicitCacheBoundaryAfter: "legacy-message-2" },
+      }),
+    ).toThrow(/final block of the stable prefix/);
+    expect(() =>
+      toLegacyProviderRequest({
+        ...v2,
+        prompt: {
+          blocks: [
+            ...v2.prompt.blocks,
+            { id: "late-stable", role: "developer", stability: "stable", content: "late" },
+          ],
+          explicitCacheBoundaryAfter: "legacy-message-1",
+        },
+      }),
+    ).toThrow(/stable prefix followed by a variable suffix/);
+  });
+
+  it("forbids a cache boundary when every block is variable", () => {
+    const variableOnly = toInferenceRequestV2(
+      {
+        ...legacyRequest,
+        messages: [legacyRequest.messages[1]],
+      },
+      {
+        outputContract: { kind: "json_object", schemaName: "polish", schema: {} },
+        promptVersion: "prompt-v1",
+        validatorVersion: "validator-v1",
+        language: "zh",
+      },
+    );
+    expect(toLegacyProviderRequest(variableOnly).messages).toHaveLength(1);
+    expect(() =>
+      toLegacyProviderRequest({
+        ...variableOnly,
+        prompt: {
+          ...variableOnly.prompt,
+          explicitCacheBoundaryAfter: "legacy-message-1",
+        },
+      }),
+    ).toThrow(/must not declare/);
+  });
+
+  it("requires a positive safe maxOutputTokens in both converter directions", () => {
+    expect(() =>
+      toInferenceRequestV2(
+        { ...legacyRequest, maxOutputTokens: 0 },
+        {
+          outputContract: { kind: "json_object", schemaName: "polish", schema: {} },
+          promptVersion: "prompt-v1",
+          validatorVersion: "validator-v1",
+          language: "zh",
+        },
+      ),
+    ).toThrow(/positive safe integer/);
+
+    const v2 = toInferenceRequestV2(legacyRequest, {
+      outputContract: { kind: "json_object", schemaName: "polish", schema: {} },
+      promptVersion: "prompt-v1",
+      validatorVersion: "validator-v1",
+      language: "zh",
+    });
+    expect(() => toLegacyProviderRequest({ ...v2, maxOutputTokens: 0 })).toThrow(
+      /positive safe integer/,
+    );
+  });
+
   it("rejects a legacy message order that would cache variable content", () => {
     expect(() =>
       toInferenceRequestV2(

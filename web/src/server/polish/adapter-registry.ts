@@ -58,43 +58,43 @@ export class ProviderRegistryError extends Error {
 }
 
 interface AdapterRegistration {
-  kind: AdapterKind;
-  wireApiKind: WireApiKind;
-  validateConfig(value: unknown): RegisteredAdapterConfig;
+  readonly kind: AdapterKind;
+  readonly wireApiKind: WireApiKind;
+  readonly validateConfig: (value: unknown) => RegisteredAdapterConfig;
 }
 
 interface EndpointRegistration {
-  alias: EndpointAlias;
-  url: string;
+  readonly alias: EndpointAlias;
+  readonly url: string;
 }
 
 interface CredentialRegistration {
-  alias: CredentialAlias;
-  envKey: "DEEPSEEK_API_KEY" | "MIMO_API_KEY";
+  readonly alias: CredentialAlias;
+  readonly envKey: "DEEPSEEK_API_KEY" | "MIMO_API_KEY";
 }
 
 interface CapabilityRegistration {
-  id: CapabilityContractId;
-  wireApiKind: WireApiKind;
-  nativeDeveloperRole: boolean;
-  outputMode: "json_object" | "prompt_only";
-  providerSubjectField: "user_id" | null;
+  readonly id: CapabilityContractId;
+  readonly wireApiKind: WireApiKind;
+  readonly nativeDeveloperRole: boolean;
+  readonly outputMode: "json_object" | "prompt_only";
+  readonly providerSubjectField: "user_id" | null;
 }
 
 interface CachePolicyRegistration {
-  id: CachePolicyId;
-  mode: "automatic";
-  cacheWriteReporting: "unavailable";
+  readonly id: CachePolicyId;
+  readonly mode: "automatic";
+  readonly cacheWriteReporting: "unavailable";
 }
 
 interface LegalManifestRegistration {
-  id: LegalManifestId;
-  providerName: "DeepSeek" | "MiMo";
+  readonly id: LegalManifestId;
+  readonly providerName: "DeepSeek" | "MiMo";
 }
 
 interface CalculatorRegistration {
-  kind: CalculatorKind;
-  requiredComponents: readonly (
+  readonly kind: CalculatorKind;
+  readonly requiredComponents: readonly (
     | "input_standard"
     | "input_cache_read"
     | "input_cache_write"
@@ -103,9 +103,20 @@ interface CalculatorRegistration {
 }
 
 interface DisplayDisclosureRegistration {
-  key: DisplayDisclosureKey;
-  providerName: "DeepSeek" | "MiMo";
-  modelName: "DeepSeek V4 Flash" | "MiMo V2.5 Pro";
+  readonly key: DisplayDisclosureKey;
+  readonly providerName: "DeepSeek" | "MiMo";
+  readonly modelName: "DeepSeek V4 Flash" | "MiMo V2.5 Pro";
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.freeze(value);
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(nested);
+  }
+  return value;
 }
 
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
@@ -274,6 +285,22 @@ const DISPLAY_DISCLOSURE_REGISTRY: Record<
     modelName: "MiMo V2.5 Pro",
   },
 };
+
+// Resolvers intentionally return canonical registrations. Deep-freeze every
+// registry and nested array so a caller cannot mutate that shared identity and
+// poison later resolutions at runtime (TypeScript readonly is not sufficient).
+for (const registry of [
+  ADAPTER_REGISTRY,
+  ENDPOINT_REGISTRY,
+  CREDENTIAL_REGISTRY,
+  CAPABILITY_REGISTRY,
+  CACHE_POLICY_REGISTRY,
+  LEGAL_MANIFEST_REGISTRY,
+  CALCULATOR_REGISTRY,
+  DISPLAY_DISCLOSURE_REGISTRY,
+]) {
+  deepFreeze(registry);
+}
 
 function resolveRegistered<T>(registry: Record<string, T>, id: string, label: string): T {
   const entry = registry[id];
