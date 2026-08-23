@@ -227,6 +227,24 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       .single();
   }
 
+  async function finalizeReservation(reservationId: string) {
+    const finalized = await service
+      .from("ai_request_ledger")
+      .update({
+        state: "finalized",
+        status: "released",
+        quota_charged: false,
+        provider_billable: false,
+        usage_complete: false,
+        finalized_at: new Date(Date.now() + 1_000).toISOString(),
+      })
+      .eq("reservation_id", reservationId)
+      .select("state")
+      .single();
+    expect(finalized.error).toBeNull();
+    expect(finalized.data?.state).toBe("finalized");
+  }
+
   it("stores a frozen started attempt and rejects duplicate caller identity", async () => {
     const fixture = await createReservation();
     const first = await insertStarted(fixture);
@@ -237,6 +255,60 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       .from("ai_provider_attempt_ledger")
       .insert(startedAttempt(fixture));
     expect(duplicate.error?.code).toBe(UNIQUE_VIOLATION);
+  });
+
+  it("admits only started attempts and only a started-to-terminal update", async () => {
+    const terminalFixture = await createReservation();
+    const terminalInsert = await service
+      .from("ai_provider_attempt_ledger")
+      .insert({
+        ...startedAttempt(terminalFixture),
+        ...unavailableCompletion(),
+      });
+    expect(terminalInsert.error?.code).toBe(CHECK_VIOLATION);
+
+    const fixture = await createReservation();
+    const started = await insertStarted(fixture);
+    expect(started.error).toBeNull();
+    const startedUpdate = await service
+      .from("ai_provider_attempt_ledger")
+      .update({ status: "started" })
+      .eq("attempt_id", started.data!.attempt_id);
+    expect(startedUpdate.error?.code).toBe(CHECK_VIOLATION);
+  });
+
+  it("rejects insert, late completion, and direct child deletion after parent finalization", async () => {
+    const finalizedBeforeStart = await createReservation();
+    await finalizeReservation(finalizedBeforeStart.reservationId);
+    const insertAfterFinalize = await service
+      .from("ai_provider_attempt_ledger")
+      .insert(startedAttempt(finalizedBeforeStart));
+    expect(insertAfterFinalize.error?.code).toBe(CHECK_VIOLATION);
+
+    const fixture = await createReservation();
+    const started = await insertStarted(fixture);
+    expect(started.error).toBeNull();
+    await finalizeReservation(fixture.reservationId);
+
+    const lateCompletion = await service
+      .from("ai_provider_attempt_ledger")
+      .update(unavailableCompletion())
+      .eq("attempt_id", started.data!.attempt_id);
+    expect(lateCompletion.error?.code).toBe(CHECK_VIOLATION);
+
+    const directDelete = await service
+      .from("ai_provider_attempt_ledger")
+      .delete()
+      .eq("attempt_id", started.data!.attempt_id);
+    expect(directDelete.error?.code).toBe(CHECK_VIOLATION);
+
+    const unchanged = await service
+      .from("ai_provider_attempt_ledger")
+      .select("status")
+      .eq("attempt_id", started.data!.attempt_id)
+      .single();
+    expect(unchanged.error).toBeNull();
+    expect(unchanged.data?.status).toBe("started");
   });
 
   it("preserves observed automatic-cache usage as NULL + unavailable", async () => {
@@ -266,6 +338,106 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(overwrite.error?.code).toBe(CHECK_VIOLATION);
   });
 
+  it.each([
+    "https://unregistered.example.net:8443/v1/responses",
+    "https://127.0.0.1:443/v1/responses",
+  ])("accepts canonical route value channels for %s", async (endpoint) => {
+    // This proves only the DB's canonical/non-secret shape. The adapter/code
+    // registry remains responsible for an exact endpoint allowlist and must
+    // reject a canonical endpoint that is not registered for the profile.
+    const fixture = await createReservation();
+    const started = await insertStarted(fixture);
+    const completed = await service
+      .from("ai_provider_attempt_ledger")
+      .update(observedCompletion({
+        gateway_request_id: "GW.123_region:iad/edge-1",
+        provider_request_id: "req/2026:08.24_id-1",
+        actual_model_id: "vendor/model.v2:pro",
+        actual_upstream_endpoint: endpoint,
+      }))
+      .eq("attempt_id", started.data!.attempt_id);
+    expect(completed.error).toBeNull();
+  });
+
+  it("rejects non-canonical or secret-like values from every route token channel", async () => {
+    const unsafeTokens = [
+      "",
+      "-leading",
+      ".leading",
+      "/leading",
+      ":leading",
+      "space value",
+      "tab\tvalue",
+      "line\nvalue",
+      "模型",
+      "id@host",
+      "id?query",
+      "id#fragment",
+      "id=value",
+      "id\\backslash",
+      "api_key:do-not-store",
+      "access_token:do-not-store",
+      "authorization/header-value",
+      "secret-value",
+      "a".repeat(257),
+    ];
+    const routeTokenFields = [
+      "gateway_request_id",
+      "provider_request_id",
+      "actual_model_id",
+    ];
+
+    for (const field of routeTokenFields) {
+      for (const value of unsafeTokens) {
+        const fixture = await createReservation();
+        const started = await insertStarted(fixture);
+        const completed = await service
+          .from("ai_provider_attempt_ledger")
+          .update(observedCompletion({ [field]: value }))
+          .eq("attempt_id", started.data!.attempt_id);
+        expect(completed.error?.code, `${field}=${JSON.stringify(value)}`).toBe(CHECK_VIOLATION);
+      }
+    }
+  });
+
+  it("rejects malformed, credential-bearing, encoded, or non-HTTPS endpoint observations", async () => {
+    const unsafeEndpoints = [
+      "https:///api_key=do-not-store",
+      "http://api.example.com/v1",
+      "HTTPS://api.example.com/v1",
+      "https://",
+      "https://api",
+      "https://user:pass@api.example.com/v1",
+      "https://api.example.com/v1?token=secret",
+      "https://api.example.com/v1#fragment",
+      "https://api.example.com/with space",
+      "https://api.example.com/line\nbreak",
+      "https://api.example.com/path@user",
+      "https://api.example.com/%40hidden-userinfo",
+      "https://secret.example.com/v1",
+      "https://999.999.999.999/v1",
+      "https://[::1]/v1",
+      "https://-api.example.com/v1",
+      "https://api..example.com/v1",
+      "https://api.example.123/v1",
+      "https://api.example.com:0/v1",
+      "https://api.example.com:65536/v1",
+      `https://${"a".repeat(500)}.com/v1`,
+      `https://${["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(63), "com"].join(".")}/v1`,
+      `https://api.example.com/${"a".repeat(490)}`,
+    ];
+
+    for (const endpoint of unsafeEndpoints) {
+      const fixture = await createReservation();
+      const started = await insertStarted(fixture);
+      const completed = await service
+        .from("ai_provider_attempt_ledger")
+        .update(observedCompletion({ actual_upstream_endpoint: endpoint }))
+        .eq("attempt_id", started.data!.attempt_id);
+      expect(completed.error?.code, endpoint).toBe(CHECK_VIOLATION);
+    }
+  });
+
   it("stores wholly unavailable usage without manufacturing zero tokens or cost", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
@@ -285,6 +457,22 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       estimated_cost_nanos: null,
       cost_reconciliation_status: "incomplete_usage",
     });
+  });
+
+  it("keeps false distinct from unknown provider billability", async () => {
+    const fixture = await createReservation();
+    const started = await insertStarted(fixture);
+    const completed = await service
+      .from("ai_provider_attempt_ledger")
+      .update({
+        ...unavailableCompletion("canceled"),
+        provider_billable: false,
+      })
+      .eq("attempt_id", started.data!.attempt_id)
+      .select("provider_billable")
+      .single();
+    expect(completed.error).toBeNull();
+    expect(completed.data?.provider_billable).toBe(false);
   });
 
   it.each([
@@ -308,6 +496,63 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       .update({ latency_ms: 9999 })
       .eq("attempt_id", started.data!.attempt_id);
     expect(secondCompletion.error?.code).toBe(CHECK_VIOLATION);
+  });
+
+  it("reserves unknown for the reconciler's null-billable unavailable-usage shape", async () => {
+    const invalidUnknownCompletions = [
+      {
+        label: "observed complete usage",
+        completion: observedCompletion({
+          status: "unknown",
+          provider_billable: null,
+          estimated_currency: null,
+          estimated_cost_nanos: null,
+          cost_reconciliation_status: "incomplete_usage",
+          finish_reason: null,
+        }),
+      },
+      {
+        label: "known provider billability",
+        completion: {
+          ...unavailableCompletion("unknown"),
+          provider_billable: false,
+        },
+      },
+      {
+        label: "known provider-reported cost",
+        completion: {
+          ...unavailableCompletion("unknown"),
+          provider_reported_currency: "CNY",
+          provider_reported_cost_nanos: 1,
+        },
+      },
+      {
+        label: "manufactured zero usage",
+        completion: {
+          ...unavailableCompletion("unknown"),
+          usage_observation_kind: "observed",
+          usage_schema_version: "normalized_usage_v2",
+          input_total_tokens: 0,
+          input_cache_read_tokens: 0,
+          input_cache_write_tokens: 0,
+          input_standard_tokens: 0,
+          output_tokens: 0,
+          reasoning_tokens: 0,
+          cache_usage_reporting: "not_applicable",
+          usage_complete: true,
+        },
+      },
+    ];
+
+    for (const { label, completion } of invalidUnknownCompletions) {
+      const fixture = await createReservation();
+      const started = await insertStarted(fixture);
+      const completed = await service
+        .from("ai_provider_attempt_ledger")
+        .update(completion)
+        .eq("attempt_id", started.data!.attempt_id);
+      expect(completed.error?.code, label).toBe(CHECK_VIOLATION);
+    }
   });
 
   it.each([
@@ -349,21 +594,30 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
   it("rejects partial/UNKNOWN-shaped facts, unsafe route metadata, and numeric overflow", async () => {
     const cases: Array<Record<string, unknown>> = [
+      { usage_observation_kind: null },
       { usage_schema_version: null },
+      { usage_complete: null },
       { cache_usage_reporting: null },
       { input_cache_write_tokens: 0 },
       { input_standard_tokens: 41 },
       { reasoning_tokens: 21 },
       { input_total_tokens: "9007199254740992", input_cache_read_tokens: SAFE_INTEGER_MAX, input_standard_tokens: 1 },
+      { route_observation_schema_version: null },
+      { router_attempt_count: 0 },
+      { router_attempt_count: 101 },
+      { cost_observation_schema_version: null },
       { estimated_currency: null },
       { estimated_currency: "USD" },
       { provider_reported_currency: "USD", provider_reported_cost_nanos: 1234 },
+      { cost_reconciliation_status: null },
       { cost_reconciliation_status: "matched", provider_reported_currency: null, provider_reported_cost_nanos: null },
       { actual_upstream_endpoint: "https://user:secret@example.com/v1" },
       { actual_upstream_endpoint: "https://api.example.com/v1?token=secret" },
       { provider_request_id: "api_key=do-not-store" },
       { failure_stage: "provider_http\nraw-message" },
+      { latency_ms: null },
       { terminal_at: null },
+      { terminal_at: "1970-01-01T00:00:00Z" },
     ];
 
     for (const invalid of cases) {
@@ -419,7 +673,25 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(forged.error?.code).toBe(CHECK_VIOLATION);
   });
 
-  it("cascades attempts with their request/user and leaves no orphan", async () => {
+  it("allows parent retention and user deletion cascades while leaving no orphan", async () => {
+    const retentionFixture = await createReservation();
+    const retentionAttempt = await insertStarted(retentionFixture);
+    expect(retentionAttempt.error).toBeNull();
+    await finalizeReservation(retentionFixture.reservationId);
+
+    const deleteParent = await service
+      .from("ai_request_ledger")
+      .delete()
+      .eq("reservation_id", retentionFixture.reservationId);
+    expect(deleteParent.error).toBeNull();
+    const retainedChild = await service
+      .from("ai_provider_attempt_ledger")
+      .select("attempt_id")
+      .eq("attempt_id", retentionAttempt.data!.attempt_id)
+      .maybeSingle();
+    expect(retainedChild.error).toBeNull();
+    expect(retainedChild.data).toBeNull();
+
     const cascadeUser = await createTestUser(service, "attempt-cascade");
     const fixture = await createReservation(cascadeUser);
     const started = await insertStarted(fixture);
@@ -469,5 +741,17 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       .from("ai_provider_attempt_ledger")
       .insert(startedAttempt(fixture));
     expect(write.error?.code).toBe(PERMISSION_DENIED);
+
+    const update = await anon
+      .from("ai_provider_attempt_ledger")
+      .update({ status: "canceled" })
+      .eq("reservation_id", fixture.reservationId);
+    expect(update.error?.code).toBe(PERMISSION_DENIED);
+
+    const remove = await anon
+      .from("ai_provider_attempt_ledger")
+      .delete()
+      .eq("reservation_id", fixture.reservationId);
+    expect(remove.error?.code).toBe(PERMISSION_DENIED);
   });
 });

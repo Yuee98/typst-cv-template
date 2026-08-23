@@ -70,8 +70,8 @@ create table public.ai_provider_attempt_ledger (
   constraint ai_provider_attempt_ledger_reservation_attempt_unique
     unique (reservation_id, attempt_no),
   constraint ai_provider_attempt_ledger_attempt_no_check
-    check (attempt_no between 1 and 2),
-  constraint ai_provider_attempt_ledger_snapshot_shape_check check (
+    check (coalesce(attempt_no between 1 and 2, false)),
+  constraint ai_provider_attempt_ledger_snapshot_shape_check check (coalesce((
     route_schema_version = 'route_snapshot_v1'
     and config_generation >= 0
     and length(btrim(legal_bundle_version)) between 1 and 200
@@ -87,8 +87,8 @@ create table public.ai_provider_attempt_ledger (
     and length(btrim(legal_manifest_id)) between 1 and 200
     and length(btrim(calculator_kind)) between 1 and 200
     and billing_currency ~ '^[A-Z]{3}$'
-  ),
-  constraint ai_provider_attempt_ledger_status_check check (
+  ), false)),
+  constraint ai_provider_attempt_ledger_status_check check (coalesce((
     status in (
       'started',
       'succeeded',
@@ -98,8 +98,8 @@ create table public.ai_provider_attempt_ledger (
       'canceled',
       'unknown'
     )
-  ),
-  constraint ai_provider_attempt_ledger_lifecycle_check check (
+  ), false)),
+  constraint ai_provider_attempt_ledger_lifecycle_check check (coalesce((
     (
       status = 'started'
       and terminal_at is null
@@ -141,8 +141,8 @@ create table public.ai_provider_attempt_ledger (
       and cost_reconciliation_status is not null
       and latency_ms is not null
     )
-  ),
-  constraint ai_provider_attempt_ledger_token_bounds_check check (
+  ), false)),
+  constraint ai_provider_attempt_ledger_token_bounds_check check (coalesce((
     (input_total_tokens is null or input_total_tokens between 0 and 9007199254740991)
     and (input_cache_read_tokens is null or input_cache_read_tokens between 0 and 9007199254740991)
     and (input_cache_write_tokens is null or input_cache_write_tokens between 0 and 9007199254740991)
@@ -150,7 +150,7 @@ create table public.ai_provider_attempt_ledger (
     and (output_tokens is null or output_tokens between 0 and 9007199254740991)
     and (reasoning_tokens is null or reasoning_tokens between 0 and 9007199254740991)
     and (reasoning_tokens is null or output_tokens is not null and reasoning_tokens <= output_tokens)
-  ),
+  ), false)),
   constraint ai_provider_attempt_ledger_usage_observation_check check (coalesce((
     (
       usage_observation_kind = 'unavailable'
@@ -207,43 +207,62 @@ create table public.ai_provider_attempt_ledger (
       and (
         gateway_request_id is null
         or (
-          length(gateway_request_id) between 1 and 256
-          and btrim(gateway_request_id) = gateway_request_id
-          and gateway_request_id !~ '[[:cntrl:]]'
-          and gateway_request_id !~* '(bearer|basic)[[:space:]]+|(api[_-]?key|password|secret)[[:space:]]*[:=]'
+          gateway_request_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$'
+          and gateway_request_id !~* '(bearer|basic|api[_-]?(key|token)|access[_-]?token|authorization|password|secret)'
         )
       )
       and (
         provider_request_id is null
         or (
-          length(provider_request_id) between 1 and 256
-          and btrim(provider_request_id) = provider_request_id
-          and provider_request_id !~ '[[:cntrl:]]'
-          and provider_request_id !~* '(bearer|basic)[[:space:]]+|(api[_-]?key|password|secret)[[:space:]]*[:=]'
+          provider_request_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$'
+          and provider_request_id !~* '(bearer|basic|api[_-]?(key|token)|access[_-]?token|authorization|password|secret)'
         )
       )
       and (
         actual_model_id is null
         or (
-          length(actual_model_id) between 1 and 256
-          and btrim(actual_model_id) = actual_model_id
-          and actual_model_id !~ '[[:cntrl:]]'
-          and actual_model_id !~* '(bearer|basic)[[:space:]]+|(api[_-]?key|password|secret)[[:space:]]*[:=]'
+          actual_model_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$'
+          and actual_model_id !~* '(bearer|basic|api[_-]?(key|token)|access[_-]?token|authorization|password|secret)'
         )
       )
       and (
         actual_upstream_endpoint is null
         or (
           length(actual_upstream_endpoint) between 9 and 512
-          and actual_upstream_endpoint ~ '^https://'
-          and actual_upstream_endpoint !~ '[[:space:][:cntrl:]?#]'
-          and split_part(split_part(actual_upstream_endpoint, '://', 2), '/', 1) !~ '@'
+          -- DB enforces only a canonical, non-secret HTTPS value channel.
+          -- The adapter/code registry separately owns the exact endpoint
+          -- allowlist and must reject canonical-but-unregistered endpoints.
+          and actual_upstream_endpoint ~ (
+            '^https://(' ||
+            '((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}' ||
+            '(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])' ||
+            '|' ||
+            '([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+' ||
+            '[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?' ||
+            ')' ||
+            '(:(' ||
+            '[1-9][0-9]{0,3}' ||
+            '|[1-5][0-9]{4}' ||
+            '|6[0-4][0-9]{3}' ||
+            '|65[0-4][0-9]{2}' ||
+            '|655[0-2][0-9]' ||
+            '|6553[0-5]' ||
+            '))?' ||
+            '(/[A-Za-z0-9._~!$&''()*+,;=:/-]*)?$'
+          )
+          and actual_upstream_endpoint !~ '[[:space:][:cntrl:]@?#]'
+          and actual_upstream_endpoint !~* '(bearer|basic|api[_-]?(key|token)|access[_-]?token|authorization|password|secret)'
+          and length(split_part(
+            split_part(split_part(actual_upstream_endpoint, '://', 2), '/', 1),
+            ':',
+            1
+          )) between 1 and 253
         )
       )
       and (router_attempt_count is null or router_attempt_count between 1 and 100)
     )
   ), false)),
-  constraint ai_provider_attempt_ledger_cost_bounds_check check (
+  constraint ai_provider_attempt_ledger_cost_bounds_check check (coalesce((
     (estimated_cost_nanos is null or estimated_cost_nanos >= 0)
     and (provider_reported_cost_nanos is null or provider_reported_cost_nanos >= 0)
     and (
@@ -258,7 +277,7 @@ create table public.ai_provider_attempt_ledger (
       and provider_reported_currency = billing_currency
       and provider_reported_cost_nanos is not null
     )
-  ),
+  ), false)),
   constraint ai_provider_attempt_ledger_cost_reconciliation_check check (coalesce((
     (
       status = 'started'
@@ -294,7 +313,29 @@ create table public.ai_provider_attempt_ledger (
       )
     )
   ), false)),
-  constraint ai_provider_attempt_ledger_metadata_check check (
+  constraint ai_provider_attempt_ledger_unknown_reconciler_shape_check check (coalesce((
+    status <> 'unknown'
+    or (
+      provider_billable is null
+      and usage_observation_kind = 'unavailable'
+      and usage_schema_version is null
+      and input_total_tokens is null
+      and input_cache_read_tokens is null
+      and input_cache_write_tokens is null
+      and input_standard_tokens is null
+      and output_tokens is null
+      and reasoning_tokens is null
+      and cache_usage_reporting is null
+      and usage_complete is false
+      and estimated_currency is null
+      and estimated_cost_nanos is null
+      and provider_reported_currency is null
+      and provider_reported_cost_nanos is null
+      and cost_reconciliation_status = 'incomplete_usage'
+      and finish_reason is null
+    )
+  ), false)),
+  constraint ai_provider_attempt_ledger_metadata_check check (coalesce((
     (finish_reason is null or finish_reason in (
       'stop',
       'length',
@@ -307,7 +348,7 @@ create table public.ai_provider_attempt_ledger (
       or failure_stage ~ '^[a-z][a-z0-9_]{0,63}$'
     )
     and (latency_ms is null or latency_ms >= 0)
-  )
+  ), false))
 );
 
 create index ai_provider_attempt_ledger_reservation_status_idx
@@ -323,8 +364,23 @@ declare
   v_profile record;
   v_price public.ai_price_versions%rowtype;
 begin
+  if tg_op = 'DELETE' then
+    -- Direct child deletion could erase immutable provider facts. Retention
+    -- and account deletion remain possible after the parent FK cascade has
+    -- made the parent row no longer visible to this trigger.
+    perform 1
+    from public.ai_request_ledger
+    where reservation_id = old.reservation_id;
+
+    if found then
+      raise exception 'ai_provider_attempt_ledger rows cannot be deleted directly'
+        using errcode = '23514';
+    end if;
+    return old;
+  end if;
+
   if tg_op = 'INSERT' then
-    if new.status <> 'started' then
+    if new.status is distinct from 'started' then
       raise exception 'ai_provider_attempt_ledger rows must be inserted as started'
         using errcode = '23514';
     end if;
@@ -332,10 +388,12 @@ begin
     select * into v_request
     from public.ai_request_ledger
     where reservation_id = new.reservation_id
-    for key share;
+    for update;
 
-    if not found or v_request.route_schema_version is null then
-      raise exception 'provider attempts require a frozen parent route snapshot'
+    if not found
+       or v_request.route_schema_version is null
+       or v_request.state is distinct from 'reserved' then
+      raise exception 'provider attempts require a reserved parent with a frozen route snapshot'
         using errcode = '23514';
     end if;
 
@@ -420,8 +478,23 @@ begin
   end if;
 
   if tg_op = 'UPDATE' then
-    if old.status <> 'started' then
+    if old.status is distinct from 'started' then
       raise exception 'terminal provider attempt facts are immutable'
+        using errcode = '23514';
+    end if;
+
+    if new.status is not distinct from 'started' then
+      raise exception 'provider attempt updates must transition started to terminal'
+        using errcode = '23514';
+    end if;
+
+    select * into v_request
+    from public.ai_request_ledger
+    where reservation_id = old.reservation_id
+    for update;
+
+    if not found or v_request.state is distinct from 'reserved' then
+      raise exception 'provider attempt completion requires its parent to remain reserved'
         using errcode = '23514';
     end if;
 
@@ -481,11 +554,14 @@ end;
 $$;
 
 create trigger guard_ai_provider_attempt_ledger
-before insert or update on public.ai_provider_attempt_ledger
+before insert or update or delete on public.ai_provider_attempt_ledger
 for each row execute function public.guard_ai_provider_attempt_ledger();
 
 alter table public.ai_provider_attempt_ledger enable row level security;
 revoke all on public.ai_provider_attempt_ledger from public, anon, authenticated;
+-- DB-008 intentionally keeps service-role direct DML for schema fixtures.
+-- DB-009/DB-010 add lifecycle RPCs; DB-011 owns final grant tightening and
+-- cleanup behavior without widening the value channels defined above.
 grant select, insert, update, delete on public.ai_provider_attempt_ledger to service_role;
 
 revoke execute on function public.guard_ai_provider_attempt_ledger()
