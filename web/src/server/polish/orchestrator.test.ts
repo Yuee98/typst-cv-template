@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { computePolishMaxOutputTokens, type PolishRequest } from "@/lib/polish/contract";
 import {
   addPolishUsage,
@@ -12,6 +12,7 @@ import {
   type PolishProviderResult,
   type PolishProviderUsage,
 } from "./orchestrator";
+import { MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
 
 const VALID_ZH_POLISHED = "负责后端核心服务的开发与优化，将 P99 延迟降低 40%。";
 /** Pseudonymous id the handler would inject; forwarded to the provider unchanged. */
@@ -75,8 +76,12 @@ function rejectWith(error: unknown): ProviderBehavior {
   return () => Promise.reject(error);
 }
 
-function providerError(code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT", message: string): Error {
-  return Object.assign(new Error(message), { code });
+function providerError(
+  code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT",
+  message: string,
+  metadata: { upstreamStatus?: number; retryable?: boolean; retryAfterMs?: number } = {},
+): Error {
+  return Object.assign(new Error(message), { code, ...metadata });
 }
 
 function fakeClock(start = 0): { now: () => number; advance: (ms: number) => void } {
@@ -167,6 +172,89 @@ describe("orchestratePolish — success paths", () => {
     // the failed transport attempt contributed no usage
     expect(result.usage).toEqual(usage());
     expect(calls[1].request.messages[1].content).toContain("UPSTREAM_ERROR");
+    expect(calls[1].request.messages[1].content).not.toContain("upstream 500");
+  });
+
+  it("does not retry terminal provider 4xx failures", async () => {
+    const { provider, calls } = makeMockProvider(
+      rejectWith(
+        providerError("UPSTREAM_ERROR", "sensitive upstream body", {
+          upstreamStatus: 402,
+          retryable: true,
+        }),
+      ),
+    );
+
+    const error = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, { now: fakeClock().now }),
+    ).catch((caught: unknown) => caught);
+
+    expect(calls).toHaveLength(1);
+    expect(error).toMatchObject({
+      code: "UPSTREAM_ERROR",
+      attempts: 1,
+      upstreamStatus: 402,
+    });
+    expect((error as Error).message).not.toContain("sensitive upstream body");
+  });
+
+  it("honors a capped 429 Retry-After inside the shared deadline", async () => {
+    const clock = fakeClock();
+    const sleeps: number[] = [];
+    const { provider, calls } = makeMockProvider(
+      rejectWith(
+        providerError("UPSTREAM_ERROR", "rate limited", {
+          upstreamStatus: 429,
+          retryAfterMs: MAX_PROVIDER_RETRY_AFTER_MS * 10,
+        }),
+      ),
+      resolveWith(successResult()),
+    );
+
+    const result = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, {
+        now: clock.now,
+        sleep: async (delayMs) => {
+          sleeps.push(delayMs);
+          clock.advance(delayMs);
+        },
+      }),
+    );
+
+    expect(result.attempts).toBe(2);
+    expect(calls).toHaveLength(2);
+    expect(sleeps).toEqual([MAX_PROVIDER_RETRY_AFTER_MS]);
+    expect(calls[1].options.timeoutMs).toBe(
+      POLISH_TOTAL_DEADLINE_MS - MAX_PROVIDER_RETRY_AFTER_MS,
+    );
+  });
+
+  it("does not wait or retry when Retry-After would consume the minimum retry budget", async () => {
+    const clock = fakeClock();
+    const sleep = vi.fn(async () => {});
+    const { provider, calls } = makeMockProvider(() => {
+      clock.advance(POLISH_TOTAL_DEADLINE_MS - MIN_RETRY_BUDGET_MS - 1_000);
+      return Promise.reject(
+        providerError("UPSTREAM_ERROR", "rate limited", {
+          upstreamStatus: 429,
+          retryAfterMs: 2_000,
+        }),
+      );
+    });
+
+    const error = await orchestratePolish(
+      provider,
+      makeRequest(),
+      callOpts(new AbortController().signal, { now: clock.now, sleep }),
+    ).catch((caught: unknown) => caught);
+
+    expect(calls).toHaveLength(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(error).toMatchObject({ code: "UPSTREAM_ERROR", attempts: 1 });
   });
 });
 

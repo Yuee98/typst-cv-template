@@ -8,8 +8,9 @@
  * Policy (roadmap「输出与验证流水线」):
  * - total deadline 45s; each attempt gets the remaining budget as its
  *   timeout; a retry is only started if at least MIN_RETRY_BUDGET_MS remains
- * - at most 2 attempts; transport failures (provider threw) and validation
- *   failures share the same attempt budget
+ * - at most 2 attempts; retryable transport failures and validation failures
+ *   share the same attempt budget; terminal provider 4xx failures stop after
+ *   one attempt, while a bounded 429 Retry-After consumes the same deadline
  * - attempt 2 carries the previous failure reason in the retry prompt
  * - usage is accumulated across attempts and returned/surfaced on BOTH
  *   success and failure (roadmap Invariant 7: all retry tokens count);
@@ -45,6 +46,7 @@ import {
   type PolishProviderResult,
   type PolishProviderUsage,
 } from "./provider";
+import { classifyProviderRetry } from "./provider-error";
 import {
   POLISH_VALIDATOR_VERSION,
   validatePolishOutput,
@@ -206,9 +208,24 @@ export interface PolishOrchestrateOptions {
   onProgress?: (progress: PolishOrchestrationProgress) => void;
   /** Time source, injectable for deterministic deadline tests. Defaults to Date.now. */
   now?: () => number;
+  /** Abort-aware retry delay, injectable for deterministic Retry-After tests. */
+  sleep?: (delayMs: number, signal: AbortSignal) => Promise<void>;
 }
 
-const MAX_TRANSPORT_REASON_CHARS = 200;
+function sleepWithAbort(delayMs: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 /**
  * Transport failures are classified as "the provider threw" (its errors are
@@ -221,17 +238,35 @@ function classifyTransportError(error: unknown): {
   reason: string;
   providerRequestId?: string;
   upstreamStatus?: number;
+  retryable: boolean;
+  retryAfterMs: number;
 } {
-  const fields = error instanceof Error ? (error as Partial<PolishProviderError>) : {};
+  const fields = error instanceof Error
+    ? (error as Partial<PolishProviderError> & {
+        retryable?: unknown;
+        retryAfterMs?: unknown;
+      })
+    : {};
   const code = fields.code === "UPSTREAM_TIMEOUT" ? "UPSTREAM_TIMEOUT" : "UPSTREAM_ERROR";
-  const detail = error instanceof Error ? error.message : String(error);
-  const reason = `transport failure (${code}): ${detail}`.slice(0, MAX_TRANSPORT_REASON_CHARS);
+  const upstreamStatus =
+    typeof fields.upstreamStatus === "number" ? fields.upstreamStatus : undefined;
+  const retry = classifyProviderRetry({
+    code,
+    upstreamStatus,
+    retryable: fields.retryable,
+    retryAfterMs: fields.retryAfterMs,
+  });
+  // Never copy provider error text/body into logs, retry prompts or the
+  // terminal orchestration error. Only bounded structured metadata survives.
+  const reason = `transport failure (${code}${upstreamStatus === undefined ? "" : `, HTTP ${upstreamStatus}`})`;
   return {
     code,
     reason,
     providerRequestId:
       typeof fields.providerRequestId === "string" ? fields.providerRequestId : undefined,
-    upstreamStatus: typeof fields.upstreamStatus === "number" ? fields.upstreamStatus : undefined,
+    upstreamStatus,
+    retryable: retry.retryable,
+    retryAfterMs: retry.retryAfterMs,
   };
 }
 
@@ -251,6 +286,7 @@ export async function orchestratePolish(
   options: PolishOrchestrateOptions,
 ): Promise<PolishOrchestratorSuccess> {
   const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? sleepWithAbort;
   const deadline = now() + POLISH_TOTAL_DEADLINE_MS;
 
   // Dynamic output budget from the contract's single-source helper (per-item
@@ -383,6 +419,13 @@ export async function orchestratePolish(
         providerRequestId: transport.providerRequestId,
         upstreamStatus: transport.upstreamStatus,
       };
+      if (!transport.retryable) break;
+      if (transport.retryAfterMs > 0) {
+        // Do not sleep into a guaranteed-dead retry. The same total deadline
+        // and minimum useful budget apply to provider-directed backoff.
+        if (deadline - now() - transport.retryAfterMs < MIN_RETRY_BUDGET_MS) break;
+        await sleep(transport.retryAfterMs, options.signal);
+      }
       continue;
     }
 
