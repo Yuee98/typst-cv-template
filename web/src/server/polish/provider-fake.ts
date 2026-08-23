@@ -103,7 +103,8 @@ const FAKE_V2_ROUTE_KEYS = new Set<keyof FakeV2Route>([
 const MAX_FAKE_V2_ROUTE_TOKEN_LENGTH = 256;
 const MAX_FAKE_V2_ENDPOINT_LENGTH = 512;
 const MAX_FAKE_V2_ROUTER_ATTEMPTS = 100;
-const MAX_FAKE_V2_COST_NANOS = BigInt("1000000000000000000000000000000");
+// Must remain representable by the PostgreSQL bigint cost columns.
+const MAX_FAKE_V2_COST_NANOS = BigInt("9223372036854775807");
 
 /**
  * Small, explicit usage fixtures.  Keeping these values in one place makes

@@ -357,11 +357,21 @@ describe("createFakePolishInferenceProvider — V2 conformance", () => {
     { currency: "cny", nanos: "1" },
     { currency: "CNY", nanos: "-1" },
     { currency: "CNY", nanos: "1.5" },
-    { currency: "CNY", nanos: "1000000000000000000000000000001" },
+    { currency: "CNY", nanos: "9223372036854775808" },
   ])("fails closed for unsafe provider-reported cost %#", (providerReportedCost) => {
     expect(() => createFakePolishInferenceProvider({ providerReportedCost })).toThrow(
       /invalid fake V2 providerReportedCost/u,
     );
+  });
+
+  it("accepts the exact PostgreSQL bigint maximum for provider-reported cost", async () => {
+    const provider = createFakePolishInferenceProvider({
+      delayMs: 0,
+      providerReportedCost: { currency: "CNY", nanos: "9223372036854775807" },
+    });
+    await expect(provider.complete(makeV2Request(), v2CallOptions())).resolves.toMatchObject({
+      providerReportedCost: { currency: "CNY", nanos: "9223372036854775807" },
+    });
   });
 
   it("exposes safe bounded Retry-After metadata for 429", async () => {
