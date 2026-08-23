@@ -22,17 +22,17 @@ The neutral body and both annexes form one legal bundle. Listing a manifest does
 | Pricing and model list | https://api-docs.deepseek.com/quick_start/pricing/ | Official model/pricing identity; mutable commercial data is not reproduced as a legal guarantee. |
 | Create Chat Completion | https://api-docs.deepseek.com/api/create-chat-completion/ | Chat API and pseudonymous `user_id`; the identifier is documented for content-safety, cache-isolation, and scheduling-isolation purposes. |
 | Context caching | https://api-docs.deepseek.com/guides/kv_cache/ | Disk context caching is enabled by default; an unused cache is usually cleared within hours to days. |
-| Open Platform Terms | https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html | Released 2026-04-22, effective 2026-04-29; downstream disclosure/controller responsibilities and AI-output risk. |
-| Chinese Privacy Policy | https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html | Current policy effective 2026-02-10; PRC processing/storage and possible improvement/training use. |
-| English Privacy Policy | https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html | English-language cross-check of the current policy and scope. |
+| Open Platform Terms | https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html | Released 2026-04-22, effective 2026-04-29; Open Platform input/output improvement and training terms, downstream disclosure/controller responsibilities, AI-output risk, and the §5.5 downstream-product scope exclusion. |
+| Chinese Privacy Policy | https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html | Last updated 2026-02-10; the general PRC processing/storage statement and its express exclusion of products and services provided by downstream users. This source does not establish a location for this service's Open Platform API content. |
+| English Privacy Policy | https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html | Last updated 2026-02-10; English-language cross-check of the same general statement and downstream-user exclusion. This source does not establish an API-content location. |
 
 ### DeepSeek wording decisions
 
 - Submitted data: selected CV text, selected context, style instructions, and an HMAC-SHA256 pseudonymous `user_id`; no email, username, or raw account ID.
 - Operator: Hangzhou DeepSeek Artificial Intelligence Co., Ltd.; official endpoint `api.deepseek.com`.
-- Region: policies support PRC processing/storage, but no separate promise identifies the exact facility or region for API content.
+- Region and transfer: the general Privacy Policy's PRC statement expressly excludes products and services provided by downstream users. It does not establish where content submitted by this service through the Open Platform API is processed or stored. API-specific location, region, and transfer path remain unverified; the annex makes no PRC API-content claim.
 - Retention: the documented disk-cache behavior is disclosed. There is no fixed overall API-content retention period or zero-retention commitment.
-- Training/service improvement: policies permit improvement/training use in applicable circumstances. There is no API no-training promise, and coverage of a consumer opt-out for API requests was not verified.
+- Training/service improvement: the Open Platform Terms permit input/output use for improvement or model training in applicable circumstances. There is no API no-training promise or verified API-specific opt-out. This statement is not borrowed from the general Privacy Policy's excluded downstream scope.
 - User warning: treat submitted content as potentially retained or used for service improvement; do not submit sensitive or confidential data; review all output.
 
 ## 3. MiMo official sources
@@ -75,5 +75,5 @@ The Privacy Policy links the actual recipient to the route-specific provider ann
 1. MiMo remains inactive until its adapter, pricing/usage interpretation, exact legal-bundle gate, live smoke, and activation authority all pass.
 2. Re-check every official source when a provider changes policy, endpoint, operator, region, caching, retention, or training/service-improvement terms.
 3. Do not activate a profile whose manifest ID or exact legal-bundle version is absent from deployed code and the authoritative database snapshot.
-4. The following remain deliberately unknown: DeepSeek's complete API-content retention/deletion period and API training opt-out coverage; MiMo's mainland-China operating company, guaranteed per-request region, fixed API-content TTL, and cache TTL/scope/opt-out.
+4. The following remain deliberately unknown: DeepSeek's API-specific processing/storage location and transfer path, complete API-content retention/deletion period, and API training opt-out coverage; MiMo's mainland-China operating company, guaranteed per-request region, fixed API-content TTL, and cache TTL/scope/opt-out.
 5. Obtain qualified legal review before relying on a consent derogation for a broad or high-risk cross-border rollout.

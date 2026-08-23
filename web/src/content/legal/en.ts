@@ -36,18 +36,18 @@ export const deepseekLegalManifest = defineAiProviderLegalManifest({
   providerSubjectId:
     "An HMAC-SHA256 pseudonymous user_id is sent. DeepSeek documents it as supporting content safety, cache isolation, and scheduling isolation.",
   processingRegion:
-    "DeepSeek policies support processing and storage in the People's Republic of China; no separate commitment identifies the exact facility or region for API content.",
+    "DeepSeek's general Privacy Policy describes processing and storage in the People's Republic of China, but it expressly excludes products and services provided by downstream users. It therefore does not establish a location for content that this service submits through the Open Platform API. The API-specific processing location and region are unverified.",
   cache:
     "Official API documentation states that disk context caching is enabled by default and that an unused cache is usually cleared automatically within a few hours to a few days.",
   retention:
     "We found no fixed overall retention period or zero-retention commitment for this API content.",
   training:
-    "Official policies allow inputs and outputs to be used for service improvement or model training in applicable circumstances. We found no API no-training commitment and could not confirm that the consumer opt-out covers API requests.",
+    "The Open Platform Terms allow user inputs and outputs to be used for service improvement or model training in applicable circumstances. We found no API no-training commitment or API-specific opt-out.",
   transfer:
-    "Content may be processed in the PRC. Where applicable law requires it, the service operator uses an explicit-consent flow for this optional feature; this is not a universal legal conclusion for every user or transfer.",
+    "The API-specific processing location and transfer path are unverified. Where applicable law requires it, the service operator uses an explicit-consent flow for this optional feature; this is the operator's chosen authorization flow, not a claim that API content is processed in any particular location or a universal legal conclusion for every user or transfer.",
   unknowns: [
     "Specific retention and deletion periods for API content beyond context caching",
-    "The exact processing facility and whether the consumer training opt-out covers API requests",
+    "The API-specific processing/storage location, transfer path, and whether any opt-out covers API requests",
   ],
   sources: [
     "https://api-docs.deepseek.com/quick_start/pricing/",

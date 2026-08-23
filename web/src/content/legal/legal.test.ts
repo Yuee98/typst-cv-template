@@ -70,7 +70,10 @@ describe("AI legal bundle", () => {
       const sourceLinks = localized.aiTermsDocument.sections
         .flatMap(({ links }) => links ?? [])
         .filter(({ kind }) => kind === "external");
-      expect(sourceLinks).toHaveLength(12);
+      expect(sourceLinks).toHaveLength(
+        localized.deepseekLegalManifest.sources.length +
+          localized.mimoLegalManifest.sources.length,
+      );
       expect(sourceLinks.every(({ href }) => href.startsWith("https://"))).toBe(true);
     }
   });
@@ -121,6 +124,27 @@ describe("AI legal bundle", () => {
   it("does not turn unresolved provider behavior into guarantees", () => {
     expect(en.deepseekLegalManifest.retention).toMatch(/no fixed|zero-retention/i);
     expect(en.deepseekLegalManifest.training).toMatch(/no API no-training/i);
+    expect(en.deepseekLegalManifest.processingRegion).toMatch(/API-specific.*unverified/i);
+    expect(en.deepseekLegalManifest.transfer).toMatch(/API-specific.*unverified/i);
+    expect(en.deepseekLegalManifest.unknowns.join(" ")).toMatch(/processing\/storage location/i);
+    expect(zh.deepseekLegalManifest.processingRegion).toMatch(/API 特定.*尚未核实/u);
+    expect(zh.deepseekLegalManifest.transfer).toMatch(/API 特定.*尚未核实/u);
+    expect(zh.deepseekLegalManifest.unknowns.join(" ")).toMatch(/处理\/存储地点/u);
+    for (const statement of [
+      en.deepseekLegalManifest.processingRegion,
+      en.deepseekLegalManifest.transfer,
+    ]) {
+      expect(statement).not.toMatch(/API content (?:may|will|is) (?:be )?processed in (?:the )?PRC/i);
+    }
+    for (const statement of [
+      zh.deepseekLegalManifest.processingRegion,
+      zh.deepseekLegalManifest.transfer,
+    ]) {
+      expect(statement).not.toMatch(/API 内容(?:可能|将|会)?在中国(?:境内)?处理/u);
+    }
+    expect(en.deepseekLegalManifest.sources).toContain(
+      "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html",
+    );
     expect(en.mimoLegalManifest.cache).toMatch(/could not verify/i);
     expect(en.mimoLegalManifest.processingRegion).toMatch(/not guaranteed/i);
     expect(en.mimoLegalManifest.unknowns.join(" ")).toMatch(
