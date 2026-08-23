@@ -154,4 +154,14 @@ describe("legal fingerprint v1 canonicalizer", () => {
       qualifiers: Array.from({ length: LEGAL_FINGERPRINT_MAX_ARRAY_ITEMS + 1 }, (_, index) => `q${index}`),
     })).toThrow(/item limit/);
   });
+
+  it("rejects sparse arrays, array extra properties, and symbol-keyed descriptor fields", () => {
+    const sparse = new Array<string>(1);
+    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: sparse })).toThrow(/sparse/);
+    const extra = ["reviewed"];
+    Object.defineProperty(extra, "extra", { value: "hidden", enumerable: true });
+    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: extra })).toThrow(/extra properties/);
+    const symbol = Symbol("unknown");
+    expect(() => fingerprintLegalDescriptorV1({ ...ASCII_ROUTE, [symbol]: "x" })).toThrow(/symbol/);
+  });
 });

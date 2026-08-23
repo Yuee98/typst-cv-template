@@ -337,6 +337,9 @@ function validateSpecialFields(schemaVersion: LegalFingerprintSchemaVersion, val
     if (isNone && (value.documented_purposes as string[]).length !== 0) {
       throw new LegalFingerprintV1Error("mode=none requires empty documented_purposes");
     }
+    if (!isNone && (value.documented_purposes as string[]).length === 0) {
+      throw new LegalFingerprintV1Error("pseudonymous_hmac requires documented_purposes");
+    }
   }
   if (schemaVersion === "ai_legal_fact_v1") {
     const operational = value.authority_class === "service-operational";
@@ -376,8 +379,17 @@ function validateSpecialFields(schemaVersion: LegalFingerprintSchemaVersion, val
         throw new LegalFingerprintV1Error(`${field} must be empty exactly when snapshot is unavailable`);
       }
     }
-    if (!snapshotUnavailable && value.upstream_snapshot_artifact_path !== value.source_locator) {
-      throw new LegalFingerprintV1Error("service evidence snapshot path must equal its source locator");
+    if (!official && snapshotUnavailable) {
+      throw new LegalFingerprintV1Error("service evidence requires an exact SHA-256 Git snapshot");
+    }
+    if (!snapshotUnavailable) {
+      const artifactPath = value.upstream_snapshot_artifact_path as string;
+      if (!/^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\\)(?!.*:)[A-Za-z0-9._/-]+(?<!\/)$/.test(artifactPath)) {
+        throw new LegalFingerprintV1Error("snapshot artifact must be a portable repo path");
+      }
+      if (!official && artifactPath !== value.source_locator) {
+        throw new LegalFingerprintV1Error("service evidence snapshot path must equal its source locator");
+      }
     }
     const excerptHash = createHash("sha256").update(value.reviewed_excerpt as string, "utf8").digest("hex");
     if (excerptHash !== value.reviewed_excerpt_sha256) {
@@ -414,6 +426,9 @@ function normalizeDescriptor(input: unknown): { schemaVersion: LegalFingerprintS
   const schemaVersion = descriptor.schema_version as LegalFingerprintSchemaVersion;
   const definition = LEGAL_FINGERPRINT_SCHEMAS[schemaVersion];
   const expected = new Set(definition.fields.map(([field]) => field));
+  if (Reflect.ownKeys(descriptor).some((field) => typeof field !== "string")) {
+    throw new LegalFingerprintV1Error("descriptor contains an unknown symbol field");
+  }
   const ownKeys = Object.keys(descriptor);
   const unknown = ownKeys.filter((field) => !expected.has(field));
   const missing = [...expected].filter((field) => !Object.hasOwn(descriptor, field));
@@ -435,6 +450,7 @@ function normalizeDescriptor(input: unknown): { schemaVersion: LegalFingerprintS
       continue;
     }
     if (!Array.isArray(raw)) throw new LegalFingerprintV1Error(`${field} must be an array`);
+    if (Object.keys(raw).length !== raw.length) throw new LegalFingerprintV1Error(`${field} must not be sparse or have extra properties`);
     if (raw.length > LEGAL_FINGERPRINT_MAX_ARRAY_ITEMS) throw new LegalFingerprintV1Error(`${field} exceeds the item limit`);
     if (definition.nonEmptyArrays.has(field) && raw.length === 0) throw new LegalFingerprintV1Error(`${field} must not be empty`);
     const array = raw.map((item, index) => canonicalString(item, `${field}.${index}`, false));
