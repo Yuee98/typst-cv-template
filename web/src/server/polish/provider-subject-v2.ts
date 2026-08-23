@@ -40,7 +40,7 @@ function assertUnicodeScalarSequence(value: string): void {
     const codeUnit = value.charCodeAt(index);
     if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
       const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) {
+      if (!Number.isInteger(next) || next < 0xdc00 || next > 0xdfff) {
         throw new ProviderSubjectV2Error("secret must contain valid Unicode for UTF-8 encoding");
       }
       index += 1;
