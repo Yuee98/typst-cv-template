@@ -4,6 +4,8 @@
 >
 > 冻结日期：2026-08-23
 >
+> 最近修订：2026-08-24（recurring price lanes、V2 reserve、legal-bundle seal 与历史 CNY cost-only binding）
+>
 > 状态：初版实现契约；字段删除、改名或语义重解释必须重新经过设计 gate
 >
 > 适用范围：DeepSeek Chat 兼容路径、MiMo Responses 初版，以及后续 Responses provider
@@ -45,6 +47,35 @@ interface PolishRouteSnapshotV1 {
 - active policy 热切换只影响之后的 reservation。
 - `start_ai_polish_provider_attempt` 仍重读 kill switch、用户 allowlist、global capacity 和已冻结 profile 的 availability；若任一不可用，拒绝 transmission，但绝不改路到另一 provider。
 - adapter、credential、endpoint、capability、cache policy、calculator 和 legal manifest 都只能解析代码 registry 中的固定 alias；未知 alias fail closed。
+
+### 2.1 `routing_rules_v1`
+
+每个 target 必须同时显式引用 immutable profile 与 price，DB 不按 latest、model、lane 名或 calculator 猜价格：
+
+```json
+{
+  "schemaVersion": "routing_rules_v1",
+  "defaultRoute": {
+    "profileVersionId": "uuid",
+    "priceVersionId": "uuid"
+  },
+  "windows": [
+    {
+      "weekdays": [1, 2, 3, 4, 5],
+      "startMinute": 540,
+      "endMinute": 720,
+      "route": {
+        "profileVersionId": "uuid",
+        "priceVersionId": "uuid"
+      }
+    }
+  ]
+}
+```
+
+DB 与 TypeScript 使用共享 fixtures 严格验证：顶层、route 与 window 拒绝未知/缺失 key；恰有一个 `defaultRoute`；`windows` 最多 32 项；`weekdays` 非空、唯一且仅含 ISO 周一=1 至周日=7；minute 为整数且 `0 <= start < end <= 1440`；窗口采用 policy `Asia/Shanghai` 的半开区间，v1 拒绝跨午夜与任意重叠。UUID 必须 canonical。selector 是接收显式时间的纯函数。
+
+`default_profile_version_id` 必须等于 `defaultRoute.profileVersionId`。每个 price 必须通过 composite relation 归属对应 profile；缺失、malformed、retired、expired、wrong-profile、unsealed 或 legal-unbound target 均 fail closed。保留 lane `legacy` 只作历史回填，任何当前 routing policy 都不得引用。
 
 ## 3. Canonical inference V2
 
@@ -163,6 +194,8 @@ interface PolishInferenceResultV2 {
 
 Provider error 仅携带 normalized code、retryable、HTTP status、bounded Retry-After 和 request ID。不得读取或记录原始 provider error body，也不得把 prompt、CV、模型输出或 secret 放入 error/message/cause/log。
 
+Provider 返回的 correlation ID 属于不受信输入。落 DB 前，`gatewayRequestId/providerRequestId` 必须统一转换为 `hmac-sha256:<64 lowercase hex>` 的 server-keyed opaque tag；复用现有 `AI_USER_ID_HMAC_SECRET`，但输入必须采用 `route-observation-v1` + field kind 的显式 domain separation，不能与 provider subject HMAC 共用裸输入。raw ID、API-key/JWT/prose-shaped value 均不得持久化或写日志。`actualModelId` 只有与 frozen profile `modelId` 完全相等时才可保存；否则省略。`actualUpstreamEndpoint` 只有与 code registry 解析的 frozen `endpointAlias` canonical URL 完全相等、且 DB rejection mirror 也认可该 alias/URL pair 时才可保存；否则省略。DB schema/trigger 对上述 canonical shape 再次 fail closed，不能依赖调用者自律。
+
 ## 4. 成本契约
 
 ```ts
@@ -179,24 +212,117 @@ type CostReconciliationStatus =
   | "incomplete_usage";
 ```
 
-- 本地 estimated cost 只能使用 reservation 冻结的 `priceVersionId` 和代码 registry 中对应 calculator。
+- 本地 estimated cost 只能使用 reservation 冻结的 `priceVersionId` 和代码 registry 中对应 calculator；calculator 不读取时钟或 lane 名。
 - 原生币种逐 attempt 保存。CNY 与 USD 不允许在 DB/runtime 指标中直接求和；换汇只能是单独、带汇率版本的报表层。
 - `providerReportedCost` 与 `estimatedCost` 分列；provider 没有报告时是 `null/not_available`。
 - 任一必需 usage 桶未知、price component 缺失或 calculator 不认识时，estimated cost 为 `null/incomplete_usage`，不能给出低估值。
 - 金额以 `1 currency unit = 1_000_000_000 nanos` 存储，跨 JSON 使用十进制字符串。
 - DeepSeek 历史迁移只使用用户确认的旧 CNY 版本：hit ¥0.02/M、miss ¥1/M、output ¥2/M；不补造历史 attempt。
 
+### 4.1 Immutable price lane
+
+`ai_price_versions.pricing_lane` 是 `NOT NULL` 的 code-style key（`^[a-z0-9][a-z0-9._-]*$`），加入 immutable identity：
+
+```sql
+unique (profile_version_id, pricing_lane, version)
+
+exclude using gist (
+  profile_version_id with =,
+  pricing_lane with =,
+  tstzrange(valid_from, valid_to, '[)') with &&
+)
+```
+
+同一 profile 可同时存在不同 lane 的 rate set；同一 lane 不允许有效期重叠。迁移只能以临时 `DEFAULT 'default'` 回填既有行，在同一事务内验证并设为 `NOT NULL`、替换约束后立即 drop default；之后每个 seed 都必须显式写 lane。lane 不选择费率或 calculator；唯一负向例外是 reserved `legacy` lane 永远不可路由，只能由历史回填 primitive 使用。
+
+当前 DeepSeek 使用 `offpeak` 与 `peak` 两条 version-1 lane；其他没有 recurring band 的 provider 显式使用 `default`。`PolishRouteSnapshotV1` 不重复保存 lane，exact `priceVersionId` 已唯一确定 immutable rate set。
+
+初始 policy 只引用 seed-owned exact UUID pair：G2 default 是 `(DeepSeek profile, offpeak price)`，两个 peak windows 是 `(同一 DeepSeek profile, peak price)`；G4 default 保持 `(DeepSeek profile, offpeak price)`，两个 peak windows 改为 `(MiMo profile, default price)`。不得按 lane/latest 查询或替换 target，同一 request 不做跨 provider fallback。
+
+### 4.2 Operational eligibility 与 provider provenance
+
+`valid_from/valid_to` 只是本系统允许自动选择该价格的 operational interval，不声称是 provider 官方生效时间。immutable nullable `provider_effective_from/provider_effective_to` 保存上游 provenance；未知边界保持 `NULL`，两者都非空时必须满足 `provider_effective_to > provider_effective_from`。
+
+上游未公布生效时间时，`valid_from` 使用 canonical `source_checked_at` 或更晚的本地激活边界，不能把更早历史绑定到当前价。激活前在 immutable row 外重新抓取证据，并把 `rechecked_at/rechecked_sha256` 写入 activation audit；相同 canonical facts 可继续激活，rate/currency/component/parameter/provider-effective fact 任一变化都必须创建新 price version 与新 policy target，不能原地刷新 source 字段。
+
+DB 冻结 calculator parameter 与 required/allowed component 的结构契约，初版仅 `linear_token_v1`；未知结构在 validation/activation/reserve fail closed。TypeScript registry 仍拥有实际计算算法，共享 fixture 必须证明 DB 结构契约与 TS 算法输入一致。
+
+### 4.3 Price component seal
+
+只有 audited activation 与 legacy-seal primitive 能发起 `components_sealed_at` 的单向转换。它们按 UUID 顺序以 `FOR UPDATE` 锁定全部目标 price，校验 calculator parameters 与完整 component set，seal 后重新验证 policy。request-snapshot trigger 只能断言 price 已 seal；不得把首次 request 当成 seal 来源。
+
+component authoring 必须先以 `FOR UPDATE` 锁其 draft price。它与 activation/legacy seal 串行：component 先提交则 seal 会审阅它，seal 先提交则后续 insert/update/delete 均拒绝。普通 reserve 只以 `FOR SHARE` 读取 sealed price，因此共享一个 price 的请求不会互相串行，同时仍与 `valid_to` closure、seal 和 component authoring 冲突。
+
+### 4.4 Historical DeepSeek cost-only binding
+
+历史行不伪造 routing policy、legal bundle、provider attempt 或当前 route facts。DB-012 只对用户确认的旧价 cohort 写以下 exact discriminated shape：
+
+```text
+route_schema_version = 'legacy_pricing_v1'
+profile_version_id = exact CFG-001 DeepSeek profile version
+price_version_id = sealed legacy price version
+config_generation/routing_policy_version_id/legal_bundle_version = NULL
+gateway_kind/model_id/wire_api_kind/display_disclosure_key = NULL
+usage_schema_version = 'legacy_v1'
+cost_basis = 'legacy_request_aggregate'
+```
+
+request-ledger constraint 只允许这个完整组合，reserve V1/V2 均不能创建，也绝不作为 `PolishRouteSnapshotV1` 返回。composite price/profile FK 继续生效；一旦写入，profile/price binding immutable。request trigger 必须先断言 legacy price 已 seal。usage 不完整的历史行保持 cost `NULL`，不制造 token 或 attempt。
+
 ## 5. DB RPC JSON contract
 
-### 5.1 Reserve（兼容扩展现有 RPC）
+### 5.1 Reserve V1 compatibility
 
-函数签名保持：
+现有三参数函数、响应字节与 DeepSeek V1 lifecycle 在 compatibility window 内保持不变：
 
 ```sql
 reserve_ai_polish_request(p_user_id uuid, p_request_id uuid, p_client_request_id uuid) returns jsonb
 ```
 
-成功返回保留现有字段并新增 snapshot：
+它不接收或伪造 expected route，不创建 `route_snapshot_v1`；V2 handler cutover 后不得调用它。
+
+### 5.2 Reserve V2
+
+为避免 PostgREST overload 歧义，V2 使用独立函数名：
+
+```sql
+reserve_ai_polish_request_v2(
+  p_user_id uuid,
+  p_request_id uuid,
+  p_client_request_id uuid,
+  p_expected_route jsonb
+) returns jsonb
+```
+
+HTTP camelCase `expectedRoute` 由 server 转成只允许 exact keys 的 equality assertion；它只能断言，不能选路：
+
+```json
+{
+  "schema_version": "expected_route_v1",
+  "config_generation": "7",
+  "profile_version_id": "uuid",
+  "legal_bundle_version": "<legal-bundle-version>"
+}
+```
+
+RPC 使用一个 configuration linearization sequence：
+
+```text
+ai_feature_config FOR SHARE
+-> exact routing policy FOR SHARE
+-> v_route_at := clock_timestamp() exactly once
+-> strict default/window target
+-> selected profile FOR SHARE
+-> selected sealed price FOR SHARE
+-> sealed exact legal membership
+-> compare expected generation/profile/legal
+-> quota/rate rows
+-> request ledger insert with reserved_at = v_route_at
+```
+
+selector、price eligibility、UTC quota day、minute rate bucket、`resetAt` 与 retry-window calculation 都从同一个 `v_route_at` 派生；之后不得用另一处 `now()` 改变 routing/accounting identity。expectedRoute 缺失、malformed 或不等时，在任何 quota、rate、provider-admission mutation 和 request-ledger insert 之前返回 `AI_ROUTE_CHANGED`。Reserve 不修改 selected price；`FOR SHARE` 允许并发 reservation，但与 price closure/seal/component parent `FOR UPDATE` 冲突。
+
+成功返回保留现有可共享字段并新增完整 snapshot：
 
 ```json
 {
@@ -220,9 +346,9 @@ reserve_ai_polish_request(p_user_id uuid, p_request_id uuid, p_client_request_id
 }
 ```
 
-所有现有 denial code 保持。新增配置失败统一返回 `allowed:false`、`reason:"SERVICE_UNAVAILABLE"`，server 记录不含内容的内部原因；未知 alias/profile/price/legal 组合不得降级到默认 provider。
+所有现有 denial code 保持。新增配置失败统一返回 `allowed:false`、`reason:"SERVICE_UNAVAILABLE"`，server 记录不含内容的内部原因；未知 alias/profile/price/legal 组合不得降级到默认 provider。V1/V2 可复用 private quota helper，但 public name、参数与语义保持分离。
 
-### 5.2 Start attempt（新增 RPC）
+### 5.3 Start attempt（新增 RPC）
 
 ```sql
 start_ai_polish_provider_attempt(
@@ -250,7 +376,7 @@ start_ai_polish_provider_attempt(
 - 该 counter 是保守的 **admitted attempt counter**，不是 provider 已收到请求的证明。start 成功后仍可能因 abort/deadline 在 transmission 前结束。
 - 失败时不创建 attempt、不调用 provider，返回现有 `AI_DISABLED`、`SERVICE_UNAVAILABLE`、`ALREADY_FINALIZED` 或内部 `NOT_FOUND` reason。
 
-### 5.3 Complete attempt（新增 RPC）
+### 5.4 Complete attempt（新增 RPC）
 
 ```sql
 complete_ai_polish_provider_attempt(
@@ -307,7 +433,7 @@ complete_ai_polish_provider_attempt(
 - `p_usage` 可为 `null`，此时 attempt 必须保存 `usage_complete=false`，成本为 `null/incomplete_usage`。
 - `p_provider_billable` 可为 `null` 表示无法确认；不能把未知改成 false。
 - complete 幂等；重复相同完成返回 `alreadyCompleted:true`。比较前将所有 optional keys canonicalize 为显式 `null`、验证各自 `schema_version`，并按字段值比较而非 raw JSON/key order；冲突返回 `ATTEMPT_COMPLETION_CONFLICT`，不能覆盖首次事实。
-- `p_route` 和 metadata 只允许安全字段；schema 不提供任何 raw body/prompt/output/content 列。
+- `p_route` 和 metadata 只允许安全字段；request IDs 只能是 canonical HMAC tags，actual model/endpoint 必须匹配 parent frozen profile 的 code-owned identity。schema 不提供任何 raw body/prompt/output/content 列。
 - complete 只写 attempt；request-level ledger 和 daily aggregate 只能由 finalize 写入。
 
 成功响应：
@@ -321,7 +447,7 @@ complete_ai_polish_provider_attempt(
 }
 ```
 
-### 5.4 Finalize request（保持现有签名）
+### 5.5 Finalize request（保持现有签名）
 
 现有 `finalize_ai_polish_request(...)` 签名和返回字段保持。迁移期间用 `p_metadata.usage_schema_version` 区分唯一事实源：
 
@@ -342,7 +468,7 @@ request row -> attempts by attempt_no -> daily/request aggregates -> global aggr
 
 Finalize 不创建 attempt，不修改任何 frozen snapshot，也不覆盖已完成 attempt 的 usage/cost。重复 finalize 保持现有幂等语义。
 
-### 5.5 Request aggregate
+### 5.6 Request aggregate
 
 ```ts
 interface RequestUsageAggregateV2 {
@@ -420,9 +546,8 @@ POST body additive 增加：
 ```
 
 - 客户端只能回传 availability 的三个值，不能指定 provider/model/profile。
-- server 使用 DB 当前时间正常 reserve/重算 route，再做精确相等比较；禁止按客户端 ID 选路。
-- 不匹配、缺失 expectation 或旧页面提交时，在任何 provider transmission 前 finalize/release reservation，并返回 `409 AI_ROUTE_CHANGED`。客户端重新读取 availability、刷新披露和同意状态后，由用户再次确认。
-- 用户重新确认后必须生成新的 `clientRequestId`；复用已 release/finalize reservation 的旧 ID 会命中永久 dedup，并正确返回 `DUPLICATE_REQUEST`。
+- server 将其转换为 strict `expected_route_v1` 并传给 `reserve_ai_polish_request_v2`；DB 在锁内按唯一 `v_route_at` 重算 route 后做 generation/profile/legal 精确相等比较，禁止按客户端值选路。
+- 不匹配、缺失 expectation 或旧页面提交时，在 quota/rate mutation 与 request-ledger insert 之前返回 `409 AI_ROUTE_CHANGED`。客户端重新读取 availability、刷新披露和同意状态后，由用户再次确认；由于没有创建 reservation，该失败本身不制造永久 dedup row。
 - 即使 expectation 匹配，`start_ai_polish_provider_attempt` 仍重读 kill switch 和 frozen profile availability。
 
 共享错误码新增：
@@ -438,8 +563,8 @@ AI_ROUTE_CHANGED -> HTTP 409
 每次真正的 upstream transmission 都遵循：
 
 ```text
-reserve (freeze snapshot)
-  -> compare expectedRoute
+availability (candidate expectedRoute)
+  -> reserve V2 (lock + recompute + assert expectedRoute + freeze snapshot)
   -> start attempt (atomic gate + attempt id)
   -> exactly one adapter transmission
   -> local output validation
@@ -459,13 +584,66 @@ reserve (freeze snapshot)
 
 - 初版继续复用 `user_terms_acceptances(document_key='ai_terms')`，不新增逐 profile consent，也不把 consent 变成 provider selector。
 - `legalBundleVersion` 与 `current_ai_terms_version()`、代码中的 `AI_TERMS_VERSION` 必须完全相等；acceptance 只有 version 精确相等才有效。
-- authorization 的权威判断属于 DB route/reservation：availability 与 reserve 都必须检查 `accepted(document_key='ai_terms', version=routeSnapshot.legalBundleVersion)`。代码中的静态 `AI_TERMS_VERSION` 比较只能作为早期 UX 提示，不能单独授权 provider transmission。
+- authorization 的权威判断属于 DB route/reservation：availability 与 reserve 都必须检查 sealed bundle 及 `accepted(document_key='ai_terms', version=routeSnapshot.legalBundleVersion)`。代码中的静态 `AI_TERMS_VERSION` 比较只能作为早期 UX 提示，不能单独授权 provider transmission。
 - 一个 bundle 由中性 AI 正文、当期可激活 profile 的 code-owned annex/manifest 组成。初版 bundle 只包含 DeepSeek 与 MiMo；OpenRouter/GPT 后续必须创建新 version。
 - 每个 profile version 固定一个 `legal_manifest_id`；routing policy 只能引用其 immutable bundle 已包含的 manifest。price/model snapshot 变化只有在既有 bundle 已明确覆盖同一 manifest/model disclosure、接收方和实质处理规则均未变化时才可不 bump；新 manifest/model 不能静默挂到旧 bundle。新增接收方、训练用途、留存/缓存、地区/跨境路径、数据类别或其他实质变化时必须 bump 并重新接受。
 - 中性正文把 separate consent 描述为本服务 operator 选择的授权流程；不得笼统声称所有 provider 的条款都要求 consent。各 annex 只陈述有 provider-specific 证据支持的合同与数据处理事实。
 - 本地开发已获授权，可在本地 DB 激活 synthetic/official-direct profile 验证。Preview/Production migration 必须把新 profile/policy seed 为 `draft`/canary-off，且只能通过 audited operator-only activation RPC 改变状态；禁止通过替换环境变量重放本地激活路径。Preview/Production 的 terms 发布、profile canary 和 active policy 仍须仓库 operator 的显式发布授权。
 - 当前已发布正文是 DeepSeek-specific；在中性正文、DeepSeek/MiMo annex、exact-bundle acceptance gate 一起实现并通过测试前，禁止任何 MiMo transmission，包括 local live smoke。
 - 法律正文是开发草案而非法律意见。未获文档支持的 retention、no-training、固定 region 或 cache TTL 承诺不得写入 annex。
+
+### 8.1 Whole-bundle seal
+
+DB 只存 identifier/hash，不存法律正文：
+
+```text
+ai_legal_bundle_versions:
+  legal_bundle_version text primary key
+  bundle_contract_sha256 text NOT NULL CHECK lowercase-hex-64
+  manifest_set_sha256 text NOT NULL CHECK lowercase-hex-64
+  created_at timestamptz NOT NULL
+  sealed_at timestamptz NULL
+
+ai_legal_bundle_manifests:
+  legal_bundle_version text references ai_legal_bundle_versions
+  legal_manifest_id text
+  manifest_sha256 text NOT NULL CHECK lowercase-hex-64
+  created_at timestamptz NOT NULL
+  primary key (legal_bundle_version, legal_manifest_id)
+```
+
+bundle 只能在 `sealed_at IS NULL` 时 author；同一 authoring transaction 可插入/纠正 child rows。seal 拒绝 empty set，按 manifest ID 排序重算 canonical set hash，以 null-safe equality 对比 `manifest_set_sha256`，再执行唯一一次且不早于 `created_at` 的 `sealed_at` 转换。seal 后 header 与完整 child set 的 insert/update/delete 全拒绝；增删改 manifest 必须创建新 bundle version 并重新接受。anon/authenticated 无访问权；CFG-000 独占初版 DeepSeek/MiMo bundle authoring 与 seal。
+
+### 8.2 Authoritative validation 与 audited operator mutation
+
+DB-007 提供单一 `assert_ai_routing_policy_v1(policy_id, phase, at)`：严格解析 rules，验证所有 profile lifecycle、composite price/profile、operational eligibility、sealed price components、DB calculator structure、sealed exact legal membership、default profile 一致性与 legacy-lane exclusion。它在 policy 每次进入或处于 `validated/canary/active` 的 transition、每次 pointer change，以及 reserve V2 的任何 quota/rate mutation 前执行。DB-owner triggers 保留同样断言作为 defense in depth。
+
+audited operator RPC 落地后，`service_role` 失去 routing-policy/provider-profile/price/legal lifecycle 与 feature-config pointer 的直接 `UPDATE` 权；只获得 pinned `search_path` 的 `SECURITY DEFINER` operator function `EXECUTE`，每次必须带 actor、reason 与 evidence hashes。所有多对象 lifecycle 操作统一锁序：
+
+```text
+ai_feature_config
+-> routing policies by UUID
+-> profile versions by UUID
+-> price versions by UUID
+-> audit insert
+```
+
+validation、canary/active/retired transition、pointer activation/rollback、profile retirement、price closure、activation/legacy seal 都遵守该顺序。component-authoring transaction 只能锁自己的 draft price，必须先提交，之后不得反向取得 config lock。pointer activation 在改 pointer 前按序锁定所有 target、验证并 seal prices、再次校验 policy；legacy price 只由 owner-only primitive seal。
+
+外部 price evidence refresh 不修改 immutable price row。operator 在激活审计写入 `rechecked_at/rechecked_sha256` 并与 immutable source facts 对比；facts 有实质变化时只能创建新 price 与 policy version。active-pointer audit 还记录 reviewed runtime-contract ID/hash，runtime 在 transmission 前再次对照 code-owned registry；mismatch 无 fallback，并走 no-transmission settlement。
+
+实现 ownership 与 migration integration 顺序固定为：
+
+```text
+DB-003A price-lane/provenance/legal/ledger shape
+-> CFG-000 initial sealed legal bundle
+-> DB-007 strict validator/reserve + private price validation/sealing helper
+-> CFG-001 DeepSeek profile/current prices/draft policy
+-> DB-012 owner-only historical primitive + legacy price/backfill
+-> DB-013 audited lifecycle/activation wrappers reusing DB-007 helper
+```
+
+DB-007 的 helper 不 seed、不切 pointer、不暴露普通 lifecycle mutation；DB-012 独占 legacy row/backfill，DB-013 不拥有或重建它。
 
 ## 9. 2026-08-23 外部事实约束
 
@@ -477,7 +655,7 @@ reserve (freeze snapshot)
 - 高峰：周一至周五 09:00–12:00、14:00–18:00，`Asia/Shanghai`。
 - 官方价格页未公布当前 price version 的精确生效日期；不得伪造日期。
 - Chat 的 thinking disabled、JSON object、`user_id`、cache hit/miss 与 body `id` 已确认；Responses 详细 wire guide 未冻结，因此当前迁移仍以 Chat compatibility 为准。
-- 来源：<https://api-docs.deepseek.com/quick_start/pricing/>、<https://api-docs.deepseek.com/api/create-chat-completion/>、<https://api-docs.deepseek.com/guides/kv_cache/>。
+- 来源：<https://api-docs.deepseek.com/zh-cn/quick_start/pricing/>、<https://api-docs.deepseek.com/api/create-chat-completion/>、<https://api-docs.deepseek.com/guides/kv_cache/>。
 
 ### MiMo V2.5 Pro
 
@@ -505,3 +683,10 @@ DB、runtime 与 API tests 必须共同覆盖：
 11. raw prompt/CV/output/provider error body 不存在于 ledger/log/API error schema。
 12. initial legal bundle 精确包含 DeepSeek/MiMo manifest；旧 acceptance 不满足新 version。
 13. 静态 `AI_TERMS_VERSION` 匹配但 route snapshot bundle 不匹配时仍不得 transmission；接受新 bundle 后才允许。
+14. `pricing_lane` 为 `NOT NULL`；同 profile 不同 lane 可重叠，同 lane overlap/NULL lane 拒绝；current policy 不得引用 `legacy`。
+15. strict `routing_rules_v1` 拒绝 unknown key、非法/重叠 window、wrong-profile/unsealed/expired price；边界分钟使用同一 `v_route_at`。
+16. reserve V2 mismatch 在 quota/rate/ledger mutation 前失败；`reserved_at`、UTC quota day、minute bucket 与 `resetAt` 都来自唯一 `v_route_at`；同 price 并发 reserve 不互相串行。
+17. 首次 request 不能 seal price；activation 与 component insert 正确串行；direct lifecycle DML 无权绕过 audited lock order。
+18. sealed legal bundle 不能追加/替换 manifest；hash NULL/malformed/empty set 与 `sealed_at < created_at` 均拒绝。
+19. `legacy_pricing_v1` 只允许 exact cost-only shape；partial shape、二次不一致回填、修改 frozen profile/price binding 与 reserve 创建均拒绝。
+20. persisted route request IDs 只接受 `hmac-sha256:<64 lowercase hex>`；actual model/endpoint 必须匹配 frozen profile，JWT/API key/prose/path-secret fixtures 全拒绝。
