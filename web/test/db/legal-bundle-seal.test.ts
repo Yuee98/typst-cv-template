@@ -60,11 +60,15 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
   }
 
   async function insertHeader(version: string, manifestSetHash: string) {
-    return service.from("ai_legal_bundle_versions").insert({
-      legal_bundle_version: version,
-      bundle_contract_sha256: "a".repeat(64),
-      manifest_set_sha256: manifestSetHash,
-    });
+    return service
+      .from("ai_legal_bundle_versions")
+      .insert({
+        legal_bundle_version: version,
+        bundle_contract_sha256: "a".repeat(64),
+        manifest_set_sha256: manifestSetHash,
+      })
+      .select("created_at")
+      .single();
   }
 
   it("rejects NULL/malformed hashes, pre-sealed rows, and empty sealing", async () => {
@@ -103,7 +107,8 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
     await registerManifests(manifests);
 
     const mismatchVersion = bundleVersion("mismatch");
-    expect((await insertHeader(mismatchVersion, "f".repeat(64))).error).toBeNull();
+    const mismatchHeader = await insertHeader(mismatchVersion, "f".repeat(64));
+    expect(mismatchHeader.error).toBeNull();
     expect(
       (
         await service.from("ai_legal_bundle_manifests").insert(
@@ -116,13 +121,14 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
     ).toBeNull();
     const mismatchSeal = await service
       .from("ai_legal_bundle_versions")
-      .update({ sealed_at: new Date().toISOString() })
+      .update({ sealed_at: mismatchHeader.data!.created_at })
       .eq("legal_bundle_version", mismatchVersion);
     expect(mismatchSeal.error?.code).toBe(CHECK_VIOLATION);
 
     const sealedVersion = bundleVersion("sealed");
     const expectedHash = canonicalManifestSetHash(manifests);
-    expect((await insertHeader(sealedVersion, expectedHash)).error).toBeNull();
+    const sealedHeader = await insertHeader(sealedVersion, expectedHash);
+    expect(sealedHeader.error).toBeNull();
     expect(
       (
         await service.from("ai_legal_bundle_manifests").insert(
@@ -136,7 +142,7 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
 
     const seal = await service
       .from("ai_legal_bundle_versions")
-      .update({ sealed_at: new Date().toISOString() })
+      .update({ sealed_at: sealedHeader.data!.created_at })
       .eq("legal_bundle_version", sealedVersion)
       .select("sealed_at")
       .single();
