@@ -123,6 +123,7 @@ alter table public.ai_request_ledger
       and output_tokens is not null
       and cache_usage_reporting is not null
       and incomplete_fields is not null
+      and cost_reconciliation_status is not null
     )
   ),
   add constraint ai_request_ledger_incomplete_fields_check check (
@@ -199,17 +200,37 @@ alter table public.ai_request_ledger
     )
     and (
       cost_reconciliation_status is null
-      or cost_reconciliation_status not in ('matched', 'mismatch')
-      or (
-        estimated_cost_nanos is not null
-        and provider_reported_cost_nanos is not null
-        and (
-          (cost_reconciliation_status = 'matched'
-            and estimated_cost_nanos = provider_reported_cost_nanos)
-          or (cost_reconciliation_status = 'mismatch'
-            and estimated_cost_nanos <> provider_reported_cost_nanos)
-        )
-      )
+      or case cost_reconciliation_status
+        when 'not_available' then
+          estimated_cost_nanos is not null
+          and provider_reported_currency is null
+          and provider_reported_cost_nanos is null
+        when 'pending' then
+          estimated_cost_nanos is not null
+          and provider_reported_currency is null
+          and provider_reported_cost_nanos is null
+        when 'matched' then
+          estimated_cost_nanos is not null
+          and provider_reported_currency is not null
+          and provider_reported_cost_nanos is not null
+          and estimated_cost_nanos = provider_reported_cost_nanos
+        when 'mismatch' then
+          estimated_cost_nanos is not null
+          and provider_reported_currency is not null
+          and provider_reported_cost_nanos is not null
+          and estimated_cost_nanos <> provider_reported_cost_nanos
+        when 'incomplete_usage' then
+          estimated_cost_nanos is null
+          and incomplete_fields is not null
+          and array_position(incomplete_fields, 'estimated_cost') is not null
+          and (
+            array_position(incomplete_fields, 'attempt_usage') is not null
+            or array_position(incomplete_fields, 'input_cache_write') is not null
+            or array_position(incomplete_fields, 'reasoning') is not null
+            or array_position(incomplete_fields, 'provider_billable') is not null
+          )
+        else false
+      end
     )
   );
 

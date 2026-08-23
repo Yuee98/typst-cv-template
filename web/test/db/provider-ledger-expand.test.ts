@@ -559,6 +559,97 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
     }
   });
 
+  it("enforces the complete reconciliation-status truth table", async () => {
+    const invalidStates = [
+      {
+        label: "V2 aggregate omits reconciliation status",
+        patch: { cost_reconciliation_status: null },
+      },
+      {
+        label: "not_available carries provider-reported cost",
+        patch: {
+          cost_reconciliation_status: "not_available",
+          provider_reported_currency: "CNY",
+          provider_reported_cost_nanos: 100,
+        },
+      },
+      {
+        label: "not_available hides incomplete local cost",
+        patch: {
+          cost_reconciliation_status: "not_available",
+          reasoning_tokens: null,
+          estimated_cost_nanos: null,
+          incomplete_fields: ["reasoning", "estimated_cost"],
+        },
+      },
+      {
+        label: "pending already carries provider-reported cost",
+        patch: {
+          cost_reconciliation_status: "pending",
+          provider_reported_currency: "CNY",
+          provider_reported_cost_nanos: 100,
+        },
+      },
+      {
+        label: "incomplete_usage keeps a complete local estimate",
+        patch: { cost_reconciliation_status: "incomplete_usage" },
+      },
+      {
+        label: "incomplete_usage has no underlying missing fact",
+        patch: {
+          cost_reconciliation_status: "incomplete_usage",
+          estimated_cost_nanos: null,
+          incomplete_fields: ["estimated_cost"],
+        },
+      },
+    ];
+    for (const fixture of invalidStates) {
+      const { error } = await service.from("ai_request_ledger").insert({
+        ...requestIdentity(),
+        ...completeUsageAggregate(),
+        ...fixture.patch,
+      });
+      expect(error?.code, fixture.label).toBe(CHECK_VIOLATION);
+    }
+
+    const validStates = [
+      { cost_reconciliation_status: "not_available" },
+      { cost_reconciliation_status: "pending" },
+      {
+        cost_reconciliation_status: "matched",
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 100,
+      },
+      {
+        cost_reconciliation_status: "mismatch",
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 101,
+      },
+      {
+        cost_reconciliation_status: "incomplete_usage",
+        reasoning_tokens: null,
+        estimated_cost_nanos: null,
+        incomplete_fields: ["reasoning", "estimated_cost"],
+      },
+      {
+        cost_reconciliation_status: "incomplete_usage",
+        reasoning_tokens: null,
+        estimated_cost_nanos: null,
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 100,
+        incomplete_fields: ["reasoning", "estimated_cost"],
+      },
+    ];
+    for (const state of validStates) {
+      const { error } = await service.from("ai_request_ledger").insert({
+        ...requestIdentity(),
+        ...completeUsageAggregate(),
+        ...state,
+      });
+      expect(error).toBeNull();
+    }
+  });
+
   it("keeps profile aggregates split by native currency", async () => {
     const day = new Date().toISOString().slice(0, 10);
     const rows = [
