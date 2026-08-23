@@ -380,10 +380,14 @@ export const LEGAL_FINGERPRINT_V1_EXPECTED_SHA256 = Object.freeze({
   [INITIAL_LEGAL_BUNDLE_VERSION]: "d1859cf9e1103a6394917b671ead068ea816d5ff97d0776426389877805d358d",
 });
 
-export const LEGAL_FINGERPRINT_V1_REGISTRY_FACT_IDS = Object.freeze(new Set([
+const LEGAL_FINGERPRINT_V1_REGISTRY_FACT_IDS = new Set([
   ...dsRegistry,
   ...mimoRegistry,
-]));
+]);
+
+export function isLegalFingerprintV1RegistryFactId(factId: string): boolean {
+  return LEGAL_FINGERPRINT_V1_REGISTRY_FACT_IDS.has(factId);
+}
 
 export const LEGAL_FINGERPRINT_V1_PROFILE_MAPPING = Object.freeze([
   Object.freeze({
@@ -416,12 +420,46 @@ export const LEGAL_FINGERPRINT_V1_PROFILE_MAPPING = Object.freeze([
   }),
 ]);
 
+const BOUND_PROFILE_KEYS = new Set<string>(LEGAL_FINGERPRINT_V1_PROFILE_MAPPING.map((item) => item.profileKey));
+
+export class LegalFingerprintDescriptorV1Error extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LegalFingerprintDescriptorV1Error";
+  }
+}
+
 export function deriveRequiredServiceFactPairs(profileKeys: ReadonlySet<string>): readonly Readonly<{ id: string; sha256: string }>[] {
-  const scopes = new Set(["global", ...[...profileKeys].map((profile) => `profile:${profile}`)]);
+  if (
+    profileKeys === null || profileKeys === undefined ||
+    typeof profileKeys[Symbol.iterator] !== "function" ||
+    typeof profileKeys.has !== "function" ||
+    !Number.isSafeInteger(profileKeys.size) || profileKeys.size < 0
+  ) {
+    throw new LegalFingerprintDescriptorV1Error("profileKeys must be an iterable readonly set");
+  }
+  const requested = [...profileKeys];
+  if (requested.length === 0) {
+    throw new LegalFingerprintDescriptorV1Error("profileKeys must contain at least one bound profile");
+  }
+  if (requested.some((profile) => typeof profile !== "string" || !BOUND_PROFILE_KEYS.has(profile))) {
+    throw new LegalFingerprintDescriptorV1Error("profileKeys contains an unknown or unbound profile");
+  }
+  if (
+    profileKeys.size !== requested.length ||
+    new Set(requested).size !== requested.length ||
+    requested.some((profile) => !profileKeys.has(profile))
+  ) {
+    throw new LegalFingerprintDescriptorV1Error("profileKeys must have readonly-set uniqueness");
+  }
+  const scopes = new Set(["global", ...requested.map((profile) => `profile:${profile}`)]);
   const reachable = [...manifestFacts, ...semanticFacts].filter((item) =>
     item.authority_class === "service-operational" && scopes.has(item.operational_scope),
   );
-  const unique = new Map(reachable.map((item) => [item.fact_id, { id: item.fact_id, sha256: descriptorHash(item) }]));
+  const unique = new Map(reachable.map((item) => [
+    item.fact_id,
+    Object.freeze({ id: item.fact_id, sha256: descriptorHash(item) }),
+  ]));
   return Object.freeze([...unique.values()].sort((left, right) =>
     Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8")),
   ));

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import * as descriptorModule from "./legal-fingerprint-v1-descriptors";
 import * as en from "@/content/legal/en";
 import * as zh from "@/content/legal/zh";
 import {
@@ -15,6 +16,8 @@ import {
   LEGAL_FINGERPRINT_V1_DESCRIPTORS,
   LEGAL_FINGERPRINT_V1_EXPECTED_SHA256,
   LEGAL_FINGERPRINT_V1_PROFILE_MAPPING,
+  isLegalFingerprintV1RegistryFactId,
+  LegalFingerprintDescriptorV1Error,
   MIMO_LEGAL_MANIFEST_ID,
   validateLegalFingerprintV1Closure,
 } from "./legal-fingerprint-v1-descriptors";
@@ -254,5 +257,49 @@ describe("initial legal fingerprint v1 descriptors", () => {
     expect(deepseek).toEqual([...deepseek].sort((left, right) =>
       Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8")),
     ));
+  });
+
+  it("derives exact immutable DeepSeek, MiMo, and combined bound service-fact sets", () => {
+    const deepseekKey = "deepseek.official.deepseek-v4-flash.chat.v1";
+    const mimoKey = "mimo.cn.mimo-v2.5-pro.responses.v1";
+    const deepseek = deriveRequiredServiceFactPairs(new Set([deepseekKey]));
+    const mimo = deriveRequiredServiceFactPairs(new Set([mimoKey]));
+    const combined = deriveRequiredServiceFactPairs(new Set([mimoKey, deepseekKey]));
+
+    expect(deepseek.map((item) => item.id)).toContain("fact.privacy.recipient.deepseek.v1");
+    expect(deepseek.map((item) => item.id)).not.toContain("fact.privacy.recipient.mimo.v1");
+    expect(mimo.map((item) => item.id)).toContain("fact.privacy.recipient.mimo.v1");
+    expect(mimo.map((item) => item.id)).not.toContain("fact.privacy.recipient.deepseek.v1");
+    expect(new Set(combined.map((item) => item.id))).toEqual(new Set([
+      ...deepseek.map((item) => item.id),
+      ...mimo.map((item) => item.id),
+    ]));
+    expect(Object.isFrozen(deepseek)).toBe(true);
+    expect(deepseek.every(Object.isFrozen)).toBe(true);
+    expect(() => (deepseek as { id: string; sha256: string }[]).push({ id: "x", sha256: "a".repeat(64) })).toThrow();
+    expect(() => ((deepseek[0] as { id: string }).id = "mutated")).toThrow();
+    expect(deriveRequiredServiceFactPairs(new Set([deepseekKey]))).toEqual(deepseek);
+  });
+
+  it.each([
+    ["empty", new Set<string>()],
+    ["unknown only", new Set(["unknown.profile.v1"])],
+    ["known plus unknown", new Set(["deepseek.official.deepseek-v4-flash.chat.v1", "unknown.profile.v1"])],
+    ["case drift", new Set(["DeepSeek.official.deepseek-v4-flash.chat.v1"])],
+  ])("rejects %s profile-key derivation input", (_label, profileKeys) => {
+    expect(() => deriveRequiredServiceFactPairs(profileKeys)).toThrow(LegalFingerprintDescriptorV1Error);
+  });
+
+  it("keeps registry-fact authority private and exposes only a stable predicate", () => {
+    expect(Object.hasOwn(descriptorModule, "LEGAL_FINGERPRINT_V1_REGISTRY_FACT_IDS")).toBe(false);
+    expect(isLegalFingerprintV1RegistryFactId("fact.deepseek.gateway.service.v1")).toBe(true);
+    expect(isLegalFingerprintV1RegistryFactId("fact.deepseek.operator.external.v1")).toBe(false);
+    expect(isLegalFingerprintV1RegistryFactId("fact.deepseek.gateway.service.v1")).toBe(true);
+  });
+
+  it("rejects an iterable that is not a readonly set", () => {
+    expect(() => deriveRequiredServiceFactPairs([
+      "deepseek.official.deepseek-v4-flash.chat.v1",
+    ] as unknown as ReadonlySet<string>)).toThrow(/readonly set/);
   });
 });
