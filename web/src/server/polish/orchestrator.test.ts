@@ -8,6 +8,8 @@ import {
   orchestratePolishV2,
   POLISH_MAX_ATTEMPTS,
   POLISH_TOTAL_DEADLINE_MS,
+  PolishAttemptPersistenceErrorV2,
+  PolishUsageAggregationError,
   zeroPolishUsage,
   type PolishAttemptCompletedEventV2,
   type PolishAttemptCompletedFactV2,
@@ -1298,5 +1300,308 @@ describe("orchestratePolishV2 — retry, failure usage, and conservative aggrega
     expect(caught.aggregate.knownEstimatedCost).not.toBeNull();
     expect(caught.aggregate.incompleteFields).toContain("attempt_usage");
     expect(caught.aggregate.incompleteFields).toContain("estimated_cost");
+  });
+});
+
+describe("orchestratePolishV2 — terminal completion callback failures", () => {
+  it("wraps a callback failure after success with the paid fact and start receipt", async () => {
+    const callbackError = new Error("complete attempt RPC unavailable");
+    const { provider, calls } = makeV2Provider(async () => v2Result());
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, {
+        now: fakeClock().now,
+        onAttemptStarted: () => ({ attemptId: "attempt-success-1" }),
+        onAttemptCompleted: () => {
+          throw callbackError;
+        },
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(calls).toHaveLength(1);
+    expect(caught).toBeInstanceOf(PolishAttemptPersistenceErrorV2);
+    expect(caught).toMatchObject({
+      code: "ATTEMPT_PERSISTENCE_ERROR",
+      retryable: false,
+      originalCause: callbackError,
+      completedEvent: {
+        startResult: { attemptId: "attempt-success-1" },
+        completed: { status: "succeeded", providerBillable: true },
+      },
+      attemptFacts: [{ status: "succeeded" }],
+      aggregate: { providerBillable: true, usageComplete: true },
+    });
+    expect((caught as Error).cause).toBe(callbackError);
+    expect(Object.isFrozen((caught as PolishAttemptPersistenceErrorV2).completedEvent)).toBe(true);
+    expect(Object.isFrozen((caught as PolishAttemptPersistenceErrorV2).attemptFacts)).toBe(true);
+  });
+
+  it("never retries a transport when persisting its failed fact throws", async () => {
+    const callbackError = new Error("failed fact persistence unavailable");
+    const { provider, calls } = makeV2Provider(async () => {
+      throw Object.assign(new Error("upstream 503"), {
+        code: "UPSTREAM_ERROR",
+        upstreamStatus: 503,
+      });
+    });
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, {
+        now: fakeClock().now,
+        onAttemptStarted: () => "attempt-transport-1",
+        onAttemptCompleted: () => {
+          throw callbackError;
+        },
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(calls).toHaveLength(1);
+    expect(caught).toMatchObject({
+      code: "ATTEMPT_PERSISTENCE_ERROR",
+      retryable: false,
+      originalCause: callbackError,
+      completedEvent: {
+        startResult: "attempt-transport-1",
+        completed: {
+          status: "failed_upstream",
+          transmitted: true,
+          providerBillable: null,
+        },
+      },
+      aggregate: { usageComplete: false, providerBillable: null },
+    });
+  });
+
+  it("retains a canceled in-flight fact when its completion callback throws", async () => {
+    const controller = new AbortController();
+    const abort = new DOMException("caller disconnected", "AbortError");
+    const callbackError = new Error("cancel fact persistence unavailable");
+    const { provider, calls } = makeV2Provider(async () => {
+      controller.abort(abort);
+      throw abort;
+    });
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(controller.signal, {
+        now: fakeClock().now,
+        onAttemptStarted: () => ({ attemptId: "attempt-cancel-1" }),
+        onAttemptCompleted: () => {
+          throw callbackError;
+        },
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(calls).toHaveLength(1);
+    expect(caught).toMatchObject({
+      code: "ATTEMPT_PERSISTENCE_ERROR",
+      retryable: false,
+      originalCause: callbackError,
+      completedEvent: {
+        startResult: { attemptId: "attempt-cancel-1" },
+        completed: {
+          status: "canceled",
+          transmitted: true,
+          providerBillable: null,
+        },
+      },
+      attemptFacts: [{ status: "canceled" }],
+    });
+  });
+});
+
+describe("aggregatePolishAttemptFactsV2 — persistence bounds", () => {
+  it("fails closed when individually legal costs overflow the request bigint aggregate", async () => {
+    const { provider, calls } = makeV2Provider(async () => v2Result());
+    const template = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, { now: fakeClock().now }),
+    );
+    const maxCost = Object.freeze({
+      currency: "CNY",
+      nanos: "9223372036854775807",
+    });
+    const withMaxCost = (attemptNo: number): PolishAttemptCompletedFactV2 => ({
+      ...template.attemptFacts[0],
+      started: {
+        ...template.attemptFacts[0].started,
+        attemptNo,
+      },
+      cost: {
+        ...template.attemptFacts[0].cost,
+        estimatedCost: maxCost,
+      },
+    });
+
+    const first = withMaxCost(1);
+    const second = withMaxCost(2);
+    let caught: unknown;
+    try {
+      aggregatePolishAttemptFactsV2([first, second]);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(caught).toBeInstanceOf(PolishUsageAggregationError);
+    expect(caught).toMatchObject({
+      code: "COST_AGGREGATE_OVERFLOW",
+      retryable: false,
+      attemptFacts: [{}, {}],
+    });
+    expect((caught as Error).message).not.toContain(maxCost.nanos);
+
+    const callbackError = new Error("completion persistence unavailable");
+    const persistenceError = new PolishAttemptPersistenceErrorV2(
+      Object.freeze({
+        started: second.started,
+        startResult: "attempt-2-receipt",
+        completed: second,
+      }),
+      [first, second],
+      callbackError,
+    );
+    expect(persistenceError).toMatchObject({
+      originalCause: callbackError,
+      aggregateInvariant: { code: "COST_AGGREGATE_OVERFLOW" },
+      aggregate: { knownEstimatedCost: null, estimatedCost: null },
+    });
+    expect(persistenceError.aggregate.incompleteFields).toContain("estimated_cost");
+  });
+});
+
+describe("orchestratePolishV2 — post-transport deadline and abort ownership", () => {
+  it("does not accept a valid provider result returned after the total deadline", async () => {
+    const clock = fakeClock();
+    const { provider, calls } = makeV2Provider(async () => {
+      clock.advance(POLISH_TOTAL_DEADLINE_MS + 1);
+      return v2Result();
+    });
+
+    const caught = (await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, { now: clock.now }),
+    ).catch((error: unknown) => error)) as {
+      code: string;
+      attemptFacts: readonly PolishAttemptCompletedFactV2[];
+      aggregate: ReturnType<typeof aggregatePolishAttemptFactsV2>;
+    };
+
+    expect(calls).toHaveLength(1);
+    expect(caught.code).toBe("UPSTREAM_TIMEOUT");
+    expect(caught.attemptFacts).toHaveLength(1);
+    expect(caught.attemptFacts[0]).toMatchObject({
+      status: "timed_out",
+      transmitted: true,
+      providerBillable: true,
+      usageObservation: { kind: "observed", usage: V2_REPORTED_USAGE },
+      route: { providerRequestId: "provider-1", actualModelId: "model-v2" },
+      cost: {
+        estimationStatus: "complete",
+        providerReportedCost: { currency: "CNY", nanos: "999" },
+      },
+      latencyMs: POLISH_TOTAL_DEADLINE_MS + 1,
+    });
+    expect(caught.aggregate).toMatchObject({
+      knownUsage: { inputTotalTokens: "100", outputTokens: "20" },
+      usageComplete: true,
+      providerBillable: true,
+    });
+  });
+
+  it("preserves a returned result as a canceled paid fact when the signal aborted in flight", async () => {
+    const controller = new AbortController();
+    const abort = new DOMException("caller disconnected", "AbortError");
+    const events: PolishAttemptCompletedEventV2<string>[] = [];
+    const { provider, calls } = makeV2Provider(async () => {
+      controller.abort(abort);
+      return v2Result();
+    });
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(controller.signal, {
+        now: fakeClock().now,
+        onAttemptStarted: () => "attempt-abort-return-1",
+        onAttemptCompleted: (event) => {
+          events.push(event);
+        },
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(caught).toBe(abort);
+    expect(calls).toHaveLength(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      startResult: "attempt-abort-return-1",
+      completed: {
+        status: "canceled",
+        transmitted: true,
+        providerBillable: true,
+        usageObservation: { kind: "observed", usage: V2_REPORTED_USAGE },
+        route: { providerRequestId: "provider-1" },
+        cost: { estimationStatus: "complete" },
+      },
+    });
+  });
+});
+
+describe("orchestratePolishV2 — deep canonical request immutability", () => {
+  it("prevents attempt one from mutating nested output schema seen by attempt two", async () => {
+    const callerSchema = {
+      nested: {
+        discriminator: "original",
+      },
+    };
+    const { provider, calls } = makeV2Provider(
+      async (call) => {
+        const schema = call.request.outputContract.schema as {
+          nested: { discriminator: string };
+        };
+        expect(Object.isFrozen(call.request)).toBe(true);
+        expect(Object.isFrozen(call.request.outputContract)).toBe(true);
+        expect(Object.isFrozen(schema.nested)).toBe(true);
+        expect(() => {
+          schema.nested.discriminator = "attempt-one-mutation";
+        }).toThrow(TypeError);
+        return v2Result("not-json");
+      },
+      async (call) => {
+        const schema = call.request.outputContract.schema as {
+          nested: { discriminator: string };
+        };
+        expect(schema.nested.discriminator).toBe("original");
+        return v2Result();
+      },
+    );
+
+    const result = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, {
+        now: fakeClock().now,
+        outputContract: {
+          kind: "json_object",
+          schemaName: "nested_contract_v1",
+          schema: callerSchema,
+        },
+      }),
+    );
+
+    expect(result.attemptFacts.map((fact) => fact.status)).toEqual([
+      "invalid_output",
+      "succeeded",
+    ]);
+    expect(calls).toHaveLength(2);
+    expect(callerSchema.nested.discriminator).toBe("original");
+    expect(Object.isFrozen(callerSchema.nested)).toBe(false);
   });
 });

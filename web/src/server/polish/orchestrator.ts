@@ -680,9 +680,19 @@ export interface PolishOrchestratorSuccessV2 {
 }
 
 export class PolishUsageAggregationError extends Error {
-  constructor(message: string) {
+  readonly code: "MIXED_CURRENCY" | "COST_AGGREGATE_OVERFLOW" | "INVALID_COST";
+  readonly retryable = false;
+  readonly attemptFacts: readonly PolishAttemptCompletedFactV2[];
+
+  constructor(
+    code: "MIXED_CURRENCY" | "COST_AGGREGATE_OVERFLOW" | "INVALID_COST",
+    message: string,
+    attemptFacts: readonly PolishAttemptCompletedFactV2[] = [],
+  ) {
     super(message);
     this.name = "PolishUsageAggregationError";
+    this.code = code;
+    this.attemptFacts = Object.freeze([...attemptFacts]);
   }
 }
 
@@ -707,6 +717,43 @@ export class PolishOrchestrationErrorV2 extends Error {
   }
 }
 
+/**
+ * A terminal lifecycle failure after an immutable attempt fact already
+ * exists. It is deliberately non-retryable: retransmitting would duplicate a
+ * possibly paid attempt merely because persistence/callback delivery failed.
+ */
+export class PolishAttemptPersistenceErrorV2<TStartResult = unknown> extends Error {
+  readonly code = "ATTEMPT_PERSISTENCE_ERROR" as const;
+  readonly retryable = false;
+  readonly completedEvent: PolishAttemptCompletedEventV2<TStartResult>;
+  readonly attemptFacts: readonly PolishAttemptCompletedFactV2[];
+  readonly aggregate: RequestUsageAggregateV2;
+  readonly aggregateInvariant: PolishUsageAggregationError | null;
+  readonly originalCause: unknown;
+
+  constructor(
+    completedEvent: PolishAttemptCompletedEventV2<TStartResult>,
+    attemptFacts: readonly PolishAttemptCompletedFactV2[],
+    cause: unknown,
+  ) {
+    super("attempt completion persistence callback failed; retransmission is forbidden", {
+      cause,
+    });
+    this.name = "PolishAttemptPersistenceErrorV2";
+    this.completedEvent = completedEvent;
+    this.attemptFacts = Object.freeze([...attemptFacts]);
+    try {
+      this.aggregate = aggregatePolishAttemptFactsV2(this.attemptFacts);
+      this.aggregateInvariant = null;
+    } catch (error) {
+      if (!(error instanceof PolishUsageAggregationError)) throw error;
+      this.aggregate = aggregatePolishAttemptFactsConservativeV2(this.attemptFacts);
+      this.aggregateInvariant = error;
+    }
+    this.originalCause = cause;
+  }
+}
+
 class ProviderOutcomeContractError extends Error {
   constructor(message: string) {
     super(message);
@@ -728,6 +775,19 @@ const MAX_POSTGRES_BIGINT = BigInt("9223372036854775807");
 
 function isRecordV2(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function deepFreezeV2<T>(value: T, seen: WeakSet<object> = new WeakSet()): T {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return value;
+  }
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+  for (const key of Reflect.ownKeys(object)) {
+    deepFreezeV2(Reflect.get(object, key), seen);
+  }
+  return Object.freeze(value);
 }
 
 function abortReason(signal: AbortSignal): unknown {
@@ -1041,15 +1101,29 @@ export function aggregatePolishAttemptFactsV2(
     if (estimated !== null) {
       const normalized = normalizeMoneyV2(estimated, "estimatedCost");
       if (normalized === null) {
-        throw new PolishUsageAggregationError("known estimated cost unexpectedly missing");
+        throw new PolishUsageAggregationError(
+          "INVALID_COST",
+          "known estimated cost unexpectedly missing",
+          attemptFacts,
+        );
       }
       if (knownCostCurrency !== null && normalized.currency !== knownCostCurrency) {
         throw new PolishUsageAggregationError(
+          "MIXED_CURRENCY",
           "attempt estimated costs use different frozen currencies",
+          attemptFacts,
         );
       }
       knownCostCurrency = normalized.currency;
-      knownCostNanos += BigInt(normalized.nanos);
+      const nextKnownCostNanos = knownCostNanos + BigInt(normalized.nanos);
+      if (nextKnownCostNanos > MAX_POSTGRES_BIGINT) {
+        throw new PolishUsageAggregationError(
+          "COST_AGGREGATE_OVERFLOW",
+          "attempt estimated cost aggregate exceeds PostgreSQL bigint",
+          attemptFacts,
+        );
+      }
+      knownCostNanos = nextKnownCostNanos;
       knownCostCount += 1;
     } else if (attempt.providerBillable !== false) {
       estimatedCostUnknown = true;
@@ -1094,6 +1168,25 @@ export function aggregatePolishAttemptFactsV2(
     knownEstimatedCost,
     estimatedCost,
   });
+}
+
+/**
+ * Error-only projection used when exact cost aggregation itself violates a
+ * persistence invariant. Per-attempt cost facts remain on the error; the
+ * request projection drops the unpersistable cost total and marks it
+ * incomplete instead of clamping or wrapping the bigint.
+ */
+function aggregatePolishAttemptFactsConservativeV2(
+  attemptFacts: readonly PolishAttemptCompletedFactV2[],
+): RequestUsageAggregateV2 {
+  const withoutAggregateCost = attemptFacts.map((attempt) => ({
+    ...attempt,
+    cost: {
+      ...attempt.cost,
+      estimatedCost: null,
+    },
+  }));
+  return aggregatePolishAttemptFactsV2(withoutAggregateCost);
 }
 
 function classifyTransportMetadataV2(error: unknown): ReturnType<typeof classifyTransportError> {
@@ -1241,7 +1334,7 @@ function buildInferenceRequestForAttemptV2(
     language: request.language,
     targets,
   };
-  return Object.freeze(inferenceRequest);
+  return deepFreezeV2(inferenceRequest);
 }
 
 async function emitCompletedAttemptV2<TStartResult>(
@@ -1252,13 +1345,16 @@ async function emitCompletedAttemptV2<TStartResult>(
   callback: PolishOrchestrateV2Options<TStartResult>["onAttemptCompleted"],
 ): Promise<void> {
   facts.push(completed);
-  await callback?.(
-    Object.freeze({
-      started,
-      startResult,
-      completed,
-    }),
-  );
+  const event = Object.freeze({
+    started,
+    startResult,
+    completed,
+  });
+  try {
+    await callback?.(event);
+  } catch (cause) {
+    throw new PolishAttemptPersistenceErrorV2(event, facts, cause);
+  }
 }
 
 function transportErrorObservationV2(
@@ -1269,6 +1365,15 @@ function transportErrorObservationV2(
     upstreamStatus: transport.upstreamStatus ?? null,
     retryable: transport.retryable,
     retryAfterMs: transport.retryAfterMs,
+  });
+}
+
+function deadlineErrorObservationV2(): PolishAttemptErrorObservationV2 {
+  return Object.freeze({
+    code: "UPSTREAM_TIMEOUT",
+    upstreamStatus: null,
+    retryable: false,
+    retryAfterMs: 0,
   });
 }
 
@@ -1286,9 +1391,9 @@ export async function orchestratePolishV2<TStartResult = unknown>(
   const deadline = now() + POLISH_TOTAL_DEADLINE_MS;
   // Snapshot caller-owned JSON once. Retries cannot observe later mutation of
   // the reservation-frozen price or output contract.
-  const frozenPrice = structuredClone(options.frozenPrice);
-  const outputContract = structuredClone(
-    options.outputContract ?? POLISH_OUTPUT_CONTRACT_V2,
+  const frozenPrice = deepFreezeV2(structuredClone(options.frozenPrice));
+  const outputContract = deepFreezeV2(
+    structuredClone(options.outputContract ?? POLISH_OUTPUT_CONTRACT_V2),
   );
   const facts: PolishAttemptCompletedFactV2[] = [];
   const promptInput: PolishPromptInput = {
@@ -1405,8 +1510,8 @@ export async function orchestratePolishV2<TStartResult = unknown>(
         timeoutMs: postStartRemainingMs,
       });
     } catch (error) {
+      const completedAtMs = now();
       if (options.signal.aborted) {
-        const completedAtMs = now();
         const usageObservation = unavailableUsageObservationV2();
         const completed = freezeAttemptCompletedV2({
           started,
@@ -1437,10 +1542,14 @@ export async function orchestratePolishV2<TStartResult = unknown>(
       }
 
       const transport = classifyTransportMetadataV2(error);
+      const deadlineExpired = completedAtMs >= deadline;
       const usageObservation = unavailableUsageObservationV2();
       const completed = freezeAttemptCompletedV2({
         started,
-        status: transport.code === "UPSTREAM_TIMEOUT" ? "timed_out" : "failed_upstream",
+        status:
+          deadlineExpired || transport.code === "UPSTREAM_TIMEOUT"
+            ? "timed_out"
+            : "failed_upstream",
         transmitted: true,
         providerBillable: null,
         usageObservation,
@@ -1448,9 +1557,11 @@ export async function orchestratePolishV2<TStartResult = unknown>(
         cost: costObservationV2(usageObservation, frozenPrice, undefined),
         finishReason: null,
         failureStage: "transport",
-        error: transportErrorObservationV2(transport),
+        error: deadlineExpired
+          ? deadlineErrorObservationV2()
+          : transportErrorObservationV2(transport),
         transportStartedAtMs,
-        completedAtMs: now(),
+        completedAtMs,
       });
       await emitCompletedAttemptV2(
         facts,
@@ -1459,6 +1570,14 @@ export async function orchestratePolishV2<TStartResult = unknown>(
         completed,
         options.onAttemptCompleted,
       );
+      if (deadlineExpired) {
+        lastFailure = {
+          code: "UPSTREAM_TIMEOUT",
+          stage: "transport",
+          reason: "total deadline expired before the provider attempt settled",
+        };
+        break;
+      }
       lastFailure = {
         code: transport.code,
         stage: "transport",
@@ -1471,6 +1590,10 @@ export async function orchestratePolishV2<TStartResult = unknown>(
       }
       continue;
     }
+
+    const transportCompletedAtMs = now();
+    const postTransportAborted = options.signal.aborted;
+    const postTransportDeadlineExpired = transportCompletedAtMs >= deadline;
 
     if (outcome.kind === "failed") {
       let usageObservation: PolishAttemptUsageObservationV2;
@@ -1504,7 +1627,11 @@ export async function orchestratePolishV2<TStartResult = unknown>(
       const transport = classifyTransportMetadataV2(outcome.failure);
       const completed = freezeAttemptCompletedV2({
         started,
-        status: transport.code === "UPSTREAM_TIMEOUT" ? "timed_out" : "failed_upstream",
+        status: postTransportAborted
+          ? "canceled"
+          : postTransportDeadlineExpired || transport.code === "UPSTREAM_TIMEOUT"
+            ? "timed_out"
+            : "failed_upstream",
         transmitted: true,
         providerBillable,
         usageObservation,
@@ -1516,9 +1643,13 @@ export async function orchestratePolishV2<TStartResult = unknown>(
         ),
         finishReason: null,
         failureStage: "transport",
-        error: transportErrorObservationV2(transport),
+        error: postTransportAborted
+          ? null
+          : postTransportDeadlineExpired
+            ? deadlineErrorObservationV2()
+            : transportErrorObservationV2(transport),
         transportStartedAtMs,
-        completedAtMs: now(),
+        completedAtMs: transportCompletedAtMs,
       });
       await emitCompletedAttemptV2(
         facts,
@@ -1527,6 +1658,15 @@ export async function orchestratePolishV2<TStartResult = unknown>(
         completed,
         options.onAttemptCompleted,
       );
+      if (postTransportAborted) throw abortReason(options.signal);
+      if (postTransportDeadlineExpired) {
+        lastFailure = {
+          code: "UPSTREAM_TIMEOUT",
+          stage: "transport",
+          reason: "total deadline expired before the provider attempt settled",
+        };
+        break;
+      }
       lastFailure = {
         code: transport.code,
         stage: "transport",
@@ -1559,7 +1699,11 @@ export async function orchestratePolishV2<TStartResult = unknown>(
       const providerReportedCost = tryProviderReportedCostV2(outcome.result);
       const completed = freezeAttemptCompletedV2({
         started,
-        status: "failed_upstream",
+        status: postTransportAborted
+          ? "canceled"
+          : postTransportDeadlineExpired
+            ? "timed_out"
+            : "failed_upstream",
         transmitted: true,
         providerBillable: usageObservation.kind === "observed" ? true : null,
         usageObservation,
@@ -1570,15 +1714,21 @@ export async function orchestratePolishV2<TStartResult = unknown>(
           providerReportedCost,
         ),
         finishReason: null,
-        failureStage: "provider_contract",
-        error: Object.freeze({
-          code: "UPSTREAM_ERROR",
-          upstreamStatus: null,
-          retryable: false,
-          retryAfterMs: 0,
-        }),
+        failureStage: postTransportAborted || postTransportDeadlineExpired
+          ? "transport"
+          : "provider_contract",
+        error: postTransportAborted
+          ? null
+          : postTransportDeadlineExpired
+            ? deadlineErrorObservationV2()
+            : Object.freeze({
+                code: "UPSTREAM_ERROR",
+                upstreamStatus: null,
+                retryable: false,
+                retryAfterMs: 0,
+              }),
         transportStartedAtMs,
-        completedAtMs: now(),
+        completedAtMs: transportCompletedAtMs,
       });
       await emitCompletedAttemptV2(
         facts,
@@ -1587,10 +1737,54 @@ export async function orchestratePolishV2<TStartResult = unknown>(
         completed,
         options.onAttemptCompleted,
       );
+      if (postTransportAborted) throw abortReason(options.signal);
+      if (postTransportDeadlineExpired) {
+        lastFailure = {
+          code: "UPSTREAM_TIMEOUT",
+          stage: "transport",
+          reason: "total deadline expired before the provider attempt settled",
+        };
+        break;
+      }
       lastFailure = {
         code: "UPSTREAM_ERROR",
         stage: "provider_contract",
         reason: "provider result violated the canonical inference contract",
+      };
+      break;
+    }
+
+    if (postTransportAborted || postTransportDeadlineExpired) {
+      const completed = freezeAttemptCompletedV2({
+        started,
+        status: postTransportAborted ? "canceled" : "timed_out",
+        transmitted: true,
+        providerBillable: true,
+        usageObservation: normalized.usageObservation,
+        route: normalized.route,
+        cost: costObservationV2(
+          normalized.usageObservation,
+          frozenPrice,
+          normalized.providerReportedCost,
+        ),
+        finishReason: normalized.finishReason,
+        failureStage: "transport",
+        error: postTransportAborted ? null : deadlineErrorObservationV2(),
+        transportStartedAtMs,
+        completedAtMs: transportCompletedAtMs,
+      });
+      await emitCompletedAttemptV2(
+        facts,
+        started,
+        startResult,
+        completed,
+        options.onAttemptCompleted,
+      );
+      if (postTransportAborted) throw abortReason(options.signal);
+      lastFailure = {
+        code: "UPSTREAM_TIMEOUT",
+        stage: "transport",
+        reason: "total deadline expired before the provider attempt settled",
       };
       break;
     }
@@ -1633,7 +1827,7 @@ export async function orchestratePolishV2<TStartResult = unknown>(
             retryAfterMs: 0,
           }),
       transportStartedAtMs,
-      completedAtMs: now(),
+      completedAtMs: transportCompletedAtMs,
     });
     await emitCompletedAttemptV2(
       facts,
