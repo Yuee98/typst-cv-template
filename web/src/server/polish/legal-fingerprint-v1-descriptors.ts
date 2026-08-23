@@ -224,6 +224,17 @@ const EXCERPT_SHA256 = Object.freeze({
   [SEMANTIC_EVIDENCE_EXCERPTS["material-change"].zh]: "a27da4880efa9d4f8437773c523e91b0f97146770bc9ad8e1daa35e7071132d0",
 });
 
+export function resolveLegalFingerprintV1ReviewedExcerptSha256(reviewedExcerpt: unknown): string {
+  if (typeof reviewedExcerpt !== "string") {
+    throw new Error("legal evidence excerpt must be an exact reviewed string");
+  }
+  const sha256 = EXCERPT_SHA256[reviewedExcerpt as keyof typeof EXCERPT_SHA256];
+  if (sha256 === undefined) {
+    throw new Error("unreviewed legal evidence excerpt");
+  }
+  return sha256;
+}
+
 function evidence(
   evidence_id: string,
   authority_kind: "provider-official" | "service-contract" | "service-registry" | "service-implementation" | "service-test" | "service-legal",
@@ -234,10 +245,7 @@ function evidence(
 ) {
   const official = authority_kind === "provider-official";
   const snapshot = official ? "unavailable" : "sha256";
-  const reviewedExcerptSha256 = EXCERPT_SHA256[reviewed_excerpt as keyof typeof EXCERPT_SHA256];
-  if (reviewedExcerptSha256 === undefined) {
-    throw new Error(`unreviewed legal evidence excerpt: ${evidence_id}`);
-  }
+  const reviewedExcerptSha256 = resolveLegalFingerprintV1ReviewedExcerptSha256(reviewed_excerpt);
   return Object.freeze({
     schema_version: "ai_legal_source_evidence_v1",
     evidence_id,
@@ -257,26 +265,33 @@ function evidence(
   });
 }
 
-const dsExternalApi = ["fact.deepseek.model.external.v1", "fact.deepseek.wire.external.v1", "fact.deepseek.endpoint.external.v1", "fact.deepseek.subject.capability.v1"];
-const dsExternalPlatformTerms = ["fact.deepseek.operator.external.v1"];
-const dsExternalTermsOfUse = ["fact.deepseek.retention.v1", "fact.deepseek.training.v1"];
-const dsExternalPrivacy = ["fact.deepseek.region.v1", "fact.deepseek.transfer.v1"];
-const dsExternalCache = ["fact.deepseek.cache.v1"];
+const dsExternalApi = Object.freeze(["fact.deepseek.model.external.v1", "fact.deepseek.wire.external.v1", "fact.deepseek.endpoint.external.v1", "fact.deepseek.subject.capability.v1"]);
+const dsExternalPlatformTerms = Object.freeze(["fact.deepseek.operator.external.v1"]);
+const dsExternalTermsOfUse = Object.freeze(["fact.deepseek.retention.v1", "fact.deepseek.training.v1"]);
+const dsExternalPrivacy = Object.freeze(["fact.deepseek.region.v1", "fact.deepseek.transfer.v1"]);
+const dsExternalCache = Object.freeze(["fact.deepseek.cache.v1"]);
 const dsOperational = manifestFacts.filter((item) => item.fact_id.startsWith("fact.deepseek.") && item.authority_class === "service-operational").map((item) => item.fact_id);
-const dsProfileRegistry = ["fact.deepseek.gateway.service.v1", "fact.deepseek.model.selection.v1", "fact.deepseek.wire.selection.v1", "fact.deepseek.endpoint.selection.v1", "fact.deepseek.display.selection.v1"];
-const dsAdapterRegistry = ["fact.deepseek.adapter.wire.v1", "fact.deepseek.endpoint.resolution.v1", "fact.deepseek.display.registration.v1"];
-const dsRegistry = [...dsProfileRegistry, ...dsAdapterRegistry];
-const dsDisplay = ["fact.deepseek.display.v1"];
-const dsDerivation = ["fact.deepseek.subject.derivation.v1"];
+const dsProfileRegistry = Object.freeze(["fact.deepseek.gateway.service.v1", "fact.deepseek.model.selection.v1", "fact.deepseek.wire.selection.v1", "fact.deepseek.endpoint.selection.v1", "fact.deepseek.display.selection.v1"]);
+const dsAdapterRegistry = Object.freeze(["fact.deepseek.adapter.wire.v1", "fact.deepseek.endpoint.resolution.v1", "fact.deepseek.display.registration.v1"]);
+const dsRegistry = Object.freeze([...dsProfileRegistry, ...dsAdapterRegistry]);
+const dsDisplay = Object.freeze(["fact.deepseek.display.v1"]);
+const dsDerivation = Object.freeze(["fact.deepseek.subject.derivation.v1"]);
 
-const mimoExternalApi = ["fact.mimo.model.external.v1", "fact.mimo.wire.external.v1", "fact.mimo.endpoint.external.v1"];
-const mimoExternalTerms = ["fact.mimo.operator.external.v1"];
-const mimoExternalPolicy = ["fact.mimo.region.v1", "fact.mimo.cache.v1", "fact.mimo.retention.v1", "fact.mimo.training.v1", "fact.mimo.transfer.v1"];
+const mimoExternalApi = Object.freeze(["fact.mimo.model.external.v1", "fact.mimo.wire.external.v1", "fact.mimo.endpoint.external.v1"]);
+const mimoExternalTerms = Object.freeze(["fact.mimo.operator.external.v1"]);
+const mimoExternalPolicy = Object.freeze(["fact.mimo.region.v1", "fact.mimo.cache.v1", "fact.mimo.retention.v1", "fact.mimo.training.v1", "fact.mimo.transfer.v1"]);
 const mimoOperational = manifestFacts.filter((item) => item.fact_id.startsWith("fact.mimo.") && item.authority_class === "service-operational").map((item) => item.fact_id);
-const mimoProfileRegistry = ["fact.mimo.gateway.service.v1", "fact.mimo.model.selection.v1", "fact.mimo.wire.selection.v1", "fact.mimo.endpoint.selection.v1", "fact.mimo.display.selection.v1"];
-const mimoAdapterRegistry = ["fact.mimo.adapter.wire.v1", "fact.mimo.endpoint.resolution.v1", "fact.mimo.display.registration.v1"];
-const mimoRegistry = [...mimoProfileRegistry, ...mimoAdapterRegistry];
-const mimoDisplay = ["fact.mimo.display.v1"];
+const mimoProfileRegistry = Object.freeze(["fact.mimo.gateway.service.v1", "fact.mimo.model.selection.v1", "fact.mimo.wire.selection.v1", "fact.mimo.endpoint.selection.v1", "fact.mimo.display.selection.v1"]);
+const mimoAdapterRegistry = Object.freeze(["fact.mimo.adapter.wire.v1", "fact.mimo.endpoint.resolution.v1", "fact.mimo.display.registration.v1"]);
+const mimoRegistry = Object.freeze([...mimoProfileRegistry, ...mimoAdapterRegistry]);
+const mimoDisplay = Object.freeze(["fact.mimo.display.v1"]);
+
+const REGISTRY_EVIDENCE_SOURCE_MAPPING = Object.freeze({
+  "evidence.deepseek.registry.adapter.v1": Object.freeze({ sourceLocator: ADAPTER_REGISTRY_PATH, factIds: dsAdapterRegistry }),
+  "evidence.deepseek.registry.profile.v1": Object.freeze({ sourceLocator: PROFILE_REGISTRY_PATH, factIds: dsProfileRegistry }),
+  "evidence.mimo.registry.adapter.v1": Object.freeze({ sourceLocator: ADAPTER_REGISTRY_PATH, factIds: mimoAdapterRegistry }),
+  "evidence.mimo.registry.profile.v1": Object.freeze({ sourceLocator: PROFILE_REGISTRY_PATH, factIds: mimoProfileRegistry }),
+});
 
 const manifestEvidence = Object.freeze([
   evidence("evidence.deepseek.api.v1", "provider-official", "https://api-docs.deepseek.com/api/create-chat-completion/", EXCERPTS.deepseekApi, dsExternalApi),
@@ -511,6 +526,44 @@ export class LegalFingerprintDescriptorV1Error extends Error {
   }
 }
 
+export function validateLegalFingerprintV1RegistryEvidenceMapping(evidence: unknown): void {
+  if (evidence === null || typeof evidence !== "object" || Array.isArray(evidence)) {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence must be an object");
+  }
+  const record = evidence as Record<string, unknown>;
+  if (typeof record.evidence_id !== "string") {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence must have an evidence_id");
+  }
+  const mapping = REGISTRY_EVIDENCE_SOURCE_MAPPING[
+    record.evidence_id as keyof typeof REGISTRY_EVIDENCE_SOURCE_MAPPING
+  ];
+  if (mapping === undefined) {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence_id is not source-authorized");
+  }
+  if (
+    record.authority_kind !== "service-registry" ||
+    record.source_locator_kind !== "repo-path" ||
+    record.source_locator !== mapping.sourceLocator
+  ) {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence source authority mismatch");
+  }
+  if (
+    !Array.isArray(record.supported_fact_ids) ||
+    record.supported_fact_ids.some((factId) => typeof factId !== "string")
+  ) {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence fact IDs must be an array of strings");
+  }
+  const actual = record.supported_fact_ids as string[];
+  const actualSet = new Set(actual);
+  if (
+    actual.length !== mapping.factIds.length ||
+    actualSet.size !== actual.length ||
+    mapping.factIds.some((factId) => !actualSet.has(factId))
+  ) {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence fact authority mismatch");
+  }
+}
+
 export function deriveRequiredServiceFactPairs(profileKeys: ReadonlySet<string>): readonly Readonly<{ id: string; sha256: string }>[] {
   if (
     profileKeys === null || profileKeys === undefined ||
@@ -571,6 +624,9 @@ export function validateLegalFingerprintV1Closure(): void {
   };
   for (const item of [...manifestEvidence, ...semanticEvidence]) {
     assertPairs(item.supported_fact_ids, item.supported_fact_sha256s, item.evidence_id);
+    if (item.authority_kind === "service-registry") {
+      validateLegalFingerprintV1RegistryEvidenceMapping(item);
+    }
   }
   for (const root of manifests) {
     assertPairs(root.route_descriptor_ids, root.route_descriptor_sha256s, `${root.manifest_id}.routes`);
