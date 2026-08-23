@@ -595,11 +595,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
         patch: { cost_reconciliation_status: "incomplete_usage" },
       },
       {
-        label: "incomplete_usage has no underlying missing fact",
+        label: "incomplete_usage omits the estimated-cost marker",
         patch: {
           cost_reconciliation_status: "incomplete_usage",
           estimated_cost_nanos: null,
-          incomplete_fields: ["estimated_cost"],
+          incomplete_fields: [],
         },
       },
     ];
@@ -648,6 +648,31 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       });
       expect(error).toBeNull();
     }
+  });
+
+  it("accepts contract_incomplete_cost_only", async () => {
+    const { data, error } = await service
+      .from("ai_request_ledger")
+      .insert({
+        ...requestIdentity(),
+        ...completeUsageAggregate(),
+        cost_reconciliation_status: "incomplete_usage",
+        estimated_cost_nanos: null,
+        incomplete_fields: ["estimated_cost"],
+      })
+      .select(
+        "usage_complete, known_estimated_cost_nanos, estimated_cost_nanos, incomplete_fields, cost_reconciliation_status",
+      )
+      .single();
+
+    expect(error).toBeNull();
+    expect(data).toEqual({
+      usage_complete: true,
+      known_estimated_cost_nanos: 100,
+      estimated_cost_nanos: null,
+      incomplete_fields: ["estimated_cost"],
+      cost_reconciliation_status: "incomplete_usage",
+    });
   });
 
   it("keeps profile aggregates split by native currency", async () => {

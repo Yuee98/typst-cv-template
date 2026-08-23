@@ -223,12 +223,6 @@ alter table public.ai_request_ledger
           estimated_cost_nanos is null
           and incomplete_fields is not null
           and array_position(incomplete_fields, 'estimated_cost') is not null
-          and (
-            array_position(incomplete_fields, 'attempt_usage') is not null
-            or array_position(incomplete_fields, 'input_cache_write') is not null
-            or array_position(incomplete_fields, 'reasoning') is not null
-            or array_position(incomplete_fields, 'provider_billable') is not null
-          )
         else false
       end
     )
