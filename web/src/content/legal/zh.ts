@@ -42,7 +42,7 @@ export const deepseekLegalManifest = defineAiProviderLegalManifest({
   retention:
     "未找到适用于本 API 内容的固定总保留期限或零保留承诺。",
   training:
-    "开放平台条款允许在适用条件下将用户输入/输出用于服务改进或模型训练；未找到 API 不训练承诺或 API 特定退出机制。",
+    "DeepSeek 使用条款将 API 纳入“服务”范围，并说明会在有限范围内使用去标识化数据改进服务。开放平台条款并未授予 DeepSeek 训练使用权，其中关于模型训练的条款描述的是开发者可如何使用输入和输出。未找到 API 特定的不训练承诺或退出机制。",
   transfer:
     "API 特定的处理地点和传输路径尚未核实。适用法律要求时，本服务运营者为这项可选功能采用明示同意流程；这是运营者选择的授权流程，不表示 API 内容在任何特定地点处理，也并非对所有用户或传输情形作出的通用法律结论。",
   unknowns: [
@@ -54,6 +54,7 @@ export const deepseekLegalManifest = defineAiProviderLegalManifest({
     "https://api-docs.deepseek.com/api/create-chat-completion/",
     "https://api-docs.deepseek.com/guides/kv_cache/",
     "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html",
+    "https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html",
     "https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html",
     "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html",
   ],

@@ -42,7 +42,7 @@ export const deepseekLegalManifest = defineAiProviderLegalManifest({
   retention:
     "We found no fixed overall retention period or zero-retention commitment for this API content.",
   training:
-    "The Open Platform Terms allow user inputs and outputs to be used for service improvement or model training in applicable circumstances. We found no API no-training commitment or API-specific opt-out.",
+    "DeepSeek's Terms of Use, which defines its Services to include APIs, describes limited use of de-identified data to improve the Services. The Open Platform Terms do not grant DeepSeek training use: their model-training clause concerns what the developer may do with inputs and outputs. We found no API-specific no-training commitment or opt-out.",
   transfer:
     "The API-specific processing location and transfer path are unverified. Where applicable law requires it, the service operator uses an explicit-consent flow for this optional feature; this is the operator's chosen authorization flow, not a claim that API content is processed in any particular location or a universal legal conclusion for every user or transfer.",
   unknowns: [
@@ -54,6 +54,7 @@ export const deepseekLegalManifest = defineAiProviderLegalManifest({
     "https://api-docs.deepseek.com/api/create-chat-completion/",
     "https://api-docs.deepseek.com/guides/kv_cache/",
     "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html",
+    "https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html",
     "https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html",
     "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html",
   ],

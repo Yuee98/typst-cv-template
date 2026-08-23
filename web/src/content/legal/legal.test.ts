@@ -123,7 +123,7 @@ describe("AI legal bundle", () => {
 
   it("does not turn unresolved provider behavior into guarantees", () => {
     expect(en.deepseekLegalManifest.retention).toMatch(/no fixed|zero-retention/i);
-    expect(en.deepseekLegalManifest.training).toMatch(/no API no-training/i);
+    expect(en.deepseekLegalManifest.training).toMatch(/no API(?:-specific)? no-training/i);
     expect(en.deepseekLegalManifest.processingRegion).toMatch(/API-specific.*unverified/i);
     expect(en.deepseekLegalManifest.transfer).toMatch(/API-specific.*unverified/i);
     expect(en.deepseekLegalManifest.unknowns.join(" ")).toMatch(/processing\/storage location/i);
@@ -145,6 +145,11 @@ describe("AI legal bundle", () => {
     expect(en.deepseekLegalManifest.sources).toContain(
       "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html",
     );
+    expect(en.deepseekLegalManifest.sources).toContain(
+      "https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html",
+    );
+    expect(en.deepseekLegalManifest.training).toMatch(/Open Platform Terms do not grant DeepSeek training use/i);
+    expect(zh.deepseekLegalManifest.training).toMatch(/开放平台条款并未授予 DeepSeek 训练使用权/u);
     expect(en.mimoLegalManifest.cache).toMatch(/could not verify/i);
     expect(en.mimoLegalManifest.processingRegion).toMatch(/not guaranteed/i);
     expect(en.mimoLegalManifest.unknowns.join(" ")).toMatch(
