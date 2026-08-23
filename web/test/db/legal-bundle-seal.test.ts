@@ -91,12 +91,16 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
     expect(presealed.error?.code).toBe(CHECK_VIOLATION);
 
     const emptyVersion = bundleVersion("empty");
-    expect((await insertHeader(emptyVersion, "b".repeat(64))).error).toBeNull();
+    const emptyHeader = await insertHeader(emptyVersion, "b".repeat(64));
+    expect(emptyHeader.error).toBeNull();
     const emptySeal = await service
       .from("ai_legal_bundle_versions")
-      .update({ sealed_at: new Date().toISOString() })
+      .update({ sealed_at: emptyHeader.data!.created_at })
       .eq("legal_bundle_version", emptyVersion);
     expect(emptySeal.error?.code).toBe(CHECK_VIOLATION);
+    expect(emptySeal.error?.message).toContain(
+      "ai legal bundle cannot seal an empty manifest set",
+    );
   });
 
   it("compares the complete canonical sorted manifest-set hash", async () => {
