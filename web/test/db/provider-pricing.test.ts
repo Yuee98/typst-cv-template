@@ -58,6 +58,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider native-currency pricing (real DB)", () 
   ) {
     return {
       profile_version_id: profileVersionId,
+      pricing_lane: "default",
       version,
       currency,
       calculator_kind: "linear_token_v1",

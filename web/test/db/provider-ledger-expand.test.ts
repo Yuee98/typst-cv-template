@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -15,6 +17,61 @@ const CHECK_VIOLATION = "23514";
 const FOREIGN_KEY_VIOLATION = "23503";
 const PERMISSION_DENIED = "42501";
 const LEGAL_BUNDLE_VERSION = "2026-08-23-multi-provider-v1";
+
+function sealPriceAsDatabaseOwner(priceId: string): void {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(priceId)) {
+    throw new Error("test price id is not a canonical UUID");
+  }
+
+  const sql = String.raw`
+    \set ON_ERROR_STOP on
+    begin;
+    create temporary table ledger_price_seal_fixture (
+      price_version_id uuid not null
+    ) on commit drop;
+    create function pg_temp.ledger_seal_price_fixture()
+    returns trigger
+    language plpgsql
+    set search_path = ''
+    as $function$
+    begin
+      update public.ai_price_versions
+      set components_sealed_at = greatest(clock_timestamp(), created_at)
+      where id = new.price_version_id;
+      return new;
+    end;
+    $function$;
+    create trigger ledger_seal_price_fixture
+    after insert on ledger_price_seal_fixture
+    for each row execute function pg_temp.ledger_seal_price_fixture();
+    insert into ledger_price_seal_fixture (price_version_id)
+    values (:'price_id'::uuid);
+    commit;
+  `;
+  const result = spawnSync(
+    "docker",
+    [
+      "exec",
+      "-i",
+      "supabase_db_typst-cv-template",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres",
+      "--set",
+      "ON_ERROR_STOP=1",
+      "--set",
+      `price_id=${priceId}`,
+    ],
+    { input: sql, encoding: "utf8" },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `database-owner ledger price seal failed: ${result.stderr || result.stdout}`,
+    );
+  }
+}
 
 interface RouteFixture {
   profileVersionId: string;
@@ -37,7 +94,10 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
     await deleteTestUser(service, user.id);
   });
 
-  async function createRouteFixture(label: string): Promise<RouteFixture> {
+  async function createRouteFixture(
+    label: string,
+    sealPrice = true,
+  ): Promise<RouteFixture> {
     const { data: profile, error: profileError } = await service
       .from("ai_provider_profiles")
       .insert({
@@ -81,6 +141,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .from("ai_price_versions")
       .insert({
         profile_version_id: profileVersion!.id,
+        pricing_lane: "default",
         version: 1,
         currency: "CNY",
         calculator_kind: "linear_token_v1",
@@ -94,6 +155,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .select("id")
       .single();
     expect(priceError).toBeNull();
+    if (sealPrice) {
+      sealPriceAsDatabaseOwner(price!.id);
+    }
 
     const { data: policy, error: policyError } = await service
       .from("ai_routing_policy_versions")
@@ -294,14 +358,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
     expect(mutate.error?.code).toBe(CHECK_VIOLATION);
   });
 
-  it("blocks price components after a request freezes the price version", async () => {
-    const componentRoute = await createRouteFixture("component-freeze");
+  it("blocks price components after an audited price seal", async () => {
+    const componentRoute = await createRouteFixture("component-freeze", false);
     const beforeReference = await service.from("ai_price_components").insert({
       price_version_id: componentRoute.priceVersionId,
       component: "input_standard",
       nanos_per_million: 100,
     });
     expect(beforeReference.error).toBeNull();
+    sealPriceAsDatabaseOwner(componentRoute.priceVersionId);
 
     const reference = await service
       .from("ai_request_ledger")

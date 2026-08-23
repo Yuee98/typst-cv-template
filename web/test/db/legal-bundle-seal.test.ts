@@ -50,6 +50,15 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
     return `test-${label}-${crypto.randomUUID()}`;
   }
 
+  function manifestId(label: string): string {
+    return `test-${label}-${crypto.randomUUID()}`;
+  }
+
+  async function registerManifests(manifests: ManifestFixture[]) {
+    const result = await service.from("ai_legal_manifest_versions").insert(manifests);
+    expect(result.error).toBeNull();
+  }
+
   async function insertHeader(version: string, manifestSetHash: string) {
     return service.from("ai_legal_bundle_versions").insert({
       legal_bundle_version: version,
@@ -88,9 +97,10 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
 
   it("compares the complete canonical sorted manifest-set hash", async () => {
     const manifests: ManifestFixture[] = [
-      { legal_manifest_id: "mimo-v1", manifest_sha256: "2".repeat(64) },
-      { legal_manifest_id: "deepseek-v1", manifest_sha256: "1".repeat(64) },
+      { legal_manifest_id: manifestId("mimo"), manifest_sha256: "2".repeat(64) },
+      { legal_manifest_id: manifestId("deepseek"), manifest_sha256: "1".repeat(64) },
     ];
+    await registerManifests(manifests);
 
     const mismatchVersion = bundleVersion("mismatch");
     expect((await insertHeader(mismatchVersion, "f".repeat(64))).error).toBeNull();
@@ -144,14 +154,14 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
       .from("ai_legal_bundle_manifests")
       .update({ manifest_sha256: "4".repeat(64) })
       .eq("legal_bundle_version", sealedVersion)
-      .eq("legal_manifest_id", "mimo-v1");
+      .eq("legal_manifest_id", manifests[0].legal_manifest_id);
     expect(mutateChild.error?.code).toBe(CHECK_VIOLATION);
 
     const deleteChild = await service
       .from("ai_legal_bundle_manifests")
       .delete()
       .eq("legal_bundle_version", sealedVersion)
-      .eq("legal_manifest_id", "mimo-v1");
+      .eq("legal_manifest_id", manifests[0].legal_manifest_id);
     expect(deleteChild.error?.code).toBe(CHECK_VIOLATION);
 
     const mutateHeader = await service
@@ -170,9 +180,14 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
   it("allows draft manifest correction but rejects a seal before creation", async () => {
     const version = bundleVersion("draft-correction");
     const manifest: ManifestFixture = {
-      legal_manifest_id: "fixture-v1",
+      legal_manifest_id: manifestId("draft-original"),
       manifest_sha256: "6".repeat(64),
     };
+    const correctedManifest: ManifestFixture = {
+      legal_manifest_id: manifestId("draft-corrected"),
+      manifest_sha256: "7".repeat(64),
+    };
+    await registerManifests([manifest, correctedManifest]);
     expect((await insertHeader(version, canonicalManifestSetHash([manifest]))).error).toBeNull();
     expect(
       (
@@ -183,18 +198,24 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
       ).error,
     ).toBeNull();
 
-    const correction = await service
+    const removeDraftChild = await service
       .from("ai_legal_bundle_manifests")
-      .update({ manifest_sha256: "7".repeat(64) })
+      .delete()
       .eq("legal_bundle_version", version)
       .eq("legal_manifest_id", manifest.legal_manifest_id);
+    expect(removeDraftChild.error).toBeNull();
+    const correction = await service.from("ai_legal_bundle_manifests").insert({
+      legal_bundle_version: version,
+      ...correctedManifest,
+    });
     expect(correction.error).toBeNull();
 
     const futureVersion = bundleVersion("future");
     const futureManifest: ManifestFixture = {
-      legal_manifest_id: "fixture-v1",
+      legal_manifest_id: manifestId("future"),
       manifest_sha256: "8".repeat(64),
     };
+    await registerManifests([futureManifest]);
     const createdAt = "2030-01-02T00:00:00Z";
     const futureHeader = await service.from("ai_legal_bundle_versions").insert({
       legal_bundle_version: futureVersion,
@@ -223,7 +244,11 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal bundle seal (real DB)", () => {
     const authenticated = await signInAsUser(user);
 
     for (const client of [anon, authenticated]) {
-      for (const table of ["ai_legal_bundle_versions", "ai_legal_bundle_manifests"] as const) {
+      for (const table of [
+        "ai_legal_manifest_versions",
+        "ai_legal_bundle_versions",
+        "ai_legal_bundle_manifests",
+      ] as const) {
         const { data, error } = await client.from(table).select("*").limit(1);
         expect(data, table).toBeNull();
         expect(error?.code, table).toBe(PERMISSION_DENIED);
