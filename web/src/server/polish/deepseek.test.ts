@@ -153,6 +153,8 @@ describe("createDeepSeekChatV1Adapter — V1 rollback parity", () => {
     const legacyInit = (legacyFetch.mock.calls[0] as [string, RequestInit])[1];
     const v2Init = (v2Fetch.mock.calls[0] as [string, RequestInit])[1];
     expect(v2Init.body).toBe(legacyInit.body);
+    expect(v2Init.redirect).toBe("error");
+    expect(legacyInit.redirect).toBeUndefined();
     expect(v2Init.body).toBe(
       JSON.stringify({
         model: "deepseek-v4-flash",
@@ -178,6 +180,25 @@ describe("createDeepSeekChatV1Adapter — V1 rollback parity", () => {
     expect((fetchMock.mock.calls[0] as [string, RequestInit])[0]).toBe(
       "https://api.deepseek.com/chat/completions",
     );
+  });
+
+  it("fails closed instead of claiming a route when an injected transport returns a redirect", async () => {
+    const redirectedResponse = jsonResponse(successPayload());
+    Object.defineProperty(redirectedResponse, "redirected", { value: true });
+    Object.defineProperty(redirectedResponse, "url", {
+      value: "https://redirect-target.invalid/chat/completions",
+    });
+    const fetchMock = vi.fn().mockResolvedValue(redirectedResponse);
+
+    const error = await makeV2Adapter(fetchMock)
+      .complete(makeV2Request(), callOptions())
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DeepSeekChatV1AdapterError);
+    expect(error).toMatchObject({ code: "UPSTREAM_ERROR", retryable: false });
+    expect(error).not.toHaveProperty("route");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].redirect).toBe("error");
   });
 });
 
@@ -600,7 +621,7 @@ describe("createDeepSeekChatV1Adapter — V2 response and usage mapping", () => 
       JSON.stringify(
         successPayload({
           id: "body-request-7",
-          model: "deepseek-v4-flash-202608",
+          model: DEEPSEEK_POLISH_MODEL,
           usage: {
             prompt_tokens: 100,
             completion_tokens: 40,
@@ -642,7 +663,7 @@ describe("createDeepSeekChatV1Adapter — V2 response and usage mapping", () => 
         gatewayRequestId: "header-request-9",
         providerRequestId: "body-request-7",
         actualUpstreamEndpoint: "https://api.deepseek.com/chat/completions",
-        actualModelId: "deepseek-v4-flash-202608",
+        actualModelId: DEEPSEEK_POLISH_MODEL,
       },
     });
   });
@@ -721,8 +742,27 @@ describe("createDeepSeekChatV1Adapter — V2 response and usage mapping", () => 
 
     expect(result.route).toEqual({
       actualUpstreamEndpoint: "https://api.deepseek.com/chat/completions",
-      actualModelId: DEEPSEEK_POLISH_MODEL,
     });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+    ["control characters", "deepseek-v4-flash\nsecret"],
+    ["safe but mismatched", "deepseek-v4-flash-unknown-revision"],
+  ])("keeps actualModelId unknown when the response model is %s", async (_label, model) => {
+    const payload = successPayload();
+    if (model === undefined) delete (payload as Record<string, unknown>).model;
+    else payload.model = model;
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await makeV2Adapter(fetchMock).complete(makeV2Request(), callOptions());
+
+    expect(result.route).not.toHaveProperty("actualModelId");
+    expect(result.route.actualUpstreamEndpoint).toBe(
+      "https://api.deepseek.com/chat/completions",
+    );
+    expect(result.usage.usageComplete).toBe(true);
   });
 
   it.each([

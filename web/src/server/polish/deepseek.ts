@@ -517,6 +517,9 @@ export function createDeepSeekChatV1Adapter(
       try {
         response = await fetchImpl(endpoint, {
           method: "POST",
+          // Never forward the bearer token or request body to a redirect
+          // target. The observed route remains the exact code-owned endpoint.
+          redirect: "error",
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
@@ -527,6 +530,17 @@ export function createDeepSeekChatV1Adapter(
         });
       } catch {
         normalizeV2TransportFailure(signal, timeoutSignal, timeoutMs);
+      }
+
+      if (
+        response.redirected ||
+        (response.url.length > 0 && response.url !== endpoint)
+      ) {
+        throw new DeepSeekChatV1AdapterError(
+          "UPSTREAM_ERROR",
+          "DeepSeek chat completions returned an unexpected redirect",
+          { retryable: false },
+        );
       }
 
       const headerRequestId = safeRouteToken(response.headers.get("x-request-id"));
@@ -558,7 +572,11 @@ export function createDeepSeekChatV1Adapter(
       const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : undefined;
       const content = message?.content;
       const contentIsString = typeof content === "string";
-      const actualModelId = safeRouteToken(payloadRecord?.model, 128) ?? profile.modelId;
+      const observedModelId = safeRouteToken(payloadRecord?.model, 128);
+      // `profile.modelId` is the expected frozen model, not evidence of what
+      // served this response. Record an actual-model observation only when
+      // the upstream explicitly reports the same safe identifier.
+      const actualModelId = observedModelId === profile.modelId ? observedModelId : undefined;
 
       return {
         schemaVersion: "polish_inference_result_v2",
@@ -571,7 +589,7 @@ export function createDeepSeekChatV1Adapter(
           ...(headerRequestId ? { gatewayRequestId: headerRequestId } : {}),
           ...(providerRequestId ? { providerRequestId } : {}),
           actualUpstreamEndpoint: endpoint,
-          actualModelId,
+          ...(actualModelId ? { actualModelId } : {}),
         },
       };
     },
