@@ -166,6 +166,20 @@ export interface ProviderEnvironmentTestOptions {
   readonly endpointRegistry?: Readonly<Partial<Record<EndpointAlias, string>>>;
 }
 
+function assertTestResolverAllowed(
+  actualRuntimeEnv: ServerEnvironment,
+  injectedEnv: ServerEnvironment,
+): void {
+  if (
+    actualRuntimeEnv.NODE_ENV === "production" ||
+    injectedEnv.NODE_ENV === "production"
+  ) {
+    throw new ProviderEnvironmentError(
+      "test provider environment resolver is forbidden in production",
+    );
+  }
+}
+
 /**
  * Explicit unit/integration-test seam. It cannot be constructed in production,
  * so custom endpoints never expand the production deployment ceiling.
@@ -173,11 +187,10 @@ export interface ProviderEnvironmentTestOptions {
 export function createProviderEnvironmentResolverForTest(
   options: ProviderEnvironmentTestOptions,
 ): ProviderEnvironmentResolver {
-  if (options.env.NODE_ENV === "production") {
-    throw new ProviderEnvironmentError(
-      "test provider environment resolver is forbidden in production",
-    );
-  }
+  // The actual process environment is an uninjectable ceiling: a caller may
+  // provide synthetic test env values, but cannot use them to disguise a
+  // production process and enable custom endpoints.
+  assertTestResolverAllowed(process.env, options.env);
   for (const alias of Object.keys(options.endpointRegistry ?? {})) {
     if (!isRegisteredEndpointAlias(alias)) {
       throw new ProviderEnvironmentError("unknown test endpoint alias");

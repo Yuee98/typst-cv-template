@@ -140,6 +140,27 @@ describe("provider environment resolver", () => {
       }),
     ).toThrow(/forbidden in production/u);
   });
+
+  it("binds the test endpoint ceiling to the actual production process environment", () => {
+    const endpointUrl = "https://deepseek.test.invalid/v1?api_key=secret";
+    vi.stubEnv("NODE_ENV", "production");
+
+    let caught: unknown;
+    try {
+      createProviderEnvironmentResolverForTest({
+        env: { NODE_ENV: "test", DEEPSEEK_API_KEY: "injected-secret" },
+        endpointRegistry: { deepseek_official: endpointUrl },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ProviderEnvironmentError);
+    expect(String(caught)).toMatch(/forbidden in production/u);
+    expect(String(caught)).not.toContain(endpointUrl);
+    expect(String(caught)).not.toContain("injected-secret");
+    expect(String(caught)).not.toContain("api_key");
+  });
 });
 
 describe("fake LLM deployment guard", () => {
