@@ -11,6 +11,7 @@ import {
 import {
   defineAiProviderLegalManifest,
   type LegalDocument,
+  type LegalSection,
 } from "./types";
 
 export const LEGAL_EFFECTIVE_DATE = "July 3, 2026";
@@ -271,6 +272,20 @@ export const privacyDocument: LegalDocument = {
         "The actual recipient and possible processing regions for AI polish depend on the route frozen for the request. The known processing regions, transfer arrangements, and unresolved points for the current DeepSeek and MiMo routes are listed in the provider annexes to the AI Service Terms.",
         "Where applicable law requires it and no other appropriate safeguard is available, we may rely on your explicit consent for this optional feature. We chose a separate-consent flow to disclose risk and record authorization; this does not mean that every AI provider universally requires separate consent, nor is it a legal conclusion for every jurisdiction.",
       ],
+      links: [
+        {
+          kind: "internal",
+          label: "View the DeepSeek provider annex",
+          href: "/ai-terms#provider-annex-deepseek-official-v1",
+          locale: "en",
+        },
+        {
+          kind: "internal",
+          label: "View the MiMo provider annex",
+          href: "/ai-terms#provider-annex-mimo-cn-v1",
+          locale: "en",
+        },
+      ],
     },
     {
       heading: "AI Features",
@@ -280,6 +295,20 @@ export const privacyDocument: LegalDocument = {
         "Before each request, the interface discloses the actual route. If the route or legal bundle changed, we stop before transmitting anything to an AI service and ask you to confirm again. We do not treat your consent as an instruction to select a provider.",
         "You may withdraw consent for future requests by ceasing to use AI polish. This does not affect processing that already occurred, and it does not require deletion of records we must retain to prove historical consent, settle quota, protect security, or satisfy legal obligations. You may also contact us as described under \"Your Rights\".",
         "End-to-end encryption, where available, does not apply to content sent to the AI provider; the rest of your encrypted resume remains protected as described in this policy.",
+      ],
+      links: [
+        {
+          kind: "internal",
+          label: "AI Service Terms — DeepSeek provider annex",
+          href: "/ai-terms#provider-annex-deepseek-official-v1",
+          locale: "en",
+        },
+        {
+          kind: "internal",
+          label: "AI Service Terms — MiMo provider annex",
+          href: "/ai-terms#provider-annex-mimo-cn-v1",
+          locale: "en",
+        },
       ],
     },
     {
@@ -354,8 +383,9 @@ export const termsAcceptanceSummary = [
 function providerAnnexSection(
   title: string,
   manifest: (typeof aiProviderLegalManifests)[number],
-) {
+): LegalSection {
   return {
+    id: `provider-annex-${manifest.displayKey}`,
     heading: `Provider Annex: ${title}`,
     body: [
       `Manifest ID: ${manifest.manifestId}; display key: ${manifest.displayKey}; reviewed: ${manifest.reviewedAt}.`,
@@ -369,7 +399,11 @@ function providerAnnexSection(
       `Unresolved: ${manifest.unknowns.join("; ")}. Database configuration and product copy must not turn these unknowns into guarantees.`,
       "Sources reviewed:",
     ],
-    bullets: [...manifest.sources],
+    links: manifest.sources.map((href, index) => ({
+      kind: "external",
+      label: `Official source ${index + 1}: ${href}`,
+      href,
+    })),
   };
 }
 

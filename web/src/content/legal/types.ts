@@ -1,7 +1,22 @@
+export type LegalLink =
+  | Readonly<{
+      kind: "internal";
+      label: string;
+      href: `/${string}`;
+      locale: "zh" | "en";
+    }>
+  | Readonly<{
+      kind: "external";
+      label: string;
+      href: `https://${string}`;
+    }>;
+
 export type LegalSection = {
+  id?: string;
   heading: string;
   body: string[];
   bullets?: string[];
+  links?: LegalLink[];
 };
 
 export type LegalDocument = {
@@ -28,7 +43,7 @@ export type AiProviderLegalManifest = Readonly<{
   training: string;
   transfer: string;
   unknowns: readonly string[];
-  sources: readonly string[];
+  sources: readonly `https://${string}`[];
 }>;
 
 export function defineAiProviderLegalManifest(

@@ -11,6 +11,7 @@ import {
 import {
   defineAiProviderLegalManifest,
   type LegalDocument,
+  type LegalSection,
 } from "./types";
 
 export const LEGAL_EFFECTIVE_DATE = "2026 年 7 月 3 日";
@@ -271,6 +272,20 @@ export const privacyDocument: LegalDocument = {
         "AI 润色的实际接收方与可能处理地区取决于请求时冻结的路由。当前 DeepSeek 与 MiMo 路径的已知处理地区、传输安排和未确认事项列在 AI 服务条款的提供方附录中。",
         "在适用法律要求且没有其他适当保障时，我们可能依赖你对这项可选功能的明示同意。我们选择使用独立同意流程来披露风险和记录授权；这并不表示每一家 AI 提供方普遍要求独立同意，也不构成对每个司法管辖区的法律结论。",
       ],
+      links: [
+        {
+          kind: "internal",
+          label: "查看 DeepSeek 提供方附录",
+          href: "/ai-terms#provider-annex-deepseek-official-v1",
+          locale: "zh",
+        },
+        {
+          kind: "internal",
+          label: "查看 MiMo 提供方附录",
+          href: "/ai-terms#provider-annex-mimo-cn-v1",
+          locale: "zh",
+        },
+      ],
     },
     {
       heading: "AI 功能",
@@ -280,6 +295,20 @@ export const privacyDocument: LegalDocument = {
         "每次请求前，界面会展示实际路由披露。如果路由或 legal bundle 已变化，我们会在向任何 AI 服务传输前停止请求并要求你重新确认。我们不会把你的同意当作选择提供方的指令。",
         "你可以停止使用 AI 润色来撤回对未来请求的同意；这不影响撤回前已经发生的处理，也不要求我们删除为证明历史同意、结算配额、安全或法律义务而必须保留的记录。你也可以按「你的权利」一节联系我们。",
         "端到端加密（如可用）不适用于发送至 AI 服务的内容；你加密简历的其余部分仍按本政策所述受到保护。",
+      ],
+      links: [
+        {
+          kind: "internal",
+          label: "AI 服务条款 — DeepSeek 提供方附录",
+          href: "/ai-terms#provider-annex-deepseek-official-v1",
+          locale: "zh",
+        },
+        {
+          kind: "internal",
+          label: "AI 服务条款 — MiMo 提供方附录",
+          href: "/ai-terms#provider-annex-mimo-cn-v1",
+          locale: "zh",
+        },
       ],
     },
     {
@@ -354,8 +383,9 @@ export const termsAcceptanceSummary = [
 function providerAnnexSection(
   title: string,
   manifest: (typeof aiProviderLegalManifests)[number],
-) {
+): LegalSection {
   return {
+    id: `provider-annex-${manifest.displayKey}`,
     heading: `提供方附录：${title}`,
     body: [
       `Manifest ID：${manifest.manifestId}；显示键：${manifest.displayKey}；核验时间：${manifest.reviewedAt}。`,
@@ -369,7 +399,11 @@ function providerAnnexSection(
       `尚未确认：${manifest.unknowns.join("；")}。这些未知事项不得由 DB 配置或产品文案改写为保证。`,
       "核验来源：",
     ],
-    bullets: [...manifest.sources],
+    links: manifest.sources.map((href, index) => ({
+      kind: "external",
+      label: `官方来源 ${index + 1}：${href}`,
+      href,
+    })),
   };
 }
 

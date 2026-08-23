@@ -58,6 +58,46 @@ describe("AI legal bundle", () => {
           expect(rendered).toContain(source);
         }
       }
+
+      const annexIds = localized.aiTermsDocument.sections
+        .filter(({ id }) => id?.startsWith("provider-annex-"))
+        .map(({ id }) => id);
+      expect(annexIds).toEqual([
+        "provider-annex-deepseek-official-v1",
+        "provider-annex-mimo-cn-v1",
+      ]);
+
+      const sourceLinks = localized.aiTermsDocument.sections
+        .flatMap(({ links }) => links ?? [])
+        .filter(({ kind }) => kind === "external");
+      expect(sourceLinks).toHaveLength(12);
+      expect(sourceLinks.every(({ href }) => href.startsWith("https://"))).toBe(true);
+    }
+  });
+
+  it("links both privacy AI disclosures to the localized annex anchors", () => {
+    for (const [localized, locale] of [
+      [en, "en"],
+      [zh, "zh"],
+    ] as const) {
+      const disclosureLinks = localized.privacyDocument.sections.flatMap(
+        ({ links }) => links ?? [],
+      );
+
+      expect(disclosureLinks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "internal",
+            href: "/ai-terms#provider-annex-deepseek-official-v1",
+            locale,
+          }),
+          expect.objectContaining({
+            kind: "internal",
+            href: "/ai-terms#provider-annex-mimo-cn-v1",
+            locale,
+          }),
+        ]),
+      );
     }
   });
 
