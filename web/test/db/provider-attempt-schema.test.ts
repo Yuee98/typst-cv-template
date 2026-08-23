@@ -15,10 +15,13 @@ const CHECK_VIOLATION = "23514";
 const UNIQUE_VIOLATION = "23505";
 const PERMISSION_DENIED = "42501";
 const SAFE_INTEGER_MAX = "9007199254740991";
+const GATEWAY_CORRELATION_TAG = `hmac-sha256:${"a".repeat(64)}`;
+const PROVIDER_CORRELATION_TAG = `hmac-sha256:${"b".repeat(64)}`;
 
 interface FrozenFixture {
   reservationId: string;
   snapshot: Record<string, unknown>;
+  attemptAliases?: Record<string, unknown>;
 }
 
 describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () => {
@@ -59,7 +62,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         adapter_kind: "deepseek_chat_v1",
         wire_api_kind: "chat_completions_v1",
         credential_alias: "deepseek_api_key_v1",
-        endpoint_alias: "deepseek_official_api_v1",
+        endpoint_alias: "deepseek_official",
         model_id: "deepseek-v4-flash",
         upstream_route: {},
         capability_contract_id: "deepseek_chat_capabilities_v1",
@@ -146,19 +149,145 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     return { reservationId: request.data!.reservation_id, snapshot };
   }
 
+  async function createCustomReservation(input: {
+    key: string;
+    gatewayKind: "direct_deepseek" | "direct_mimo";
+    adapterKind: string;
+    wireApiKind: "chat_completions_v1" | "responses_v1";
+    endpointAlias: string;
+    modelId: string;
+  }): Promise<FrozenFixture> {
+    const profile = await service
+      .from("ai_provider_profiles")
+      .insert({
+        profile_key: `test.attempt.${input.key}.${crypto.randomUUID()}`,
+        display_name: `${input.key} attempt schema fixture`,
+        gateway_kind: input.gatewayKind,
+        model_vendor: "fixture",
+      })
+      .select("id")
+      .single();
+    expect(profile.error).toBeNull();
+
+    const credentialAlias = `${input.key}_api_key_v1`;
+    const capabilityContractId = `${input.key}_capabilities_v1`;
+    const cachePolicyId = "automatic_cache_v1";
+    const legalManifestId = `${input.key}-legal-v1`;
+    const version = await service
+      .from("ai_provider_profile_versions")
+      .insert({
+        profile_id: profile.data!.id,
+        version: 1,
+        adapter_kind: input.adapterKind,
+        wire_api_kind: input.wireApiKind,
+        credential_alias: credentialAlias,
+        endpoint_alias: input.endpointAlias,
+        model_id: input.modelId,
+        upstream_route: {},
+        capability_contract_id: capabilityContractId,
+        cache_policy_id: cachePolicyId,
+        legal_manifest_id: legalManifestId,
+        config: {},
+        config_sha256: "d".repeat(64),
+      })
+      .select("id")
+      .single();
+    expect(version.error).toBeNull();
+
+    const price = await service
+      .from("ai_price_versions")
+      .insert({
+        profile_version_id: version.data!.id,
+        version: 1,
+        currency: "CNY",
+        calculator_kind: "linear_token_v1",
+        valid_from: "2026-01-01T00:00:00Z",
+        source_url: `https://example.com/${input.key}-price-fixture`,
+        source_checked_at: "2026-08-23T00:00:00Z",
+        source_snapshot_sha256: "e".repeat(64),
+        parameters: {},
+      })
+      .select("id")
+      .single();
+    expect(price.error).toBeNull();
+
+    const components = await service.from("ai_price_components").insert([
+      { price_version_id: price.data!.id, component: "input_cache_read", nanos_per_million: 20_000_000 },
+      { price_version_id: price.data!.id, component: "input_standard", nanos_per_million: 1_000_000_000 },
+      { price_version_id: price.data!.id, component: "output", nanos_per_million: 2_000_000_000 },
+    ]);
+    expect(components.error).toBeNull();
+
+    const policy = await service
+      .from("ai_routing_policy_versions")
+      .insert({
+        policy_key: `test.attempt.${input.key}.${crypto.randomUUID()}`,
+        version: 1,
+        timezone: "Asia/Shanghai",
+        rules: { kind: "fixture_default_only_v1" },
+        default_profile_version_id: version.data!.id,
+        legal_bundle_version: legalBundleVersion,
+        config_sha256: "f".repeat(64),
+      })
+      .select("id")
+      .single();
+    expect(policy.error).toBeNull();
+
+    const snapshot = {
+      route_schema_version: "route_snapshot_v1",
+      config_generation: 8,
+      routing_policy_version_id: policy.data!.id,
+      profile_version_id: version.data!.id,
+      price_version_id: price.data!.id,
+      legal_bundle_version: legalBundleVersion,
+      gateway_kind: input.gatewayKind,
+      model_id: input.modelId,
+      wire_api_kind: input.wireApiKind,
+      display_disclosure_key: `${input.key}-disclosure-v1`,
+    };
+    const request = await service
+      .from("ai_request_ledger")
+      .insert({
+        request_id: crypto.randomUUID(),
+        client_request_id: crypto.randomUUID(),
+        user_id: user.id,
+        ...snapshot,
+      })
+      .select("reservation_id")
+      .single();
+    expect(request.error).toBeNull();
+
+    return {
+      reservationId: request.data!.reservation_id,
+      snapshot,
+      attemptAliases: {
+        adapter_kind: input.adapterKind,
+        credential_alias: credentialAlias,
+        endpoint_alias: input.endpointAlias,
+        capability_contract_id: capabilityContractId,
+        cache_policy_id: cachePolicyId,
+        legal_manifest_id: legalManifestId,
+        calculator_kind: "linear_token_v1",
+        billing_currency: "CNY",
+      },
+    };
+  }
+
   function startedAttempt(fixture: FrozenFixture, attemptNo = 1) {
     return {
       reservation_id: fixture.reservationId,
       attempt_no: attemptNo,
       ...fixture.snapshot,
-      adapter_kind: "deepseek_chat_v1",
-      credential_alias: "deepseek_api_key_v1",
-      endpoint_alias: "deepseek_official_api_v1",
-      capability_contract_id: "deepseek_chat_capabilities_v1",
-      cache_policy_id: "automatic_cache_v1",
-      legal_manifest_id: "deepseek-official-2026-08-23-v1",
-      calculator_kind: "linear_token_v1",
-      billing_currency: "CNY",
+      ...(fixture.attemptAliases ?? {
+        adapter_kind: "deepseek_chat_v1",
+        credential_alias: "deepseek_api_key_v1",
+        endpoint_alias: "deepseek_official",
+        capability_contract_id: "deepseek_chat_capabilities_v1",
+        cache_policy_id: "automatic_cache_v1",
+        legal_manifest_id: "deepseek-official-2026-08-23-v1",
+        calculator_kind: "linear_token_v1",
+        billing_currency: "CNY",
+      }),
     };
   }
 
@@ -179,9 +308,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       cache_usage_reporting: "unavailable",
       usage_complete: true,
       route_observation_schema_version: "route_observation_v1",
-      gateway_request_id: "gw-123",
-      provider_request_id: "provider-123",
-      actual_upstream_endpoint: "https://api.deepseek.com/v1/chat/completions",
+      gateway_request_id: GATEWAY_CORRELATION_TAG,
+      provider_request_id: PROVIDER_CORRELATION_TAG,
+      actual_upstream_endpoint: "https://api.deepseek.com/chat/completions",
       actual_model_id: "deepseek-v4-flash",
       router_attempt_count: null,
       cost_observation_schema_version: "cost_observation_v1",
@@ -338,57 +467,96 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(overwrite.error?.code).toBe(CHECK_VIOLATION);
   });
 
-  it.each([
-    "https://unregistered.example.net:8443/v1/responses",
-    "https://127.0.0.1:443/v1/responses",
-  ])("accepts canonical route value channels for %s", async (endpoint) => {
-    // This proves only the DB's canonical/non-secret shape. The adapter/code
-    // registry remains responsible for an exact endpoint allowlist and must
-    // reject a canonical endpoint that is not registered for the profile.
+  it("accepts HMAC correlation tags plus exact frozen DeepSeek/MiMo route provenance", async () => {
+    const deepseek = await createReservation();
+    const mimo = await createCustomReservation({
+      key: "mimo",
+      gatewayKind: "direct_mimo",
+      adapterKind: "mimo_responses_v1",
+      wireApiKind: "responses_v1",
+      endpointAlias: "mimo_cn_official",
+      modelId: "mimo-v2.5-pro",
+    });
+    const modelProvenance = await createCustomReservation({
+      key: "model-provenance",
+      gatewayKind: "direct_deepseek",
+      adapterKind: "fixture_chat_v1",
+      wireApiKind: "chat_completions_v1",
+      endpointAlias: "deepseek_official",
+      modelId: "vendor/basic-model@2026",
+    });
+    const cases = [
+      {
+        fixture: deepseek,
+        modelId: "deepseek-v4-flash",
+        endpoint: "https://api.deepseek.com/chat/completions",
+      },
+      {
+        fixture: mimo,
+        modelId: "mimo-v2.5-pro",
+        endpoint: "https://api.xiaomimimo.com/v1/responses",
+      },
+      {
+        fixture: modelProvenance,
+        modelId: "vendor/basic-model@2026",
+        endpoint: "https://api.deepseek.com/chat/completions",
+      },
+    ];
+
+    for (const { fixture, modelId, endpoint } of cases) {
+      const started = await insertStarted(fixture);
+      const completed = await service
+        .from("ai_provider_attempt_ledger")
+        .update(observedCompletion({
+          actual_model_id: modelId,
+          actual_upstream_endpoint: endpoint,
+        }))
+        .eq("attempt_id", started.data!.attempt_id)
+        .select("gateway_request_id,provider_request_id,actual_model_id,actual_upstream_endpoint")
+        .single();
+      expect(completed.error).toBeNull();
+      expect(completed.data).toEqual({
+        gateway_request_id: GATEWAY_CORRELATION_TAG,
+        provider_request_id: PROVIDER_CORRELATION_TAG,
+        actual_model_id: modelId,
+        actual_upstream_endpoint: endpoint,
+      });
+    }
+  });
+
+  it("accepts explicit NULL when no safe route observation is available", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
     const completed = await service
       .from("ai_provider_attempt_ledger")
       .update(observedCompletion({
-        gateway_request_id: "GW.123_region:iad/edge-1",
-        provider_request_id: "req/2026:08.24_id-1",
-        actual_model_id: "vendor/model.v2:pro",
-        actual_upstream_endpoint: endpoint,
+        gateway_request_id: null,
+        provider_request_id: null,
+        actual_model_id: null,
+        actual_upstream_endpoint: null,
       }))
       .eq("attempt_id", started.data!.attempt_id);
     expect(completed.error).toBeNull();
   });
 
-  it("rejects non-canonical or secret-like values from every route token channel", async () => {
-    const unsafeTokens = [
-      "",
-      "-leading",
-      ".leading",
-      "/leading",
-      ":leading",
-      "space value",
-      "tab\tvalue",
-      "line\nvalue",
-      "模型",
-      "id@host",
-      "id?query",
-      "id#fragment",
-      "id=value",
-      "id\\backslash",
-      "api_key:do-not-store",
-      "access_token:do-not-store",
-      "authorization/header-value",
-      "secret-value",
-      "a".repeat(257),
-    ];
-    const routeTokenFields = [
-      "gateway_request_id",
-      "provider_request_id",
-      "actual_model_id",
+  it("rejects raw upstream IDs, credentials, JWTs, prose, and malformed HMAC tags", async () => {
+    const unsafeRequestIds = [
+      "gw-123",
+      "provider-123",
+      crypto.randomUUID(),
+      "sk-live-do-not-store",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature",
+      "ordinary request id prose",
+      `hmac-sha256:${"A".repeat(64)}`,
+      `HMAC-SHA256:${"a".repeat(64)}`,
+      `hmac-sha256:${"a".repeat(63)}`,
+      `hmac-sha256:${"a".repeat(65)}`,
+      `hmac-sha256:${"g".repeat(64)}`,
+      `hmac-sha256:${"a".repeat(32)}\n${"b".repeat(31)}`,
     ];
 
-    for (const field of routeTokenFields) {
-      for (const value of unsafeTokens) {
+    for (const field of ["gateway_request_id", "provider_request_id"]) {
+      for (const value of unsafeRequestIds) {
         const fixture = await createReservation();
         const started = await insertStarted(fixture);
         const completed = await service
@@ -400,9 +568,32 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     }
   });
 
+  it("rejects any observed model that is not the frozen reservation model", async () => {
+    for (const modelId of [
+      "vendor/model.v2:pro",
+      "deepseek-v4-flash ",
+      "DeepSeek-v4-flash",
+      "sk-live-model-prose",
+      "",
+    ]) {
+      const fixture = await createReservation();
+      const started = await insertStarted(fixture);
+      const completed = await service
+        .from("ai_provider_attempt_ledger")
+        .update(observedCompletion({ actual_model_id: modelId }))
+        .eq("attempt_id", started.data!.attempt_id);
+      expect(completed.error?.code, JSON.stringify(modelId)).toBe(CHECK_VIOLATION);
+    }
+  });
+
   it("rejects malformed, credential-bearing, encoded, or non-HTTPS endpoint observations", async () => {
     const unsafeEndpoints = [
       "https:///api_key=do-not-store",
+      "https://api.deepseek.com/v1/chat/completions",
+      "https://api.deepseek.com/chat/completions/",
+      "https://api.xiaomimimo.com/v1/responses",
+      "https://api.deepseek.com/chat/completions/api_key=sk-live-do-not-store",
+      "https://api.deepseek.com/chat/completions/sk-live-do-not-store",
       "http://api.example.com/v1",
       "HTTPS://api.example.com/v1",
       "https://",
@@ -435,6 +626,55 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         .update(observedCompletion({ actual_upstream_endpoint: endpoint }))
         .eq("attempt_id", started.data!.attempt_id);
       expect(completed.error?.code, endpoint).toBe(CHECK_VIOLATION);
+    }
+  });
+
+  it("requires NULL endpoint observations for unknown aliases and alias/route mismatches", async () => {
+    const cases = [
+      {
+        input: {
+          key: "unknown-endpoint",
+          gatewayKind: "direct_deepseek" as const,
+          adapterKind: "fixture_chat_v1",
+          wireApiKind: "chat_completions_v1" as const,
+          endpointAlias: "unregistered_endpoint_v1",
+          modelId: "fixture-unknown-endpoint-model",
+        },
+        endpoint: "https://unregistered.example.net/v1/responses",
+      },
+      {
+        input: {
+          key: "mismatched-endpoint",
+          gatewayKind: "direct_deepseek" as const,
+          adapterKind: "fixture_responses_v1",
+          wireApiKind: "responses_v1" as const,
+          endpointAlias: "deepseek_official",
+          modelId: "fixture-mismatched-endpoint-model",
+        },
+        endpoint: "https://api.deepseek.com/chat/completions",
+      },
+    ];
+
+    for (const { input, endpoint } of cases) {
+      const fixture = await createCustomReservation(input);
+      const started = await insertStarted(fixture);
+      const nonNullEndpoint = await service
+        .from("ai_provider_attempt_ledger")
+        .update(observedCompletion({
+          actual_model_id: input.modelId,
+          actual_upstream_endpoint: endpoint,
+        }))
+        .eq("attempt_id", started.data!.attempt_id);
+      expect(nonNullEndpoint.error?.code, input.key).toBe(CHECK_VIOLATION);
+
+      const nullEndpoint = await service
+        .from("ai_provider_attempt_ledger")
+        .update(observedCompletion({
+          actual_model_id: input.modelId,
+          actual_upstream_endpoint: null,
+        }))
+        .eq("attempt_id", started.data!.attempt_id);
+      expect(nullEndpoint.error, input.key).toBeNull();
     }
   });
 

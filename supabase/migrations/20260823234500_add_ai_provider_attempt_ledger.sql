@@ -50,6 +50,8 @@ create table public.ai_provider_attempt_ledger (
   usage_complete boolean,
 
   route_observation_schema_version text,
+  -- Application-produced opaque correlation tags only, never raw upstream
+  -- identifiers. RT-009 owns HMAC normalization before persistence.
   gateway_request_id text,
   provider_request_id text,
   actual_upstream_endpoint text,
@@ -206,32 +208,29 @@ create table public.ai_provider_attempt_ledger (
       and route_observation_schema_version = 'route_observation_v1'
       and (
         gateway_request_id is null
-        or (
-          gateway_request_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$'
-          and gateway_request_id !~* '(bearer|basic|api[_-]?(key|token)|access[_-]?token|authorization|password|secret)'
-        )
+        or gateway_request_id ~ '^hmac-sha256:[0-9a-f]{64}$'
       )
       and (
         provider_request_id is null
-        or (
-          provider_request_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$'
-          and provider_request_id !~* '(bearer|basic|api[_-]?(key|token)|access[_-]?token|authorization|password|secret)'
-        )
+        or provider_request_id ~ '^hmac-sha256:[0-9a-f]{64}$'
       )
       and (
         actual_model_id is null
         or (
-          actual_model_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$'
-          and actual_model_id !~* '(bearer|basic|api[_-]?(key|token)|access[_-]?token|authorization|password|secret)'
+          -- The trigger supplies the provenance boundary by comparing the
+          -- value to the locked reservation model; this is only a scalar
+          -- safety/bounds check, not a model-name blacklist.
+          length(actual_model_id) between 1 and 200
+          and btrim(actual_model_id) = actual_model_id
+          and actual_model_id !~ '[[:cntrl:]]'
         )
       )
       and (
         actual_upstream_endpoint is null
         or (
           length(actual_upstream_endpoint) between 9 and 512
-          -- DB enforces only a canonical, non-secret HTTPS value channel.
-          -- The adapter/code registry separately owns the exact endpoint
-          -- allowlist and must reject canonical-but-unregistered endpoints.
+          -- Cheap scalar shape defense; the completion trigger below also
+          -- proves this exact URL from the locked parent/profile alias.
           and actual_upstream_endpoint ~ (
             '^https://(' ||
             '((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}' ||
@@ -363,6 +362,7 @@ declare
   v_request public.ai_request_ledger%rowtype;
   v_profile record;
   v_price public.ai_price_versions%rowtype;
+  v_expected_upstream_endpoint text;
 begin
   if tg_op = 'DELETE' then
     -- Direct child deletion could erase immutable provider facts. Retention
@@ -495,6 +495,53 @@ begin
 
     if not found or v_request.state is distinct from 'reserved' then
       raise exception 'provider attempt completion requires its parent to remain reserved'
+        using errcode = '23514';
+    end if;
+
+    select
+      version.endpoint_alias,
+      version.model_id,
+      version.wire_api_kind,
+      profile.gateway_kind
+    into v_profile
+    from public.ai_provider_profile_versions as version
+    join public.ai_provider_profiles as profile on profile.id = version.profile_id
+    where version.id = v_request.profile_version_id
+      and version.id = old.profile_version_id
+    for key share of version, profile;
+
+    if not found or v_profile.model_id is distinct from v_request.model_id then
+      raise exception 'provider attempt completion requires its frozen parent profile'
+        using errcode = '23514';
+    end if;
+
+    if new.actual_model_id is not null
+       and new.actual_model_id is distinct from v_request.model_id then
+      raise exception 'observed model must equal the frozen reservation model'
+        using errcode = '23514';
+    end if;
+
+    -- Rejection-only mirror of the code registry. RT-009 must validate the
+    -- same endpoint alias before persistence; unknown aliases/combinations
+    -- intentionally have no DB endpoint and therefore require NULL.
+    v_expected_upstream_endpoint := case
+      when v_profile.endpoint_alias = 'deepseek_official'
+       and v_profile.gateway_kind = 'direct_deepseek'
+       and v_profile.wire_api_kind = 'chat_completions_v1'
+        then 'https://api.deepseek.com/chat/completions'
+      when v_profile.endpoint_alias = 'mimo_cn_official'
+       and v_profile.gateway_kind = 'direct_mimo'
+       and v_profile.wire_api_kind = 'responses_v1'
+        then 'https://api.xiaomimimo.com/v1/responses'
+      else null
+    end;
+
+    if new.actual_upstream_endpoint is not null
+       and (
+         v_expected_upstream_endpoint is null
+         or new.actual_upstream_endpoint is distinct from v_expected_upstream_endpoint
+       ) then
+      raise exception 'observed endpoint must match the frozen profile endpoint alias'
         using errcode = '23514';
     end if;
 
