@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { POLISH_REFERENCE_ROLES, POLISH_STYLE_PRESETS } from "@/lib/polish/contract";
 import {
   buildPolishMessages,
+  buildPolishPromptBlocks,
   buildSystemPrompt,
   buildUserPrompt,
+  POLISH_STABLE_PROMPT_BLOCK_ID,
+  POLISH_VARIABLE_PROMPT_BLOCK_ID,
   trimReferencesForLevel,
   type PolishPromptInput,
 } from "./prompt";
@@ -229,5 +232,96 @@ describe("buildPolishMessages", () => {
     expect(messages[1].role).toBe("user");
     expect(messages[0].content).toBe(buildSystemPrompt("zh"));
     expect(messages[1].content).not.toContain("不应出现的 skill 内容");
+  });
+
+  it("is compiled from the same source as the canonical V2 prompt blocks", () => {
+    const input = makeInput({
+      stylePreset: "concise",
+      contextLevel: 1,
+      references: [{ role: "sibling", text: "相邻条目" }],
+    });
+    const prompt = buildPolishPromptBlocks(input);
+
+    expect(buildPolishMessages(input)).toEqual(
+      prompt.blocks.map((block) => ({
+        role: block.role === "developer" ? "system" : "user",
+        content: block.content,
+      })),
+    );
+  });
+});
+
+describe("buildPolishPromptBlocks", () => {
+  it("emits one stable developer prefix followed by one variable user suffix", () => {
+    expect(buildPolishPromptBlocks(makeInput())).toEqual({
+      blocks: [
+        {
+          id: POLISH_STABLE_PROMPT_BLOCK_ID,
+          role: "developer",
+          stability: "stable",
+          content: buildSystemPrompt("zh"),
+        },
+        {
+          id: POLISH_VARIABLE_PROMPT_BLOCK_ID,
+          role: "user",
+          stability: "variable",
+          content: buildUserPrompt(makeInput()),
+        },
+      ],
+      explicitCacheBoundaryAfter: POLISH_STABLE_PROMPT_BLOCK_ID,
+    });
+  });
+
+  it("keeps every request-derived value after the cache boundary", () => {
+    const requestValues = [
+      "private-section-id",
+      "private-item-id",
+      "private CV text",
+      "private-reference-label",
+      "private reference text",
+      "private custom style",
+      "private retry feedback",
+    ];
+    const prompt = buildPolishPromptBlocks(
+      makeInput({
+        sectionId: requestValues[0],
+        items: [{ id: requestValues[1], kind: "experience_bullet", text: requestValues[2] }],
+        contextLevel: 2,
+        references: [{ role: "profile", label: requestValues[3], text: requestValues[4] }],
+        styleInstruction: requestValues[5],
+        retryFeedback: requestValues[6],
+      }),
+    );
+
+    const boundaryIndex = prompt.blocks.findIndex(
+      (block) => block.id === prompt.explicitCacheBoundaryAfter,
+    );
+    const stablePrefix = prompt.blocks
+      .slice(0, boundaryIndex + 1)
+      .map((block) => block.content)
+      .join("\n");
+    const variableSuffix = prompt.blocks
+      .slice(boundaryIndex + 1)
+      .map((block) => block.content)
+      .join("\n");
+
+    for (const value of requestValues) {
+      expect(stablePrefix).not.toContain(value);
+      expect(variableSuffix).toContain(value);
+    }
+  });
+
+  it("keeps the stable prefix independent of request data for the same locale", () => {
+    const first = buildPolishPromptBlocks(makeInput());
+    const second = buildPolishPromptBlocks(
+      makeInput({
+        sectionId: "projects",
+        items: [{ id: "different", kind: "experience_bullet", text: "entirely different" }],
+        stylePreset: "management",
+      }),
+    );
+
+    expect(first.blocks[0]).toEqual(second.blocks[0]);
+    expect(first.blocks[1]).not.toEqual(second.blocks[1]);
   });
 });

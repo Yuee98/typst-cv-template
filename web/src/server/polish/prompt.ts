@@ -27,12 +27,24 @@ import {
   type PolishReference,
   type PolishStylePreset,
 } from "@/lib/polish/contract";
+import type { PolishInferenceRequestV2 } from "./inference-v2";
 
 /**
  * Version stamp recorded in the request ledger metadata by the handler
  * (roadmap「用量记录与日志」prompt_version column). Bump on any prompt change.
  */
 export const POLISH_PROMPT_VERSION = "2026-08-prompt-v1";
+
+/** Code-owned block ids are metadata only and never incorporate request data. */
+export const POLISH_STABLE_PROMPT_BLOCK_ID = "polish-developer-instructions-v1" as const;
+export const POLISH_VARIABLE_PROMPT_BLOCK_ID = "polish-request-content-v1" as const;
+
+export type PolishPromptBlockV2 = PolishInferenceRequestV2["prompt"]["blocks"][number];
+
+export interface CompiledPolishPromptV2 {
+  blocks: PolishPromptBlockV2[];
+  explicitCacheBoundaryAfter: typeof POLISH_STABLE_PROMPT_BLOCK_ID;
+}
 
 // ---------------------------------------------------------------------------
 // Server-side context-level trimming (never trust the client)
@@ -174,12 +186,37 @@ export function buildUserPrompt(input: PolishPromptInput): string {
   return sections.join("\n\n");
 }
 
+/**
+ * Compile the canonical prompt once for both V2 adapters and the legacy Chat
+ * compatibility path. All request-derived content stays in the variable
+ * suffix after the stable developer block.
+ */
+export function buildPolishPromptBlocks(input: PolishPromptInput): CompiledPolishPromptV2 {
+  return {
+    blocks: [
+      {
+        id: POLISH_STABLE_PROMPT_BLOCK_ID,
+        role: "developer",
+        stability: "stable",
+        content: buildSystemPrompt(input.language),
+      },
+      {
+        id: POLISH_VARIABLE_PROMPT_BLOCK_ID,
+        role: "user",
+        stability: "variable",
+        content: buildUserPrompt(input),
+      },
+    ],
+    explicitCacheBoundaryAfter: POLISH_STABLE_PROMPT_BLOCK_ID,
+  };
+}
+
 /** Assemble the final chat messages (system + user), references already level-trimmed. */
 export function buildPolishMessages(
   input: PolishPromptInput,
 ): { role: "system" | "user"; content: string }[] {
-  return [
-    { role: "system", content: buildSystemPrompt(input.language) },
-    { role: "user", content: buildUserPrompt(input) },
-  ];
+  return buildPolishPromptBlocks(input).blocks.map((block) => ({
+    role: block.role === "developer" ? ("system" as const) : ("user" as const),
+    content: block.content,
+  }));
 }
