@@ -19,6 +19,28 @@ import type { PolishErrorCode } from "@/lib/polish/contract";
 import { createDeepSeekPolishProvider } from "./deepseek";
 import { createFakePolishProvider } from "./provider-fake";
 
+export {
+  InferenceV2ContractError,
+  assertNormalizedUsageV2,
+  observedUsage,
+  toInferenceRequestV2,
+  toInferenceResultV2,
+  toLegacyProviderRequest,
+  toLegacyProviderResult,
+  toLegacyProviderUsage,
+  toNormalizedUsageV2,
+  unavailableUsage,
+} from "./inference-v2";
+export type {
+  AttemptUsageObservationV1,
+  CacheUsageReporting,
+  LegacyRequestV2Metadata,
+  NormalizedFinishReason,
+  NormalizedUsageV2,
+  PolishInferenceRequestV2,
+  PolishInferenceResultV2,
+} from "./inference-v2";
+
 export interface PolishProviderRequest {
   /** Fully assembled chat messages (system + user), already level-trimmed. */
   messages: { role: "system" | "user"; content: string }[];
