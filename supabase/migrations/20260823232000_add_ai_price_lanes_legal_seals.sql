@@ -252,7 +252,7 @@ alter table public.ai_request_ledger
     )
     or
     (
-      route_schema_version = 'route_snapshot_v1'
+      route_schema_version is not distinct from 'route_snapshot_v1'
       and num_nonnulls(
         config_generation,
         routing_policy_version_id,
@@ -273,7 +273,7 @@ alter table public.ai_request_ledger
     )
     or
     (
-      route_schema_version = 'legacy_pricing_v1'
+      route_schema_version is not distinct from 'legacy_pricing_v1'
       and profile_version_id is not null
       and price_version_id is not null
       and num_nonnulls(
@@ -292,8 +292,8 @@ alter table public.ai_request_ledger
   add constraint ai_request_ledger_legacy_pricing_shape_check check (
     route_schema_version is distinct from 'legacy_pricing_v1'
     or (
-      usage_schema_version = 'legacy_v1'
-      and cost_basis = 'legacy_request_aggregate'
+      usage_schema_version is not distinct from 'legacy_v1'
+      and cost_basis is not distinct from 'legacy_request_aggregate'
     )
   );
 
@@ -336,7 +336,8 @@ begin
   -- Historical cost-only bindings are migration updates, never reservation
   -- inserts. Reserve V1 inserts no route discriminator and Reserve V2 inserts
   -- route_snapshot_v1, so this also fails closed if either path regresses.
-  if tg_op = 'INSERT' and new.route_schema_version = 'legacy_pricing_v1' then
+  if tg_op = 'INSERT'
+     and new.route_schema_version is not distinct from 'legacy_pricing_v1' then
     raise exception 'legacy pricing bindings cannot be created by reservation insert'
       using errcode = '23514';
   end if;
@@ -353,13 +354,13 @@ begin
         using errcode = '23503';
     end if;
 
-    if new.route_schema_version = 'legacy_pricing_v1'
+    if new.route_schema_version is not distinct from 'legacy_pricing_v1'
        and v_pricing_lane <> 'legacy' then
       raise exception 'legacy pricing binding requires the reserved legacy lane'
         using errcode = '23514';
     end if;
 
-    if new.route_schema_version = 'route_snapshot_v1'
+    if new.route_schema_version is not distinct from 'route_snapshot_v1'
        and v_pricing_lane = 'legacy' then
       raise exception 'current route snapshots cannot reference the legacy lane'
         using errcode = '23514';

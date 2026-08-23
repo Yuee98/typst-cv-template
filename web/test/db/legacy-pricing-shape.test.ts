@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -18,6 +20,67 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
   let user: TestUser;
   let profileVersionId: string;
   let priceVersionId: string;
+  let policyVersionId: string;
+
+  function sealPriceAsDatabaseOwner(priceId: string): void {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(priceId)) {
+      throw new Error("test price id is not a canonical UUID");
+    }
+
+    // DB-007 deliberately owns the persistent validation/sealing helper. This
+    // local-real-DB test instead uses a transaction-scoped, database-owner
+    // trigger to exercise the foundation guard's trusted nested transition.
+    // The pg_temp objects disappear with psql and no production helper/RPC is
+    // introduced by DB-003A.
+    const sql = String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      create temporary table db003a_price_seal_fixture (
+        price_version_id uuid not null
+      ) on commit drop;
+      create function pg_temp.db003a_seal_price_fixture()
+      returns trigger
+      language plpgsql
+      set search_path = ''
+      as $function$
+      begin
+        update public.ai_price_versions
+        set components_sealed_at = greatest(clock_timestamp(), created_at)
+        where id = new.price_version_id;
+        return new;
+      end;
+      $function$;
+      create trigger db003a_seal_price_fixture
+      after insert on db003a_price_seal_fixture
+      for each row execute function pg_temp.db003a_seal_price_fixture();
+      insert into db003a_price_seal_fixture (price_version_id)
+      values (:'price_id'::uuid);
+      commit;
+    `;
+    const result = spawnSync(
+      "docker",
+      [
+        "exec",
+        "-i",
+        "supabase_db_typst-cv-template",
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "--set",
+        "ON_ERROR_STOP=1",
+        "--set",
+        `price_id=${priceId}`,
+      ],
+      { input: sql, encoding: "utf8" },
+    );
+    if (result.status !== 0) {
+      throw new Error(
+        `database-owner price seal fixture failed: ${result.stderr || result.stdout}`,
+      );
+    }
+  }
 
   beforeAll(async () => {
     service = createServiceClient();
@@ -73,6 +136,51 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
       .single();
     expect(priceError).toBeNull();
     priceVersionId = price!.id as string;
+
+    const components = await service.from("ai_price_components").insert([
+      {
+        price_version_id: priceVersionId,
+        component: "input_cache_read",
+        nanos_per_million: 20_000_000,
+      },
+      {
+        price_version_id: priceVersionId,
+        component: "input_standard",
+        nanos_per_million: 1_000_000_000,
+      },
+      {
+        price_version_id: priceVersionId,
+        component: "output",
+        nanos_per_million: 2_000_000_000,
+      },
+    ]);
+    expect(components.error).toBeNull();
+
+    sealPriceAsDatabaseOwner(priceVersionId);
+
+    const { data: sealedPrice, error: sealedPriceError } = await service
+      .from("ai_price_versions")
+      .select("components_sealed_at")
+      .eq("id", priceVersionId)
+      .single();
+    expect(sealedPriceError).toBeNull();
+    expect(sealedPrice?.components_sealed_at).toBeTruthy();
+
+    const { data: policy, error: policyError } = await service
+      .from("ai_routing_policy_versions")
+      .insert({
+        policy_key: `test.legacy-pricing.${crypto.randomUUID()}`,
+        version: 1,
+        timezone: "Asia/Shanghai",
+        rules: {},
+        default_profile_version_id: profileVersionId,
+        legal_bundle_version: "fixture-v1",
+        config_sha256: "e".repeat(64),
+      })
+      .select("id")
+      .single();
+    expect(policyError).toBeNull();
+    policyVersionId = policy!.id as string;
   });
 
   afterAll(async () => {
@@ -129,6 +237,9 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
       })
       .eq("reservation_id", row!.reservation_id);
     expect(partialUsage.error?.code).toBe(CHECK_VIOLATION);
+    expect(partialUsage.error?.message).toContain(
+      "ai_request_ledger_legacy_pricing_shape_check",
+    );
 
     const partialCost = await service
       .from("ai_request_ledger")
@@ -138,6 +249,9 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
       })
       .eq("reservation_id", row!.reservation_id);
     expect(partialCost.error?.code).toBe(CHECK_VIOLATION);
+    expect(partialCost.error?.message).toContain(
+      "ai_request_ledger_legacy_pricing_shape_check",
+    );
 
     for (const fabricated of [
       { config_generation: 1 },
@@ -156,7 +270,7 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
     }
   });
 
-  it("requires DB-007 to seal the price before owner-only historical binding", async () => {
+  it("accepts only the complete sealed historical shape and freezes its binding", async () => {
     const { data: row, error: rowError } = await service
       .from("ai_request_ledger")
       .insert(identity())
@@ -164,19 +278,51 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
       .single();
     expect(rowError).toBeNull();
 
-    const unsealedBinding = await service
+    const completeBinding = await service
       .from("ai_request_ledger")
       .update(exactLegacyShape())
-      .eq("reservation_id", row!.reservation_id);
-    expect(unsealedBinding.error?.code).toBe(CHECK_VIOLATION);
-
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .select("components_sealed_at")
-      .eq("id", priceVersionId)
+      .eq("reservation_id", row!.reservation_id)
+      .select(
+        "route_schema_version,profile_version_id,price_version_id,usage_schema_version,cost_basis",
+      )
       .single();
-    expect(priceError).toBeNull();
-    expect(price?.components_sealed_at).toBeNull();
+    expect(completeBinding.error).toBeNull();
+    expect(completeBinding.data).toEqual({
+      route_schema_version: "legacy_pricing_v1",
+      profile_version_id: profileVersionId,
+      price_version_id: priceVersionId,
+      usage_schema_version: "legacy_v1",
+      cost_basis: "legacy_request_aggregate",
+    });
+
+    const mutateBinding = await service
+      .from("ai_request_ledger")
+      .update({ profile_version_id: crypto.randomUUID() })
+      .eq("reservation_id", row!.reservation_id);
+    expect(mutateBinding.error?.code).toBe(CHECK_VIOLATION);
+    expect(mutateBinding.error?.message).toContain(
+      "ai_request_ledger route binding is immutable once frozen",
+    );
+  });
+
+  it("treats a NULL route discriminator with all current facts as invalid", async () => {
+    const invalid = await service.from("ai_request_ledger").insert({
+      ...identity(),
+      route_schema_version: null,
+      config_generation: 1,
+      routing_policy_version_id: policyVersionId,
+      profile_version_id: profileVersionId,
+      price_version_id: priceVersionId,
+      legal_bundle_version: "fixture-v1",
+      gateway_kind: "direct_deepseek",
+      model_id: "fixture-model",
+      wire_api_kind: "chat_completions_v1",
+      display_disclosure_key: "fixture-v1",
+    });
+    expect(invalid.error?.code).toBe(CHECK_VIOLATION);
+    expect(invalid.error?.message).toContain(
+      "ai_request_ledger_route_snapshot_check",
+    );
   });
 
   it("keeps Reserve V1 byte-compatible and unable to create legacy pricing", async () => {
