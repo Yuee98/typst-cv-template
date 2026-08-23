@@ -2,16 +2,36 @@ import { describe, expect, it, vi } from "vitest";
 import { computePolishMaxOutputTokens, type PolishRequest } from "@/lib/polish/contract";
 import {
   addPolishUsage,
+  aggregatePolishAttemptFactsV2,
   MIN_RETRY_BUDGET_MS,
   orchestratePolish,
+  orchestratePolishV2,
   POLISH_MAX_ATTEMPTS,
   POLISH_TOTAL_DEADLINE_MS,
   zeroPolishUsage,
+  type PolishAttemptCompletedEventV2,
+  type PolishAttemptCompletedFactV2,
+  type PolishInferenceAttemptOutcomeV2,
+  type PolishInferenceProviderV2,
+  type PolishOrchestrateV2Options,
   type PolishProvider,
   type PolishProviderRequest,
   type PolishProviderResult,
   type PolishProviderUsage,
 } from "./orchestrator";
+import {
+  observedUsage,
+  unavailableUsage,
+  type NormalizedUsageV2,
+  type PolishInferenceRequestV2,
+  type PolishInferenceResultV2,
+} from "./inference-v2";
+import {
+  createFakePolishInferenceProvider,
+  FAKE_V2_SCENARIOS,
+  FAKE_V2_USAGE_FIXTURES,
+} from "./provider-fake";
+import type { FrozenPriceSnapshotV1 } from "./pricing";
 import { MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
 
 const VALID_ZH_POLISHED = "负责后端核心服务的开发与优化，将 P99 延迟降低 40%。";
@@ -87,6 +107,101 @@ function providerError(
 function fakeClock(start = 0): { now: () => number; advance: (ms: number) => void } {
   let t = start;
   return { now: () => t, advance: (ms: number) => void (t += ms) };
+}
+
+const V2_PRICE: FrozenPriceSnapshotV1 = {
+  schemaVersion: "price_snapshot_v1",
+  priceVersionId: "price-v2-test",
+  currency: "CNY",
+  calculatorKind: "linear_token_v1",
+  components: {
+    input_standard: "1000000000",
+    input_cache_read: "500000000",
+    input_cache_write: "750000000",
+    output: "2000000000",
+  },
+  parameters: {},
+};
+
+const V2_REPORTED_USAGE: NormalizedUsageV2 = {
+  schemaVersion: "normalized_usage_v2",
+  inputTotalTokens: 100,
+  inputCacheReadTokens: 60,
+  inputCacheWriteTokens: 10,
+  inputStandardTokens: 30,
+  outputTokens: 20,
+  reasoningTokens: 5,
+  cacheUsageReporting: "reported",
+  usageComplete: true,
+};
+
+const V2_UNAVAILABLE_WRITE_USAGE: NormalizedUsageV2 = {
+  schemaVersion: "normalized_usage_v2",
+  inputTotalTokens: 100,
+  inputCacheReadTokens: 60,
+  inputCacheWriteTokens: null,
+  inputStandardTokens: 40,
+  outputTokens: 20,
+  reasoningTokens: null,
+  cacheUsageReporting: "unavailable",
+  usageComplete: true,
+};
+
+function v2Result(
+  text = JSON.stringify({ items: [{ id: "i0", polished: VALID_ZH_POLISHED }] }),
+  usageValue: NormalizedUsageV2 = V2_REPORTED_USAGE,
+): PolishInferenceResultV2 {
+  return {
+    schemaVersion: "polish_inference_result_v2",
+    text,
+    finishReason: "stop",
+    usage: usageValue,
+    route: {
+      gatewayRequestId: "gateway-1",
+      providerRequestId: "provider-1",
+      actualUpstreamEndpoint: "https://api.example.invalid/v1/responses",
+      actualModelId: "model-v2",
+      routerAttemptCount: 1,
+    },
+    providerReportedCost: { currency: "CNY", nanos: "999" },
+  };
+}
+
+function v2Options<TStartResult = unknown>(
+  signal: AbortSignal,
+  extra: Partial<PolishOrchestrateV2Options<TStartResult>> = {},
+): PolishOrchestrateV2Options<TStartResult> {
+  return {
+    signal,
+    providerSubjectId: TEST_PROVIDER_USER_ID,
+    frozenPrice: V2_PRICE,
+    ...extra,
+  };
+}
+
+interface V2ProviderCall {
+  request: PolishInferenceRequestV2;
+  options: { signal: AbortSignal; timeoutMs: number };
+}
+
+type V2ProviderBehavior = (call: V2ProviderCall) => Promise<PolishInferenceResultV2>;
+
+function makeV2Provider(
+  ...behaviors: V2ProviderBehavior[]
+): { provider: PolishInferenceProviderV2; calls: V2ProviderCall[] } {
+  const calls: V2ProviderCall[] = [];
+  return {
+    calls,
+    provider: {
+      complete(request, options) {
+        const call = { request, options };
+        calls.push(call);
+        const behavior = behaviors[calls.length - 1];
+        if (!behavior) return Promise.reject(new Error(`unexpected V2 attempt ${calls.length}`));
+        return behavior(call);
+      },
+    },
+  };
 }
 
 describe("addPolishUsage", () => {
@@ -689,5 +804,499 @@ describe("orchestratePolish — terminal progress & post-mark rechecks (relay #3
       code: "INVALID_MODEL_OUTPUT",
       attempts: 2,
     });
+  });
+});
+
+describe("orchestratePolishV2 — canonical request and immutable attempt facts", () => {
+  it("uses canonical prompt blocks, prices the frozen snapshot, and carries the start receipt", async () => {
+    const { provider, calls } = makeV2Provider(async () => v2Result());
+    const completedEvents: PolishAttemptCompletedEventV2<{ attemptId: string }>[] = [];
+
+    const result = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, {
+        now: fakeClock().now,
+        onAttemptStarted: async (fact) => {
+          expect(Object.isFrozen(fact)).toBe(true);
+          return { attemptId: `attempt-${fact.attemptNo}` };
+        },
+        onAttemptCompleted: (event) => {
+          completedEvents.push(event);
+        },
+      }),
+    );
+
+    expect(result.items).toEqual([{ id: "i0", polished: VALID_ZH_POLISHED }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options.timeoutMs).toBe(POLISH_TOTAL_DEADLINE_MS);
+    expect(calls[0].request).toMatchObject({
+      schemaVersion: "polish_inference_request_v2",
+      providerSubjectId: TEST_PROVIDER_USER_ID,
+      promptVersion: "2026-08-prompt-v1",
+      outputContract: { kind: "json_object", schemaName: "polish_items_v1" },
+    });
+    expect(calls[0].request.prompt.blocks.map((block) => [block.role, block.stability])).toEqual([
+      ["developer", "stable"],
+      ["user", "variable"],
+    ]);
+    expect(calls[0].request.prompt.explicitCacheBoundaryAfter).toBe(
+      calls[0].request.prompt.blocks[0].id,
+    );
+    expect(JSON.stringify(calls[0].request)).not.toContain(
+      "123e4567-e89b-42d3-a456-426614174000",
+    );
+
+    expect(completedEvents).toHaveLength(1);
+    expect(completedEvents[0].startResult).toEqual({ attemptId: "attempt-1" });
+    expect(completedEvents[0].completed).toMatchObject({
+      status: "succeeded",
+      transmitted: true,
+      providerBillable: true,
+      route: {
+        providerRequestId: "provider-1",
+        actualModelId: "model-v2",
+      },
+      cost: {
+        estimationStatus: "complete",
+        providerReportedCost: { currency: "CNY", nanos: "999" },
+      },
+    });
+    expect(Object.isFrozen(completedEvents[0])).toBe(true);
+    expect(Object.isFrozen(completedEvents[0].completed)).toBe(true);
+    expect(Object.isFrozen(completedEvents[0].completed.usageObservation)).toBe(true);
+    expect(result.aggregate).toMatchObject({
+      knownUsage: {
+        inputTotalTokens: "100",
+        inputCacheReadTokens: "60",
+        inputStandardTokens: "30",
+        outputTokens: "20",
+      },
+      inputCacheWriteTokens: "10",
+      reasoningTokens: "5",
+      usageComplete: true,
+      providerBillable: true,
+    });
+    expect(result.aggregate.estimatedCost).not.toBeNull();
+  });
+
+  it("consumes the existing fake completeAttempt seam without coupling to its type", async () => {
+    const provider = createFakePolishInferenceProvider({
+      scenario: FAKE_V2_SCENARIOS.success,
+      delayMs: 0,
+    });
+    const result = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal),
+    );
+
+    expect(result.attemptFacts).toHaveLength(1);
+    expect(result.attemptFacts[0].usageObservation).toEqual(
+      observedUsage(FAKE_V2_USAGE_FIXTURES.reported),
+    );
+    expect(result.winningRoute).toMatchObject({
+      gatewayRequestId: "fake-gateway-request-001",
+      providerRequestId: "fake-provider-request-001",
+      actualModelId: "fake-v2-model",
+    });
+  });
+});
+
+describe("orchestratePolishV2 — cancellation and admission boundary", () => {
+  it("does not admit or transmit when cancellation already exists", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("canceled before start", "AbortError");
+    controller.abort(reason);
+    const started = vi.fn();
+    const completed = vi.fn();
+    const { provider, calls } = makeV2Provider(async () => v2Result());
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(controller.signal, {
+        onAttemptStarted: started,
+        onAttemptCompleted: completed,
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(caught).toBe(reason);
+    expect(started).not.toHaveBeenCalled();
+    expect(completed).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("completes the admitted attempt as non-billable when canceled after start but before transport", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("canceled after admission", "AbortError");
+    const events: PolishAttemptCompletedEventV2<{ attemptId: string }>[] = [];
+    const { provider, calls } = makeV2Provider(async () => v2Result());
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(controller.signal, {
+        now: fakeClock().now,
+        onAttemptStarted: () => {
+          controller.abort(reason);
+          return { attemptId: "admitted-1" };
+        },
+        onAttemptCompleted: (event) => {
+          events.push(event);
+        },
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(caught).toBe(reason);
+    expect(calls).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      startResult: { attemptId: "admitted-1" },
+      completed: {
+        status: "canceled",
+        transmitted: false,
+        providerBillable: false,
+        usageObservation: { kind: "unavailable" },
+      },
+    });
+  });
+
+  it("retains the start receipt and unknown billing when cancellation happens in transport", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("canceled in transport", "AbortError");
+    const events: PolishAttemptCompletedEventV2<string>[] = [];
+    const { provider, calls } = makeV2Provider(async () => {
+      controller.abort(reason);
+      throw reason;
+    });
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(controller.signal, {
+        now: fakeClock().now,
+        onAttemptStarted: () => "attempt-id-1",
+        onAttemptCompleted: (event) => {
+          events.push(event);
+        },
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(caught).toBe(reason);
+    expect(calls).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      startResult: "attempt-id-1",
+      completed: {
+        status: "canceled",
+        transmitted: true,
+        providerBillable: null,
+        usageObservation: { kind: "unavailable" },
+      },
+    });
+  });
+
+  it("does not transmit when the start hook consumes the total deadline", async () => {
+    const clock = fakeClock();
+    const events: PolishAttemptCompletedEventV2<string>[] = [];
+    const { provider, calls } = makeV2Provider(async () => v2Result());
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, {
+        now: clock.now,
+        onAttemptStarted: () => {
+          clock.advance(POLISH_TOTAL_DEADLINE_MS + 1);
+          return "deadline-attempt";
+        },
+        onAttemptCompleted: (event) => {
+          events.push(event);
+        },
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(calls).toHaveLength(0);
+    expect(caught).toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+    expect(events[0]).toMatchObject({
+      startResult: "deadline-attempt",
+      completed: {
+        status: "timed_out",
+        transmitted: false,
+        providerBillable: false,
+      },
+    });
+  });
+});
+
+describe("orchestratePolishV2 — retry, failure usage, and conservative aggregation", () => {
+  it("retains usage/cost/route for malformed content and retries the same provider", async () => {
+    const clock = fakeClock();
+    const events: PolishAttemptCompletedEventV2<string>[] = [];
+    const { provider, calls } = makeV2Provider(
+      async () => {
+        clock.advance(1_000);
+        return v2Result("not-json");
+      },
+      async () => {
+        clock.advance(2_000);
+        return v2Result();
+      },
+    );
+
+    const result = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, {
+        now: clock.now,
+        onAttemptStarted: (fact) => `attempt-${fact.attemptNo}`,
+        onAttemptCompleted: (event) => {
+          events.push(event);
+        },
+      }),
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].request.prompt.blocks[1].content).toContain(
+      "previous response failed validation",
+    );
+    expect(calls[1].request.prompt.blocks[1].content).toContain("not valid JSON");
+    expect(events.map((event) => event.startResult)).toEqual(["attempt-1", "attempt-2"]);
+    expect(result.attemptFacts.map((fact) => fact.status)).toEqual([
+      "invalid_output",
+      "succeeded",
+    ]);
+    expect(result.attemptFacts[0]).toMatchObject({
+      transmitted: true,
+      providerBillable: true,
+      usageObservation: { kind: "observed" },
+      route: { providerRequestId: "provider-1" },
+      cost: { estimationStatus: "complete" },
+      latencyMs: 1_000,
+    });
+    expect(result.aggregate).toMatchObject({
+      knownUsage: {
+        inputTotalTokens: "200",
+        inputCacheReadTokens: "120",
+        inputStandardTokens: "60",
+        outputTokens: "40",
+      },
+      inputCacheWriteTokens: "20",
+      reasoningTokens: "10",
+      usageComplete: true,
+      providerBillable: true,
+    });
+  });
+
+  it("records the fake explicit unavailable-usage failure without inventing zero cost", async () => {
+    const provider = createFakePolishInferenceProvider({
+      scenario: FAKE_V2_SCENARIOS.unavailableUsage,
+      delayMs: 0,
+    });
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal),
+    ).catch((error: unknown) => error as {
+      attemptFacts: readonly PolishAttemptCompletedFactV2[];
+      aggregate: ReturnType<typeof aggregatePolishAttemptFactsV2>;
+    });
+
+    expect(caught.attemptFacts).toHaveLength(1);
+    expect(caught.attemptFacts[0]).toMatchObject({
+      status: "failed_upstream",
+      transmitted: true,
+      providerBillable: null,
+      usageObservation: { kind: "unavailable", usage: null, usageComplete: false },
+      cost: { estimatedCost: null, estimationStatus: "incomplete_usage" },
+    });
+    expect(caught.aggregate).toMatchObject({
+      knownUsage: {
+        inputTotalTokens: "0",
+        inputCacheReadTokens: "0",
+        inputStandardTokens: "0",
+        outputTokens: "0",
+      },
+      usageComplete: false,
+      providerBillable: null,
+      knownEstimatedCost: null,
+      estimatedCost: null,
+    });
+    expect(caught.aggregate.incompleteFields).toEqual([
+      "attempt_usage",
+      "input_cache_write",
+      "reasoning",
+      "provider_billable",
+      "estimated_cost",
+    ]);
+  });
+
+  it("preserves an observed lower bound when a failed outcome includes usage", async () => {
+    const failedOutcome: PolishInferenceAttemptOutcomeV2 = {
+      kind: "failed",
+      failure: {
+        code: "UPSTREAM_ERROR",
+        upstreamStatus: 400,
+        retryable: false,
+        retryAfterMs: 0,
+        providerRequestId: "provider-failed-with-usage",
+      },
+      route: { providerRequestId: "provider-failed-with-usage" },
+      providerBillable: true,
+      result: null,
+      usageObservation: observedUsage(V2_REPORTED_USAGE),
+      providerReportedCost: { currency: "CNY", nanos: "123" },
+    };
+    const provider: PolishInferenceProviderV2 = {
+      complete: async () => {
+        throw new Error("complete must not be used when completeAttempt exists");
+      },
+      completeAttempt: async () => failedOutcome,
+    };
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal),
+    ).catch((error: unknown) => error as {
+      attemptFacts: readonly PolishAttemptCompletedFactV2[];
+      aggregate: ReturnType<typeof aggregatePolishAttemptFactsV2>;
+    });
+
+    expect(caught.attemptFacts[0]).toMatchObject({
+      providerBillable: true,
+      usageObservation: { kind: "observed", usage: V2_REPORTED_USAGE },
+      cost: {
+        estimationStatus: "complete",
+        providerReportedCost: { currency: "CNY", nanos: "123" },
+      },
+    });
+    expect(caught.aggregate).toMatchObject({
+      knownUsage: {
+        inputTotalTokens: "100",
+        outputTokens: "20",
+      },
+      usageComplete: true,
+      providerBillable: true,
+    });
+    expect(caught.aggregate.knownEstimatedCost).not.toBeNull();
+  });
+
+  it("keeps usage known while making cost and optional buckets null when cache-write is unavailable", async () => {
+    const { provider } = makeV2Provider(async () =>
+      v2Result(undefined, V2_UNAVAILABLE_WRITE_USAGE),
+    );
+    const result = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, { now: fakeClock().now }),
+    );
+
+    expect(result.attemptFacts[0].cost).toMatchObject({
+      estimationStatus: "incomplete_usage",
+      estimatedCost: null,
+      incompleteReasons: ["input_cache_write"],
+    });
+    expect(result.aggregate).toMatchObject({
+      knownUsage: {
+        inputTotalTokens: "100",
+        inputCacheReadTokens: "60",
+        inputStandardTokens: "40",
+        outputTokens: "20",
+      },
+      inputCacheWriteTokens: null,
+      reasoningTokens: null,
+      usageComplete: true,
+      providerBillable: true,
+      knownEstimatedCost: null,
+      estimatedCost: null,
+    });
+    expect(result.aggregate.incompleteFields).toEqual([
+      "input_cache_write",
+      "reasoning",
+      "estimated_cost",
+    ]);
+  });
+
+  it("rejects aggregation across different frozen currencies instead of summing them", async () => {
+    const first = await orchestratePolishV2(
+      makeV2Provider(async () => v2Result()).provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, { now: fakeClock().now }),
+    );
+    const second = await orchestratePolishV2(
+      makeV2Provider(async () => v2Result()).provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, {
+        now: fakeClock().now,
+        frozenPrice: { ...V2_PRICE, currency: "USD", priceVersionId: "price-usd" },
+      }),
+    );
+
+    expect(() =>
+      aggregatePolishAttemptFactsV2([
+        first.attemptFacts[0],
+        second.attemptFacts[0],
+      ]),
+    ).toThrow(/different frozen currencies/);
+  });
+
+  it("retains known attempt-one lower bounds when attempt two has unavailable usage", async () => {
+    const outcomes: PolishInferenceAttemptOutcomeV2[] = [
+      {
+        kind: "completed",
+        result: v2Result("not-json"),
+        usageObservation: observedUsage(V2_REPORTED_USAGE) as Extract<
+          PolishInferenceAttemptOutcomeV2,
+          { kind: "completed" }
+        >["usageObservation"],
+      },
+      {
+        kind: "failed",
+        failure: {
+          code: "UPSTREAM_ERROR",
+          upstreamStatus: 400,
+          retryable: false,
+          retryAfterMs: 0,
+        },
+        route: {},
+        providerBillable: null,
+        result: null,
+        usageObservation: unavailableUsage(),
+      },
+    ];
+    const provider: PolishInferenceProviderV2 = {
+      complete: async () => {
+        throw new Error("complete must not be used");
+      },
+      completeAttempt: async () => {
+        const outcome = outcomes.shift();
+        if (!outcome) throw new Error("unexpected attempt");
+        return outcome;
+      },
+    };
+
+    const caught = await orchestratePolishV2(
+      provider,
+      makeRequest(),
+      v2Options(new AbortController().signal, { now: fakeClock().now }),
+    ).catch((error: unknown) => error as {
+      aggregate: ReturnType<typeof aggregatePolishAttemptFactsV2>;
+    });
+
+    expect(caught.aggregate).toMatchObject({
+      knownUsage: {
+        inputTotalTokens: "100",
+        inputCacheReadTokens: "60",
+        inputStandardTokens: "30",
+        outputTokens: "20",
+      },
+      usageComplete: false,
+      providerBillable: true,
+      estimatedCost: null,
+    });
+    expect(caught.aggregate.knownEstimatedCost).not.toBeNull();
+    expect(caught.aggregate.incompleteFields).toContain("attempt_usage");
+    expect(caught.aggregate.incompleteFields).toContain("estimated_cost");
   });
 });
