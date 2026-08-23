@@ -190,6 +190,30 @@ describe("legacy request/result converters", () => {
         },
       }),
     ).toThrow(/role\/stability/);
+    expect(() =>
+      toLegacyProviderRequest({
+        ...v2,
+        outputContract: { ...v2.outputContract, kind: "json_object" },
+        prompt: { ...v2.prompt, explicitCacheBoundaryAfter: "legacy-message-2" },
+      }),
+    ).toThrow(/stable prefix/);
+  });
+
+  it("rejects a legacy message order that would cache variable content", () => {
+    expect(() =>
+      toInferenceRequestV2(
+        {
+          ...legacyRequest,
+          messages: [legacyRequest.messages[1], legacyRequest.messages[0]],
+        },
+        {
+          outputContract: { kind: "json_object", schemaName: "polish", schema: {} },
+          promptVersion: "prompt-v1",
+          validatorVersion: "validator-v1",
+          language: "zh",
+        },
+      ),
+    ).toThrow(/stable prefix/);
   });
 
   it("round-trips a representable legacy result", () => {

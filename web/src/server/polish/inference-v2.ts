@@ -228,6 +228,17 @@ export function toInferenceRequestV2(
   assertNonEmpty(metadata.promptVersion, "promptVersion");
   assertNonEmpty(metadata.validatorVersion, "validatorVersion");
 
+  let variableContentStarted = false;
+  for (const message of request.messages) {
+    if (message.role === "user") {
+      variableContentStarted = true;
+    } else if (variableContentStarted) {
+      throw new InferenceV2ContractError(
+        "legacy system messages must form a stable prefix before variable user content",
+      );
+    }
+  }
+
   const blocks = request.messages.map((message, index) => ({
     id: `legacy-message-${index + 1}`,
     role: message.role === "system" ? ("developer" as const) : ("user" as const),
@@ -283,6 +294,17 @@ export function toLegacyProviderRequest(request: PolishInferenceRequestV2): Poli
     !ids.has(request.prompt.explicitCacheBoundaryAfter)
   ) {
     throw new InferenceV2ContractError("explicit cache boundary must reference a prompt block");
+  }
+  if (request.prompt.explicitCacheBoundaryAfter !== undefined) {
+    const boundaryIndex = request.prompt.blocks.findIndex(
+      (block) => block.id === request.prompt.explicitCacheBoundaryAfter,
+    );
+    const stablePrefix = request.prompt.blocks.slice(0, boundaryIndex + 1);
+    if (stablePrefix.some((block) => block.stability !== "stable")) {
+      throw new InferenceV2ContractError(
+        "explicit cache boundary must end a stable prefix before variable content",
+      );
+    }
   }
 
   return {

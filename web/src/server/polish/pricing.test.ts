@@ -244,4 +244,21 @@ describe("price snapshot validation and fail-closed behavior", () => {
       incompleteReasons: ["invalid_usage"],
     });
   });
+
+  it("does not estimate cost from an explicitly incomplete usage observation", () => {
+    expect(calculateEstimatedCost(usage({ usageComplete: false }), linearPrice())).toEqual({
+      status: "incomplete_usage",
+      estimatedCost: null,
+      incompleteReasons: ["usage_incomplete"],
+    });
+  });
+
+  it("rejects unknown top-level snapshot fields", () => {
+    expect(() =>
+      validateFrozenPriceSnapshot({
+        ...linearPrice(),
+        executableFormula: "tokens * attacker_rate",
+      } as FrozenPriceSnapshotV1),
+    ).toThrow(/unknown: executableFormula/);
+  });
 });

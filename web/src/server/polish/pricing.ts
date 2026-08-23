@@ -27,6 +27,7 @@ export interface FrozenPriceSnapshotV1 {
 
 export type CostCalculationIncompleteReason =
   | "invalid_usage"
+  | "usage_incomplete"
   | "unknown_calculator"
   | "invalid_price_snapshot"
   | "missing_price_component"
@@ -68,6 +69,14 @@ const ZERO_NANOS = BigInt(0);
 const MAX_POSTGRES_BIGINT = BigInt("9223372036854775807");
 const TOKENS_PER_MILLION = BigInt(1_000_000);
 const BASIS_POINTS = BigInt(10_000);
+const PRICE_SNAPSHOT_KEYS = [
+  "schemaVersion",
+  "priceVersionId",
+  "currency",
+  "calculatorKind",
+  "components",
+  "parameters",
+] as const;
 
 export class PricingContractError extends Error {
   readonly reason: CostCalculationIncompleteReason;
@@ -165,6 +174,8 @@ function parseParameters(
 
 /** Validate a DB price projection without accepting executable config from DB. */
 export function validateFrozenPriceSnapshot(snapshot: FrozenPriceSnapshotV1): ParsedPriceSnapshot {
+  assertRecord(snapshot, "invalid_price_snapshot", "price snapshot");
+  assertExactKeys(snapshot as unknown as Record<string, unknown>, PRICE_SNAPSHOT_KEYS, "price snapshot");
   if (snapshot.schemaVersion !== "price_snapshot_v1") {
     throw new PricingContractError("invalid_price_snapshot", "unknown price snapshot schemaVersion");
   }
@@ -336,6 +347,9 @@ export function calculateEstimatedCost(
       return incomplete("invalid_usage");
     }
     throw error;
+  }
+  if (!usage.usageComplete) {
+    return incomplete("usage_incomplete");
   }
 
   let snapshot: ParsedPriceSnapshot;
