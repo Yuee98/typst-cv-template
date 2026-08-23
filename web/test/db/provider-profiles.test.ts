@@ -129,6 +129,18 @@ describe.skipIf(!RUN_DB_TESTS)("provider profile foundation (real DB)", () => {
       .from("ai_provider_profile_versions")
       .insert({ ...versionFixture(profile.id, 3), endpoint_alias: " " });
     expect(blankAlias.error?.code).toBe(CHECK_VIOLATION);
+
+    for (const [index, status] of [
+      "validated",
+      "canary",
+      "active",
+      "retired",
+    ].entries()) {
+      const nonDraftInsert = await service
+        .from("ai_provider_profile_versions")
+        .insert({ ...versionFixture(profile.id, 10 + index), status });
+      expect(nonDraftInsert.error?.code).toBe(CHECK_VIOLATION);
+    }
   });
 
   it("allows only monotonic lifecycle transitions", async () => {

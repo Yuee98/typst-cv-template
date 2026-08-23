@@ -126,9 +126,15 @@ begin
       using errcode = '23514';
   end if;
 
-  if tg_op = 'INSERT' and num_nonnulls(new.validated_at, new.activated_at, new.retired_at) > 0 then
-    raise exception 'ai_provider_profile_versions lifecycle timestamps are trigger-managed'
-      using errcode = '23514';
+  if tg_op = 'INSERT' then
+    if new.status <> 'draft' then
+      raise exception 'ai_provider_profile_versions must be inserted as draft'
+        using errcode = '23514';
+    end if;
+    if num_nonnulls(new.validated_at, new.activated_at, new.retired_at) > 0 then
+      raise exception 'ai_provider_profile_versions lifecycle timestamps are trigger-managed'
+        using errcode = '23514';
+    end if;
   end if;
 
   if tg_op = 'UPDATE' then
@@ -192,6 +198,9 @@ create table public.ai_price_versions (
   source_checked_at timestamptz not null,
   source_snapshot_sha256 text not null,
   parameters jsonb not null default '{}'::jsonb,
+  -- Set exactly once by the request snapshot trigger. It remains as a
+  -- permanent seal after request-ledger retention cleanup.
+  components_sealed_at timestamptz,
   created_at timestamptz not null default now(),
 
   constraint ai_price_versions_identity_unique
@@ -243,21 +252,46 @@ begin
       using errcode = '23514';
   end if;
 
+  if tg_op = 'INSERT' then
+    if new.components_sealed_at is not null then
+      raise exception 'ai_price_versions components seal is trigger-managed'
+        using errcode = '23514';
+    end if;
+    return new;
+  end if;
+
   -- A previously open interval may be closed once when a successor price is
   -- introduced. All price identity, calculator, source and parameter facts
-  -- remain immutable; an already closed interval cannot be rewritten.
-  if (to_jsonb(new) - 'valid_to') is distinct from (to_jsonb(old) - 'valid_to')
-     or old.valid_to is not null
-     or new.valid_to is null then
-    raise exception 'ai_price_versions rows are immutable except one-time valid_to closure'
+  -- remain immutable. The only other change is a nested, one-way component
+  -- seal made by guard_ai_request_route_snapshot(); pg_trigger_depth() keeps
+  -- a direct service-role UPDATE from impersonating that trigger transition.
+  if (to_jsonb(new) - array['valid_to', 'components_sealed_at'])
+     is distinct from
+     (to_jsonb(old) - array['valid_to', 'components_sealed_at']) then
+    raise exception 'ai_price_versions immutable fields cannot be changed'
       using errcode = '23514';
   end if;
-  return new;
+
+  if old.valid_to is null
+     and new.valid_to is not null
+     and new.components_sealed_at is not distinct from old.components_sealed_at then
+    return new;
+  end if;
+
+  if old.components_sealed_at is null
+     and new.components_sealed_at is not null
+     and new.valid_to is not distinct from old.valid_to
+     and pg_trigger_depth() > 1 then
+    return new;
+  end if;
+
+  raise exception 'ai_price_versions permits only one-time valid_to closure or trigger-managed component sealing'
+    using errcode = '23514';
 end;
 $$;
 
 create trigger guard_ai_price_version
-before update or delete on public.ai_price_versions
+before insert or update or delete on public.ai_price_versions
 for each row execute function public.guard_ai_price_version();
 
 create or replace function public.guard_ai_price_component()
@@ -332,9 +366,15 @@ begin
       using errcode = '23514';
   end if;
 
-  if tg_op = 'INSERT' and num_nonnulls(new.validated_at, new.activated_at, new.retired_at) > 0 then
-    raise exception 'ai_routing_policy_versions lifecycle timestamps are trigger-managed'
-      using errcode = '23514';
+  if tg_op = 'INSERT' then
+    if new.status <> 'draft' then
+      raise exception 'ai_routing_policy_versions must be inserted as draft'
+        using errcode = '23514';
+    end if;
+    if num_nonnulls(new.validated_at, new.activated_at, new.retired_at) > 0 then
+      raise exception 'ai_routing_policy_versions lifecycle timestamps are trigger-managed'
+        using errcode = '23514';
+    end if;
   end if;
 
   if tg_op = 'UPDATE' then
@@ -437,8 +477,11 @@ begin
     end if;
     new.config_generation := old.config_generation + 1;
     new.routing_updated_at := now();
-  elsif new.config_generation is distinct from old.config_generation then
-    raise exception 'config_generation changes only with the routing pointer'
+  elsif new.config_generation is distinct from old.config_generation
+     or new.routing_updated_at is distinct from old.routing_updated_at
+     or new.routing_updated_by is distinct from old.routing_updated_by
+     or new.routing_change_reason is distinct from old.routing_change_reason then
+    raise exception 'routing audit and generation change only with the routing pointer'
       using errcode = '23514';
   end if;
   return new;

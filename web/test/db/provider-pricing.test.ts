@@ -199,6 +199,23 @@ describe.skipIf(!RUN_DB_TESTS)("provider native-currency pricing (real DB)", () 
       .update({ calculator_kind: "changed", valid_to: "2026-02-01T00:00:00Z" })
       .eq("id", price!.id);
     expect(mutate.error?.code).toBe(CHECK_VIOLATION);
+
+    const directSeal = await service
+      .from("ai_price_versions")
+      .update({ components_sealed_at: "2026-01-02T00:00:00Z" })
+      .eq("id", price!.id);
+    expect(directSeal.error?.code).toBe(CHECK_VIOLATION);
+
+    const insertSealed = await service.from("ai_price_versions").insert({
+      ...priceFixture(
+        await createProfileVersion("presealed"),
+        1,
+        "2026-01-01T00:00:00Z",
+        null,
+      ),
+      components_sealed_at: "2026-01-02T00:00:00Z",
+    });
+    expect(insertSealed.error?.code).toBe(CHECK_VIOLATION);
   });
 
   it("rejects unknown or negative price components and component mutation", async () => {

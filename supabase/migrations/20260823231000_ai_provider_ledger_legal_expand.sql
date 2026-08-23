@@ -49,21 +49,25 @@ alter table public.ai_request_ledger
     )
     or
     (
+      num_nonnulls(
+        route_schema_version,
+        config_generation,
+        routing_policy_version_id,
+        profile_version_id,
+        price_version_id,
+        legal_bundle_version,
+        gateway_kind,
+        model_id,
+        wire_api_kind,
+        display_disclosure_key
+      ) = 10
+      and
       route_schema_version = 'route_snapshot_v1'
-      and config_generation is not null
       and config_generation >= 0
-      and routing_policy_version_id is not null
-      and profile_version_id is not null
-      and price_version_id is not null
-      and legal_bundle_version is not null
       and length(btrim(legal_bundle_version)) > 0
-      and gateway_kind is not null
       and gateway_kind in ('direct_deepseek', 'direct_mimo', 'openrouter')
-      and model_id is not null
       and length(btrim(model_id)) > 0
-      and wire_api_kind is not null
       and wire_api_kind in ('chat_completions_v1', 'responses_v1')
-      and display_disclosure_key is not null
       and length(btrim(display_disclosure_key)) > 0
     )
   ),
@@ -111,7 +115,7 @@ alter table public.ai_request_ledger
     )
   ),
   add constraint ai_request_ledger_v2_usage_shape_check check (
-    usage_schema_version <> 'request_usage_aggregate_v2'
+    usage_schema_version is distinct from 'request_usage_aggregate_v2'
     or (
       input_total_tokens is not null
       and input_cache_read_tokens is not null
@@ -130,6 +134,31 @@ alter table public.ai_request_ledger
       'provider_billable',
       'estimated_cost'
     ]::text[]
+    and array_position(incomplete_fields, null) is null
+  ),
+  add constraint ai_request_ledger_v2_incomplete_consistency_check check (
+    usage_schema_version is distinct from 'request_usage_aggregate_v2'
+    or (
+      incomplete_fields is not null
+      and (
+        (usage_complete is true and array_position(incomplete_fields, 'attempt_usage') is null)
+        or (usage_complete is false and array_position(incomplete_fields, 'attempt_usage') is not null)
+      )
+      and (input_cache_write_tokens is null) =
+        (array_position(incomplete_fields, 'input_cache_write') is not null)
+      and (reasoning_tokens is null) =
+        (array_position(incomplete_fields, 'reasoning') is not null)
+      and (provider_billable is null) =
+        (array_position(incomplete_fields, 'provider_billable') is not null)
+      and (estimated_cost_nanos is null) =
+        (array_position(incomplete_fields, 'estimated_cost') is not null)
+      and cardinality(incomplete_fields) =
+        case when array_position(incomplete_fields, 'attempt_usage') is null then 0 else 1 end
+        + case when array_position(incomplete_fields, 'input_cache_write') is null then 0 else 1 end
+        + case when array_position(incomplete_fields, 'reasoning') is null then 0 else 1 end
+        + case when array_position(incomplete_fields, 'provider_billable') is null then 0 else 1 end
+        + case when array_position(incomplete_fields, 'estimated_cost') is null then 0 else 1 end
+    )
   ),
   add constraint ai_request_ledger_cost_check check (
     (cost_basis is null or length(btrim(cost_basis)) > 0)
@@ -168,6 +197,20 @@ alter table public.ai_request_ledger
         'incomplete_usage'
       )
     )
+    and (
+      cost_reconciliation_status is null
+      or cost_reconciliation_status not in ('matched', 'mismatch')
+      or (
+        estimated_cost_nanos is not null
+        and provider_reported_cost_nanos is not null
+        and (
+          (cost_reconciliation_status = 'matched'
+            and estimated_cost_nanos = provider_reported_cost_nanos)
+          or (cost_reconciliation_status = 'mismatch'
+            and estimated_cost_nanos <> provider_reported_cost_nanos)
+        )
+      )
+    )
   );
 
 alter table public.ai_request_ledger
@@ -175,13 +218,55 @@ alter table public.ai_request_ledger
   foreign key (price_version_id, profile_version_id)
   references public.ai_price_versions(id, profile_version_id);
 
+-- Price component inserts and the first request snapshot reference serialize
+-- on the same ai_price_versions row. The reference transition also persists a
+-- one-way seal, so request-ledger cleanup can never reopen historical prices:
+--
+--   request row (already locked by INSERT/UPDATE) -> price row UPDATE/seal
+--   component INSERT -> price row FOR UPDATE -> read persistent seal
+--
+-- Both paths hold a conflicting parent-row lock through transaction end. The
+-- component path never locks a request row, so it cannot form a circular wait.
+-- If the component commits first, the request freezes it; if the request seals
+-- first, the waiting component sees the seal and is rejected.
+create or replace function public.guard_ai_price_component()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_components_sealed_at timestamptz;
+begin
+  if tg_op = 'UPDATE' or tg_op = 'DELETE' then
+    raise exception 'ai_price_components rows are immutable'
+      using errcode = '23514';
+  end if;
+
+  select components_sealed_at into v_components_sealed_at
+  from public.ai_price_versions
+  where id = new.price_version_id
+  for update;
+
+  if v_components_sealed_at is not null then
+    raise exception 'cannot add components to a price version frozen by a request'
+      using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger guard_ai_price_component on public.ai_price_components;
+create trigger guard_ai_price_component
+before insert or update or delete on public.ai_price_components
+for each row execute function public.guard_ai_price_component();
+
 create or replace function public.guard_ai_request_route_snapshot()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
-  if old.route_schema_version is not null and (
+  if tg_op = 'UPDATE' and old.route_schema_version is not null and (
     new.route_schema_version,
     new.config_generation,
     new.routing_policy_version_id,
@@ -207,12 +292,26 @@ begin
     raise exception 'ai_request_ledger route snapshot is immutable once frozen'
       using errcode = '23514';
   end if;
+
+  if tg_op = 'INSERT' and new.price_version_id is not null then
+    update public.ai_price_versions
+    set components_sealed_at = now()
+    where id = new.price_version_id
+      and components_sealed_at is null;
+  elsif tg_op = 'UPDATE'
+        and old.price_version_id is null
+        and new.price_version_id is not null then
+    update public.ai_price_versions
+    set components_sealed_at = now()
+    where id = new.price_version_id
+      and components_sealed_at is null;
+  end if;
   return new;
 end;
 $$;
 
 create trigger guard_ai_request_route_snapshot
-before update on public.ai_request_ledger
+before insert or update on public.ai_request_ledger
 for each row execute function public.guard_ai_request_route_snapshot();
 
 -- Global operational aggregate grouped by immutable profile and native

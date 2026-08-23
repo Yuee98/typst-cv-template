@@ -55,7 +55,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .insert({
         profile_id: profile!.id,
         version: 1,
-        status: "validated",
+        status: "draft",
         adapter_kind: "fixture_adapter_v1",
         wire_api_kind: "responses_v1",
         credential_alias: "fixture_credential_v1",
@@ -71,6 +71,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .select("id")
       .single();
     expect(versionError).toBeNull();
+    const { error: validateVersionError } = await service
+      .from("ai_provider_profile_versions")
+      .update({ status: "validated" })
+      .eq("id", profileVersion!.id);
+    expect(validateVersionError).toBeNull();
 
     const { data: price, error: priceError } = await service
       .from("ai_price_versions")
@@ -95,7 +100,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .insert({
         policy_key: `test.ledger.${label}.${crypto.randomUUID()}`,
         version: 1,
-        status: "validated",
+        status: "draft",
         timezone: "Asia/Shanghai",
         rules: { kind: "fixture_default_only_v1" },
         default_profile_version_id: profileVersion!.id,
@@ -105,6 +110,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .select("id")
       .single();
     expect(policyError).toBeNull();
+    const { error: validatePolicyError } = await service
+      .from("ai_routing_policy_versions")
+      .update({ status: "validated" })
+      .eq("id", policy!.id);
+    expect(validatePolicyError).toBeNull();
 
     return {
       profileVersionId: profileVersion!.id,
@@ -133,6 +143,27 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       model_id: "fixture-model",
       wire_api_kind: "responses_v1",
       display_disclosure_key: "fixture-disclosure-v1",
+    };
+  }
+
+  function completeUsageAggregate() {
+    return {
+      usage_schema_version: "request_usage_aggregate_v2",
+      input_total_tokens: 100,
+      input_cache_read_tokens: 60,
+      input_cache_write_tokens: 0,
+      input_standard_tokens: 40,
+      output_tokens: 20,
+      reasoning_tokens: 5,
+      cache_usage_reporting: "reported",
+      incomplete_fields: [] as string[],
+      usage_complete: true,
+      provider_billable: false,
+      cost_basis: "frozen_price_version_v1",
+      billing_currency: "CNY",
+      known_estimated_cost_nanos: 100,
+      estimated_cost_nanos: 100,
+      cost_reconciliation_status: "not_available",
     };
   }
 
@@ -190,6 +221,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
         cache_usage_reporting: "unavailable",
         incomplete_fields: ["input_cache_write"],
         usage_complete: true,
+        provider_billable: false,
         cost_basis: "frozen_price_version_v1",
         billing_currency: "CNY",
         known_estimated_cost_nanos: 1234,
@@ -220,6 +252,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
     });
     expect(partial.error?.code).toBe(CHECK_VIOLATION);
 
+    const nullSchemaWithConfig = await service
+      .from("ai_request_ledger")
+      .insert({
+        ...requestIdentity(),
+        config_generation: 7,
+      });
+    expect(nullSchemaWithConfig.error?.code).toBe(CHECK_VIOLATION);
+
     const otherRoute = await createRouteFixture("other-profile");
     const mixed = await service.from("ai_request_ledger").insert({
       ...requestIdentity(),
@@ -228,18 +268,71 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
     });
     expect(mixed.error?.code).toBe(FOREIGN_KEY_VIOLATION);
 
-    const { data: frozen, error: frozenError } = await service
+    const { data: empty, error: emptyError } = await service
       .from("ai_request_ledger")
-      .insert({ ...requestIdentity(), ...routeSnapshot() })
+      .insert(requestIdentity())
       .select("reservation_id")
       .single();
+    expect(emptyError).toBeNull();
+
+    const { data: frozen, error: frozenError } = await service
+      .from("ai_request_ledger")
+      .update(routeSnapshot())
+      .eq("reservation_id", empty!.reservation_id)
+      .select("reservation_id,route_schema_version,price_version_id")
+      .single();
     expect(frozenError).toBeNull();
+    expect(frozen).toMatchObject({
+      route_schema_version: "route_snapshot_v1",
+      price_version_id: route.priceVersionId,
+    });
 
     const mutate = await service
       .from("ai_request_ledger")
       .update({ model_id: "changed-model" })
       .eq("reservation_id", frozen!.reservation_id);
     expect(mutate.error?.code).toBe(CHECK_VIOLATION);
+  });
+
+  it("blocks price components after a request freezes the price version", async () => {
+    const componentRoute = await createRouteFixture("component-freeze");
+    const beforeReference = await service.from("ai_price_components").insert({
+      price_version_id: componentRoute.priceVersionId,
+      component: "input_standard",
+      nanos_per_million: 100,
+    });
+    expect(beforeReference.error).toBeNull();
+
+    const reference = await service
+      .from("ai_request_ledger")
+      .insert({
+        ...requestIdentity(),
+        ...routeSnapshot(componentRoute),
+      })
+      .select("reservation_id")
+      .single();
+    expect(reference.error).toBeNull();
+
+    const { error: cleanupError } = await service
+      .from("ai_request_ledger")
+      .delete()
+      .eq("reservation_id", reference.data!.reservation_id);
+    expect(cleanupError).toBeNull();
+
+    const { data: sealedPrice, error: sealReadError } = await service
+      .from("ai_price_versions")
+      .select("components_sealed_at")
+      .eq("id", componentRoute.priceVersionId)
+      .single();
+    expect(sealReadError).toBeNull();
+    expect(sealedPrice?.components_sealed_at).toBeTruthy();
+
+    const afterCleanup = await service.from("ai_price_components").insert({
+      price_version_id: componentRoute.priceVersionId,
+      component: "output",
+      nanos_per_million: 200,
+    });
+    expect(afterCleanup.error?.code).toBe(CHECK_VIOLATION);
   });
 
   it("enforces reported/unavailable usage conservation and reasoning detail", async () => {
@@ -307,6 +400,163 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
         estimated_cost_nanos: 101,
       });
     expect(estimatedDiffersFromKnown.error?.code).toBe(CHECK_VIOLATION);
+  });
+
+  it("binds V2 unknown fields bidirectionally to incomplete_fields", async () => {
+    const invalidAggregates = [
+      {
+        label: "usage complete but attempt_usage is present",
+        patch: { incomplete_fields: ["attempt_usage"], usage_complete: true },
+      },
+      {
+        label: "usage incomplete but attempt_usage is absent",
+        patch: { incomplete_fields: [], usage_complete: false },
+      },
+      {
+        label: "cache write unknown without marker",
+        patch: {
+          input_cache_write_tokens: null,
+          cache_usage_reporting: "unavailable",
+          incomplete_fields: [],
+        },
+      },
+      {
+        label: "known cache write with marker",
+        patch: { incomplete_fields: ["input_cache_write"] },
+      },
+      {
+        label: "reasoning unknown without marker",
+        patch: { reasoning_tokens: null, incomplete_fields: [] },
+      },
+      {
+        label: "known reasoning with marker",
+        patch: { incomplete_fields: ["reasoning"] },
+      },
+      {
+        label: "provider billability unknown without marker",
+        patch: { provider_billable: null, incomplete_fields: [] },
+      },
+      {
+        label: "known provider billability with marker",
+        patch: { incomplete_fields: ["provider_billable"] },
+      },
+      {
+        label: "estimated cost unknown without marker",
+        patch: { estimated_cost_nanos: null, incomplete_fields: [] },
+      },
+      {
+        label: "known estimated cost with marker",
+        patch: { incomplete_fields: ["estimated_cost"] },
+      },
+      {
+        label: "duplicate marker",
+        patch: {
+          provider_billable: null,
+          incomplete_fields: ["provider_billable", "provider_billable"],
+        },
+      },
+    ];
+
+    for (const fixture of invalidAggregates) {
+      const { error } = await service.from("ai_request_ledger").insert({
+        ...requestIdentity(),
+        ...completeUsageAggregate(),
+        ...fixture.patch,
+      });
+      expect(error?.code, fixture.label).toBe(CHECK_VIOLATION);
+    }
+  });
+
+  it("preserves known lower bounds while unknown V2 facts remain null", async () => {
+    const { data, error } = await service
+      .from("ai_request_ledger")
+      .insert({
+        ...requestIdentity(),
+        ...completeUsageAggregate(),
+        input_cache_write_tokens: null,
+        reasoning_tokens: null,
+        cache_usage_reporting: "unavailable",
+        usage_complete: false,
+        provider_billable: null,
+        known_estimated_cost_nanos: 50,
+        estimated_cost_nanos: null,
+        cost_reconciliation_status: "incomplete_usage",
+        incomplete_fields: [
+          "attempt_usage",
+          "input_cache_write",
+          "reasoning",
+          "provider_billable",
+          "estimated_cost",
+        ],
+      })
+      .select(
+        "input_total_tokens,input_cache_write_tokens,reasoning_tokens,provider_billable,known_estimated_cost_nanos,estimated_cost_nanos,incomplete_fields",
+      )
+      .single();
+    expect(error).toBeNull();
+    expect(data).toMatchObject({
+      input_total_tokens: 100,
+      input_cache_write_tokens: null,
+      reasoning_tokens: null,
+      provider_billable: null,
+      known_estimated_cost_nanos: 50,
+      estimated_cost_nanos: null,
+    });
+    expect(data?.incomplete_fields).toEqual([
+      "attempt_usage",
+      "input_cache_write",
+      "reasoning",
+      "provider_billable",
+      "estimated_cost",
+    ]);
+  });
+
+  it("validates matched and mismatch cost reconciliation facts", async () => {
+    const invalidReconciliations = [
+      {
+        cost_reconciliation_status: "matched",
+        provider_reported_currency: null,
+        provider_reported_cost_nanos: null,
+      },
+      {
+        cost_reconciliation_status: "matched",
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 101,
+      },
+      {
+        cost_reconciliation_status: "mismatch",
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 100,
+      },
+    ];
+    for (const reconciliation of invalidReconciliations) {
+      const { error } = await service.from("ai_request_ledger").insert({
+        ...requestIdentity(),
+        ...completeUsageAggregate(),
+        ...reconciliation,
+      });
+      expect(error?.code).toBe(CHECK_VIOLATION);
+    }
+
+    for (const reconciliation of [
+      {
+        cost_reconciliation_status: "matched",
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 100,
+      },
+      {
+        cost_reconciliation_status: "mismatch",
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 101,
+      },
+    ]) {
+      const { error } = await service.from("ai_request_ledger").insert({
+        ...requestIdentity(),
+        ...completeUsageAggregate(),
+        ...reconciliation,
+      });
+      expect(error).toBeNull();
+    }
   });
 
   it("keeps profile aggregates split by native currency", async () => {
