@@ -14,20 +14,38 @@ type FieldKind = "string" | "boolean" | "string[]";
 
 interface SchemaDefinition {
   readonly fields: readonly (readonly [string, FieldKind])[];
+  readonly allowEmpty: readonly string[];
+  readonly setLike: readonly string[];
+  readonly nonEmptyArrays: readonly string[];
+  readonly enumValues: Readonly<Record<string, readonly string[]>>;
+}
+
+type SchemaOptions = {
   readonly allowEmpty: ReadonlySet<string>;
   readonly setLike: ReadonlySet<string>;
   readonly nonEmptyArrays: ReadonlySet<string>;
   readonly enumValues?: Readonly<Record<string, ReadonlySet<string>>>;
-}
+};
 
 const schema = (
   fields: readonly (readonly [string, FieldKind])[],
-  options: Omit<SchemaDefinition, "fields">,
-): SchemaDefinition => Object.freeze({ fields, ...options });
+  options: SchemaOptions,
+): SchemaDefinition => Object.freeze({
+  fields: Object.freeze(fields.map(([field, kind]) => Object.freeze([field, kind] as const))),
+  allowEmpty: Object.freeze([...options.allowEmpty]),
+  setLike: Object.freeze([...options.setLike]),
+  nonEmptyArrays: Object.freeze([...options.nonEmptyArrays]),
+  enumValues: Object.freeze(Object.fromEntries(
+    Object.entries(options.enumValues ?? {}).map(([field, values]) => [
+      field,
+      Object.freeze([...values]),
+    ]),
+  )),
+});
 
 const EMPTY = new Set<string>();
 
-export const LEGAL_FINGERPRINT_SCHEMAS = Object.freeze({
+const LEGAL_FINGERPRINT_SCHEMAS = Object.freeze({
   ai_legal_route_identity_v1: schema(
     [
       ["schema_version", "string"],
@@ -309,6 +327,33 @@ function compareUtf8(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
+function isPortableRepoPath(value: string): boolean {
+  if (!/^[A-Za-z0-9._/-]+$/.test(value) || value.startsWith("/") || value.endsWith("/")) {
+    return false;
+  }
+  const segments = value.split("/");
+  return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+function assertExactDataArray(value: unknown, field: string): asserts value is unknown[] {
+  if (!Array.isArray(value)) throw new LegalFingerprintV1Error(`${field} must be an array`);
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new LegalFingerprintV1Error(`${field} must not use an inherited or custom array prototype`);
+  }
+  const allowed = new Set(["length", ...Array.from({ length: value.length }, (_, index) => String(index))]);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string" || !allowed.has(key)) {
+      throw new LegalFingerprintV1Error(`${field} must not contain symbol or extra array properties`);
+    }
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) {
+      throw new LegalFingerprintV1Error(`${field} must contain every index as an own data property`);
+    }
+  }
+}
+
 function pairBase(field: string): string | undefined {
   return field.endsWith("_ids") ? field.slice(0, -4) : undefined;
 }
@@ -366,7 +411,7 @@ function validateSpecialFields(schemaVersion: LegalFingerprintSchemaVersion, val
       } catch {
         throw new LegalFingerprintV1Error("provider-official source_locator must be HTTPS");
       }
-    } else if (!/^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\\)(?!.*:)[A-Za-z0-9._/-]+(?<!\/)$/.test(value.source_locator as string)) {
+    } else if (!isPortableRepoPath(value.source_locator as string)) {
       throw new LegalFingerprintV1Error("service evidence source_locator must be a portable repo path");
     }
     const revisionUnavailable = value.source_revision_status === "unavailable";
@@ -384,7 +429,7 @@ function validateSpecialFields(schemaVersion: LegalFingerprintSchemaVersion, val
     }
     if (!snapshotUnavailable) {
       const artifactPath = value.upstream_snapshot_artifact_path as string;
-      if (!/^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\\)(?!.*:)[A-Za-z0-9._/-]+(?<!\/)$/.test(artifactPath)) {
+      if (!isPortableRepoPath(artifactPath)) {
         throw new LegalFingerprintV1Error("snapshot artifact must be a portable repo path");
       }
       if (!official && artifactPath !== value.source_locator) {
@@ -413,6 +458,9 @@ function validateSpecialFields(schemaVersion: LegalFingerprintSchemaVersion, val
   if (schemaVersion === "ai_service_runtime_contract_v1" && !/^sha1:[0-9a-f]{40}$/.test(value.reviewed_source_commit_oid as string)) {
     throw new LegalFingerprintV1Error("reviewed_source_commit_oid must be sha1:<40 lowercase hex>");
   }
+  if (schemaVersion === "ai_service_runtime_evidence_v1" && !isPortableRepoPath(value.source_repo_path as string)) {
+    throw new LegalFingerprintV1Error("source_repo_path must be a portable ASCII repo path");
+  }
 }
 
 function normalizeDescriptor(input: unknown): { schemaVersion: LegalFingerprintSchemaVersion; values: Record<string, string | boolean | string[]> } {
@@ -426,14 +474,21 @@ function normalizeDescriptor(input: unknown): { schemaVersion: LegalFingerprintS
   const schemaVersion = descriptor.schema_version as LegalFingerprintSchemaVersion;
   const definition = LEGAL_FINGERPRINT_SCHEMAS[schemaVersion];
   const expected = new Set(definition.fields.map(([field]) => field));
-  if (Reflect.ownKeys(descriptor).some((field) => typeof field !== "string")) {
+  const ownKeys = Reflect.ownKeys(descriptor);
+  if (ownKeys.some((field) => typeof field !== "string")) {
     throw new LegalFingerprintV1Error("descriptor contains an unknown symbol field");
   }
-  const ownKeys = Object.keys(descriptor);
-  const unknown = ownKeys.filter((field) => !expected.has(field));
+  const stringKeys = ownKeys as string[];
+  const unknown = stringKeys.filter((field) => !expected.has(field));
   const missing = [...expected].filter((field) => !Object.hasOwn(descriptor, field));
-  if (unknown.length > 0 || missing.length > 0 || ownKeys.length !== expected.size) {
+  if (unknown.length > 0 || missing.length > 0 || stringKeys.length !== expected.size) {
     throw new LegalFingerprintV1Error(`descriptor keys mismatch (unknown=${unknown.join(",") || "none"}; missing=${missing.join(",") || "none"})`);
+  }
+  for (const field of stringKeys) {
+    const property = Object.getOwnPropertyDescriptor(descriptor, field);
+    if (property === undefined || !("value" in property)) {
+      throw new LegalFingerprintV1Error(`${field} must be an own data property`);
+    }
   }
 
   const values: Record<string, string | boolean | string[]> = {};
@@ -446,15 +501,14 @@ function normalizeDescriptor(input: unknown): { schemaVersion: LegalFingerprintS
       continue;
     }
     if (kind === "string") {
-      values[field] = canonicalString(raw, field, definition.allowEmpty.has(field));
+      values[field] = canonicalString(raw, field, definition.allowEmpty.includes(field));
       continue;
     }
-    if (!Array.isArray(raw)) throw new LegalFingerprintV1Error(`${field} must be an array`);
-    if (Object.keys(raw).length !== raw.length) throw new LegalFingerprintV1Error(`${field} must not be sparse or have extra properties`);
+    assertExactDataArray(raw, field);
     if (raw.length > LEGAL_FINGERPRINT_MAX_ARRAY_ITEMS) throw new LegalFingerprintV1Error(`${field} exceeds the item limit`);
-    if (definition.nonEmptyArrays.has(field) && raw.length === 0) throw new LegalFingerprintV1Error(`${field} must not be empty`);
+    if (definition.nonEmptyArrays.includes(field) && raw.length === 0) throw new LegalFingerprintV1Error(`${field} must not be empty`);
     const array = raw.map((item, index) => canonicalString(item, `${field}.${index}`, false));
-    if (definition.setLike.has(field)) {
+    if (definition.setLike.includes(field)) {
       const sorted = [...array].sort(compareUtf8);
       if (sorted.some((item, index) => index > 0 && item === sorted[index - 1])) {
         throw new LegalFingerprintV1Error(`${field} contains an NFC-duplicate`);
@@ -465,8 +519,8 @@ function normalizeDescriptor(input: unknown): { schemaVersion: LegalFingerprintS
     }
   }
 
-  for (const [field, allowed] of Object.entries(definition.enumValues ?? {})) {
-    if (!allowed.has(values[field] as string)) throw new LegalFingerprintV1Error(`${field} contains an unknown enum value`);
+  for (const [field, allowed] of Object.entries(definition.enumValues)) {
+    if (!allowed.includes(values[field] as string)) throw new LegalFingerprintV1Error(`${field} contains an unknown enum value`);
   }
 
   for (const [field, value] of Object.entries(values)) {

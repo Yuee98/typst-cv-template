@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as legalFingerprintModule from "./legal-fingerprint-v1";
 import {
   fingerprintLegalDescriptorV1,
   LEGAL_FINGERPRINT_MAX_ARRAY_ITEMS,
@@ -157,11 +158,90 @@ describe("legal fingerprint v1 canonicalizer", () => {
 
   it("rejects sparse arrays, array extra properties, and symbol-keyed descriptor fields", () => {
     const sparse = new Array<string>(1);
-    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: sparse })).toThrow(/sparse/);
+    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: sparse })).toThrow(/every index as an own data property/);
     const extra = ["reviewed"];
     Object.defineProperty(extra, "extra", { value: "hidden", enumerable: true });
-    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: extra })).toThrow(/extra properties/);
+    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: extra })).toThrow(/extra array properties/);
     const symbol = Symbol("unknown");
     expect(() => fingerprintLegalDescriptorV1({ ...ASCII_ROUTE, [symbol]: "x" })).toThrow(/symbol/);
+  });
+
+  it("uses Reflect.ownKeys and own data properties for the exact descriptor field set", () => {
+    const hiddenUnknown = { ...ASCII_ROUTE } as Record<string, unknown>;
+    Object.defineProperty(hiddenUnknown, "hidden", { value: "collision", enumerable: false });
+    expect(() => fingerprintLegalDescriptorV1(hiddenUnknown)).toThrow(/keys mismatch/);
+
+    const accessor = { ...ASCII_ROUTE } as Record<string, unknown>;
+    Object.defineProperty(accessor, "model_id", { get: () => "deepseek-v4-flash", enumerable: true });
+    expect(() => fingerprintLegalDescriptorV1(accessor)).toThrow(/own data property/);
+
+    const hiddenRequired = { ...ASCII_ROUTE } as Record<string, unknown>;
+    Object.defineProperty(hiddenRequired, "model_id", {
+      value: "deepseek-v4-flash",
+      enumerable: false,
+      configurable: true,
+    });
+    expect(fingerprintLegalDescriptorV1(hiddenRequired).sha256).toBe(ASCII_ROUTE_SHA256);
+  });
+
+  it("rejects inherited, accessor, symbol, non-index, and non-canonical array constructions", () => {
+    const inherited = new Array<string>(1);
+    Object.setPrototypeOf(inherited, Object.assign(Object.create(Array.prototype), { 0: "inherited" }));
+    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: inherited })).toThrow(/inherited or custom/);
+
+    const accessor = ["placeholder"];
+    Object.defineProperty(accessor, "0", { get: () => "reviewed", enumerable: true });
+    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: accessor })).toThrow(/own data property/);
+
+    const symbol = ["reviewed"];
+    Object.defineProperty(symbol, Symbol("extra"), { value: "x" });
+    expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: symbol })).toThrow(/symbol or extra/);
+
+    for (const key of ["01", "-1", "1.0", "4294967295"]) {
+      const nonIndex = ["reviewed"] as string[] & Record<string, unknown>;
+      Object.defineProperty(nonIndex, key, { value: "collision", enumerable: false });
+      expect(() => fingerprintLegalDescriptorV1({ ...MULTIBYTE_FACT, qualifiers: nonIndex })).toThrow(/extra array/);
+    }
+  });
+
+  it("keeps mutable validation Sets private and freezes normalized collision authority", () => {
+    expect(Object.hasOwn(legalFingerprintModule, "LEGAL_FINGERPRINT_SCHEMAS")).toBe(false);
+    const result = fingerprintLegalDescriptorV1(MULTIBYTE_FACT);
+    expect(Object.isFrozen(result.normalized)).toBe(true);
+    expect(Object.isFrozen(result.normalized.qualifiers)).toBe(true);
+    expect(() => (result.normalized.qualifiers as string[]).push("mutated")).toThrow();
+    expect(fingerprintLegalDescriptorV1(MULTIBYTE_FACT).sha256).toBe(MULTIBYTE_FACT_SHA256);
+  });
+
+  it.each([
+    "web/src/server/polish/runtime.test.ts",
+    "docs/ai-provider-contract.md",
+    "a-b_c.d/e-f_1.ts",
+  ])("accepts portable runtime evidence path %s", (source_repo_path) => {
+    expect(() => fingerprintLegalDescriptorV1({
+      schema_version: "ai_service_runtime_evidence_v1",
+      runtime_evidence_id: "runtime-evidence.test.v1",
+      authority_kind: "service-test",
+      supported_fact_id: "fact.test.v1",
+      supported_fact_sha256: "a".repeat(64),
+      source_repo_path,
+      source_git_blob_sha256: "b".repeat(64),
+    })).not.toThrow();
+  });
+
+  it.each([
+    "", "/absolute.ts", "C:/drive.ts", "\\\\server\\share", "web\\file.ts",
+    "web//file.ts", "web/./file.ts", "web/../file.ts", "web/file.ts/", ".", "..",
+    "web/文件.ts", "web/file.ts\n",
+  ])("rejects non-portable runtime evidence path %j", (source_repo_path) => {
+    expect(() => fingerprintLegalDescriptorV1({
+      schema_version: "ai_service_runtime_evidence_v1",
+      runtime_evidence_id: "runtime-evidence.test.v1",
+      authority_kind: "service-test",
+      supported_fact_id: "fact.test.v1",
+      supported_fact_sha256: "a".repeat(64),
+      source_repo_path,
+      source_git_blob_sha256: "b".repeat(64),
+    })).toThrow(LegalFingerprintV1Error);
   });
 });
