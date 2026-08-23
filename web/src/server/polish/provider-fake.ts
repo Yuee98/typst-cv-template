@@ -40,6 +40,15 @@ import {
   type PolishProviderResult,
   type PolishProviderUsage,
 } from "./provider";
+import {
+  observedUsage,
+  unavailableUsage,
+  type AttemptUsageObservationV1,
+  type NormalizedUsageV2,
+  type PolishInferenceRequestV2,
+  type PolishInferenceResultV2,
+} from "./inference-v2";
+import { MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
 
 export const FAKE_PROVIDER_CODEWORDS = {
   failUpstream: "FAIL_UPSTREAM",
@@ -54,6 +63,124 @@ export const DEFAULT_FAKE_DELAY_MS = 20;
  * so the fake's own timeout always fires before the simulated latency ends.
  */
 export const FAKE_SLOW_EXTRA_DELAY_MS = 1000;
+
+/**
+ * V2-only deterministic scenarios.  These are fixtures for the orchestrator
+ * and ledger conformance tests; they are never selected by the production
+ * provider resolver below.
+ */
+export const FAKE_V2_SCENARIOS = {
+  success: "success",
+  partialUsage: "partial_usage",
+  unavailableUsage: "unavailable_usage",
+  rateLimited: "rate_limited",
+  serverError: "server_error",
+  timeout: "timeout",
+} as const;
+
+export type FakeV2Scenario = (typeof FAKE_V2_SCENARIOS)[keyof typeof FAKE_V2_SCENARIOS];
+
+export const FAKE_V2_MAX_RETRY_AFTER_MS = MAX_PROVIDER_RETRY_AFTER_MS;
+
+const FAKE_V2_ROUTE = {
+  gatewayRequestId: "fake-gateway-request-001",
+  providerRequestId: "fake-provider-request-001",
+  actualUpstreamEndpoint: "https://fake.invalid/v2/responses",
+  actualModelId: "fake-v2-model",
+  routerAttemptCount: 1,
+} as const;
+
+/**
+ * Small, explicit usage fixtures.  Keeping these values in one place makes
+ * conservation and aggregate tests independent of prompt length or clocks.
+ */
+export const FAKE_V2_USAGE_FIXTURES = {
+  reported: {
+    schemaVersion: "normalized_usage_v2",
+    inputTotalTokens: 12,
+    inputCacheReadTokens: 3,
+    inputCacheWriteTokens: 4,
+    inputStandardTokens: 5,
+    outputTokens: 6,
+    reasoningTokens: 2,
+    cacheUsageReporting: "reported",
+    usageComplete: true,
+  },
+  partial: {
+    schemaVersion: "normalized_usage_v2",
+    inputTotalTokens: 8,
+    inputCacheReadTokens: 3,
+    inputCacheWriteTokens: null,
+    inputStandardTokens: 5,
+    outputTokens: 6,
+    reasoningTokens: null,
+    cacheUsageReporting: "unavailable",
+    usageComplete: false,
+  },
+} as const satisfies Record<string, NormalizedUsageV2>;
+
+export interface FakePolishInferenceProviderOptions {
+  scenario?: FakeV2Scenario;
+  /** Simulated latency for the successful/partial paths. */
+  delayMs?: number;
+  /** Deliberately oversized values are clamped to the shared fake bound. */
+  retryAfterMs?: number;
+  providerReportedCost?: { currency: string; nanos: string };
+  route?: Partial<typeof FAKE_V2_ROUTE>;
+}
+
+export type FakePolishInferenceCompletion =
+  | {
+      kind: "completed";
+      result: PolishInferenceResultV2;
+      usageObservation: Extract<AttemptUsageObservationV1, { kind: "observed" }>;
+    }
+  | {
+      kind: "usage_unavailable";
+      result: null;
+      usageObservation: Extract<AttemptUsageObservationV1, { kind: "unavailable" }>;
+    };
+
+/** Safe, normalized metadata used by deterministic V2 error fixtures. */
+export class FakePolishInferenceProviderError extends Error {
+  readonly code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT";
+  readonly upstreamStatus?: number;
+  readonly retryAfterMs?: number;
+  readonly providerRequestId?: string;
+  readonly usageUnavailable: boolean;
+
+  constructor(
+    code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT",
+    options: {
+      upstreamStatus?: number;
+      retryAfterMs?: number;
+      providerRequestId?: string;
+      usageUnavailable?: boolean;
+    } = {},
+  ) {
+    super("fake V2 provider transport failure");
+    this.name = "FakePolishInferenceProviderError";
+    this.code = code;
+    this.upstreamStatus = options.upstreamStatus;
+    this.retryAfterMs = options.retryAfterMs;
+    this.providerRequestId = options.providerRequestId;
+    // Transport failures stay errors.  Only the explicit missing-usage
+    // scenario is converted by completeAttempt into an observation.
+    this.usageUnavailable = options.usageUnavailable ?? false;
+  }
+}
+
+export interface FakePolishInferenceProviderV2 {
+  complete(
+    request: PolishInferenceRequestV2,
+    options: { signal: AbortSignal; timeoutMs: number },
+  ): Promise<PolishInferenceResultV2>;
+  /** Converts only the intentional missing-usage fixture into an observation. */
+  completeAttempt(
+    request: PolishInferenceRequestV2,
+    options: { signal: AbortSignal; timeoutMs: number },
+  ): Promise<FakePolishInferenceCompletion>;
+}
 
 export interface FakePolishProviderOptions {
   /** Simulated per-call latency in milliseconds (SLOW overrides it). */
@@ -95,6 +222,136 @@ function sleep(ms: number, signal: AbortSignal, timeoutMs: number): Promise<void
     }, timeoutMs);
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function boundedFakeRetryAfterMs(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(Math.floor(value), FAKE_V2_MAX_RETRY_AFTER_MS);
+}
+
+function sleepV2(ms: number, signal: AbortSignal, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+
+    const cleanup = () => {
+      clearTimeout(delayTimer);
+      clearTimeout(timeoutTimer);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason);
+    };
+    const delayTimer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const timeoutTimer = setTimeout(() => {
+      cleanup();
+      reject(new FakePolishInferenceProviderError("UPSTREAM_TIMEOUT"));
+    }, timeoutMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Create a deterministic V2 provider fixture.  It deliberately has no HTTP
+ * client and never logs request contents.  The fake is a conformance seam,
+ * not a substitute for provider validation or a production adapter.
+ */
+export function createFakePolishInferenceProvider(
+  options: FakePolishInferenceProviderOptions = {},
+): FakePolishInferenceProviderV2 {
+  const scenario = options.scenario ?? FAKE_V2_SCENARIOS.success;
+  if (!(Object.values(FAKE_V2_SCENARIOS) as readonly string[]).includes(scenario)) {
+    throw new Error("unknown fake V2 scenario");
+  }
+  const delayMs = options.delayMs ?? DEFAULT_FAKE_DELAY_MS;
+  const route = { ...FAKE_V2_ROUTE, ...options.route };
+
+  const complete = async (
+    request: PolishInferenceRequestV2,
+    { signal, timeoutMs }: { signal: AbortSignal; timeoutMs: number },
+  ): Promise<PolishInferenceResultV2> => {
+    signal.throwIfAborted();
+
+    if (scenario === FAKE_V2_SCENARIOS.rateLimited) {
+      throw new FakePolishInferenceProviderError("UPSTREAM_ERROR", {
+        upstreamStatus: 429,
+        retryAfterMs: boundedFakeRetryAfterMs(options.retryAfterMs),
+        providerRequestId: route.providerRequestId,
+      });
+    }
+    if (scenario === FAKE_V2_SCENARIOS.serverError) {
+      throw new FakePolishInferenceProviderError("UPSTREAM_ERROR", {
+        upstreamStatus: 503,
+        providerRequestId: route.providerRequestId,
+      });
+    }
+    if (scenario === FAKE_V2_SCENARIOS.unavailableUsage) {
+      throw new FakePolishInferenceProviderError("UPSTREAM_ERROR", {
+        providerRequestId: route.providerRequestId,
+        usageUnavailable: true,
+      });
+    }
+
+    const slow = scenario === FAKE_V2_SCENARIOS.timeout;
+    await sleepV2(slow ? timeoutMs + FAKE_SLOW_EXTRA_DELAY_MS : delayMs, signal, timeoutMs);
+
+    const usage =
+      scenario === FAKE_V2_SCENARIOS.partialUsage
+        ? { ...FAKE_V2_USAGE_FIXTURES.partial }
+        : { ...FAKE_V2_USAGE_FIXTURES.reported };
+    const text = JSON.stringify({
+      items: request.targets.map((target) => ({ id: target.id, polished: target.text })),
+    });
+
+    return {
+      schemaVersion: "polish_inference_result_v2",
+      text,
+      finishReason: "stop",
+      usage,
+      route,
+      providerReportedCost: options.providerReportedCost ?? {
+        currency: "CNY",
+        nanos: "123456789",
+      },
+    };
+  };
+
+  return {
+    complete,
+    async completeAttempt(request, callOptions) {
+      try {
+        const result = await complete(request, callOptions);
+        const usageObservation = observedUsage(result.usage);
+        if (usageObservation.kind !== "observed") {
+          throw new Error("fake V2 observed result produced an unavailable usage observation");
+        }
+        return {
+          kind: "completed",
+          result,
+          usageObservation,
+        };
+      } catch (error) {
+        if (error instanceof FakePolishInferenceProviderError && error.usageUnavailable) {
+          const usageObservation = unavailableUsage();
+          if (usageObservation.kind !== "unavailable") {
+            throw new Error("fake V2 unavailable result produced an observed usage observation");
+          }
+          return {
+            kind: "usage_unavailable",
+            result: null,
+            usageObservation,
+          };
+        }
+        throw error;
+      }
+    },
+  };
 }
 
 /** Synthetic, deterministic usage estimate (≈4 chars per token). */

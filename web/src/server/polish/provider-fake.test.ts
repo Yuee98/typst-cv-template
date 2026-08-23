@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PolishProviderError, type PolishProviderRequest } from "./provider";
 import {
+  createFakePolishInferenceProvider,
   createFakePolishProvider,
   DEFAULT_FAKE_DELAY_MS,
   FAKE_PROVIDER_CODEWORDS,
   FAKE_SLOW_EXTRA_DELAY_MS,
+  FAKE_V2_MAX_RETRY_AFTER_MS,
+  FAKE_V2_SCENARIOS,
 } from "./provider-fake";
+import type { PolishInferenceRequestV2 } from "./inference-v2";
+import { classifyProviderRetry, type ProviderRetryErrorMetadata } from "./provider-error";
 
 const DEFAULT_TARGETS = [{ id: "i0", text: "原始文本 i0，含 40% 与 v1.4。" }] as const;
 
@@ -176,5 +181,226 @@ describe("createFakePolishProvider — simulated latency", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toBe(true);
     await expect(promise).resolves.toMatchObject({ finishReason: "stop" });
+  });
+});
+
+const V2_TARGETS = [{ id: "target-1", text: "履历正文 secret-cv-content" }] as const;
+
+function makeV2Request(): PolishInferenceRequestV2 {
+  return {
+    schemaVersion: "polish_inference_request_v2",
+    prompt: {
+      blocks: [
+        {
+          id: "developer-1",
+          role: "developer",
+          stability: "stable",
+          content: "Return JSON items only.",
+        },
+        {
+          id: "user-1",
+          role: "user",
+          stability: "variable",
+          content: "Please polish secret-cv-content.",
+        },
+      ],
+      explicitCacheBoundaryAfter: "developer-1",
+    },
+    outputContract: { kind: "json_object", schemaName: "polish-items", schema: {} },
+    maxOutputTokens: 256,
+    providerSubjectId: "fake-subject-001",
+    promptVersion: "prompt-v2-test",
+    validatorVersion: "validator-v2-test",
+    language: "zh",
+    targets: V2_TARGETS,
+  };
+}
+
+function v2CallOptions(timeoutMs = 1000): { signal: AbortSignal; timeoutMs: number } {
+  return { signal: new AbortController().signal, timeoutMs };
+}
+
+describe("createFakePolishInferenceProvider — V2 conformance", () => {
+  it("returns deterministic success with all cache buckets, route, and reported cost", async () => {
+    const provider = createFakePolishInferenceProvider({ delayMs: 0 });
+    const request = makeV2Request();
+    const first = await provider.complete(request, v2CallOptions());
+    const second = await provider.complete(request, v2CallOptions());
+
+    expect(second).toEqual(first);
+    expect(first.usage).toMatchObject({
+      inputTotalTokens: 12,
+      inputCacheReadTokens: 3,
+      inputCacheWriteTokens: 4,
+      inputStandardTokens: 5,
+      cacheUsageReporting: "reported",
+    });
+    expect(first.usage.inputTotalTokens).toBe(
+      first.usage.inputCacheReadTokens +
+        (first.usage.inputCacheWriteTokens ?? 0) +
+        first.usage.inputStandardTokens,
+    );
+    expect(first.route).toEqual({
+      gatewayRequestId: "fake-gateway-request-001",
+      providerRequestId: "fake-provider-request-001",
+      actualUpstreamEndpoint: "https://fake.invalid/v2/responses",
+      actualModelId: "fake-v2-model",
+      routerAttemptCount: 1,
+    });
+    expect(first.providerReportedCost).toEqual({ currency: "CNY", nanos: "123456789" });
+    expect(first.route).not.toHaveProperty("targets");
+    expect(first.route).not.toHaveProperty("content");
+    expect(first.text).toContain("secret-cv-content");
+  });
+
+  it("supports partial usage without fabricating cache-write zero", async () => {
+    const provider = createFakePolishInferenceProvider({
+      scenario: FAKE_V2_SCENARIOS.partialUsage,
+      delayMs: 0,
+    });
+    const result = await provider.complete(makeV2Request(), v2CallOptions());
+    expect(result.usage).toMatchObject({
+      inputTotalTokens: 8,
+      inputCacheReadTokens: 3,
+      inputCacheWriteTokens: null,
+      inputStandardTokens: 5,
+      cacheUsageReporting: "unavailable",
+      usageComplete: false,
+    });
+  });
+
+  it("turns missing usage into an explicit unavailable observation", async () => {
+    const provider = createFakePolishInferenceProvider({
+      scenario: FAKE_V2_SCENARIOS.unavailableUsage,
+    });
+    await expect(provider.complete(makeV2Request(), v2CallOptions())).rejects.toMatchObject({
+      name: "FakePolishInferenceProviderError",
+      code: "UPSTREAM_ERROR",
+    });
+    await expect(
+      provider.completeAttempt(makeV2Request(), v2CallOptions()),
+    ).resolves.toEqual({
+      kind: "usage_unavailable",
+      result: null,
+      usageObservation: { kind: "unavailable", usage: null, usageComplete: false },
+    });
+  });
+
+  it("exposes safe bounded Retry-After metadata for 429", async () => {
+    const provider = createFakePolishInferenceProvider({
+      scenario: FAKE_V2_SCENARIOS.rateLimited,
+      retryAfterMs: FAKE_V2_MAX_RETRY_AFTER_MS * 10,
+    });
+    const sensitive = makeV2Request();
+    await expect(provider.complete(sensitive, v2CallOptions())).rejects.toMatchObject({
+      code: "UPSTREAM_ERROR",
+      upstreamStatus: 429,
+      retryAfterMs: FAKE_V2_MAX_RETRY_AFTER_MS,
+      providerRequestId: "fake-provider-request-001",
+    });
+    try {
+      await provider.complete(sensitive, v2CallOptions());
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain("secret-cv-content");
+    }
+  });
+
+  it("produces metadata consumable by the shared retry classifier", async () => {
+    const cases = [
+      {
+        scenario: FAKE_V2_SCENARIOS.rateLimited,
+        expected: { retryable: true, retryAfterMs: FAKE_V2_MAX_RETRY_AFTER_MS },
+      },
+      {
+        scenario: FAKE_V2_SCENARIOS.serverError,
+        expected: { retryable: true, retryAfterMs: 0 },
+      },
+      {
+        scenario: FAKE_V2_SCENARIOS.timeout,
+        expected: { retryable: true, retryAfterMs: 0 },
+      },
+    ] as const;
+
+    for (const { scenario, expected } of cases) {
+      vi.useFakeTimers();
+      const provider = createFakePolishInferenceProvider({
+        scenario,
+        retryAfterMs: FAKE_V2_MAX_RETRY_AFTER_MS * 10,
+      });
+      const promise = provider.complete(makeV2Request(), v2CallOptions(50));
+      const failure = promise.catch((error: unknown) => error);
+      if (scenario === FAKE_V2_SCENARIOS.timeout) {
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      expect(
+        classifyProviderRetry((await failure) as ProviderRetryErrorMetadata),
+      ).toEqual(expected);
+      vi.useRealTimers();
+    }
+  });
+
+  it("exposes safe 5xx metadata without a raw response body", async () => {
+    const provider = createFakePolishInferenceProvider({
+      scenario: FAKE_V2_SCENARIOS.serverError,
+    });
+    await expect(provider.complete(makeV2Request(), v2CallOptions())).rejects.toMatchObject({
+      code: "UPSTREAM_ERROR",
+      upstreamStatus: 503,
+      providerRequestId: "fake-provider-request-001",
+    });
+  });
+
+  it("enforces the single-call timeout", async () => {
+    vi.useFakeTimers();
+    const provider = createFakePolishInferenceProvider({ scenario: FAKE_V2_SCENARIOS.timeout });
+    const promise = provider.complete(makeV2Request(), v2CallOptions(50));
+    const assertion = expect(promise).rejects.toMatchObject({
+      name: "FakePolishInferenceProviderError",
+      code: "UPSTREAM_TIMEOUT",
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    await assertion;
+  });
+
+  it("preserves caller cancellation as AbortError", async () => {
+    vi.useFakeTimers();
+    const provider = createFakePolishInferenceProvider({ delayMs: 100 });
+    const controller = new AbortController();
+    const promise = provider.complete(makeV2Request(), {
+      signal: controller.signal,
+      timeoutMs: 1000,
+    });
+    const assertion = expect(promise).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await assertion;
+  });
+
+  it.each([
+    FAKE_V2_SCENARIOS.rateLimited,
+    FAKE_V2_SCENARIOS.serverError,
+    FAKE_V2_SCENARIOS.timeout,
+  ])("does not swallow transport scenario %s in completeAttempt", async (scenario) => {
+    vi.useFakeTimers();
+    const provider = createFakePolishInferenceProvider({ scenario });
+    const promise = provider.completeAttempt(makeV2Request(), v2CallOptions(50));
+    const assertion = expect(promise).rejects.toBeInstanceOf(Error);
+    if (scenario === FAKE_V2_SCENARIOS.timeout) {
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    await assertion;
+  });
+
+  it("does not swallow cancellation in completeAttempt", async () => {
+    vi.useFakeTimers();
+    const provider = createFakePolishInferenceProvider({ delayMs: 100 });
+    const controller = new AbortController();
+    const promise = provider.completeAttempt(makeV2Request(), {
+      signal: controller.signal,
+      timeoutMs: 1000,
+    });
+    const assertion = expect(promise).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await assertion;
   });
 });

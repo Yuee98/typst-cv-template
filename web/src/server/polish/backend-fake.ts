@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 
 import type { PolishProvider } from "./provider";
 import type { PolishRouteDeps } from "./lifecycle";
+import type { FakePolishInferenceProviderV2 } from "./provider-fake";
 
 /** Fixed pseudonymous user id every fake token resolves to. */
 export const FAKE_BACKEND_USER_ID = "00000000-0000-4000-8000-0000000000fa";
@@ -66,5 +67,25 @@ export function createFakePolishRouteDeps(options: {
     providerUserId: (userId) => `fake-backend-${userId}`,
     model: "fake-llm",
     aiPolishEnabled: env.AI_POLISH_ENABLED === "true",
+  };
+}
+
+/**
+ * V2 test-only backend shape.  Lifecycle code can opt into the deterministic
+ * inference fixture without changing the existing V1 fake route or its
+ * production guard.  No request content is copied into these dependencies.
+ */
+export interface FakePolishRouteDepsV2 extends PolishRouteDeps {
+  providerV2: FakePolishInferenceProviderV2;
+}
+
+export function createFakePolishV2RouteDeps(options: {
+  provider: PolishProvider;
+  providerV2: FakePolishInferenceProviderV2;
+  env?: Record<string, string | undefined>;
+}): FakePolishRouteDepsV2 {
+  return {
+    ...createFakePolishRouteDeps(options),
+    providerV2: options.providerV2,
   };
 }
