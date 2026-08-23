@@ -90,6 +90,21 @@ const FAKE_V2_ROUTE = {
   routerAttemptCount: 1,
 } as const;
 
+type FakeV2Route = PolishInferenceResultV2["route"];
+
+const FAKE_V2_ROUTE_KEYS = new Set<keyof FakeV2Route>([
+  "gatewayRequestId",
+  "providerRequestId",
+  "actualUpstreamEndpoint",
+  "actualModelId",
+  "routerAttemptCount",
+]);
+
+const MAX_FAKE_V2_ROUTE_TOKEN_LENGTH = 256;
+const MAX_FAKE_V2_ENDPOINT_LENGTH = 512;
+const MAX_FAKE_V2_ROUTER_ATTEMPTS = 100;
+const MAX_FAKE_V2_COST_NANOS = BigInt("1000000000000000000000000000000");
+
 /**
  * Small, explicit usage fixtures.  Keeping these values in one place makes
  * conservation and aggregate tests independent of prompt length or clocks.
@@ -126,7 +141,7 @@ export interface FakePolishInferenceProviderOptions {
   /** Deliberately oversized values are clamped to the shared fake bound. */
   retryAfterMs?: number;
   providerReportedCost?: { currency: string; nanos: string };
-  route?: Partial<typeof FAKE_V2_ROUTE>;
+  route?: Partial<FakeV2Route>;
 }
 
 export type FakePolishInferenceCompletion =
@@ -136,10 +151,21 @@ export type FakePolishInferenceCompletion =
       usageObservation: Extract<AttemptUsageObservationV1, { kind: "observed" }>;
     }
   | {
-      kind: "usage_unavailable";
+      kind: "failed";
+      failure: FakeV2Failure;
+      route: FakeV2Route;
+      providerBillable: null;
       result: null;
       usageObservation: Extract<AttemptUsageObservationV1, { kind: "unavailable" }>;
     };
+
+export interface FakeV2Failure {
+  code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT";
+  upstreamStatus?: number;
+  retryable: boolean;
+  retryAfterMs: number;
+  providerRequestId?: string;
+}
 
 /** Safe, normalized metadata used by deterministic V2 error fixtures. */
 export class FakePolishInferenceProviderError extends Error {
@@ -147,6 +173,7 @@ export class FakePolishInferenceProviderError extends Error {
   readonly upstreamStatus?: number;
   readonly retryAfterMs?: number;
   readonly providerRequestId?: string;
+  readonly retryable?: boolean;
   readonly usageUnavailable: boolean;
 
   constructor(
@@ -155,6 +182,7 @@ export class FakePolishInferenceProviderError extends Error {
       upstreamStatus?: number;
       retryAfterMs?: number;
       providerRequestId?: string;
+      retryable?: boolean;
       usageUnavailable?: boolean;
     } = {},
   ) {
@@ -164,6 +192,7 @@ export class FakePolishInferenceProviderError extends Error {
     this.upstreamStatus = options.upstreamStatus;
     this.retryAfterMs = options.retryAfterMs;
     this.providerRequestId = options.providerRequestId;
+    this.retryable = options.retryable;
     // Transport failures stay errors.  Only the explicit missing-usage
     // scenario is converted by completeAttempt into an observation.
     this.usageUnavailable = options.usageUnavailable ?? false;
@@ -175,7 +204,7 @@ export interface FakePolishInferenceProviderV2 {
     request: PolishInferenceRequestV2,
     options: { signal: AbortSignal; timeoutMs: number },
   ): Promise<PolishInferenceResultV2>;
-  /** Converts only the intentional missing-usage fixture into an observation. */
+  /** Preserves the missing-usage failure and attaches its unavailable observation. */
   completeAttempt(
     request: PolishInferenceRequestV2,
     options: { signal: AbortSignal; timeoutMs: number },
@@ -229,6 +258,111 @@ function boundedFakeRetryAfterMs(value: number | undefined): number {
   return Math.min(Math.floor(value), FAKE_V2_MAX_RETRY_AFTER_MS);
 }
 
+function assertSafeRouteToken(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
+    throw new Error(`invalid fake V2 route ${field}`);
+  }
+  if (value.trim() !== value || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error(`invalid fake V2 route ${field}`);
+  }
+  if (/(?:bearer|basic)\s+|(?:api[_-]?key|password|secret)\s*[:=]/iu.test(value)) {
+    throw new Error(`invalid fake V2 route ${field}`);
+  }
+  return value;
+}
+
+function normalizeFakeV2Route(override: Partial<FakeV2Route> | undefined): FakeV2Route {
+  if (override !== undefined &&
+    (typeof override !== "object" || override === null || Array.isArray(override))) {
+    throw new Error("invalid fake V2 route override");
+  }
+
+  if (override !== undefined) {
+    for (const key of Object.keys(override)) {
+      if (!FAKE_V2_ROUTE_KEYS.has(key as keyof FakeV2Route)) {
+        throw new Error("unknown fake V2 route field");
+      }
+      if ((override as Record<string, unknown>)[key] === undefined) {
+        throw new Error(`invalid fake V2 route ${key}`);
+      }
+    }
+  }
+
+  const route: FakeV2Route = { ...FAKE_V2_ROUTE };
+  const value = override as Record<string, unknown> | undefined;
+  for (const key of FAKE_V2_ROUTE_KEYS) {
+    const candidate = value?.[key];
+    if (candidate === undefined) continue;
+    if (key === "routerAttemptCount") {
+      if (
+        typeof candidate !== "number" ||
+        !Number.isSafeInteger(candidate) ||
+        candidate < 1 ||
+        candidate > MAX_FAKE_V2_ROUTER_ATTEMPTS
+      ) {
+        throw new Error(`invalid fake V2 route ${key}`);
+      }
+      route[key] = candidate;
+    } else if (key === "actualUpstreamEndpoint") {
+      const endpoint = assertSafeRouteToken(candidate, key, MAX_FAKE_V2_ENDPOINT_LENGTH);
+      let parsed: URL;
+      try {
+        parsed = new URL(endpoint);
+      } catch {
+        throw new Error(`invalid fake V2 route ${key}`);
+      }
+      if (
+        parsed.protocol !== "https:" ||
+        parsed.username !== "" ||
+        parsed.password !== "" ||
+        parsed.search !== "" ||
+        parsed.hash !== ""
+      ) {
+        throw new Error(`invalid fake V2 route ${key}`);
+      }
+      route[key] = parsed.toString().replace(/\/$/u, "");
+    } else {
+      route[key] = assertSafeRouteToken(candidate, key, MAX_FAKE_V2_ROUTE_TOKEN_LENGTH);
+    }
+  }
+  return route;
+}
+
+function normalizeFakeV2Cost(
+  value: { currency: string; nanos: string } | undefined,
+): { currency: string; nanos: string } {
+  const candidate = value ?? { currency: "CNY", nanos: "123456789" };
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    typeof candidate.currency !== "string" ||
+    typeof candidate.nanos !== "string" ||
+    !/^[A-Z]{3}$/u.test(candidate.currency)
+  ) {
+    throw new Error("invalid fake V2 providerReportedCost currency");
+  }
+  if (!/^(?:0|[1-9]\d*)$/u.test(candidate.nanos)) {
+    throw new Error("invalid fake V2 providerReportedCost nanos");
+  }
+  const nanos = BigInt(candidate.nanos);
+  if (nanos > MAX_FAKE_V2_COST_NANOS) {
+    throw new Error("invalid fake V2 providerReportedCost nanos");
+  }
+  return { currency: candidate.currency, nanos: nanos.toString() };
+}
+
+function toFakeV2Failure(error: FakePolishInferenceProviderError): FakeV2Failure {
+  return {
+    code: error.code,
+    ...(error.upstreamStatus === undefined ? {} : { upstreamStatus: error.upstreamStatus }),
+    retryable: error.retryable ?? false,
+    retryAfterMs: boundedFakeRetryAfterMs(error.retryAfterMs),
+    ...(error.providerRequestId === undefined
+      ? {}
+      : { providerRequestId: error.providerRequestId }),
+  };
+}
+
 function sleepV2(ms: number, signal: AbortSignal, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -270,7 +404,12 @@ export function createFakePolishInferenceProvider(
     throw new Error("unknown fake V2 scenario");
   }
   const delayMs = options.delayMs ?? DEFAULT_FAKE_DELAY_MS;
-  const route = { ...FAKE_V2_ROUTE, ...options.route };
+  if (!Number.isFinite(delayMs) || delayMs < 0 || delayMs > 60_000) {
+    throw new Error("invalid fake V2 delayMs");
+  }
+  const retryAfterMs = boundedFakeRetryAfterMs(options.retryAfterMs);
+  const routeSnapshot = normalizeFakeV2Route(options.route);
+  const providerReportedCostSnapshot = normalizeFakeV2Cost(options.providerReportedCost);
 
   const complete = async (
     request: PolishInferenceRequestV2,
@@ -281,19 +420,20 @@ export function createFakePolishInferenceProvider(
     if (scenario === FAKE_V2_SCENARIOS.rateLimited) {
       throw new FakePolishInferenceProviderError("UPSTREAM_ERROR", {
         upstreamStatus: 429,
-        retryAfterMs: boundedFakeRetryAfterMs(options.retryAfterMs),
-        providerRequestId: route.providerRequestId,
+        retryAfterMs,
+        providerRequestId: routeSnapshot.providerRequestId,
       });
     }
     if (scenario === FAKE_V2_SCENARIOS.serverError) {
       throw new FakePolishInferenceProviderError("UPSTREAM_ERROR", {
         upstreamStatus: 503,
-        providerRequestId: route.providerRequestId,
+        providerRequestId: routeSnapshot.providerRequestId,
       });
     }
     if (scenario === FAKE_V2_SCENARIOS.unavailableUsage) {
       throw new FakePolishInferenceProviderError("UPSTREAM_ERROR", {
-        providerRequestId: route.providerRequestId,
+        providerRequestId: routeSnapshot.providerRequestId,
+        retryable: false,
         usageUnavailable: true,
       });
     }
@@ -314,11 +454,8 @@ export function createFakePolishInferenceProvider(
       text,
       finishReason: "stop",
       usage,
-      route,
-      providerReportedCost: options.providerReportedCost ?? {
-        currency: "CNY",
-        nanos: "123456789",
-      },
+      route: { ...routeSnapshot },
+      providerReportedCost: { ...providerReportedCostSnapshot },
     };
   };
 
@@ -343,7 +480,10 @@ export function createFakePolishInferenceProvider(
             throw new Error("fake V2 unavailable result produced an observed usage observation");
           }
           return {
-            kind: "usage_unavailable",
+            kind: "failed",
+            failure: toFakeV2Failure(error),
+            route: { ...routeSnapshot },
+            providerBillable: null,
             result: null,
             usageObservation,
           };

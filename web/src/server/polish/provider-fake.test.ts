@@ -277,13 +277,91 @@ describe("createFakePolishInferenceProvider — V2 conformance", () => {
       name: "FakePolishInferenceProviderError",
       code: "UPSTREAM_ERROR",
     });
-    await expect(
-      provider.completeAttempt(makeV2Request(), v2CallOptions()),
-    ).resolves.toEqual({
-      kind: "usage_unavailable",
+    const outcome = await provider.completeAttempt(makeV2Request(), v2CallOptions());
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      route: {
+        providerRequestId: "fake-provider-request-001",
+        actualModelId: "fake-v2-model",
+      },
+      providerBillable: null,
       result: null,
       usageObservation: { kind: "unavailable", usage: null, usageComplete: false },
+      failure: {
+        code: "UPSTREAM_ERROR",
+        retryable: false,
+        retryAfterMs: 0,
+        providerRequestId: "fake-provider-request-001",
+      },
     });
+    if (outcome.kind !== "failed") throw new Error("expected failed fake outcome");
+    expect(classifyProviderRetry(outcome.failure)).toEqual({
+      retryable: false,
+      retryAfterMs: 0,
+    });
+    const serialized = JSON.stringify(outcome);
+    expect(serialized).not.toContain("secret-cv-content");
+    expect(serialized).not.toContain("Please polish");
+  });
+
+  it("snapshots safe custom route/cost values and isolates each result", async () => {
+    const routeOverride = {
+      gatewayRequestId: "gateway-custom-002",
+      providerRequestId: "provider-custom-002",
+      actualUpstreamEndpoint: "https://custom.invalid/v2/responses",
+      actualModelId: "custom-v2-model",
+      routerAttemptCount: 2,
+    };
+    const reportedCost = { currency: "USD", nanos: "42" };
+    const provider = createFakePolishInferenceProvider({
+      delayMs: 0,
+      route: routeOverride,
+      providerReportedCost: reportedCost,
+    });
+
+    routeOverride.actualModelId = "mutated-after-create";
+    reportedCost.nanos = "999";
+    const first = await provider.complete(makeV2Request(), v2CallOptions());
+    first.route.actualModelId = "mutated-first-result";
+    if (first.providerReportedCost) first.providerReportedCost.nanos = "1000";
+
+    const second = await provider.complete(makeV2Request(), v2CallOptions());
+    expect(second.route).toEqual({
+      gatewayRequestId: "gateway-custom-002",
+      providerRequestId: "provider-custom-002",
+      actualUpstreamEndpoint: "https://custom.invalid/v2/responses",
+      actualModelId: "custom-v2-model",
+      routerAttemptCount: 2,
+    });
+    expect(second.providerReportedCost).toEqual({ currency: "USD", nanos: "42" });
+  });
+
+  it.each([
+    { route: { actualUpstreamEndpoint: "http://insecure.invalid/v2" } },
+    { route: { actualUpstreamEndpoint: "https://user:pass@fake.invalid/v2" } },
+    { route: { actualUpstreamEndpoint: "https://fake.invalid/v2?token=secret" } },
+    { route: { actualUpstreamEndpoint: "https://fake.invalid/v2\nlog" } },
+    { route: { gatewayRequestId: "Bearer secret" } },
+    { route: { routerAttemptCount: 0 } },
+    { route: { routerAttemptCount: 101 } },
+    { route: { unexpected: "field" } },
+  ])("fails closed for unsafe route override %#", ({ route }) => {
+    expect(() =>
+      createFakePolishInferenceProvider({
+        route: route as never,
+      }),
+    ).toThrow(/invalid|unknown fake V2 route/u);
+  });
+
+  it.each([
+    { currency: "cny", nanos: "1" },
+    { currency: "CNY", nanos: "-1" },
+    { currency: "CNY", nanos: "1.5" },
+    { currency: "CNY", nanos: "1000000000000000000000000000001" },
+  ])("fails closed for unsafe provider-reported cost %#", (providerReportedCost) => {
+    expect(() => createFakePolishInferenceProvider({ providerReportedCost })).toThrow(
+      /invalid fake V2 providerReportedCost/u,
+    );
   });
 
   it("exposes safe bounded Retry-After metadata for 429", async () => {
