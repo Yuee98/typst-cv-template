@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import routingRulesFixture from "../fixtures/routing-rules-v1.json";
 import {
   createAnonClient,
   createServiceClient,
@@ -469,13 +470,24 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
   it("accepts HMAC correlation tags plus exact frozen DeepSeek/MiMo route provenance", async () => {
     const deepseek = await createReservation();
+    const routePairs = routingRulesFixture.routeObservationPairs;
+    expect(routePairs.map(({ endpointAlias }) => endpointAlias).sort()).toEqual([
+      "deepseek_official",
+      "mimo_cn_official",
+    ]);
+
+    const mimoPair = routePairs.find(({ endpointAlias }) => endpointAlias === "mimo_cn_official");
+    expect(mimoPair).toBeDefined();
+    if (!mimoPair) {
+      throw new Error("routing fixture is missing mimo_cn_official");
+    }
     const mimo = await createCustomReservation({
       key: "mimo",
       gatewayKind: "direct_mimo",
       adapterKind: "mimo_responses_v1",
       wireApiKind: "responses_v1",
-      endpointAlias: "mimo_cn_official",
-      modelId: "mimo-v2.5-pro",
+      endpointAlias: mimoPair.endpointAlias,
+      modelId: mimoPair.modelId,
     });
     const modelProvenance = await createCustomReservation({
       key: "model-provenance",
@@ -485,17 +497,22 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       endpointAlias: "deepseek_official",
       modelId: "vendor/basic-model@2026",
     });
+    const fixtureByEndpointAlias = new Map([
+      ["deepseek_official", deepseek],
+      ["mimo_cn_official", mimo],
+    ]);
     const cases = [
-      {
-        fixture: deepseek,
-        modelId: "deepseek-v4-flash",
-        endpoint: "https://api.deepseek.com/chat/completions",
-      },
-      {
-        fixture: mimo,
-        modelId: "mimo-v2.5-pro",
-        endpoint: "https://api.xiaomimimo.com/v1/responses",
-      },
+      ...routePairs.map((pair) => {
+        const fixture = fixtureByEndpointAlias.get(pair.endpointAlias);
+        if (!fixture) {
+          throw new Error(`DB route mirror is missing ${pair.endpointAlias}`);
+        }
+        return {
+          fixture,
+          modelId: pair.modelId,
+          endpoint: pair.canonicalEndpoint,
+        };
+      }),
       {
         fixture: modelProvenance,
         modelId: "vendor/basic-model@2026",
