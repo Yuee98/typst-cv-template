@@ -1386,25 +1386,29 @@ export async function orchestratePolishV2<TStartResult = unknown>(
   request: PolishRequest,
   options: PolishOrchestrateV2Options<TStartResult>,
 ): Promise<PolishOrchestratorSuccessV2> {
+  // The caller retains the request object and callbacks/provider awaits create
+  // mutation windows. Bind the entire orchestration (prompt, targets, output
+  // budget, retries and validation) to one immutable entry snapshot.
+  const requestSnapshot = deepFreezeV2(structuredClone(request));
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? sleepWithAbort;
   const deadline = now() + POLISH_TOTAL_DEADLINE_MS;
-  // Snapshot caller-owned JSON once. Retries cannot observe later mutation of
-  // the reservation-frozen price or output contract.
+  // Snapshot caller-owned configuration once. Retries cannot observe later
+  // mutation of the reservation-frozen price or output contract.
   const frozenPrice = deepFreezeV2(structuredClone(options.frozenPrice));
   const outputContract = deepFreezeV2(
     structuredClone(options.outputContract ?? POLISH_OUTPUT_CONTRACT_V2),
   );
   const facts: PolishAttemptCompletedFactV2[] = [];
   const promptInput: PolishPromptInput = {
-    language: request.language,
-    sectionId: request.sectionId,
-    granularity: request.granularity,
-    items: request.items,
-    contextLevel: request.context.level,
-    references: request.context.references,
-    stylePreset: request.stylePreset,
-    styleInstruction: request.styleInstruction,
+    language: requestSnapshot.language,
+    sectionId: requestSnapshot.sectionId,
+    granularity: requestSnapshot.granularity,
+    items: requestSnapshot.items,
+    contextLevel: requestSnapshot.context.level,
+    references: requestSnapshot.context.references,
+    stylePreset: requestSnapshot.stylePreset,
+    styleInstruction: requestSnapshot.styleInstruction,
   };
 
   let attemptNo = 0;
@@ -1423,7 +1427,7 @@ export async function orchestratePolishV2<TStartResult = unknown>(
     attemptNo += 1;
     const started = freezeAttemptStartedV2(attemptNo, now(), deadline);
     const inferenceRequest = buildInferenceRequestForAttemptV2(
-      request,
+      requestSnapshot,
       promptInput,
       options.providerSubjectId,
       outputContract,
@@ -1791,7 +1795,7 @@ export async function orchestratePolishV2<TStartResult = unknown>(
 
     const validation = validatePolishOutput(
       { text: normalized.text, finishReason: normalized.finishReason },
-      { items: request.items, language: request.language },
+      { items: requestSnapshot.items, language: requestSnapshot.language },
     );
     const succeeded = validation.ok;
     const upstreamValidationFailure =

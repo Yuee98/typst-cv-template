@@ -1604,4 +1604,115 @@ describe("orchestratePolishV2 — deep canonical request immutability", () => {
     expect(callerSchema.nested.discriminator).toBe("original");
     expect(Object.isFrozen(callerSchema.nested)).toBe(false);
   });
+
+  it("binds retry prompt, targets, budget and validation against callback mutation", async () => {
+    const mutableRequest = makeRequest({
+      context: {
+        level: 1,
+        references: [{ role: "sibling", text: "original sibling context" }],
+      },
+    });
+    const originalText = mutableRequest.items[0].text;
+    const originalBudget = computePolishMaxOutputTokens(mutableRequest.items);
+    const { provider, calls } = makeV2Provider(
+      async () => v2Result("not-json"),
+      async () => v2Result(),
+    );
+
+    const result = await orchestratePolishV2(
+      provider,
+      mutableRequest,
+      v2Options(new AbortController().signal, {
+        now: fakeClock().now,
+        onAttemptCompleted: (event) => {
+          if (event.started.attemptNo !== 1) return;
+          mutableRequest.language = "en";
+          mutableRequest.sectionId = "education";
+          mutableRequest.items[0].id = "mutated-id";
+          mutableRequest.items[0].text = "MUTATED CONTENT 99%".repeat(20);
+          mutableRequest.context.references[0].text = "mutated sibling context";
+          mutableRequest.styleInstruction = "mutated instruction";
+        },
+      }),
+    );
+
+    expect(result.attemptFacts.map((fact) => fact.status)).toEqual([
+      "invalid_output",
+      "succeeded",
+    ]);
+    expect(result.items).toEqual([{ id: "i0", polished: VALID_ZH_POLISHED }]);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call) => call.request.maxOutputTokens)).toEqual([
+      originalBudget,
+      originalBudget,
+    ]);
+    expect(calls[1].request.targets).toEqual([{ id: "i0", text: originalText }]);
+    expect(calls[1].request.language).toBe("zh");
+    const retryPrompt = calls[1].request.prompt.blocks[1].content;
+    expect(retryPrompt).toContain(originalText);
+    expect(retryPrompt).toContain("original sibling context");
+    expect(retryPrompt).not.toContain("MUTATED CONTENT");
+    expect(retryPrompt).not.toContain("mutated sibling context");
+    expect(retryPrompt).not.toContain('"education" section');
+  });
+
+  it("stays bound to the entry snapshot when the caller mutates a pending request", async () => {
+    const mutableRequest = makeRequest({
+      context: {
+        level: 1,
+        references: [{ role: "sibling", text: "pending original context" }],
+      },
+    });
+    const originalText = mutableRequest.items[0].text;
+    let markProviderEntered: (() => void) | undefined;
+    const providerEntered = new Promise<void>((resolve) => {
+      markProviderEntered = resolve;
+    });
+    let resolveFirstAttempt: ((result: PolishInferenceResultV2) => void) | undefined;
+    const firstAttempt = new Promise<PolishInferenceResultV2>((resolve) => {
+      resolveFirstAttempt = resolve;
+    });
+    const { provider, calls } = makeV2Provider(
+      async () => {
+        markProviderEntered?.();
+        return firstAttempt;
+      },
+      async () => v2Result(),
+    );
+
+    const operation = orchestratePolishV2(
+      provider,
+      mutableRequest,
+      v2Options(new AbortController().signal, { now: fakeClock().now }),
+    );
+    await providerEntered;
+
+    mutableRequest.language = "en";
+    mutableRequest.granularity = "section";
+    mutableRequest.items.splice(0, 1, {
+      id: "pending-mutated-id",
+      kind: "experience_bullet",
+      text: "PENDING MUTATED CONTENT 99%",
+    });
+    mutableRequest.context.references.push({
+      role: "sibling",
+      text: "pending mutated context",
+    });
+    resolveFirstAttempt?.(v2Result("not-json"));
+
+    const result = await operation;
+    expect(result.attemptFacts.map((fact) => fact.status)).toEqual([
+      "invalid_output",
+      "succeeded",
+    ]);
+    expect(result.items).toEqual([{ id: "i0", polished: VALID_ZH_POLISHED }]);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.request.targets).toEqual([{ id: "i0", text: originalText }]);
+      expect(call.request.language).toBe("zh");
+      expect(call.request.prompt.blocks[1].content).toContain(originalText);
+      expect(call.request.prompt.blocks[1].content).not.toContain("PENDING MUTATED");
+      expect(call.request.prompt.blocks[1].content).not.toContain("pending mutated context");
+    }
+  });
 });
