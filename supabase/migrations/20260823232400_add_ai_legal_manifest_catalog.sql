@@ -69,6 +69,15 @@ revoke all on public.ai_legal_manifest_versions
 grant select, insert, update, delete on public.ai_legal_manifest_versions
   to service_role;
 
+-- Normalize the inherited DB-003A grants as well. In particular, authoring
+-- never grants schema-level TRUNCATE, REFERENCES, or TRIGGER authority.
+revoke all on public.ai_legal_bundle_versions from service_role;
+revoke all on public.ai_legal_bundle_manifests from service_role;
+grant select, insert, update, delete on public.ai_legal_bundle_versions
+  to service_role;
+grant select, insert, update, delete on public.ai_legal_bundle_manifests
+  to service_role;
+
 -- DB-003B preserves DB-003A's dark-stack service-role authoring posture.
 -- Catalog UPDATE/DELETE remain structurally forbidden by the trigger above;
 -- DB-013 owns the later operator-lifecycle privilege contraction.
