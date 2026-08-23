@@ -182,6 +182,50 @@ describe.skipIf(!RUN_DB_TESTS)("provider profile foundation (real DB)", () => {
     expect(backwards.error?.code).toBe(CHECK_VIOLATION);
   });
 
+  it("clamps trigger-managed lifecycle timestamps to monotonic row time", async () => {
+    const profile = await createProfile("lifecycle-clock-clamp");
+    const futureCreatedAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const { data: version, error: insertError } = await service
+      .from("ai_provider_profile_versions")
+      .insert({ ...versionFixture(profile.id), created_at: futureCreatedAt })
+      .select("id,created_at")
+      .single();
+    expect(insertError).toBeNull();
+
+    const validated = await service
+      .from("ai_provider_profile_versions")
+      .update({ status: "validated" })
+      .eq("id", version!.id)
+      .select("created_at,validated_at")
+      .single();
+    expect(validated.error).toBeNull();
+    expect(Date.parse(validated.data!.validated_at!)).toBeGreaterThanOrEqual(
+      Date.parse(validated.data!.created_at),
+    );
+
+    const active = await service
+      .from("ai_provider_profile_versions")
+      .update({ status: "active" })
+      .eq("id", version!.id)
+      .select("created_at,validated_at,activated_at")
+      .single();
+    expect(active.error).toBeNull();
+    expect(Date.parse(active.data!.activated_at!)).toBeGreaterThanOrEqual(
+      Date.parse(active.data!.validated_at!),
+    );
+
+    const retired = await service
+      .from("ai_provider_profile_versions")
+      .update({ status: "retired" })
+      .eq("id", version!.id)
+      .select("created_at,validated_at,activated_at,retired_at")
+      .single();
+    expect(retired.error).toBeNull();
+    expect(Date.parse(retired.data!.retired_at!)).toBeGreaterThanOrEqual(
+      Date.parse(retired.data!.activated_at!),
+    );
+  });
+
   describe.each([
     ["anon", () => anon],
     ["authenticated", () => authed],

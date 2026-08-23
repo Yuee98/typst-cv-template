@@ -305,4 +305,58 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .eq("id", policy.id);
     expect(backwards.error?.code).toBe(CHECK_VIOLATION);
   });
+
+  it("clamps policy lifecycle timestamps to monotonic row time", async () => {
+    const profile = await createProfileVersion("policy-clock-clamp", "validated");
+    const futureCreatedAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const { data: policy, error: insertError } = await service
+      .from("ai_routing_policy_versions")
+      .insert({
+        policy_key: `test.routing.policy-clock-clamp.${crypto.randomUUID()}`,
+        version: 1,
+        status: "draft",
+        timezone: "Asia/Shanghai",
+        rules: { kind: "fixture_default_only_v1" },
+        default_profile_version_id: profile.id,
+        legal_bundle_version: legalBundleVersion,
+        config_sha256: "f".repeat(64),
+        created_at: futureCreatedAt,
+      })
+      .select("id,created_at")
+      .single();
+    expect(insertError).toBeNull();
+
+    const validated = await service
+      .from("ai_routing_policy_versions")
+      .update({ status: "validated" })
+      .eq("id", policy!.id)
+      .select("created_at,validated_at")
+      .single();
+    expect(validated.error).toBeNull();
+    expect(Date.parse(validated.data!.validated_at!)).toBeGreaterThanOrEqual(
+      Date.parse(validated.data!.created_at),
+    );
+
+    const active = await service
+      .from("ai_routing_policy_versions")
+      .update({ status: "active" })
+      .eq("id", policy!.id)
+      .select("created_at,validated_at,activated_at")
+      .single();
+    expect(active.error).toBeNull();
+    expect(Date.parse(active.data!.activated_at!)).toBeGreaterThanOrEqual(
+      Date.parse(active.data!.validated_at!),
+    );
+
+    const retired = await service
+      .from("ai_routing_policy_versions")
+      .update({ status: "retired" })
+      .eq("id", policy!.id)
+      .select("created_at,validated_at,activated_at,retired_at")
+      .single();
+    expect(retired.error).toBeNull();
+    expect(Date.parse(retired.data!.retired_at!)).toBeGreaterThanOrEqual(
+      Date.parse(retired.data!.activated_at!),
+    );
+  });
 });

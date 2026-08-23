@@ -166,13 +166,18 @@ begin
   end if;
 
   if new.status in ('validated', 'canary', 'active') and new.validated_at is null then
-    new.validated_at := now();
+    new.validated_at := greatest(clock_timestamp(), new.created_at);
   end if;
   if new.status = 'active' and new.activated_at is null then
-    new.activated_at := now();
+    new.activated_at := greatest(clock_timestamp(), new.created_at, new.validated_at);
   end if;
   if new.status = 'retired' and new.retired_at is null then
-    new.retired_at := now();
+    new.retired_at := greatest(
+      clock_timestamp(),
+      new.created_at,
+      new.validated_at,
+      new.activated_at
+    );
   end if;
   return new;
 end;
@@ -406,13 +411,18 @@ begin
   end if;
 
   if new.status in ('validated', 'canary', 'active') and new.validated_at is null then
-    new.validated_at := now();
+    new.validated_at := greatest(clock_timestamp(), new.created_at);
   end if;
   if new.status = 'active' and new.activated_at is null then
-    new.activated_at := now();
+    new.activated_at := greatest(clock_timestamp(), new.created_at, new.validated_at);
   end if;
   if new.status = 'retired' and new.retired_at is null then
-    new.retired_at := now();
+    new.retired_at := greatest(
+      clock_timestamp(),
+      new.created_at,
+      new.validated_at,
+      new.activated_at
+    );
   end if;
   return new;
 end;
