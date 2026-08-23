@@ -6,71 +6,153 @@
       "profileVersionId": "11111111-1111-4111-8111-111111111111",
       "priceVersionId": "11111111-1111-4111-8111-111111111112"
     },
+    "deepseekPeak": {
+      "profileVersionId": "11111111-1111-4111-8111-111111111111",
+      "priceVersionId": "11111111-1111-4111-8111-111111111113"
+    },
     "mimoDefault": {
       "profileVersionId": "22222222-2222-4222-8222-222222222221",
       "priceVersionId": "22222222-2222-4222-8222-222222222222"
     }
   },
   "validRules": {
-    "schemaVersion": "routing_rules_v1",
-    "defaultRoute": {
-      "profileVersionId": "11111111-1111-4111-8111-111111111111",
-      "priceVersionId": "11111111-1111-4111-8111-111111111112"
-    },
-    "windows": [
-      {
-        "weekdays": [1, 2, 3, 4, 5],
-        "startMinute": 540,
-        "endMinute": 720,
-        "route": {
-          "profileVersionId": "22222222-2222-4222-8222-222222222221",
-          "priceVersionId": "22222222-2222-4222-8222-222222222222"
-        }
+    "g2DeepseekOnly": {
+      "schemaVersion": "routing_rules_v1",
+      "defaultRoute": {
+        "profileVersionId": "11111111-1111-4111-8111-111111111111",
+        "priceVersionId": "11111111-1111-4111-8111-111111111112"
       },
-      {
-        "weekdays": [1, 2, 3, 4, 5],
-        "startMinute": 840,
-        "endMinute": 1080,
-        "route": {
-          "profileVersionId": "22222222-2222-4222-8222-222222222221",
-          "priceVersionId": "22222222-2222-4222-8222-222222222222"
+      "windows": [
+        {
+          "weekdays": [1, 2, 3, 4, 5],
+          "startMinute": 540,
+          "endMinute": 720,
+          "route": {
+            "profileVersionId": "11111111-1111-4111-8111-111111111111",
+            "priceVersionId": "11111111-1111-4111-8111-111111111113"
+          }
+        },
+        {
+          "weekdays": [1, 2, 3, 4, 5],
+          "startMinute": 840,
+          "endMinute": 1080,
+          "route": {
+            "profileVersionId": "11111111-1111-4111-8111-111111111111",
+            "priceVersionId": "11111111-1111-4111-8111-111111111113"
+          }
         }
-      }
-    ]
+      ]
+    },
+    "g4InitialProvider": {
+      "schemaVersion": "routing_rules_v1",
+      "defaultRoute": {
+        "profileVersionId": "11111111-1111-4111-8111-111111111111",
+        "priceVersionId": "11111111-1111-4111-8111-111111111112"
+      },
+      "windows": [
+        {
+          "weekdays": [1, 2, 3, 4, 5],
+          "startMinute": 540,
+          "endMinute": 720,
+          "route": {
+            "profileVersionId": "22222222-2222-4222-8222-222222222221",
+            "priceVersionId": "22222222-2222-4222-8222-222222222222"
+          }
+        },
+        {
+          "weekdays": [1, 2, 3, 4, 5],
+          "startMinute": 840,
+          "endMinute": 1080,
+          "route": {
+            "profileVersionId": "22222222-2222-4222-8222-222222222221",
+            "priceVersionId": "22222222-2222-4222-8222-222222222222"
+          }
+        }
+      ]
+    }
   },
   "selectionCases": [
     {
-      "name": "weekday before first window",
+      "name": "G2 weekday before first window",
+      "rulesFixture": "g2DeepseekOnly",
       "at": "2026-08-24T00:59:59.000Z",
       "expectedRoute": "deepseekOffpeak"
     },
     {
-      "name": "first window inclusive start",
+      "name": "G2 first window inclusive start",
+      "rulesFixture": "g2DeepseekOnly",
       "at": "2026-08-24T01:00:00.000Z",
-      "expectedRoute": "mimoDefault"
+      "expectedRoute": "deepseekPeak"
     },
     {
-      "name": "first window exclusive end",
+      "name": "G2 first window exclusive end",
+      "rulesFixture": "g2DeepseekOnly",
       "at": "2026-08-24T04:00:00.000Z",
       "expectedRoute": "deepseekOffpeak"
     },
     {
-      "name": "second window inclusive start",
+      "name": "G2 second window inclusive start",
+      "rulesFixture": "g2DeepseekOnly",
       "at": "2026-08-24T06:00:00.000Z",
-      "expectedRoute": "mimoDefault"
+      "expectedRoute": "deepseekPeak"
     },
     {
-      "name": "second window last minute",
+      "name": "G2 second window last minute",
+      "rulesFixture": "g2DeepseekOnly",
       "at": "2026-08-24T09:59:59.999Z",
-      "expectedRoute": "mimoDefault"
+      "expectedRoute": "deepseekPeak"
     },
     {
-      "name": "second window exclusive end",
+      "name": "G2 second window exclusive end",
+      "rulesFixture": "g2DeepseekOnly",
       "at": "2026-08-24T10:00:00.000Z",
       "expectedRoute": "deepseekOffpeak"
     },
     {
-      "name": "weekend ignores matching clock time",
+      "name": "G2 weekend ignores matching clock time",
+      "rulesFixture": "g2DeepseekOnly",
+      "at": "2026-08-23T01:00:00.000Z",
+      "expectedRoute": "deepseekOffpeak"
+    },
+    {
+      "name": "G4 weekday before first window",
+      "rulesFixture": "g4InitialProvider",
+      "at": "2026-08-24T00:59:59.000Z",
+      "expectedRoute": "deepseekOffpeak"
+    },
+    {
+      "name": "G4 first window inclusive start",
+      "rulesFixture": "g4InitialProvider",
+      "at": "2026-08-24T01:00:00.000Z",
+      "expectedRoute": "mimoDefault"
+    },
+    {
+      "name": "G4 first window exclusive end",
+      "rulesFixture": "g4InitialProvider",
+      "at": "2026-08-24T04:00:00.000Z",
+      "expectedRoute": "deepseekOffpeak"
+    },
+    {
+      "name": "G4 second window inclusive start",
+      "rulesFixture": "g4InitialProvider",
+      "at": "2026-08-24T06:00:00.000Z",
+      "expectedRoute": "mimoDefault"
+    },
+    {
+      "name": "G4 second window last minute",
+      "rulesFixture": "g4InitialProvider",
+      "at": "2026-08-24T09:59:59.999Z",
+      "expectedRoute": "mimoDefault"
+    },
+    {
+      "name": "G4 second window exclusive end",
+      "rulesFixture": "g4InitialProvider",
+      "at": "2026-08-24T10:00:00.000Z",
+      "expectedRoute": "deepseekOffpeak"
+    },
+    {
+      "name": "G4 weekend ignores matching clock time",
+      "rulesFixture": "g4InitialProvider",
       "at": "2026-08-23T01:00:00.000Z",
       "expectedRoute": "deepseekOffpeak"
     }
