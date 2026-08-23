@@ -1,16 +1,107 @@
 import {
+  DEEPSEEK_LEGAL_DISPLAY_KEY,
+  DEEPSEEK_LEGAL_MANIFEST_ID,
+  MIMO_LEGAL_DISPLAY_KEY,
+  MIMO_LEGAL_MANIFEST_ID,
   SERVICE_CONTACT_EMAIL,
   SERVICE_NAME,
   SERVICE_OPERATOR,
   SERVICE_WEBSITE,
 } from "./constants";
-import type { LegalDocument } from "./types";
+import {
+  defineAiProviderLegalManifest,
+  type LegalDocument,
+} from "./types";
 
 export const LEGAL_EFFECTIVE_DATE = "July 3, 2026";
 
-export const PRIVACY_EFFECTIVE_DATE = "August 4, 2026";
+export const PRIVACY_EFFECTIVE_DATE = "August 23, 2026";
 
-export const AI_TERMS_EFFECTIVE_DATE = "August 4, 2026";
+export const AI_TERMS_EFFECTIVE_DATE = "August 23, 2026";
+
+export const deepseekLegalManifest = defineAiProviderLegalManifest({
+  manifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
+  displayKey: DEEPSEEK_LEGAL_DISPLAY_KEY,
+  reviewedAt: "2026-08-23 (Asia/Shanghai)",
+  provider: "Official DeepSeek Open Platform",
+  gatewayOperator: "Hangzhou DeepSeek Artificial Intelligence Co., Ltd.",
+  modelVendor: "DeepSeek",
+  models: ["deepseek-v4-flash (Chat Completions profile)"],
+  upstream: "Official DeepSeek API (api.deepseek.com)",
+  submittedData: [
+    "The resume text selected by the user, chosen context, and style instructions",
+    "An HMAC-SHA256 pseudonymous user_id for request isolation; no email address, username, or raw account ID",
+  ],
+  providerSubjectId:
+    "An HMAC-SHA256 pseudonymous user_id is sent. DeepSeek documents it as supporting content safety, cache isolation, and scheduling isolation.",
+  processingRegion:
+    "DeepSeek policies support processing and storage in the People's Republic of China; no separate commitment identifies the exact facility or region for API content.",
+  cache:
+    "Official API documentation states that disk context caching is enabled by default and that an unused cache is usually cleared automatically within a few hours to a few days.",
+  retention:
+    "We found no fixed overall retention period or zero-retention commitment for this API content.",
+  training:
+    "Official policies allow inputs and outputs to be used for service improvement or model training in applicable circumstances. We found no API no-training commitment and could not confirm that the consumer opt-out covers API requests.",
+  transfer:
+    "Content may be processed in the PRC. Where applicable law requires it, the service operator uses an explicit-consent flow for this optional feature; this is not a universal legal conclusion for every user or transfer.",
+  unknowns: [
+    "Specific retention and deletion periods for API content beyond context caching",
+    "The exact processing facility and whether the consumer training opt-out covers API requests",
+  ],
+  sources: [
+    "https://api-docs.deepseek.com/quick_start/pricing/",
+    "https://api-docs.deepseek.com/api/create-chat-completion/",
+    "https://api-docs.deepseek.com/guides/kv_cache/",
+    "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html",
+    "https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html",
+    "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html",
+  ],
+});
+
+export const mimoLegalManifest = defineAiProviderLegalManifest({
+  manifestId: MIMO_LEGAL_MANIFEST_ID,
+  displayKey: MIMO_LEGAL_DISPLAY_KEY,
+  reviewedAt: "2026-08-23 (Asia/Shanghai)",
+  provider: "Official MiMo API (mainland-China profile)",
+  gatewayOperator:
+    "Official MiMo API. The reviewed pages do not identify the specific company operating the service in mainland China. The terms for service outside mainland China name Xiaomi Technologies Singapore Pte. Ltd.",
+  modelVendor: "Xiaomi / MiMo",
+  models: ["mimo-v2.5-pro (Responses API profile)"],
+  upstream: "Official MiMo Responses API (api.xiaomimimo.com/v1/responses)",
+  submittedData: [
+    "The resume text selected by the user, chosen context, and style instructions",
+    "The initial adapter sends no HMAC provider subject ID, email address, username, or raw account ID",
+  ],
+  providerSubjectId: "No provider subject ID is sent.",
+  processingRegion:
+    "The Privacy Policy describes global data centers, including the Netherlands and Singapore, and possible transfers involving other parties or regions. The actual request region depends on the request or a separate arrangement and is not guaranteed.",
+  cache:
+    "We could not verify a fixed TTL, scope, or opt-out mechanism for API-content caching from the reviewed official materials.",
+  retention:
+    "The Privacy Policy states a general rule of retaining data for the necessary period and then deleting or anonymizing it; it gives no fixed numeric TTL for API content.",
+  training:
+    "MiMo describes the user as Controller and itself as Processor, and states that submitted API content is not used for model training or other purposes.",
+  transfer:
+    "Access from mainland China is governed by the in-PRC terms; cross-border or other-region processing depends on the request and arrangements. Where applicable law requires it, the service operator uses an explicit-consent flow for this optional feature.",
+  unknowns: [
+    "The exact company operating the service in mainland China",
+    "A guaranteed processing region for each API request",
+    "API-content cache TTL, cache scope, opt-out mechanism, and fixed content-retention period",
+  ],
+  sources: [
+    "https://mimo.mi.com/docs/en-US/api/chat/responses",
+    "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+    "https://mimo.mi.com/docs/en-US/api/guidance/rate-limit",
+    "https://mimo.mi.com/docs/en-US/api/guidance/error-codes",
+    "https://mimo.mi.com/docs/quick-start/terms/user-agreement",
+    "https://mimo.mi.com/docs/en-US/terms/privacy-policy",
+  ],
+});
+
+export const aiProviderLegalManifests = Object.freeze([
+  deepseekLegalManifest,
+  mimoLegalManifest,
+]);
 
 export const termsDocument: LegalDocument = {
   title: "Terms of Use",
@@ -177,15 +268,17 @@ export const privacyDocument: LegalDocument = {
       body: [
         "We and our service providers may process data in countries other than your country of residence.",
         "Where GDPR applies and personal data is transferred outside the European Economic Area, we rely on appropriate safeguards where required, such as adequacy decisions, standard contractual clauses, or other lawful transfer mechanisms.",
-        "For the AI polish feature specifically, no adequacy decision or contractual safeguard is currently available from the AI provider; the transfer mechanism for that feature is your explicit consent, as described in the \"AI Features\" section and the AI Service Terms.",
+        "The actual recipient and possible processing regions for AI polish depend on the route frozen for the request. The known processing regions, transfer arrangements, and unresolved points for the current DeepSeek and MiMo routes are listed in the provider annexes to the AI Service Terms.",
+        "Where applicable law requires it and no other appropriate safeguard is available, we may rely on your explicit consent for this optional feature. We chose a separate-consent flow to disclose risk and record authorization; this does not mean that every AI provider universally requires separate consent, nor is it a legal conclusion for every jurisdiction.",
       ],
     },
     {
       heading: "AI Features",
       body: [
-        "If you use the AI polish feature, the resume text you select and the context you choose to include are forwarded in plaintext through our server to a third-party AI provider (DeepSeek). DeepSeek processes that content under its own terms and policies, which we do not control.",
-        "Before you use AI polish for the first time, we ask you to separately accept the AI Service Terms. They describe in detail what is sent, the pseudonymous identifier mechanism, DeepSeek's retention and data-use policies, and our own metadata logging and quota rules — please read them before use.",
-        "No data processing agreement or equivalent transfer safeguard is currently available from DeepSeek. Where GDPR or a similar data-protection law applies, the transfer to DeepSeek of the content you choose to send therefore relies on your explicit consent as a derogation. The AI Service Terms consent flow discloses the resulting transfer risks before you accept, and you may withdraw your consent at any time by ceasing to use the feature.",
+        "If you use AI polish, the resume text you select and the context you choose to include are forwarded in plaintext through our server to the third-party AI service disclosed for that request. The recipients currently eligible to be routed are the official DeepSeek Open Platform and the official MiMo API. MiMo may remain inactive at initial release, but its annex is disclosed in advance.",
+        "Before first use of the current AI legal bundle, we ask you to separately accept the AI Service Terms. The terms combine neutral processing rules with immutable provider annexes covering submitted data, identifiers, caching, retention, training or service improvement, processing regions, unresolved points, and our own metadata logging and quota rules.",
+        "Before each request, the interface discloses the actual route. If the route or legal bundle changed, we stop before transmitting anything to an AI service and ask you to confirm again. We do not treat your consent as an instruction to select a provider.",
+        "You may withdraw consent for future requests by ceasing to use AI polish. This does not affect processing that already occurred, and it does not require deletion of records we must retain to prove historical consent, settle quota, protect security, or satisfy legal obligations. You may also contact us as described under \"Your Rights\".",
         "End-to-end encryption, where available, does not apply to content sent to the AI provider; the rest of your encrypted resume remains protected as described in this policy.",
       ],
     },
@@ -200,7 +293,7 @@ export const privacyDocument: LegalDocument = {
         "Local browser data remains on your device until you clear it or delete it through the service.",
         "Support emails are kept for up to 24 months.",
         "Technical and security logs are kept for up to 90 days.",
-        "AI polish request metadata logs (which never contain resume text or AI output) are scheduled for deletion 90 days after the request completes; deletion is performed by a daily cleanup job, so a record may remain until the next scheduled run after it crosses the threshold (up to roughly one additional day).",
+        "AI polish request and attempt metadata ledgers/logs (which never contain resume text, style instructions, or AI output) are scheduled for deletion 90 days after the request completes; per-minute rate-limit counters after 2 days; and daily usage aggregates after 90 days. Deletion is performed by a daily cleanup job, so a record may remain until the next scheduled run after it crosses the threshold (up to roughly one additional day).",
         "Backups may retain deleted data for a limited period, typically up to 90 days, before being overwritten or deleted.",
         "We may retain limited data longer where necessary for legal compliance, security, dispute resolution, or abuse prevention.",
       ],
@@ -258,26 +351,50 @@ export const termsAcceptanceSummary = [
   "The service is provided as-is. Keep your own backups of important CV data and exported files.",
 ];
 
+function providerAnnexSection(
+  title: string,
+  manifest: (typeof aiProviderLegalManifests)[number],
+) {
+  return {
+    heading: `Provider Annex: ${title}`,
+    body: [
+      `Manifest ID: ${manifest.manifestId}; display key: ${manifest.displayKey}; reviewed: ${manifest.reviewedAt}.`,
+      `Provider: ${manifest.provider}. Gateway/operator: ${manifest.gatewayOperator}. Model vendor: ${manifest.modelVendor}. Models: ${manifest.models.join(", ")}. Upstream: ${manifest.upstream}.`,
+      `Submitted data: ${manifest.submittedData.join("; ")}. Provider subject ID: ${manifest.providerSubjectId}`,
+      `Processing region: ${manifest.processingRegion}`,
+      `Caching: ${manifest.cache}`,
+      `Retention: ${manifest.retention}`,
+      `Training/service improvement: ${manifest.training}`,
+      `Transfer mechanism: ${manifest.transfer}`,
+      `Unresolved: ${manifest.unknowns.join("; ")}. Database configuration and product copy must not turn these unknowns into guarantees.`,
+      "Sources reviewed:",
+    ],
+    bullets: [...manifest.sources],
+  };
+}
+
 export const aiTermsDocument: LegalDocument = {
   title: "AI Service Terms",
   effectiveDate: AI_TERMS_EFFECTIVE_DATE,
   intro: [
     `These AI Service Terms govern your use of the AI polish feature of ${SERVICE_NAME} at ${SERVICE_WEBSITE}. They supplement the Terms of Use and the Privacy Policy and apply together with them.`,
-    "Before using AI polish for the first time, you must separately accept these terms in the feature interface. Your acceptance (user ID, document version, and timestamp) is recorded so we can demonstrate that consent was given. Our AI provider's terms require us, as the downstream developer, to disclose our processing rules to you and, where applicable law requires, to obtain your consent or have another lawful basis — we use this separate consent flow for this optional feature.",
+    "We chose a separate-consent flow for this optional feature. Before first use of the current version, you must separately accept it in the feature interface; we record your user ID, legal-bundle version, and timestamp to demonstrate authorization. This is the service operator's chosen disclosure and authorization flow, not a statement that all AI providers universally require separate consent.",
+    "This version consists of a neutral body and the immutable DeepSeek and MiMo provider annexes below. The actual route used for a request is disclosed read-only before transmission; the interface does not provide a provider selector.",
   ],
   sections: [
     {
       heading: "The AI Polish Feature",
       body: [
         "AI polish rewrites selected free-text fields of your resume at your request, such as profile summaries, bullet points, and skill descriptions. It is intended to change wording only, not facts, figures, employers, job titles, or other factual content, and it never applies changes automatically.",
-        "When you confirm a polish request, the text you selected, together with any context you choose to include, is forwarded in plaintext through our server to a third-party AI provider (DeepSeek) for processing. Network transmission uses HTTPS, but your request content is readable by our server and by DeepSeek — end-to-end encryption does not apply to this feature (see \"Encryption and AI Polish\" below).",
+        "When you confirm a polish request, the text you selected, together with any context you choose to include, is forwarded in plaintext through our server to the third-party AI service disclosed for that request. Network transmission uses HTTPS, but your request content is readable by our server and the actual recipient — end-to-end encryption does not apply to this feature (see \"Encryption and AI Polish\" below).",
+        "Routing is determined by server-side configuration and request time. Each frozen request uses one disclosed provider/model profile; a provider failure does not trigger an undisclosed automatic cross-provider fallback within that request.",
       ],
     },
     {
       heading: "What Is Sent",
       body: [
         "We do not actively send the name, email address, or phone number from your resume header — they are never read at any context level. However, any personal information contained in the text and context you select will still be sent to the AI provider as part of your request.",
-        "Each request also carries a pseudonymous identifier (an HMAC-SHA256 hash of your account ID) in place of your real account ID. We never send your email address, username, or raw account ID to the AI provider.",
+        "We never send your email address, username, or raw account ID to the AI provider. Whether an HMAC-SHA256 pseudonymous identifier is sent depends on the actual provider profile: the current DeepSeek profile sends one, while the initial MiMo profile does not. See the applicable provider annex.",
         "Before each request, the feature shows you exactly what will be sent. Review this disclosure carefully and remove or avoid content you do not want to share. The context level you choose determines the scope:",
       ],
       bullets: [
@@ -290,7 +407,7 @@ export const aiTermsDocument: LegalDocument = {
       heading: "What We Store",
       body: [
         "We do not intentionally store the resume text you send for polishing or the AI-generated output on our servers. Request content is processed in memory and discarded after the response is returned.",
-        "We keep metadata logs about each request, such as: request timestamps, your user ID, request IDs, polish granularity, item count, context level, language, model and prompt/validator versions, attempt count, the AI provider's request ID, completion status or failure stage, token usage (cached and uncached input tokens and output tokens), latency, and the quota settlement outcome. These logs never include your resume text, the AI output, or your style instructions.",
+        "We keep metadata ledgers/logs about each request and attempt, such as: request timestamps, your user ID, request/attempt IDs, the frozen route/profile/price/legal bundle, polish granularity, item count, context level, language, model and prompt/validator versions, attempt count, the AI provider's request ID, completion status or failure stage, explainable token/cache usage, latency, cost, and the quota settlement outcome. These logs never include your resume text, the AI output, or your style instructions. If provider usage cannot be interpreted reliably, the relevant usage detail or cost remains unknown rather than being guessed.",
         "Request metadata logs are scheduled for deletion 90 days after the request completes, per-minute rate-limit counters after 2 days, and daily usage aggregates after 90 days. Deletion is performed by a cleanup job that runs once per day, so each record is deleted at the first scheduled run after it crosses its retention threshold and may remain for up to roughly one additional day. Records of your acceptance of these AI Service Terms are kept until you delete your account.",
       ],
     },
@@ -298,18 +415,15 @@ export const aiTermsDocument: LegalDocument = {
       heading: "Usage Limits, Quota, and Cancellation",
       body: [
         "AI polish is currently a free feature with usage limits: at most 20 requests per user per day (reset at midnight UTC) and at most 3 requests per minute; a service-wide daily capacity limit also applies, after which the feature becomes temporarily unavailable. We may adjust these limits, and we may suspend access in cases of abuse, excessive use, or risk to the service.",
-        "A request consumes quota once accepted. If you cancel or interrupt a request after it has been sent to the AI provider, the quota is still charged, because the provider's cost has already been incurred. If a request fails because of a provider outage or because the output fails validation, the consumed quota is refunded automatically.",
+        "Quota is reserved when a request is accepted. If you cancel or interrupt it after it has been sent to the AI provider, the quota remains charged because provider processing or cost has occurred. If it fails before transmission, or the service's settlement rules classify a provider/validation failure as refundable, the reservation is refunded. Retries are attempts under the same frozen route and do not silently switch to another provider.",
       ],
     },
     {
-      heading: "Third-Party AI Provider",
+      heading: "Providers, Routing, and Policy Changes",
       body: [
-        "AI polish is powered by DeepSeek (Hangzhou DeepSeek Artificial Intelligence Co., Ltd.), a third-party AI provider. The content you send is processed by DeepSeek under its own terms and policies, which we do not control.",
-        "As of August 4, 2026, DeepSeek's official documentation and policies (Open Platform Terms of Service, Terms of Use, Privacy Policy, and API documentation) show that: its API documentation states that request content is written to a disk cache by default to speed up subsequent requests, and the cache is automatically cleared \"usually within a few hours to a few days\" after it is no longer in use; we did not identify any API-specific commitment covering other retention or deletion of your content. DeepSeek's general Privacy Policy states that the data it governs is stored in the People's Republic of China, but that policy expressly does not govern personal data collected from end users of downstream applications like this one, so we could not verify an API-specific storage location for your content. Its Terms of Use, which cover the API, allow it to use inputs and outputs to improve its services under strict de-identification, and we could not verify whether its consumer-facing opt-out of model training applies to API requests.",
-        "Therefore, treat anything sent to DeepSeek as potentially retained by DeepSeek and used for service improvement. Do not include sensitive or confidential information in polish requests; if that is not acceptable to you, do not use the feature. We make no representation or guarantee about how DeepSeek retains, uses, or deletes the content it receives.",
-        "No data processing agreement or equivalent transfer safeguard is currently available from DeepSeek. Where GDPR or a similar data-protection law applies to you, the transfer of the content you choose to send — which may be processed outside your country, at a location we could not verify — therefore relies on your explicit consent as a legal derogation. This consent flow discloses the transfer risks described above before you agree; you may withdraw your consent at any time by ceasing to use the feature (withdrawal does not affect the lawfulness of processing already performed, and your acceptance record is retained as proof that consent was given).",
-        "The pseudonymous identifier sent with each request is only a hash of your account ID and contains neither your email address nor your username. DeepSeek's documentation states that this identifier is used for content safety review, cache isolation, and scheduling isolation.",
-        "We may change the AI provider in the future. If we do, we will update these terms and, where required, ask you to accept the updated version before continuing to use the feature.",
+        "The current legal bundle lists the official DeepSeek Open Platform and the official MiMo API. Inclusion in an annex does not mean that a profile is active; the actual recipient is the route disclosed before the request and frozen by the server.",
+        "Each third party processes received content under its own terms and policies, which we do not control. Do not send sensitive, confidential, or other information that you do not want the actual recipient to process.",
+        "If we add a recipient, upstream, or processing region, or materially change caching, retention, training, or improvement policies, we will update the annexes and version and require renewed acceptance where needed. Acceptance of an old version cannot authorize a route that requires a new legal bundle.",
       ],
     },
     {
@@ -326,6 +440,11 @@ export const aiTermsDocument: LegalDocument = {
         "When you use AI polish on an encrypted resume, the selected plaintext leaves your device and is sent through our server to the AI provider. The rest of your encrypted resume remains protected as described in the Privacy Policy.",
       ],
     },
+    providerAnnexSection("Official DeepSeek Open Platform", deepseekLegalManifest),
+    providerAnnexSection(
+      "Official MiMo API (mainland-China profile)",
+      mimoLegalManifest,
+    ),
     {
       heading: "Changes",
       body: [
