@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { classifyProviderRetry, MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
 import { PolishProviderError, type PolishProviderRequest } from "./provider";
+import { buildPolishPromptBlocks, POLISH_PROMPT_VERSION } from "./prompt";
+import type { PolishInferenceRequestV2 } from "./inference-v2";
 import {
+  createDeepSeekChatV1Adapter,
   createDeepSeekPolishProvider,
+  DeepSeekChatV1AdapterError,
+  DEEPSEEK_CHAT_V1_ADAPTER_KIND,
   DEEPSEEK_POLISH_MODEL,
   DEFAULT_DEEPSEEK_BASE_URL,
 } from "./deepseek";
@@ -30,6 +36,40 @@ function makeRequest(maxOutputTokens = 1024): PolishProviderRequest {
   };
 }
 
+function makeV2Request(maxOutputTokens = 1024): PolishInferenceRequestV2 {
+  const items = [
+    { id: "i0", kind: "experience_bullet" as const, text: "Led the migration." },
+  ];
+  const prompt = buildPolishPromptBlocks({
+    language: "en",
+    sectionId: "experience",
+    granularity: "item",
+    items,
+    contextLevel: 0,
+    references: [],
+    stylePreset: "professional",
+  });
+  return {
+    schemaVersion: "polish_inference_request_v2",
+    prompt,
+    outputContract: {
+      kind: "json_object",
+      schemaName: "polish_items_v1",
+      schema: { type: "object" },
+    },
+    maxOutputTokens,
+    providerSubjectId: TEST_PROVIDER_USER_ID,
+    promptVersion: POLISH_PROMPT_VERSION,
+    validatorVersion: "polish-validator-v1",
+    language: "en",
+    targets: [{ id: "i0", text: TARGET_ONLY_SENTINEL }],
+  };
+}
+
+function makeV2Adapter(fetchImpl: typeof fetch) {
+  return createDeepSeekChatV1Adapter({ env: TEST_ENV, fetch: fetchImpl });
+}
+
 function callOptions(timeoutMs = 1000): { signal: AbortSignal; timeoutMs: number } {
   return { signal: new AbortController().signal, timeoutMs };
 }
@@ -44,6 +84,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function successPayload(overrides: Record<string, unknown> = {}) {
   return {
     id: "chatcmpl-test",
+    model: DEEPSEEK_POLISH_MODEL,
     choices: [
       {
         index: 0,
@@ -78,6 +119,66 @@ function pendingUntilAbortFetch() {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+describe("createDeepSeekChatV1Adapter — V1 rollback parity", () => {
+  it("fails closed on a missing registered credential", () => {
+    expect(() => createDeepSeekChatV1Adapter({ env: {} })).toThrow(
+      /credential deepseek_api_key is unavailable/u,
+    );
+  });
+
+  it("keeps the exact canonical Chat wire bytes across the V1 and V2 factories", async () => {
+    const responseFactory = () => jsonResponse(successPayload());
+    const legacyFetch = vi.fn().mockImplementation(responseFactory);
+    const v2Fetch = vi.fn().mockImplementation(responseFactory);
+    const v2Request = makeV2Request(4096);
+    const legacyRequest: PolishProviderRequest = {
+      messages: v2Request.prompt.blocks.map((block) => ({
+        role: block.role === "developer" ? "system" : "user",
+        content: block.content,
+      })),
+      maxOutputTokens: v2Request.maxOutputTokens,
+      providerUserId: v2Request.providerSubjectId,
+      targets: v2Request.targets,
+    };
+
+    await createDeepSeekPolishProvider({ env: TEST_ENV, fetch: legacyFetch }).complete(
+      legacyRequest,
+      callOptions(),
+    );
+    await makeV2Adapter(v2Fetch).complete(v2Request, callOptions());
+
+    expect(makeV2Adapter(v2Fetch).kind).toBe(DEEPSEEK_CHAT_V1_ADAPTER_KIND);
+    const legacyInit = (legacyFetch.mock.calls[0] as [string, RequestInit])[1];
+    const v2Init = (v2Fetch.mock.calls[0] as [string, RequestInit])[1];
+    expect(v2Init.body).toBe(legacyInit.body);
+    expect(v2Init.body).toBe(
+      JSON.stringify({
+        model: "deepseek-v4-flash",
+        messages: legacyRequest.messages,
+        thinking: { type: "disabled" },
+        response_format: { type: "json_object" },
+        max_tokens: 4096,
+        user_id: TEST_PROVIDER_USER_ID,
+      }),
+    );
+    expect(v2Init.body as string).not.toContain(TARGET_ONLY_SENTINEL);
+  });
+
+  it("uses the code-owned official endpoint even when the legacy base-url override is present", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(successPayload()));
+    const adapter = createDeepSeekChatV1Adapter({
+      env: { ...TEST_ENV, DEEPSEEK_BASE_URL: "https://unreviewed.invalid/v1" },
+      fetch: fetchMock,
+    });
+
+    await adapter.complete(makeV2Request(), callOptions());
+
+    expect((fetchMock.mock.calls[0] as [string, RequestInit])[0]).toBe(
+      "https://api.deepseek.com/chat/completions",
+    );
+  });
 });
 
 describe("createDeepSeekPolishProvider — configuration (fail-loud)", () => {
@@ -490,5 +591,274 @@ describe("createDeepSeekPolishProvider — cancellation", () => {
     const error = await promise.catch((e: unknown) => e);
     expect(error).toBe(customReason);
     expect(error).not.toBeInstanceOf(PolishProviderError);
+  });
+});
+
+describe("createDeepSeekChatV1Adapter — V2 response and usage mapping", () => {
+  it("maps hit/miss cache buckets, output reasoning detail, model and both request ids", async () => {
+    const response = new Response(
+      JSON.stringify(
+        successPayload({
+          id: "body-request-7",
+          model: "deepseek-v4-flash-202608",
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 40,
+            prompt_cache_hit_tokens: 30,
+            prompt_cache_miss_tokens: 70,
+            completion_tokens_details: { reasoning_tokens: 10 },
+          },
+        }),
+      ),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "x-request-id": "header-request-9",
+        },
+      },
+    );
+    const fetchMock = vi.fn().mockResolvedValue(response);
+
+    const result = await makeV2Adapter(fetchMock).complete(makeV2Request(), callOptions());
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      schemaVersion: "polish_inference_result_v2",
+      text: '{"items":[{"id":"i0","polished":"Drove the migration."}]}',
+      finishReason: "stop",
+      usage: {
+        schemaVersion: "normalized_usage_v2",
+        inputTotalTokens: 100,
+        inputCacheReadTokens: 30,
+        inputCacheWriteTokens: null,
+        inputStandardTokens: 70,
+        outputTokens: 40,
+        reasoningTokens: 10,
+        cacheUsageReporting: "unavailable",
+        usageComplete: true,
+      },
+      route: {
+        gatewayRequestId: "header-request-9",
+        providerRequestId: "body-request-7",
+        actualUpstreamEndpoint: "https://api.deepseek.com/chat/completions",
+        actualModelId: "deepseek-v4-flash-202608",
+      },
+    });
+  });
+
+  it("books missing cache split as standard input without inventing a cache-write count", async () => {
+    const payload = successPayload({
+      usage: { prompt_tokens: 11, completion_tokens: 4 },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await makeV2Adapter(fetchMock).complete(makeV2Request(), callOptions());
+
+    expect(result.usage).toMatchObject({
+      inputTotalTokens: 11,
+      inputCacheReadTokens: 0,
+      inputCacheWriteTokens: null,
+      inputStandardTokens: 11,
+      outputTokens: 4,
+      reasoningTokens: null,
+      cacheUsageReporting: "unavailable",
+      usageComplete: true,
+    });
+  });
+
+  it.each([
+    ["missing choices", { choices: [] }],
+    ["non-string content", { choices: [{ message: { content: null } }] }],
+    ["empty content", { choices: [{ message: { content: "" }, finish_reason: "stop" }] }],
+  ])("preserves valid billable usage when content is %s", async (_label, malformed) => {
+    const payload = {
+      id: "chatcmpl-billable-invalid",
+      model: DEEPSEEK_POLISH_MODEL,
+      ...malformed,
+      usage: {
+        prompt_tokens: 12,
+        completion_tokens: 3,
+        prompt_cache_hit_tokens: 4,
+        prompt_cache_miss_tokens: 8,
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await makeV2Adapter(fetchMock).complete(makeV2Request(), callOptions());
+
+    expect(result.text).toBe("");
+    expect(result.usage).toMatchObject({
+      inputTotalTokens: 12,
+      inputCacheReadTokens: 4,
+      inputStandardTokens: 8,
+      outputTokens: 3,
+      usageComplete: true,
+    });
+    expect(result.route.providerRequestId).toBe("chatcmpl-billable-invalid");
+    expect(result.finishReason).toBe(_label === "empty content" ? "stop" : "unknown");
+  });
+
+  it("keeps unsafe upstream observation strings out of the normalized route", async () => {
+    const response = new Response(
+      JSON.stringify(
+        successPayload({
+          id: "Bearer secret",
+          model: "bad\nmodel",
+        }),
+      ),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "x-request-id": "Bearer secret",
+        },
+      },
+    );
+    const fetchMock = vi.fn().mockResolvedValue(response);
+
+    const result = await makeV2Adapter(fetchMock).complete(makeV2Request(), callOptions());
+
+    expect(result.route).toEqual({
+      actualUpstreamEndpoint: "https://api.deepseek.com/chat/completions",
+      actualModelId: DEEPSEEK_POLISH_MODEL,
+    });
+  });
+
+  it.each([
+    ["missing usage", undefined],
+    ["fractional total", { prompt_tokens: 1.5, completion_tokens: 2 }],
+    [
+      "over-explained input",
+      {
+        prompt_tokens: 4,
+        completion_tokens: 2,
+        prompt_cache_hit_tokens: 3,
+        prompt_cache_miss_tokens: 2,
+      },
+    ],
+    [
+      "reasoning exceeds output",
+      {
+        prompt_tokens: 4,
+        completion_tokens: 2,
+        prompt_cache_hit_tokens: 1,
+        prompt_cache_miss_tokens: 3,
+        completion_tokens_details: { reasoning_tokens: 3 },
+      },
+    ],
+  ])("fails closed on %s instead of fabricating complete usage", async (_label, usage) => {
+    const payload = successPayload();
+    if (usage === undefined) delete (payload as Record<string, unknown>).usage;
+    else payload.usage = usage as never;
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const error = await makeV2Adapter(fetchMock)
+      .complete(makeV2Request(), callOptions())
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DeepSeekChatV1AdapterError);
+    expect(error).toMatchObject({
+      code: "UPSTREAM_ERROR",
+      providerRequestId: "chatcmpl-test",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createDeepSeekChatV1Adapter — safe V2 failures", () => {
+  it("emits bounded 429 retry metadata without reading or leaking the raw body", async () => {
+    const response = new Response("SENSITIVE-UPSTREAM-DETAIL", {
+      status: 429,
+      headers: { "x-request-id": "rate-limit-request-1", "retry-after": "99" },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(response);
+
+    const error = await makeV2Adapter(fetchMock)
+      .complete(makeV2Request(), callOptions())
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DeepSeekChatV1AdapterError);
+    expect(error).toMatchObject({
+      code: "UPSTREAM_ERROR",
+      upstreamStatus: 429,
+      providerRequestId: "rate-limit-request-1",
+      retryAfterMs: MAX_PROVIDER_RETRY_AFTER_MS,
+    });
+    expect(classifyProviderRetry(error as DeepSeekChatV1AdapterError)).toEqual({
+      retryable: true,
+      retryAfterMs: MAX_PROVIDER_RETRY_AFTER_MS,
+    });
+    expect((error as Error).message).not.toContain("SENSITIVE-UPSTREAM-DETAIL");
+    expect(response.bodyUsed).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retain a raw network error message or cause", async () => {
+    const rawFailure = new TypeError("SENSITIVE-DNS-AND-SECRET");
+    const fetchMock = vi.fn().mockRejectedValue(rawFailure);
+
+    const error = await makeV2Adapter(fetchMock)
+      .complete(makeV2Request(), callOptions())
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DeepSeekChatV1AdapterError);
+    expect(error).toMatchObject({ code: "UPSTREAM_ERROR" });
+    expect((error as Error).message).not.toContain("SENSITIVE-DNS-AND-SECRET");
+    expect((error as Error).cause).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a safe header request id when a successful body is malformed JSON", async () => {
+    const response = new Response("not-json-SENSITIVE", {
+      status: 200,
+      headers: { "x-request-id": "json-failure-request-3" },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(response);
+
+    const error = await makeV2Adapter(fetchMock)
+      .complete(makeV2Request(), callOptions())
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DeepSeekChatV1AdapterError);
+    expect(error).toMatchObject({
+      code: "UPSTREAM_ERROR",
+      providerRequestId: "json-failure-request-3",
+    });
+    expect((error as Error).message).not.toContain("not-json-SENSITIVE");
+  });
+
+  it("maps its hard timeout without an internal retry", async () => {
+    const fetchMock = pendingUntilAbortFetch();
+
+    const error = await makeV2Adapter(fetchMock)
+      .complete(makeV2Request(), callOptions(30))
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DeepSeekChatV1AdapterError);
+    expect(error).toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rethrows caller cancellation as-is before and during transmission", async () => {
+    const preFetch = vi.fn().mockResolvedValue(jsonResponse(successPayload()));
+    const pre = new AbortController();
+    pre.abort();
+    const preError = await makeV2Adapter(preFetch)
+      .complete(makeV2Request(), { signal: pre.signal, timeoutMs: 1000 })
+      .catch((caught: unknown) => caught);
+    expect(preError).toBe(pre.signal.reason);
+    expect(preFetch).not.toHaveBeenCalled();
+
+    const midFetch = pendingUntilAbortFetch();
+    const mid = new AbortController();
+    const customReason = new Error("caller canceled");
+    const pending = makeV2Adapter(midFetch).complete(makeV2Request(), {
+      signal: mid.signal,
+      timeoutMs: 60_000,
+    });
+    mid.abort(customReason);
+    await expect(pending).rejects.toBe(customReason);
+    expect(midFetch).toHaveBeenCalledTimes(1);
   });
 });
