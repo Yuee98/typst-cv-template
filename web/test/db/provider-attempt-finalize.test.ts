@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -1327,9 +1328,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     ).toEqual(expect.arrayContaining(["provider_billable", "estimated_cost"]));
   });
 
-  it("denies direct service-role abandoned but permits the exact owner-OID child-backed branch", async () => {
+  it("proves the dormant owner-OID abandoned branch through an app-ungranted definer probe", async () => {
     const direct = await completed("finalize-abandoned-direct");
-    const directBefore = await getLedgerRow(service, direct.reservation.reservationId);
+    const directBefore = await settlementSnapshot(
+      direct.user.id,
+      direct.reservation.reservationId,
+    );
     expect(
       await harness.finalize(direct.reservation.reservationId, {
         status: "abandoned",
@@ -1337,32 +1341,260 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         providerBillable: true,
       }),
     ).toEqual({ ok: false, reason: "INVALID_STATUS" });
-    expect(await getLedgerRow(service, direct.reservation.reservationId)).toEqual(
-      directBefore,
-    );
+    expect(
+      await settlementSnapshot(direct.user.id, direct.reservation.reservationId),
+    ).toEqual(directBefore);
 
-    const owner = await completed("finalize-abandoned-owner");
-    const result = runOwnerSql(String.raw`
-      \set ON_ERROR_STOP on
-      \pset format unaligned
-      \pset tuples_only on
-      select public.finalize_ai_polish_request(
-        '${owner.reservation.reservationId}'::uuid,
-        'abandoned',
-        false,
-        true,
-        null,
-        '{"usage_schema_version":"attempt_v2"}'::jsonb
+    const v1User = await harness.makeUser("finalize-abandoned-owner-v1");
+    const v1Reserve = await tryReserve(service, v1User.id);
+    expect(v1Reserve.ok).toBe(true);
+    const v1ReservationId = (v1Reserve as { reservationId: string }).reservationId;
+
+    const zeroUser = await harness.makeUser("finalize-abandoned-owner-zero");
+    const zero = await harness.reserveV2(zeroUser);
+    const inProgress = await started("finalize-abandoned-owner-started");
+    const mismatch = await completed("finalize-abandoned-owner-mismatch");
+    const owner = await completed("finalize-abandoned-owner-success");
+
+    const suffix = randomUUID().replaceAll("-", "");
+    const probeFunction = `db010_owner_finalize_probe_${suffix}`;
+    const probeCaller = `db010_owner_probe_caller_${suffix}`;
+    let probeCreated = false;
+
+    const invokeProbe = (reservationId: string, providerBillable: boolean) => {
+      const result = runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        \pset format unaligned
+        \pset tuples_only on
+        begin;
+        set local role ${probeCaller};
+        select public.${probeFunction}(
+          '${reservationId}'::uuid,
+          ${providerBillable}
+        );
+        commit;
+      `);
+      const payload = result.stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .find((line) => line.startsWith("{"));
+      if (!payload) {
+        throw new Error(`owner probe returned no JSON payload: ${result.stdout}`);
+      }
+      return JSON.parse(payload) as Record<string, unknown>;
+    };
+
+    try {
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        create role ${probeCaller}
+          nologin nosuperuser nocreatedb nocreaterole noinherit
+          noreplication nobypassrls;
+        grant ${probeCaller} to postgres with set true;
+        create function public.${probeFunction}(
+          p_reservation_id uuid,
+          p_provider_billable boolean
+        )
+        returns jsonb
+        language plpgsql
+        security definer
+        set search_path = ''
+        as $probe$
+        declare
+          v_current_user_oid oid;
+          v_finalize_owner_oid oid;
+        begin
+          select role_row.oid into strict v_current_user_oid
+          from pg_catalog.pg_roles as role_row
+          where role_row.rolname = current_user;
+          select finalize_proc.proowner into strict v_finalize_owner_oid
+          from pg_catalog.pg_proc as finalize_proc
+          where finalize_proc.oid =
+            'public.finalize_ai_polish_request(uuid,text,boolean,boolean,jsonb,jsonb)'::pg_catalog.regprocedure;
+          if v_current_user_oid is distinct from v_finalize_owner_oid then
+            raise exception 'probe did not enter the exact finalize owner OID';
+          end if;
+          return public.finalize_ai_polish_request(
+            p_reservation_id,
+            'abandoned',
+            false,
+            p_provider_billable,
+            null,
+            '{"usage_schema_version":"attempt_v2"}'::jsonb
+          );
+        end
+        $probe$;
+        revoke all on function public.${probeFunction}(uuid, boolean)
+          from public, anon, authenticated, service_role, authenticator;
+        grant execute on function public.${probeFunction}(uuid, boolean)
+          to ${probeCaller};
+
+        do $assertions$
+        declare
+          v_finalize pg_catalog.pg_proc%rowtype;
+          v_probe pg_catalog.pg_proc%rowtype;
+          v_owner_name name;
+        begin
+          select * into strict v_finalize
+          from pg_catalog.pg_proc
+          where oid =
+            'public.finalize_ai_polish_request(uuid,text,boolean,boolean,jsonb,jsonb)'::pg_catalog.regprocedure;
+          select * into strict v_probe
+          from pg_catalog.pg_proc
+          where oid =
+            'public.${probeFunction}(uuid,boolean)'::pg_catalog.regprocedure;
+          select rolname into strict v_owner_name
+          from pg_catalog.pg_roles
+          where oid = v_finalize.proowner;
+
+          if v_probe.proowner is distinct from v_finalize.proowner
+             or not v_probe.prosecdef
+             or v_probe.proconfig is distinct from
+               array['search_path=""']::text[] then
+            raise exception 'owner probe definition or owner OID drifted';
+          end if;
+          if v_owner_name in (
+               'anon', 'authenticated', 'service_role', 'authenticator'
+             )
+             or pg_catalog.pg_has_role(
+               'service_role', v_finalize.proowner, 'SET'
+             ) then
+            raise exception 'finalize owner is reachable from an application role';
+          end if;
+          if v_finalize.prosecdef
+             or not pg_catalog.has_function_privilege(
+               'service_role', v_finalize.oid, 'EXECUTE'
+             )
+             or pg_catalog.has_function_privilege(
+               'anon', v_finalize.oid, 'EXECUTE'
+             )
+             or pg_catalog.has_function_privilege(
+               'authenticated', v_finalize.oid, 'EXECUTE'
+             ) then
+            raise exception 'public finalize invoker ACL drifted';
+          end if;
+          if pg_catalog.has_function_privilege(
+               'service_role', v_probe.oid, 'EXECUTE'
+             )
+             or pg_catalog.has_function_privilege(
+               'anon', v_probe.oid, 'EXECUTE'
+             )
+             or pg_catalog.has_function_privilege(
+               'authenticated', v_probe.oid, 'EXECUTE'
+             )
+             or not pg_catalog.has_function_privilege(
+               '${probeCaller}', v_probe.oid, 'EXECUTE'
+             )
+             or exists (
+               select 1
+               from pg_catalog.aclexplode(v_probe.proacl)
+               where grantee = 0
+             ) then
+            raise exception 'owner probe ACL is reachable from an application role';
+          end if;
+        end
+        $assertions$;
+        commit;
+      `);
+      probeCreated = true;
+
+      const rejectionCases = [
+        {
+          label: "genuine-v1",
+          userId: v1User.id,
+          reservationId: v1ReservationId,
+          providerBillable: true,
+          expected: { ok: false, reason: "INVALID_STATUS" },
+        },
+        {
+          label: "v2-zero-child",
+          userId: zeroUser.id,
+          reservationId: zero.reservationId,
+          providerBillable: false,
+          expected: { ok: false, reason: "INVALID_STATUS" },
+        },
+        {
+          label: "started-child",
+          userId: inProgress.user.id,
+          reservationId: inProgress.reservation.reservationId,
+          providerBillable: true,
+          expected: { ok: false, reason: "ATTEMPT_IN_PROGRESS" },
+        },
+        {
+          label: "billability-mismatch",
+          userId: mismatch.user.id,
+          reservationId: mismatch.reservation.reservationId,
+          providerBillable: false,
+          expected: { ok: false, reason: "INTERNAL_ERROR" },
+        },
+      ];
+      for (const entry of rejectionCases) {
+        const before = await settlementSnapshot(entry.userId, entry.reservationId);
+        expect(
+          invokeProbe(entry.reservationId, entry.providerBillable),
+          entry.label,
+        ).toEqual(entry.expected);
+        expect(
+          await settlementSnapshot(entry.userId, entry.reservationId),
+          entry.label,
+        ).toEqual(before);
+      }
+
+      const ownerResult = invokeProbe(owner.reservation.reservationId, true);
+      expect(ownerResult).toMatchObject({
+        ok: true,
+        alreadyFinalized: false,
+        status: "abandoned",
+        quotaCharged: false,
+      });
+      expect(await getLedgerRow(service, owner.reservation.reservationId)).toMatchObject({
+        state: "finalized",
+        status: "abandoned",
+        quota_charged: false,
+        usage_schema_version: "request_usage_aggregate_v2",
+      });
+
+      const finalizedBeforeReplay = await settlementSnapshot(
+        owner.user.id,
+        owner.reservation.reservationId,
       );
-    `);
-    expect(result.stdout).toContain('"ok": true');
-    expect(result.stdout).toContain('"status": "abandoned"');
-    expect(await getLedgerRow(service, owner.reservation.reservationId)).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
-      quota_charged: false,
-      usage_schema_version: "request_usage_aggregate_v2",
-    });
+      expect(
+        await harness.finalize(owner.reservation.reservationId, {
+          status: "abandoned",
+          quotaCharged: true,
+          providerBillable: false,
+          usage: { hostile: true },
+          metadata: "hostile-owner-replay",
+        }),
+      ).toEqual({ ...ownerResult, alreadyFinalized: true });
+      expect(
+        await settlementSnapshot(owner.user.id, owner.reservation.reservationId),
+      ).toEqual(finalizedBeforeReplay);
+    } finally {
+      if (probeCreated) {
+        runOwnerSql(String.raw`
+          \set ON_ERROR_STOP on
+          begin;
+          drop function public.${probeFunction}(uuid, boolean);
+          drop role ${probeCaller};
+          do $cleanup$
+          begin
+            if pg_catalog.to_regprocedure(
+                 'public.${probeFunction}(uuid,boolean)'
+               ) is not null
+               or exists (
+                 select 1 from pg_catalog.pg_roles
+                 where rolname = '${probeCaller}'
+               ) then
+              raise exception 'owner probe cleanup failed';
+            end if;
+          end
+          $cleanup$;
+          commit;
+        `);
+      }
+    }
   });
 
   it("returns exact finalized readback before unknown selector, scalar metadata, usage, or billability parsing", async () => {
