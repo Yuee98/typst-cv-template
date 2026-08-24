@@ -666,6 +666,25 @@ function startAttemptActionSql(reservationId: string, attemptNo: 1 | 2): string 
   `;
 }
 
+function staleSnapshotSql(
+  attemptId: string,
+  isolation: "repeatable read" | "serializable",
+  marker: string,
+): string {
+  return String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin isolation level ${isolation};
+    set local statement_timeout = '10s';
+    set local role service_role;
+    select status
+    from public.ai_provider_attempt_ledger
+    where attempt_id = '${attemptId}'::uuid;
+    \echo ${marker}
+  `;
+}
+
 function invokeRawFinalize(
   reservationId: string,
   usageSql: string,
@@ -1099,6 +1118,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         );
 
         if v_finalize.prosecdef
+           or v_finalize.provolatile is distinct from 'v'
            or v_finalize.proconfig is distinct from array['search_path=""']::text[]
            or v_finalize.pronargdefaults <> 3
            or pg_catalog.pg_get_function_identity_arguments(v_finalize.oid)
@@ -3844,6 +3864,51 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       { attempt_no: 1, status: "succeeded" },
       { attempt_no: 2, status: "started" },
     ]);
+  });
+
+  it("fails closed on stale high-isolation child snapshots and retries in RC", async () => {
+    for (const isolation of ["repeatable read", "serializable"] as const) {
+      await harness.activateFreshRouteFixture();
+      const value = await started(`stale-snapshot-${isolation.replaceAll(" ", "-")}`);
+      const beforeSettlement = await settlementSnapshot(
+        value.user.id,
+        value.reservation.reservationId,
+      );
+      const marker = `DB010_${isolation.replaceAll(" ", "_").toUpperCase()}_SNAPSHOT_READY`;
+      const staleFinalizer = startOwnerSqlWithBarrier(
+        staleSnapshotSql(value.attempt.attemptId, isolation, marker),
+        marker,
+        finalizeAttemptActionSql(value.reservation.reservationId),
+      );
+      let released = false;
+      try {
+        await staleFinalizer.ready;
+        const completion = runOwnerSql(completeAttemptSql(value.attempt.attemptId));
+        expect(completion.status, completion.stderr).toBe(0);
+        expect(completion.stdout).toContain('"alreadyCompleted": false');
+
+        staleFinalizer.release();
+        released = true;
+        const staleResult = await staleFinalizer.result;
+        const safeStaleOutcome =
+          (staleResult.status === 0 &&
+            staleResult.stdout.includes('"reason": "ATTEMPT_IN_PROGRESS"')) ||
+          (staleResult.status !== 0 && staleResult.stderr.includes("40001"));
+        expect(safeStaleOutcome, staleResult.stderr || staleResult.stdout).toBe(true);
+      } finally {
+        if (!released) {
+          staleFinalizer.release();
+        }
+      }
+
+      expect(
+        await settlementSnapshot(value.user.id, value.reservation.reservationId),
+      ).toEqual(beforeSettlement);
+      expect(await harness.finalize(value.reservation.reservationId)).toMatchObject({
+        ok: true,
+        alreadyFinalized: false,
+      });
+    }
   });
 
   it("rolls back the whole settlement when request cost aggregation exceeds bigint", async () => {
