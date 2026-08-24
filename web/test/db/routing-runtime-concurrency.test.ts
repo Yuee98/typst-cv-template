@@ -1,9 +1,11 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
+  acceptAiLegalBundle,
   configureFeature,
   createServiceClient,
   createTestUser,
@@ -24,7 +26,107 @@ import {
   sealPriceAsDatabaseOwner,
   startOwnerSql,
   transitionPolicyAsDatabaseOwner,
+  type OwnerSqlResult,
 } from "./runtime-contract-fixtures";
+
+const DB_CONTAINER = "supabase_db_typst-cv-template";
+const AVAILABILITY_READY = "DB011A_AVAILABILITY_READY";
+const POINTER_READY = "DB011A_POINTER_READY";
+const SNAPSHOT_READY = "DB011A_SNAPSHOT_READY";
+const FINALIZE_READY = "DB011A_FINALIZE_READY";
+const CHILD_LOCK_READY = "DB011A_CHILD_LOCK_READY";
+
+interface BarrierSqlProcess {
+  ready: Promise<void>;
+  result: Promise<OwnerSqlResult>;
+  release: () => void;
+}
+
+function startOwnerSqlWithBarrier(
+  sql: string,
+  marker: string,
+  releaseSql?: string,
+): BarrierSqlProcess {
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  let released = releaseSql === undefined;
+  let release: () => void = () => undefined;
+  const result = new Promise<OwnerSqlResult>((resolve, reject) => {
+    const child = spawn(
+      "docker",
+      [
+        "exec",
+        "-i",
+        DB_CONTAINER,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "--set",
+        "ON_ERROR_STOP=1",
+        "--no-psqlrc",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) {
+        readySettled = true;
+        resolveReady();
+      }
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) {
+        readySettled = true;
+        resolveReady();
+      }
+    });
+    child.on("error", (error) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(error);
+      }
+      reject(error);
+    });
+    child.on("close", (status) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(
+          new Error(
+            `owner SQL exited before barrier ${marker}: ${stderr || stdout}`,
+          ),
+        );
+      }
+      resolve({ status: status ?? -1, stdout, stderr });
+    });
+    release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      child.stdin.end(releaseSql);
+    };
+    if (releaseSql === undefined) {
+      child.stdin.end(sql);
+    } else {
+      child.stdin.write(sql);
+    }
+  });
+
+  return { ready, release: () => release(), result };
+}
 
 interface LiveRoute {
   profileId: string;
@@ -379,6 +481,150 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     return { current, replacement };
   }
 
+  function startHeldTransaction(
+    body: string,
+    marker: string,
+  ): BarrierSqlProcess {
+    return startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        \pset format unaligned
+        \pset tuples_only on
+        begin;
+        set local statement_timeout = '10s';
+        ${body}
+        \echo ${marker}
+      `,
+      marker,
+      String.raw`
+        commit;
+      `,
+    );
+  }
+
+  function startBlockingContender(
+    body: string,
+    marker: string,
+    applicationName: string,
+  ): BarrierSqlProcess {
+    return startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        \pset format unaligned
+        \pset tuples_only on
+        begin;
+        set local statement_timeout = '10s';
+        set local application_name = '${applicationName}';
+        \echo ${marker}
+        ${body}
+        commit;
+      `,
+      marker,
+    );
+  }
+
+  async function waitForDatabaseLock(applicationName: string): Promise<void> {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const state = runOwnerSql(String.raw`
+        \pset format unaligned
+        \pset tuples_only on
+        select coalesce(wait_event_type, '') || ':' || coalesce(wait_event, '')
+        from pg_catalog.pg_stat_activity
+        where application_name = '${applicationName}';
+      `).stdout;
+      if (state.split(/\r?\n/u).some((line) => line.trim().startsWith("Lock:"))) {
+        return;
+      }
+      await sleep(25);
+    }
+    throw new Error(`contender ${applicationName} never reported a DB lock wait`);
+  }
+
+  function availabilitySelect(userId: string): string {
+    return String.raw`
+      set local role service_role;
+      select public.get_ai_polish_availability_v1('${userId}'::uuid);
+      reset role;
+    `;
+  }
+
+  function executionSnapshotSelect(
+    reservationId: string,
+    userId: string,
+  ): string {
+    return String.raw`
+      set local role service_role;
+      select public.get_ai_polish_execution_snapshot_v1(
+        '${reservationId}'::uuid,
+        '${userId}'::uuid
+      );
+      reset role;
+    `;
+  }
+
+  function finalizeSelect(reservationId: string): string {
+    return String.raw`
+      set local role service_role;
+      select public.finalize_ai_polish_request(
+        '${reservationId}'::uuid,
+        'released',
+        false,
+        false,
+        null,
+        null
+      );
+      reset role;
+    `;
+  }
+
+  function childLockStatements(route: LiveRoute): string {
+    return String.raw`
+      select id from public.ai_provider_profiles
+      where id = '${route.profileId}'::uuid for update;
+      select id from public.ai_provider_profile_versions
+      where id = '${route.profileVersionId}'::uuid for update;
+      select id from public.ai_price_versions
+      where id = '${route.priceVersionId}'::uuid for update;
+      select price_version_id from public.ai_price_components
+      where price_version_id = '${route.priceVersionId}'::uuid
+      order by component for update;
+      select legal_bundle_version from public.ai_legal_bundle_versions
+      where legal_bundle_version = '${INITIAL_LEGAL_BUNDLE_VERSION}' for update;
+      select runtime_contract_id
+      from public.ai_service_runtime_contract_versions
+      where runtime_contract_id = '${route.runtimeContractId}' for update;
+    `;
+  }
+
+  async function reserveV2ViaService(
+    route: LiveRoute,
+    userId: string,
+  ): Promise<string> {
+    await acceptAiLegalBundle(service, userId, INITIAL_LEGAL_BUNDLE_VERSION);
+    const config = await service
+      .from("ai_feature_config")
+      .select("config_generation")
+      .eq("id", true)
+      .single();
+    expect(config.error).toBeNull();
+    const result = await service.rpc("reserve_ai_polish_request_v2", {
+      p_user_id: userId,
+      p_request_id: crypto.randomUUID(),
+      p_client_request_id: crypto.randomUUID(),
+      p_expected_route: {
+        schema_version: "expected_route_v1",
+        config_generation: String(config.data!.config_generation),
+        profile_version_id: route.profileVersionId,
+        legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+        runtime_contract_id: route.runtimeContractId,
+        runtime_contract_sha256: route.runtimeContractSha256,
+      },
+    });
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ allowed: true });
+    return result.data.reservationId as string;
+  }
+
   function promotePolicySql(route: LiveRoute, holdSeconds: number) {
     return String.raw`
       \set ON_ERROR_STOP on
@@ -477,6 +723,228 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       await expectNoV2Admission(secondUser.id);
     } finally {
       await deleteTestUser(service, secondUser.id);
+      await configureFeature(service, { enabled: false });
+    }
+  });
+
+  it("returns one coherent availability candidate across pointer switches", async () => {
+    const availabilityFirst = await createPointerRacePair(
+      "availability-pointer-read-first",
+    );
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const firstUser = await createTestUser(
+      service,
+      "availability-pointer-read-first",
+    );
+    try {
+      const holder = startHeldTransaction(
+        availabilitySelect(firstUser.id),
+        AVAILABILITY_READY,
+      );
+      await holder.ready;
+      const applicationName = `db011a-pointer-${crypto.randomUUID()}`;
+      const contender = startBlockingContender(
+        String.raw`
+          update public.ai_feature_config
+          set active_routing_policy_version_id =
+                '${availabilityFirst.replacement.policyVersionId}'::uuid,
+              routing_updated_by = 'runtime-concurrency',
+              routing_change_reason = 'availability read first ${crypto.randomUUID()}'
+          where id = true;
+        `,
+        POINTER_READY,
+        applicationName,
+      );
+      await contender.ready;
+      try {
+        await waitForDatabaseLock(applicationName);
+      } finally {
+        holder.release();
+      }
+      const [availability, switched] = await Promise.all([
+        holder.result,
+        contender.result,
+      ]);
+      expect(availability.status, availability.stderr).toBe(0);
+      expect(availability.stdout).toContain(
+        availabilityFirst.current.profileVersionId,
+      );
+      expect(availability.stdout).not.toContain(
+        availabilityFirst.replacement.profileVersionId,
+      );
+      expect(switched.status, switched.stderr).toBe(0);
+    } finally {
+      await deleteTestUser(service, firstUser.id);
+    }
+
+    const pointerFirst = await createPointerRacePair(
+      "availability-pointer-write-first",
+    );
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const secondUser = await createTestUser(
+      service,
+      "availability-pointer-write-first",
+    );
+    try {
+      const holder = startHeldTransaction(
+        String.raw`
+          update public.ai_feature_config
+          set active_routing_policy_version_id =
+                '${pointerFirst.replacement.policyVersionId}'::uuid,
+              routing_updated_by = 'runtime-concurrency',
+              routing_change_reason = 'availability write first ${crypto.randomUUID()}'
+          where id = true;
+        `,
+        POINTER_READY,
+      );
+      await holder.ready;
+      const applicationName = `db011a-availability-${crypto.randomUUID()}`;
+      const contender = startBlockingContender(
+        availabilitySelect(secondUser.id),
+        AVAILABILITY_READY,
+        applicationName,
+      );
+      await contender.ready;
+      try {
+        await waitForDatabaseLock(applicationName);
+      } finally {
+        holder.release();
+      }
+      const [switched, availability] = await Promise.all([
+        holder.result,
+        contender.result,
+      ]);
+      expect(switched.status, switched.stderr).toBe(0);
+      expect(availability.status, availability.stderr).toBe(0);
+      expect(availability.stdout).toContain('"enabled": true');
+      expect(availability.stdout).toContain(
+        pointerFirst.replacement.profileVersionId,
+      );
+      expect(availability.stdout).not.toContain(
+        pointerFirst.current.profileVersionId,
+      );
+    } finally {
+      await deleteTestUser(service, secondUser.id);
+      await clearPointer("availability pointer race cleanup");
+      await configureFeature(service, { enabled: false });
+    }
+  });
+
+  it("locks only the request while snapshot and finalize serialize", async () => {
+    const route = await createLiveRoute("execution-snapshot-lock-boundary");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const firstUser = await createTestUser(
+      service,
+      "execution-snapshot-lock-boundary-a",
+    );
+    const secondUser = await createTestUser(
+      service,
+      "execution-snapshot-lock-boundary-b",
+    );
+    try {
+      const firstReservation = await reserveV2ViaService(route, firstUser.id);
+      const secondReservation = await reserveV2ViaService(route, secondUser.id);
+
+      const childHolder = startHeldTransaction(
+        childLockStatements(route),
+        CHILD_LOCK_READY,
+      );
+      await childHolder.ready;
+      try {
+        const snapshot = runOwnerSql(String.raw`
+          \set ON_ERROR_STOP on
+          \pset format unaligned
+          \pset tuples_only on
+          begin;
+          set local statement_timeout = '10s';
+          set local lock_timeout = '250ms';
+          ${executionSnapshotSelect(firstReservation, firstUser.id)}
+          commit;
+        `);
+        expect(snapshot.status, snapshot.stderr).toBe(0);
+        expect(snapshot.stdout).toContain('"ok": true');
+      } finally {
+        childHolder.release();
+      }
+      expect((await childHolder.result).status).toBe(0);
+
+      const snapshotHolder = startHeldTransaction(
+        executionSnapshotSelect(firstReservation, firstUser.id),
+        SNAPSHOT_READY,
+      );
+      await snapshotHolder.ready;
+      try {
+        const childLocks = runOwnerSql(String.raw`
+          \set ON_ERROR_STOP on
+          begin;
+          set local statement_timeout = '10s';
+          set local lock_timeout = '250ms';
+          ${childLockStatements(route)}
+          commit;
+        `);
+        expect(childLocks.status, childLocks.stderr).toBe(0);
+      } finally {
+        snapshotHolder.release();
+      }
+      expect((await snapshotHolder.result).status).toBe(0);
+
+      const snapshotBeforeFinalize = startHeldTransaction(
+        executionSnapshotSelect(firstReservation, firstUser.id),
+        SNAPSHOT_READY,
+      );
+      await snapshotBeforeFinalize.ready;
+      const finalizeApplication = `db011a-finalize-${crypto.randomUUID()}`;
+      const finalizeContender = startBlockingContender(
+        finalizeSelect(firstReservation),
+        FINALIZE_READY,
+        finalizeApplication,
+      );
+      await finalizeContender.ready;
+      try {
+        await waitForDatabaseLock(finalizeApplication);
+      } finally {
+        snapshotBeforeFinalize.release();
+      }
+      const [snapshotResult, finalizeResult] = await Promise.all([
+        snapshotBeforeFinalize.result,
+        finalizeContender.result,
+      ]);
+      expect(snapshotResult.status, snapshotResult.stderr).toBe(0);
+      expect(snapshotResult.stdout).toContain('"ok": true');
+      expect(finalizeResult.status, finalizeResult.stderr).toBe(0);
+      expect(finalizeResult.stdout).toContain('"ok": true');
+
+      const finalizeBeforeSnapshot = startHeldTransaction(
+        finalizeSelect(secondReservation),
+        FINALIZE_READY,
+      );
+      await finalizeBeforeSnapshot.ready;
+      const snapshotApplication = `db011a-snapshot-${crypto.randomUUID()}`;
+      const snapshotContender = startBlockingContender(
+        executionSnapshotSelect(secondReservation, secondUser.id),
+        SNAPSHOT_READY,
+        snapshotApplication,
+      );
+      await snapshotContender.ready;
+      try {
+        await waitForDatabaseLock(snapshotApplication);
+      } finally {
+        finalizeBeforeSnapshot.release();
+      }
+      const [finalizeFirstResult, snapshotAfterFinalize] = await Promise.all([
+        finalizeBeforeSnapshot.result,
+        snapshotContender.result,
+      ]);
+      expect(finalizeFirstResult.status, finalizeFirstResult.stderr).toBe(0);
+      expect(finalizeFirstResult.stdout).toContain('"ok": true');
+      expect(snapshotAfterFinalize.status, snapshotAfterFinalize.stderr).toBe(0);
+      expect(snapshotAfterFinalize.stdout).toContain(
+        '"reason": "ALREADY_FINALIZED"',
+      );
+    } finally {
+      await deleteTestUser(service, firstUser.id);
+      await deleteTestUser(service, secondUser.id);
+      await clearPointer("execution snapshot lock boundary cleanup");
       await configureFeature(service, { enabled: false });
     }
   });
