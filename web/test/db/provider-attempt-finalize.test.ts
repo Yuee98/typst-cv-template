@@ -1115,6 +1115,84 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     });
   });
 
+  it("rejects owner-corrupted parent and attempt disclosure snapshots before settlement", async () => {
+    const value = await completed("finalize-disclosure-corruption");
+    const corruptedDisclosure = "owner-corrupted.disclosure";
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      set session_replication_role = replica;
+      update public.ai_request_ledger
+      set display_disclosure_key = '${corruptedDisclosure}'
+      where reservation_id = '${value.reservation.reservationId}'::uuid;
+      update public.ai_provider_attempt_ledger
+      set display_disclosure_key = '${corruptedDisclosure}'
+      where attempt_id = '${value.attempt.attemptId}'::uuid;
+      set session_replication_role = origin;
+    `);
+
+    const currentProfile = await service
+      .from("ai_provider_profile_versions")
+      .select("display_disclosure_key")
+      .eq("id", harness.fixture.profileVersionId)
+      .single();
+    expect(currentProfile.error).toBeNull();
+    expect(currentProfile.data?.display_disclosure_key).toBe(
+      harness.fixture.displayDisclosureKey,
+    );
+
+    const before = {
+      settlement: await settlementSnapshot(
+        value.user.id,
+        value.reservation.reservationId,
+      ),
+      attempt: await service
+        .from("ai_provider_attempt_ledger")
+        .select("*")
+        .eq("attempt_id", value.attempt.attemptId)
+        .single(),
+      rate: await service
+        .from("ai_rate_minutes")
+        .select("*")
+        .eq("user_id", value.user.id)
+        .order("minute_bucket"),
+      profile: currentProfile,
+    };
+    expect(before.attempt.error).toBeNull();
+    expect(before.rate.error).toBeNull();
+    expect(before.settlement.request).toMatchObject({
+      display_disclosure_key: corruptedDisclosure,
+    });
+    expect(before.attempt.data).toMatchObject({
+      display_disclosure_key: corruptedDisclosure,
+    });
+
+    expect(await harness.finalize(value.reservation.reservationId)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect({
+      settlement: await settlementSnapshot(
+        value.user.id,
+        value.reservation.reservationId,
+      ),
+      attempt: await service
+        .from("ai_provider_attempt_ledger")
+        .select("*")
+        .eq("attempt_id", value.attempt.attemptId)
+        .single(),
+      rate: await service
+        .from("ai_rate_minutes")
+        .select("*")
+        .eq("user_id", value.user.id)
+        .order("minute_bucket"),
+      profile: await service
+        .from("ai_provider_profile_versions")
+        .select("display_disclosure_key")
+        .eq("id", harness.fixture.profileVersionId)
+        .single(),
+    }).toEqual(before);
+  });
+
   it("settles one reported attempt into V2 and legacy ledgers exactly once", async () => {
     const { user, reservation } = await completed("finalize-one-reported");
     const usageBefore = await getUsageRow(service, user.id);

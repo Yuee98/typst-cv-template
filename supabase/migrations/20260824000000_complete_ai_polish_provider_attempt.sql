@@ -1427,6 +1427,7 @@ begin
       v_attempt.legal_manifest_id,
       v_attempt.model_id,
       v_attempt.wire_api_kind,
+      v_attempt.display_disclosure_key,
       v_attempt.gateway_kind,
       v_attempt.calculator_kind,
       v_attempt.billing_currency
@@ -1439,6 +1440,7 @@ begin
       v_profile.legal_manifest_id,
       v_profile.model_id,
       v_profile.wire_api_kind,
+      v_profile.display_disclosure_key,
       v_profile.gateway_kind,
       v_price.calculator_kind,
       v_price.currency
