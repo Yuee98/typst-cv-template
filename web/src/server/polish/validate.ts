@@ -50,17 +50,21 @@ export interface RawModelOutput {
   finishReason: ProviderFinishReason;
 }
 
+export const POLISH_VALIDATION_FAILURE_STAGES = Object.freeze([
+  "finish_reason",
+  "empty_content",
+  "json_parse",
+  "schema_validation",
+  "id_set_mismatch",
+  "empty_item",
+  "length_cap",
+  "total_length_cap",
+  "language_mismatch",
+  "protected_spans",
+] as const);
+
 export type PolishValidationFailureStage =
-  | "finish_reason"
-  | "empty_content"
-  | "json_parse"
-  | "schema_validation"
-  | "id_set_mismatch"
-  | "empty_item"
-  | "length_cap"
-  | "total_length_cap"
-  | "language_mismatch"
-  | "protected_spans";
+  (typeof POLISH_VALIDATION_FAILURE_STAGES)[number];
 
 export interface PolishValidationFailure {
   ok: false;

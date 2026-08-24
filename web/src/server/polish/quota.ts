@@ -22,6 +22,7 @@ import {
   type PolishErrorCode,
   type PolishGranularity,
 } from "@/lib/polish/contract";
+import { resolveEndpoint } from "./adapter-registry";
 import { assertNormalizedUsageV2 } from "./inference-v2";
 import {
   PolishLifecycleV2ContractError,
@@ -48,6 +49,11 @@ import type {
   PolishAttemptCompletedFactV2,
   PolishAttemptStatusV2,
 } from "./orchestrator";
+import {
+  validateProfileExecutionConfig,
+  type ProfileExecutionConfigV1,
+} from "./profile-registry";
+import { POLISH_VALIDATION_FAILURE_STAGES } from "./validate";
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -500,16 +506,9 @@ const FINISH_REASONS_V2 = new Set([
   "insufficient_system_resource",
   "unknown",
 ]);
-const FAILURE_STAGES_V2 = new Set([
+const FAILURE_STAGES_V2: ReadonlySet<string> = new Set([
   "transport",
-  "finish_reason",
-  "empty_content",
-  "json_parse",
-  "schema_validation",
-  "id_set_mismatch",
-  "empty_item",
-  "length_cap",
-  "total_length_cap",
+  ...POLISH_VALIDATION_FAILURE_STAGES,
   "provider_contract",
 ]);
 const COST_INCOMPLETE_REASONS_V2 = new Set([
@@ -958,12 +957,23 @@ function taggedRouteIdV2(
 export function serializePolishAttemptCompletionV2(params: {
   attempt: ProviderAttemptStartV2;
   fact: PolishAttemptCompletedFactV2;
+  profileExecutionConfig: ProfileExecutionConfigV1;
   billingCurrency: string;
   routeObservationSecret: unknown;
 }): PolishAttemptCompletionRpcPayloadV2 {
   try {
     const attempt = parseAttemptStartRpcResultV2(params.attempt);
     if (!attempt.ok || attempt.status !== "started") throw localContractErrorV2();
+    const profile = validateProfileExecutionConfig(params.profileExecutionConfig);
+    if (
+      attempt.routeSnapshot.gatewayKind !== profile.gatewayKind ||
+      attempt.routeSnapshot.modelId !== profile.modelId ||
+      attempt.routeSnapshot.wireApiKind !== profile.wireApiKind ||
+      attempt.routeSnapshot.displayDisclosureKey !== profile.displayDisclosureKey
+    ) {
+      throw localContractErrorV2();
+    }
+    const expectedUpstreamEndpoint = resolveEndpoint(profile.endpointAlias).url;
     if (!CURRENCY_V2.test(params.billingCurrency)) throw localContractErrorV2();
 
     const fact = params.fact;
@@ -1015,6 +1025,12 @@ export function serializePolishAttemptCompletionV2(params: {
     const actualUpstreamEndpoint = requireNullableNonEmptyStringV2(
       fact.route.actualUpstreamEndpoint,
     );
+    if (
+      actualUpstreamEndpoint !== null &&
+      actualUpstreamEndpoint !== expectedUpstreamEndpoint
+    ) {
+      throw localContractErrorV2();
+    }
     const actualModelId = requireNullableNonEmptyStringV2(fact.route.actualModelId);
     if (actualModelId !== null && actualModelId !== attempt.routeSnapshot.modelId) {
       throw localContractErrorV2();

@@ -545,6 +545,7 @@ export async function executePolishLifecycleV2(
         await deps.completeAttempt({
           attempt: event.startResult,
           fact: event.completed,
+          profileExecutionConfig: execution.profileExecutionConfig,
           billingCurrency: execution.priceSnapshot.currency,
           routeObservationSecret: deps.routeObservationSecret,
         });

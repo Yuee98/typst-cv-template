@@ -2,8 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
 
 import fixture from "../../../test/fixtures/ai-runtime-execution-contract-v1.json";
+import { resolveEndpoint } from "./adapter-registry";
 import { parseRouteSnapshotV1, type ExpectedRouteV1 } from "./lifecycle-v2-contract";
 import type { PolishAttemptCompletedFactV2 } from "./orchestrator";
+import { resolveProfile } from "./profile-registry";
 import {
   completePolishProviderAttemptV2,
   finalizePolishRequestV2,
@@ -16,6 +18,7 @@ import {
   type PolishFinalizeMetadataV2,
   type ProviderAttemptStartV2,
 } from "./quota";
+import { POLISH_VALIDATION_FAILURE_STAGES } from "./validate";
 
 type RpcReply = Readonly<{
   data: unknown;
@@ -49,6 +52,9 @@ const ATTEMPT_ID = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1";
 const executionSuccess = structuredClone(fixture.executionSnapshot.successes[0].value);
 const RESERVATION_ID = executionSuccess.reservationId;
 const ROUTE = parseRouteSnapshotV1(executionSuccess.routeSnapshot);
+const PROFILE = resolveProfile("deepseek.official.deepseek-v4-flash.chat.v1");
+const MIMO_PROFILE = resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1");
+const DEEPSEEK_ENDPOINT = resolveEndpoint(PROFILE.endpointAlias).url;
 const EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
   schemaVersion: "expected_route_v1",
   configGeneration: ROUTE.configGeneration,
@@ -123,7 +129,7 @@ function completedFact(
       schemaVersion: "route_observation_v1",
       gatewayRequestId: "req_ABC12345",
       providerRequestId: "provider_12345678",
-      actualUpstreamEndpoint: "https://api.deepseek.com/chat/completions",
+      actualUpstreamEndpoint: DEEPSEEK_ENDPOINT,
       actualModelId: ROUTE.modelId,
       routerAttemptCount: 1,
     },
@@ -364,6 +370,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
     const payload = serializePolishAttemptCompletionV2({
       attempt: attemptStart(),
       fact: completedFact(),
+      profileExecutionConfig: PROFILE,
       billingCurrency: "CNY",
       routeObservationSecret: "  route-secret  ",
     });
@@ -437,6 +444,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
     const payload = serializePolishAttemptCompletionV2({
       attempt: attemptStart(),
       fact,
+      profileExecutionConfig: PROFILE,
       billingCurrency: "CNY",
       routeObservationSecret: null,
     });
@@ -471,10 +479,123 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       serializePolishAttemptCompletionV2({
         attempt: attemptStart(),
         fact: "fact" in override ? override.fact : completedFact(),
+        profileExecutionConfig: PROFILE,
         billingCurrency: "billingCurrency" in override ? override.billingCurrency : "CNY",
         routeObservationSecret: "route-secret",
       }),
     ).toThrow(PolishLifecycleV2RpcError);
+  });
+
+  it.each(POLISH_VALIDATION_FAILURE_STAGES)(
+    "persists the complete current validation-stage domain: %s",
+    async (failureStage) => {
+      const { client, rpc } = sequenceClient({
+        data: {
+          ok: true,
+          alreadyCompleted: false,
+          status: "invalid_output",
+          usageComplete: true,
+        },
+      });
+      const fact = completedFact({
+        status: "invalid_output",
+        failureStage,
+        error: {
+          code: "INVALID_MODEL_OUTPUT",
+          upstreamStatus: null,
+          retryable: true,
+          retryAfterMs: 0,
+        },
+      });
+
+      await expect(
+        completePolishProviderAttemptV2(client, {
+          attempt: attemptStart(),
+          fact,
+          profileExecutionConfig: PROFILE,
+          billingCurrency: "CNY",
+          routeObservationSecret: "route-secret",
+        }),
+      ).resolves.toMatchObject({ status: "invalid_output", usageComplete: true });
+
+      expect(rpc).toHaveBeenCalledTimes(1);
+      const payload = rpc.mock.calls[0]?.[1];
+      expect(payload).toMatchObject({
+        p_status: "invalid_output",
+        p_usage: {
+          input_total_tokens: 15,
+          input_cache_read_tokens: 5,
+          input_standard_tokens: 10,
+          output_tokens: 4,
+          usage_complete: true,
+        },
+        p_cost: {
+          estimated_currency: "CNY",
+          estimated_cost_nanos: "17",
+          provider_reported_currency: "CNY",
+          provider_reported_cost_nanos: "17",
+          reconciliation_status: "matched",
+        },
+        p_metadata: {
+          schema_version: "attempt_metadata_v1",
+          finish_reason: "stop",
+          failure_stage: failureStage,
+          latency_ms: 150,
+        },
+      });
+      expect(Object.keys((payload as { p_metadata: object }).p_metadata)).toEqual([
+        "schema_version",
+        "finish_reason",
+        "failure_stage",
+        "latency_ms",
+      ]);
+      expect(JSON.stringify(payload)).not.toContain("INVALID_MODEL_OUTPUT");
+    },
+  );
+
+  it.each([
+    ["unrelated HTTPS origin", "https://unregistered.example/v1/responses"],
+    ["MiMo endpoint under a DeepSeek route", resolveEndpoint(MIMO_PROFILE.endpointAlias).url],
+    ["userinfo variant", "https://user@api.deepseek.com/chat/completions"],
+    ["query variant", `${DEEPSEEK_ENDPOINT}?request_id=req_ABC12345`],
+    ["fragment variant", `${DEEPSEEK_ENDPOINT}#req_ABC12345`],
+    ["unregistered path", `${DEEPSEEK_ENDPOINT}/req_ABC12345`],
+    ["overlength endpoint", `https://api.deepseek.com/${"a".repeat(500)}`],
+    ["whitespace-bearing endpoint", ` ${DEEPSEEK_ENDPOINT}`],
+  ] as const)("rejects %s before the completion RPC", async (_name, endpoint) => {
+    const { client, rpc } = sequenceClient();
+    const fact = completedFact({
+      route: { ...completedFact().route, actualUpstreamEndpoint: endpoint },
+    });
+
+    const error = await capturedError(
+      completePolishProviderAttemptV2(client, {
+        attempt: attemptStart(),
+        fact,
+        profileExecutionConfig: PROFILE,
+        billingCurrency: "CNY",
+        routeObservationSecret: "route-secret",
+      }),
+    );
+
+    expect(error.kind).toBe("LOCAL_CONTRACT_REJECTED");
+    expect(rpc).toHaveBeenCalledTimes(0);
+  });
+
+  it("rejects a code-owned profile that does not match the frozen attempt route", async () => {
+    const { client, rpc } = sequenceClient();
+    const error = await capturedError(
+      completePolishProviderAttemptV2(client, {
+        attempt: attemptStart(),
+        fact: completedFact(),
+        profileExecutionConfig: MIMO_PROFILE,
+        billingCurrency: "CNY",
+        routeObservationSecret: "route-secret",
+      }),
+    );
+
+    expect(error.kind).toBe("LOCAL_CONTRACT_REJECTED");
+    expect(rpc).toHaveBeenCalledTimes(0);
   });
 
   it("retries an identical completion payload once and accepts exact idempotent readback", async () => {
@@ -493,12 +614,16 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       completePolishProviderAttemptV2(client, {
         attempt: attemptStart(),
         fact: completedFact(),
+        profileExecutionConfig: PROFILE,
         billingCurrency: "CNY",
         routeObservationSecret: "route-secret",
       }),
     ).resolves.toMatchObject({ alreadyCompleted: true, status: "succeeded" });
     expect(rpc).toHaveBeenCalledTimes(2);
     expect(rpc.mock.calls[0][1]).toBe(rpc.mock.calls[1][1]);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_route: { actual_upstream_endpoint: DEEPSEEK_ENDPOINT },
+    });
   });
 
   it("does not retry a definite completion rejection or accept conflicting readback", async () => {
@@ -507,6 +632,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       completePolishProviderAttemptV2(rejected.client, {
         attempt: attemptStart(),
         fact: completedFact(),
+        profileExecutionConfig: PROFILE,
         billingCurrency: "CNY",
         routeObservationSecret: "route-secret",
       }),
@@ -526,6 +652,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       completePolishProviderAttemptV2(conflict.client, {
         attempt: attemptStart(),
         fact: completedFact(),
+        profileExecutionConfig: PROFILE,
         billingCurrency: "CNY",
         routeObservationSecret: "route-secret",
       }),
@@ -545,6 +672,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       completePolishProviderAttemptV2(client, {
         attempt: attemptStart(),
         fact: completedFact(),
+        profileExecutionConfig: PROFILE,
         billingCurrency: "CNY",
         routeObservationSecret: "route-secret",
       }),
