@@ -5,6 +5,8 @@
 
 begin;
 
+lock table public.ai_profile_usage_daily in access exclusive mode;
+
 -- This table is intentionally dark before DB-010.  Refuse to assign a new
 -- completeness identity to any pre-existing aggregate row silently.
 do $$

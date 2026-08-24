@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -332,6 +334,238 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       end
       $assertions$;
     `);
+  });
+
+  it("serializes the profile-daily empty preflight against concurrent writers", async () => {
+    const migrationPath = fileURLToPath(
+      new URL(
+        "../../../supabase/migrations/20260824000000_complete_ai_polish_provider_attempt.sql",
+        import.meta.url,
+      ),
+    );
+    const productionSql = readFileSync(migrationPath, "utf8").replaceAll(
+      "\r\n",
+      "\n",
+    );
+    const beginIndex = productionSql.indexOf("begin;");
+    const lockSql =
+      "lock table public.ai_profile_usage_daily in access exclusive mode;";
+    const lockIndex = productionSql.indexOf(lockSql);
+    const emptyCheckIndex = productionSql.indexOf(
+      "if exists (select 1 from public.ai_profile_usage_daily) then",
+    );
+    const alterIndex = productionSql.indexOf(
+      "alter table public.ai_profile_usage_daily\n  add column provider_report_incomplete_count",
+    );
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(lockIndex).toBeGreaterThan(beginIndex);
+    expect(
+      productionSql.slice(beginIndex + "begin;".length, lockIndex).trim(),
+    ).toBe("");
+    expect(emptyCheckIndex).toBeGreaterThan(lockIndex);
+    expect(alterIndex).toBeGreaterThan(emptyCheckIndex);
+    expect(productionSql.split(lockSql)).toHaveLength(2);
+
+    const suffix = randomUUID().replaceAll("-", "");
+    const writerFirstTable = `db010_pf_w_${suffix}`;
+    const writerFirstFunction = `${writerFirstTable}_fn`;
+    const writerFirstConstraint = `${writerFirstTable}_nonnegative`;
+    const migrationFirstTable = `db010_pf_m_${suffix}`;
+    const migrationFirstFunction = `${migrationFirstTable}_fn`;
+    const migrationFirstConstraint = `${migrationFirstTable}_nonnegative`;
+
+    const createDisposableTable = (tableName: string) => {
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        create table public.${tableName} (id integer primary key);
+      `);
+    };
+    const cleanupDisposable = (tableName: string, functionName: string) => {
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        drop function if exists public.${functionName}();
+        drop table if exists public.${tableName};
+      `);
+    };
+    const replaySql = (options: {
+      tableName: string;
+      functionName: string;
+      constraintName: string;
+      beforeLockMarker?: string;
+      afterDdlMarker?: string;
+      holdAfterDdl?: boolean;
+    }) => String.raw`
+      \set ON_ERROR_STOP on
+      \set VERBOSITY verbose
+      begin;
+      ${options.beforeLockMarker ? `\\echo ${options.beforeLockMarker}` : ""}
+      lock table public.${options.tableName} in access exclusive mode;
+      do $preflight$
+      begin
+        if exists (select 1 from public.${options.tableName}) then
+          raise exception 'DB-010 requires an empty ai_profile_usage_daily preflight'
+            using errcode = '23514';
+        end if;
+      end
+      $preflight$;
+      alter table public.${options.tableName}
+        add column provider_report_incomplete_count integer not null default 0,
+        add constraint ${options.constraintName}
+          check (provider_report_incomplete_count >= 0);
+      create function public.${options.functionName}()
+      returns integer
+      language sql
+      set search_path = ''
+      as $function$ select 1 $function$;
+      ${options.afterDdlMarker ? `\\echo ${options.afterDdlMarker}` : ""}
+      ${options.holdAfterDdl ? "" : "commit;"}
+    `;
+
+    createDisposableTable(writerFirstTable);
+    let writerFirstReleased = false;
+    let migrationAfterWriter: BarrierSqlProcess | undefined;
+    const writerFirst = startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        insert into public.${writerFirstTable} (id) values (1);
+        \echo DB010_WRITER_FIRST_HOLDS
+      `,
+      "DB010_WRITER_FIRST_HOLDS",
+      "commit;\n",
+    );
+    try {
+      await writerFirst.ready;
+      migrationAfterWriter = startOwnerSqlWithBarrier(
+        replaySql({
+          tableName: writerFirstTable,
+          functionName: writerFirstFunction,
+          constraintName: writerFirstConstraint,
+          beforeLockMarker: "DB010_MIGRATION_WAITS_FOR_WRITER",
+        }),
+        "DB010_MIGRATION_WAITS_FOR_WRITER",
+      );
+      let migrationSettled = false;
+      const migrationResult = migrationAfterWriter.result.then((result) => {
+        migrationSettled = true;
+        return result;
+      });
+      await migrationAfterWriter.ready;
+      await sleep(LOCK_OBSERVATION_MS);
+      expect(migrationSettled).toBe(false);
+
+      writerFirst.release();
+      writerFirstReleased = true;
+      expect((await writerFirst.result).status).toBe(0);
+      const failedMigration = await migrationResult;
+      expect(failedMigration.status).not.toBe(0);
+      expect(failedMigration.stderr).toContain("23514");
+
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        do $assertions$
+        begin
+          if (select count(*) from public.${writerFirstTable}) <> 1
+             or exists (
+               select 1 from pg_catalog.pg_attribute
+               where attrelid = 'public.${writerFirstTable}'::pg_catalog.regclass
+                 and attname = 'provider_report_incomplete_count'
+                 and not attisdropped
+             )
+             or exists (
+               select 1 from pg_catalog.pg_constraint
+               where conrelid = 'public.${writerFirstTable}'::pg_catalog.regclass
+                 and conname = '${writerFirstConstraint}'
+             )
+             or pg_catalog.to_regprocedure(
+               'public.${writerFirstFunction}()'
+             ) is not null then
+            raise exception 'writer-first preflight did not roll back cleanly';
+          end if;
+        end
+        $assertions$;
+      `);
+    } finally {
+      if (!writerFirstReleased) {
+        writerFirst.release();
+        await writerFirst.result;
+      }
+      if (migrationAfterWriter) {
+        await migrationAfterWriter.result;
+      }
+      cleanupDisposable(writerFirstTable, writerFirstFunction);
+    }
+
+    createDisposableTable(migrationFirstTable);
+    let migrationFirstReleased = false;
+    let writerAfterMigration: BarrierSqlProcess | undefined;
+    const migrationFirst = startOwnerSqlWithBarrier(
+      replaySql({
+        tableName: migrationFirstTable,
+        functionName: migrationFirstFunction,
+        constraintName: migrationFirstConstraint,
+        afterDdlMarker: "DB010_MIGRATION_FIRST_HOLDS",
+        holdAfterDdl: true,
+      }),
+      "DB010_MIGRATION_FIRST_HOLDS",
+      "commit;\n",
+    );
+    try {
+      await migrationFirst.ready;
+      writerAfterMigration = startOwnerSqlWithBarrier(
+        String.raw`
+          \set ON_ERROR_STOP on
+          begin;
+          \echo DB010_WRITER_WAITS_FOR_MIGRATION
+          insert into public.${migrationFirstTable} (id) values (1);
+          commit;
+        `,
+        "DB010_WRITER_WAITS_FOR_MIGRATION",
+      );
+      let writerSettled = false;
+      const writerResult = writerAfterMigration.result.then((result) => {
+        writerSettled = true;
+        return result;
+      });
+      await writerAfterMigration.ready;
+      await sleep(LOCK_OBSERVATION_MS);
+      expect(writerSettled).toBe(false);
+
+      migrationFirst.release();
+      migrationFirstReleased = true;
+      expect((await migrationFirst.result).status).toBe(0);
+      expect((await writerResult).status).toBe(0);
+
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        do $assertions$
+        begin
+          if (select count(*) from public.${migrationFirstTable}) <> 1
+             or (select provider_report_incomplete_count
+                 from public.${migrationFirstTable} where id = 1) <> 0
+             or not exists (
+               select 1 from pg_catalog.pg_constraint
+               where conrelid = 'public.${migrationFirstTable}'::pg_catalog.regclass
+                 and conname = '${migrationFirstConstraint}'
+             )
+             or pg_catalog.to_regprocedure(
+               'public.${migrationFirstFunction}()'
+             ) is null then
+            raise exception 'migration-first DDL boundary did not commit exactly';
+          end if;
+        end
+        $assertions$;
+      `);
+    } finally {
+      if (!migrationFirstReleased) {
+        migrationFirst.release();
+        await migrationFirst.result;
+      }
+      if (writerAfterMigration) {
+        await writerAfterMigration.result;
+      }
+      cleanupDisposable(migrationFirstTable, migrationFirstFunction);
+    }
   });
 
   it("preserves canonical V1 usage, metadata, attempt_count, refund, and replay behavior", async () => {
