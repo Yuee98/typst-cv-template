@@ -23,7 +23,6 @@ import {
   INITIAL_LEGAL_BUNDLE_VERSION,
   runOwnerSql,
   sealPriceAsDatabaseOwner,
-  startOwnerSql,
   transitionPolicyAsDatabaseOwner,
   type OwnerSqlResult,
 } from "./runtime-contract-fixtures";
@@ -34,6 +33,9 @@ const LARGE_GLOBAL_LIMIT = 2_000_000;
 const DB_CONTAINER = "supabase_db_typst-cv-template";
 const HOLDER_READY = "DB009_HOLDER_READY";
 const CONTENDER_READY = "DB009_CONTENDER_READY";
+const CHILD_LOCK_READY = "DB009_CHILD_LOCK_READY";
+const ADVISORY_GATE_READY = "DB009_ADVISORY_GATE_READY";
+const CHILD_LOCK_GATE_KEY = 9_009_009;
 const LOCK_HOLD_SECONDS = 0.8;
 
 interface RouteSnapshot {
@@ -84,11 +86,13 @@ interface StartDenial {
 interface BarrierSqlProcess {
   ready: Promise<void>;
   result: Promise<OwnerSqlResult>;
+  release: () => void;
 }
 
 function startOwnerSqlWithBarrier(
   sql: string,
   marker: string,
+  releaseSql?: string,
 ): BarrierSqlProcess {
   let resolveReady!: () => void;
   let rejectReady!: (error: Error) => void;
@@ -98,6 +102,8 @@ function startOwnerSqlWithBarrier(
     rejectReady = reject;
   });
 
+  let released = releaseSql === undefined;
+  let release: () => void = () => undefined;
   const result = new Promise<OwnerSqlResult>((resolve, reject) => {
     const child = spawn(
       "docker",
@@ -122,13 +128,17 @@ function startOwnerSqlWithBarrier(
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
-      if (!readySettled && stdout.includes(marker)) {
+      if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) {
         readySettled = true;
         resolveReady();
       }
     });
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
+      if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) {
+        readySettled = true;
+        resolveReady();
+      }
     });
     child.on("error", (error) => {
       if (!readySettled) {
@@ -148,10 +158,59 @@ function startOwnerSqlWithBarrier(
       }
       resolve({ status: status ?? -1, stdout, stderr });
     });
-    child.stdin.end(sql);
+    release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      child.stdin.end(releaseSql);
+    };
+    if (releaseSql === undefined) {
+      child.stdin.end(sql);
+    } else {
+      child.stdin.write(sql);
+    }
   });
 
-  return { ready, result };
+  return { ready, release: () => release(), result };
+}
+
+function startOwnerAdvisoryGate(
+  lockKey: number,
+  marker: string,
+): BarrierSqlProcess {
+  return startOwnerSqlWithBarrier(
+    String.raw`
+      \set ON_ERROR_STOP on
+      select pg_catalog.pg_advisory_lock(${lockKey});
+      \echo ${marker}
+    `,
+    marker,
+    String.raw`
+      select pg_catalog.pg_advisory_unlock(${lockKey});
+    `,
+  );
+}
+
+function databaseClockMs(): number {
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    select floor(
+      extract(epoch from pg_catalog.clock_timestamp()) * 1000
+    )::bigint;
+  `);
+  const value = result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => /^\d+$/u.test(line));
+  if (!value) {
+    throw new Error(
+      `database clock query returned no epoch milliseconds: ${result.stdout}`,
+    );
+  }
+  return Number(value);
 }
 
 async function runObservedBlockedRace(
@@ -410,6 +469,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       markerBefore?: string;
       markerAfter?: string;
       holdSeconds?: number;
+      lockParentBefore?: boolean;
     } = {},
   ): string {
     return String.raw`
@@ -419,6 +479,14 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       begin;
       set local statement_timeout = '10s';
       set local role service_role;
+      ${
+        options.lockParentBefore
+          ? `select reservation_id
+             from public.ai_request_ledger
+             where reservation_id = '${reservationId}'::uuid
+             for update;`
+          : ""
+      }
       ${options.markerBefore ? `\\echo ${options.markerBefore}` : ""}
       select public.start_ai_polish_provider_attempt(
         '${reservationId}'::uuid,
@@ -464,6 +532,42 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       ${statement}
       \echo ${HOLDER_READY}
       select pg_sleep(${LOCK_HOLD_SECONDS});
+      commit;
+    `;
+  }
+
+  function completeAttemptSql(attemptId: string): string {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      \pset format unaligned
+      \pset tuples_only on
+      begin;
+      set local statement_timeout = '10s';
+      set local role service_role;
+      update public.ai_provider_attempt_ledger
+      set status = 'succeeded',
+          terminal_at = pg_catalog.clock_timestamp(),
+          provider_billable = true,
+          usage_observation_kind = 'observed',
+          usage_schema_version = 'normalized_usage_v2',
+          input_total_tokens = 100,
+          input_cache_read_tokens = 60,
+          input_cache_write_tokens = null,
+          input_standard_tokens = 40,
+          output_tokens = 20,
+          reasoning_tokens = 5,
+          cache_usage_reporting = 'unavailable',
+          usage_complete = true,
+          route_observation_schema_version = 'route_observation_v1',
+          cost_observation_schema_version = 'cost_observation_v1',
+          estimated_currency = 'CNY',
+          estimated_cost_nanos = 1234,
+          cost_reconciliation_status = 'not_available',
+          finish_reason = 'stop',
+          latency_ms = 1234
+      where attempt_id = '${attemptId}'::uuid
+      returning status;
+      reset role;
       commit;
     `;
   }
@@ -649,10 +753,10 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     const user = await makeUser("attempt-start-roundtrip");
     const reservation = await reserveV2(user);
     const globalBefore = await getGlobalStartedCount(service);
-    const before = Date.now();
+    const before = databaseClockMs();
 
     const started = await startAttempt(reservation.reservationId, 1);
-    const after = Date.now();
+    const after = databaseClockMs();
     expect(started).toMatchObject({
       ok: true,
       attemptNo: 1,
@@ -766,6 +870,115 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       attempt_count: 1,
     });
     expect(await getGlobalStartedCount(service)).toBe(globalBefore + 1);
+  });
+
+  it("serializes a direct child completion against replay without a parent-child deadlock", async () => {
+    const user = await makeUser("attempt-start-direct-update-replay");
+    const reservation = await reserveV2(user);
+    const first = (await startAttempt(reservation.reservationId, 1)) as StartReceipt;
+    const globalAfterStart = await getGlobalStartedCount(service);
+    const probeFunction = "public.db009_hold_child_before_parent";
+    const probeTrigger = "a_db009_hold_child_before_parent";
+
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      drop trigger if exists ${probeTrigger}
+        on public.ai_provider_attempt_ledger;
+      drop function if exists ${probeFunction}();
+      create function ${probeFunction}()
+      returns trigger
+      language plpgsql
+      set search_path = ''
+      as $probe$
+      begin
+        raise notice '${CHILD_LOCK_READY}';
+        perform pg_catalog.pg_advisory_xact_lock(${CHILD_LOCK_GATE_KEY});
+        return new;
+      end
+      $probe$;
+
+      create trigger ${probeTrigger}
+      before update on public.ai_provider_attempt_ledger
+      for each row execute function ${probeFunction}();
+    `);
+
+    const gate = startOwnerAdvisoryGate(
+      CHILD_LOCK_GATE_KEY,
+      ADVISORY_GATE_READY,
+    );
+    let holder: BarrierSqlProcess | undefined;
+    let contender: BarrierSqlProcess | undefined;
+    try {
+      await gate.ready;
+      holder = startOwnerSqlWithBarrier(
+        completeAttemptSql(first.attemptId),
+        CHILD_LOCK_READY,
+      );
+      await holder.ready;
+
+      contender = startOwnerSqlWithBarrier(
+        startAttemptSql(reservation.reservationId, 1, {
+          lockParentBefore: true,
+          markerBefore: CONTENDER_READY,
+          holdSeconds: LOCK_HOLD_SECONDS,
+        }),
+        CONTENDER_READY,
+      );
+      await contender.ready;
+
+      let holderSettled = false;
+      const holderResult = holder.result.then((result) => {
+        holderSettled = true;
+        return result;
+      });
+      gate.release();
+      await sleep(150);
+      expect(holderSettled).toBe(false);
+
+      const [completedContender, completedHolder, completedGate] =
+        await Promise.all([contender.result, holderResult, gate.result]);
+      expect(completedContender.status, completedContender.stderr).toBe(0);
+      expect(completedHolder.status, completedHolder.stderr).toBe(0);
+      expect(completedHolder.stdout).toContain("succeeded");
+      expect(completedGate.status, completedGate.stderr).toBe(0);
+
+      const replayLine = completedContender.stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .find((line) => line.startsWith('{"ok"'));
+      expect(replayLine).toBeDefined();
+      expect(JSON.parse(replayLine!)).toEqual({
+        ...first,
+        alreadyStarted: true,
+      });
+    } finally {
+      gate.release();
+      await Promise.allSettled([
+        gate.result,
+        ...(holder ? [holder.result] : []),
+        ...(contender ? [contender.result] : []),
+      ]);
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        drop trigger if exists ${probeTrigger}
+          on public.ai_provider_attempt_ledger;
+        drop function if exists ${probeFunction}();
+      `);
+    }
+
+    expect(await attemptRows(reservation.reservationId)).toMatchObject([
+      {
+        attempt_id: first.attemptId,
+        attempt_no: 1,
+        status: "succeeded",
+      },
+    ]);
+    expect(await getLedgerRow(service, reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      provider_started_at: null,
+      attempt_count: 1,
+    });
+    expect(await getGlobalStartedCount(service)).toBe(globalAfterStart);
   });
 
   it("admits caller-stable attempts 1 and 2 exactly once each", async () => {
