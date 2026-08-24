@@ -323,14 +323,14 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
     const { data: currentAiTerms, error: currentAiTermsError } =
       await service.rpc("current_ai_terms_version");
     expect(currentAiTermsError).toBeNull();
-    const { error: acceptanceError } = await service
+    const { data: existingAcceptance, error: acceptanceError } = await service
       .from("user_terms_acceptances")
-      .insert({
-        user_id: cascadeUser.id,
-        document_key: "ai_terms",
-        version: currentAiTerms as string,
-      });
+      .select("version")
+      .eq("user_id", cascadeUser.id)
+      .eq("document_key", "ai_terms")
+      .single();
     expect(acceptanceError).toBeNull();
+    expect(existingAcceptance?.version).toBe(currentAiTerms);
 
     // --- seed old + recent rows directly (service_role) ---
     // rate_minutes: 2-day retention.

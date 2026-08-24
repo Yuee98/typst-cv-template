@@ -359,6 +359,21 @@ begin
         'message', 'The AI route changed; refresh availability and confirm again.'
       );
     end if;
+
+    -- Legal acceptance is evaluated only after the complete authoritative route
+    -- matches the caller assertion.  It therefore cannot turn a stale route into
+    -- an acceptance oracle, and it still precedes every admission-side lock or
+    -- write below.
+    if not public.has_accepted_ai_legal_bundle(
+      p_user_id,
+      v_policy.legal_bundle_version
+    ) then
+      return jsonb_build_object(
+        'allowed', false,
+        'reason', 'AI_TERMS_REQUIRED',
+        'message', 'Acceptance of the current AI terms is required before polishing.'
+      );
+    end if;
   exception
     when others then
       return jsonb_build_object(

@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  acceptAiLegalBundle,
   configureFeature,
   createAnonClient,
   createServiceClient,
@@ -436,6 +437,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     user: TestUser,
     target = fixture,
   ): Promise<ReservationReceipt> {
+    await acceptAiLegalBundle(service, user.id, INITIAL_LEGAL_BUNDLE_VERSION);
     const result = await service.rpc("reserve_ai_polish_request_v2", {
       p_user_id: user.id,
       p_request_id: crypto.randomUUID(),

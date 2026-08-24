@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  acceptAiLegalBundle,
   configureFeature,
   createAnonClient,
   createServiceClient,
@@ -422,7 +423,11 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     userId: string,
     expected: unknown,
     clientRequestId = crypto.randomUUID(),
+    options: { acceptTerms?: boolean } = {},
   ) {
+    if (options.acceptTerms !== false) {
+      await acceptAiLegalBundle(service, userId, INITIAL_LEGAL_BUNDLE_VERSION);
+    }
     return service.rpc("reserve_ai_polish_request_v2", {
       p_user_id: userId,
       p_request_id: crypto.randomUUID(),
@@ -441,6 +446,82 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     expect(await getUsageRow(service, userId)).toBeNull();
     expect(await getRateBuckets(service, userId)).toEqual([]);
     expect(await getLedgerRows(service, userId)).toEqual([]);
+  }
+
+  function exactMutableState(
+    userIds: string[],
+    fixture: ActiveRouteFixture,
+  ): string {
+    const users = userIds.map((id) => `'${id}'::uuid`).join(", ");
+    const profiles = [
+      fixture.defaultNode.profileVersionId,
+      fixture.selectedNode.profileVersionId,
+    ]
+      .map((id) => `'${id}'::uuid`)
+      .join(", ");
+    return runOwnerSql(String.raw`
+      \pset format unaligned
+      \pset tuples_only on
+      select jsonb_build_object(
+        'requests', (
+          select coalesce(jsonb_agg(to_jsonb(row_value) order by reservation_id), '[]'::jsonb)
+          from public.ai_request_ledger as row_value
+          where user_id in (${users})
+        ),
+        'attempts', (
+          select coalesce(jsonb_agg(to_jsonb(attempt) order by attempt.attempt_id), '[]'::jsonb)
+          from public.ai_provider_attempt_ledger as attempt
+          join public.ai_request_ledger as request
+            on request.reservation_id = attempt.reservation_id
+          where request.user_id in (${users})
+        ),
+        'userDaily', (
+          select coalesce(jsonb_agg(to_jsonb(row_value) order by user_id, day), '[]'::jsonb)
+          from public.ai_usage_daily as row_value
+          where user_id in (${users})
+        ),
+        'rate', (
+          select coalesce(jsonb_agg(to_jsonb(row_value) order by user_id, minute_bucket), '[]'::jsonb)
+          from public.ai_rate_minutes as row_value
+          where user_id in (${users})
+        ),
+        'globalDaily', (
+          select coalesce(jsonb_agg(to_jsonb(row_value) order by day), '[]'::jsonb)
+          from public.ai_global_usage_daily as row_value
+        ),
+        'profileDaily', (
+          select coalesce(
+            jsonb_agg(to_jsonb(row_value) order by day, profile_version_id, billing_currency),
+            '[]'::jsonb
+          )
+          from public.ai_profile_usage_daily as row_value
+          where profile_version_id in (${profiles})
+        ),
+        'acceptances', (
+          select coalesce(jsonb_agg(to_jsonb(row_value) order by user_id, document_key, version), '[]'::jsonb)
+          from public.user_terms_acceptances as row_value
+          where user_id in (${users})
+        ),
+        'featureConfig', (
+          select to_jsonb(row_value)
+          from public.ai_feature_config as row_value
+          where id = true
+        ),
+        'policy', (
+          select to_jsonb(row_value)
+          from public.ai_routing_policy_versions as row_value
+          where id = '${fixture.policyVersionId}'::uuid
+        ),
+        'sequences', (
+          select coalesce(
+            jsonb_agg(to_jsonb(row_value) order by schemaname, sequencename),
+            '[]'::jsonb
+          )
+          from pg_catalog.pg_sequences as row_value
+          where schemaname = 'public'
+        )
+      )::text;
+    `).stdout.trim();
   }
 
   it("freezes the exact signature, authority, grants, and unchanged V1 fingerprint", () => {
@@ -678,6 +759,112 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       );
     } finally {
       await deleteTestUser(service, user.id);
+    }
+  });
+
+  it("requires the exact route bundle before every admission-side mutation", async () => {
+    const fixture = await createActiveFixture({ label: "terms-gate" });
+    const expected = await expectedRoute(fixture);
+    const missing = await createTestUser(service, "reserve-v2-terms-missing");
+    const old = await createTestUser(service, "reserve-v2-terms-old");
+    const wrongDocument = await createTestUser(
+      service,
+      "reserve-v2-terms-wrong-document",
+    );
+    const wrongUser = await createTestUser(service, "reserve-v2-terms-wrong-user");
+    const acceptedOther = await createTestUser(
+      service,
+      "reserve-v2-terms-accepted-other",
+    );
+    const users = [missing, old, wrongDocument, wrongUser, acceptedOther];
+
+    try {
+      const { error: oldError } = await service.from("user_terms_acceptances").insert({
+        user_id: old.id,
+        document_key: "ai_terms",
+        version: "2026-08-04",
+      });
+      expect(oldError).toBeNull();
+      const { error: wrongDocumentError } = await service
+        .from("user_terms_acceptances")
+        .insert({
+          user_id: wrongDocument.id,
+          document_key: "terms",
+          version: INITIAL_LEGAL_BUNDLE_VERSION,
+        });
+      expect(wrongDocumentError).toBeNull();
+      await acceptAiLegalBundle(
+        service,
+        acceptedOther.id,
+        INITIAL_LEGAL_BUNDLE_VERSION,
+      );
+
+      for (const user of [missing, old, wrongDocument, wrongUser]) {
+        const before = exactMutableState(
+          users.map(({ id }) => id),
+          fixture,
+        );
+        const result = await reserveV2(user.id, expected, crypto.randomUUID(), {
+          acceptTerms: false,
+        });
+        expect(result.error).toBeNull();
+        expect(result.data).toEqual({
+          allowed: false,
+          reason: "AI_TERMS_REQUIRED",
+          message:
+            "Acceptance of the current AI terms is required before polishing.",
+        });
+        expect(exactMutableState(users.map(({ id }) => id), fixture)).toBe(before);
+      }
+
+      const staleRoute = {
+        ...expected,
+        config_generation: String(BigInt(expected.config_generation) + BigInt(1)),
+      };
+      const beforeStale = exactMutableState(
+        users.map(({ id }) => id),
+        fixture,
+      );
+      const stale = await reserveV2(
+        missing.id,
+        staleRoute,
+        crypto.randomUUID(),
+        { acceptTerms: false },
+      );
+      expect(stale.error).toBeNull();
+      expect(stale.data).toEqual({
+        allowed: false,
+        reason: "AI_ROUTE_CHANGED",
+        message: "The AI route changed; refresh availability and confirm again.",
+      });
+      expect(exactMutableState(users.map(({ id }) => id), fixture)).toBe(
+        beforeStale,
+      );
+
+      await acceptAiLegalBundle(
+        service,
+        missing.id,
+        INITIAL_LEGAL_BUNDLE_VERSION,
+      );
+      const accepted = await reserveV2(
+        missing.id,
+        expected,
+        crypto.randomUUID(),
+        { acceptTerms: false },
+      );
+      expect(accepted.error).toBeNull();
+      expect(accepted.data).toMatchObject({
+        allowed: true,
+        routeSnapshot: {
+          legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
+          profileVersionId: fixture.selectedNode.profileVersionId,
+          priceVersionId: fixture.selectedNode.priceVersionId,
+        },
+      });
+    } finally {
+      for (const user of users) {
+        await deleteTestUser(service, user.id);
+      }
     }
   });
 

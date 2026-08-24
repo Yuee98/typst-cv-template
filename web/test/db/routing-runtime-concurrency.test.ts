@@ -252,6 +252,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       \set ON_ERROR_STOP on
       \pset format unaligned
       \pset tuples_only on
+      insert into public.user_terms_acceptances (
+        user_id, document_key, version
+      ) values (
+        '${userId}'::uuid, 'ai_terms', '${INITIAL_LEGAL_BUNDLE_VERSION}'
+      ) on conflict (user_id, document_key, version) do nothing;
       begin;
       set local statement_timeout = '10s';
       ${

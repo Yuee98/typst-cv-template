@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { expect } from "vitest";
 
 import {
+  acceptAiLegalBundle,
   configureFeature,
   createTestUser,
   deleteTestUser,
@@ -194,6 +195,11 @@ export class SettlementHarness {
   }
 
   async reserveV2(user: TestUser): Promise<SettlementReservation> {
+    await acceptAiLegalBundle(
+      this.service,
+      user.id,
+      INITIAL_LEGAL_BUNDLE_VERSION,
+    );
     const config = await this.service
       .from("ai_feature_config")
       .select("config_generation")
