@@ -982,6 +982,39 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         quotaCharged: true,
         metadata: { usage_schema_version: "attempt_v2", context_level: {} },
       },
+      {
+        label: "granularity-number",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", granularity: 1 },
+      },
+      {
+        label: "granularity-domain",
+        quotaCharged: true,
+        metadata: {
+          usage_schema_version: "attempt_v2",
+          granularity: "paragraph",
+        },
+      },
+      {
+        label: "language-number",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", language: 1 },
+      },
+      {
+        label: "language-domain",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", language: "fr" },
+      },
+      {
+        label: "prompt-object",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", prompt_version: {} },
+      },
+      {
+        label: "validator-array",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", validator_version: [] },
+      },
     ];
 
     await harness.activateFreshRouteFixture();
@@ -1017,12 +1050,41 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           usage_schema_version: "attempt_v2",
           item_count: 2_147_483_647,
           context_level: 2,
+          granularity: null,
+          language: null,
+          prompt_version: null,
+          validator_version: null,
         },
       }),
     ).toMatchObject({ ok: true, alreadyFinalized: false });
     expect(await getLedgerRow(service, valid.reservation.reservationId)).toMatchObject({
       item_count: 2_147_483_647,
       context_level: 2,
+      granularity: null,
+      language: null,
+      prompt_version: null,
+      validator_version: null,
+    });
+
+    const validStrings = await completed("v2-caller-metadata-strings");
+    expect(
+      await harness.finalize(validStrings.reservation.reservationId, {
+        metadata: {
+          usage_schema_version: "attempt_v2",
+          granularity: "group",
+          language: "en",
+          prompt_version: "",
+          validator_version: "",
+        },
+      }),
+    ).toMatchObject({ ok: true, alreadyFinalized: false });
+    expect(
+      await getLedgerRow(service, validStrings.reservation.reservationId),
+    ).toMatchObject({
+      granularity: "group",
+      language: "en",
+      prompt_version: "",
+      validator_version: "",
     });
     await harness.activateFreshRouteFixture();
   });

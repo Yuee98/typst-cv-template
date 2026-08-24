@@ -1301,6 +1301,38 @@ begin
            is distinct from 'number'
          or v_metadata_object ->> 'context_level' not in ('0', '1', '2')
        )
+     )
+     or (
+       v_metadata_object ? 'granularity'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'granularity') <> 'null'
+       and (
+         pg_catalog.jsonb_typeof(v_metadata_object -> 'granularity')
+           is distinct from 'string'
+         or v_metadata_object ->> 'granularity' not in (
+           'item', 'entry', 'group', 'section'
+         )
+       )
+     )
+     or (
+       v_metadata_object ? 'language'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'language') <> 'null'
+       and (
+         pg_catalog.jsonb_typeof(v_metadata_object -> 'language')
+           is distinct from 'string'
+         or v_metadata_object ->> 'language' not in ('zh', 'en')
+       )
+     )
+     or (
+       v_metadata_object ? 'prompt_version'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'prompt_version') <> 'null'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'prompt_version')
+         is distinct from 'string'
+     )
+     or (
+       v_metadata_object ? 'validator_version'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'validator_version') <> 'null'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'validator_version')
+         is distinct from 'string'
      ) then
     return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INTERNAL_ERROR');
   end if;
