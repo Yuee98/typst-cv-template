@@ -131,11 +131,21 @@ function dollarQuoteTagAt(sql: string, index: number): string | null {
   return /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/u.exec(sql.slice(index))?.[0] ?? null;
 }
 
+function isEscapeStringQuote(sql: string, quoteIndex: number): boolean {
+  const prefixIndex = quoteIndex - 1;
+  return (
+    prefixIndex >= 0 &&
+    (sql[prefixIndex] === "e" || sql[prefixIndex] === "E") &&
+    (prefixIndex === 0 || !/[A-Za-z0-9_$]/u.test(sql[prefixIndex - 1]))
+  );
+}
+
 function splitExecutableSqlStatements(sql: string): string[] {
   const statements: string[] = [];
   let current = "";
   let index = 0;
   let quote: "'" | '"' | null = null;
+  let quoteBackslashEscapes = false;
   let dollarTag: string | null = null;
   let blockCommentDepth = 0;
   let lineComment = false;
@@ -180,6 +190,14 @@ function splitExecutableSqlStatements(sql: string): string[] {
     }
     if (quote !== null) {
       current += character;
+      if (quoteBackslashEscapes && character === "\\") {
+        if (next === undefined) {
+          throw new Error("escape string ended after a backslash");
+        }
+        current += next;
+        index += 2;
+        continue;
+      }
       if (character === quote) {
         if (next === quote) {
           current += next;
@@ -187,6 +205,7 @@ function splitExecutableSqlStatements(sql: string): string[] {
           continue;
         }
         quote = null;
+        quoteBackslashEscapes = false;
       }
       index += 1;
       continue;
@@ -203,6 +222,8 @@ function splitExecutableSqlStatements(sql: string): string[] {
     }
     if (character === "'" || character === '"') {
       quote = character;
+      quoteBackslashEscapes =
+        character === "'" && isEscapeStringQuote(sql, index);
       current += character;
       index += 1;
       continue;
@@ -236,22 +257,272 @@ function splitExecutableSqlStatements(sql: string): string[] {
   return statements;
 }
 
-function normalizeSqlStatement(statement: string): string {
-  return statement.toLowerCase().replace(/\s+/gu, " ").trim();
+type SqlTokenKind = "word" | "string" | "identifier" | "symbol" | "dollar";
+
+interface SqlToken {
+  kind: SqlTokenKind;
+  value: string;
 }
 
-function extractDollarQuotedBody(statement: string): string {
-  const openingIndex = statement.indexOf("$");
-  const tag =
-    openingIndex >= 0 ? dollarQuoteTagAt(statement, openingIndex) : null;
-  if (tag === null) {
-    throw new Error("expected a dollar-quoted SQL body");
+function readQuotedSqlToken(
+  sql: string,
+  quoteIndex: number,
+  quote: "'" | '"',
+  backslashEscapes: boolean,
+): { token: SqlToken; nextIndex: number } {
+  let value = "";
+  let index = quoteIndex + 1;
+  while (index < sql.length) {
+    const character = sql[index];
+    const next = sql[index + 1];
+    if (backslashEscapes && character === "\\") {
+      if (next === undefined) {
+        throw new Error("escape string ended after a backslash");
+      }
+      value += next;
+      index += 2;
+      continue;
+    }
+    if (character === quote) {
+      if (next === quote) {
+        value += quote;
+        index += 2;
+        continue;
+      }
+      return {
+        token: {
+          kind: quote === "'" ? "string" : "identifier",
+          value,
+        },
+        nextIndex: index + 1,
+      };
+    }
+    value += character;
+    index += 1;
   }
-  const closingIndex = statement.lastIndexOf(tag);
-  if (closingIndex <= openingIndex) {
-    throw new Error("dollar-quoted SQL body is not closed");
+  throw new Error("SQL token ended inside a quoted string or identifier");
+}
+
+function tokenizeSqlStatement(statement: string): SqlToken[] {
+  const tokens: SqlToken[] = [];
+  let index = 0;
+  while (index < statement.length) {
+    const character = statement[index];
+    if (/\s/u.test(character)) {
+      index += 1;
+      continue;
+    }
+
+    const atWordBoundary =
+      index === 0 || !/[A-Za-z0-9_$]/u.test(statement[index - 1]);
+    if (
+      atWordBoundary &&
+      (character === "e" || character === "E") &&
+      statement[index + 1] === "'"
+    ) {
+      const quoted = readQuotedSqlToken(statement, index + 1, "'", true);
+      tokens.push(quoted.token);
+      index = quoted.nextIndex;
+      continue;
+    }
+    if (
+      atWordBoundary &&
+      (character === "u" || character === "U") &&
+      statement[index + 1] === "&" &&
+      (statement[index + 2] === "'" || statement[index + 2] === '"')
+    ) {
+      const quote = statement[index + 2] as "'" | '"';
+      const quoted = readQuotedSqlToken(statement, index + 2, quote, false);
+      tokens.push(quoted.token);
+      index = quoted.nextIndex;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      const quoted = readQuotedSqlToken(statement, index, character, false);
+      tokens.push(quoted.token);
+      index = quoted.nextIndex;
+      continue;
+    }
+    if (character === "$") {
+      const tag = dollarQuoteTagAt(statement, index);
+      if (tag !== null) {
+        const bodyStart = index + tag.length;
+        const closingIndex = statement.indexOf(tag, bodyStart);
+        if (closingIndex < 0) {
+          throw new Error("SQL token ended inside a dollar-quoted body");
+        }
+        tokens.push({
+          kind: "dollar",
+          value: statement.slice(bodyStart, closingIndex),
+        });
+        index = closingIndex + tag.length;
+        continue;
+      }
+    }
+    if (/[A-Za-z0-9_$]/u.test(character)) {
+      const start = index;
+      while (
+        index < statement.length &&
+        /[A-Za-z0-9_$]/u.test(statement[index])
+      ) {
+        index += 1;
+      }
+      tokens.push({
+        kind: "word",
+        value: statement.slice(start, index).toLowerCase(),
+      });
+      continue;
+    }
+    tokens.push({ kind: "symbol", value: character });
+    index += 1;
   }
-  return statement.slice(openingIndex + tag.length, closingIndex);
+  return tokens;
+}
+
+function tokenSignatures(tokens: SqlToken[]): string[] {
+  return tokens.map(({ kind, value }) => `${kind}:${value}`);
+}
+
+function requireTokenSequence(
+  tokens: SqlToken[],
+  expected: string[],
+  label: string,
+): void {
+  const actual = tokenSignatures(tokens);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} token sequence drifted: ${JSON.stringify(actual)}`);
+  }
+}
+
+function isProfileUsageLock(tokens: SqlToken[]): boolean {
+  if (tokens[0]?.kind !== "word" || tokens[0].value !== "lock") {
+    return false;
+  }
+  for (let index = 1; index < tokens.length; index += 1) {
+    const table = tokens[index];
+    if (
+      (table.kind === "word" || table.kind === "identifier") &&
+      table.value === "ai_profile_usage_daily"
+    ) {
+      const precedingDot = tokens[index - 1];
+      if (
+        precedingDot?.kind !== "symbol" ||
+        precedingDot.value !== "."
+      ) {
+        return true;
+      }
+      const schema = tokens[index - 2];
+      if (
+        (schema?.kind === "word" || schema?.kind === "identifier") &&
+        schema.value === "public"
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function validateProfileUsageExpansionPrefix(sql: string): void {
+  const statements = splitExecutableSqlStatements(sql);
+  if (statements.length < 4) {
+    throw new Error("profile usage expansion prefix is incomplete");
+  }
+  const tokenized = statements.map(tokenizeSqlStatement);
+  requireTokenSequence(tokenized[0], ["word:begin"], "transaction start");
+
+  const canonicalLock = [
+    "word:lock",
+    "word:table",
+    "word:public",
+    "symbol:.",
+    "word:ai_profile_usage_daily",
+    "word:in",
+    "word:access",
+    "word:exclusive",
+    "word:mode",
+  ];
+  const profileLocks = tokenized.filter(isProfileUsageLock);
+  if (profileLocks.length !== 1) {
+    throw new Error(`expected one profile usage lock, found ${profileLocks.length}`);
+  }
+  requireTokenSequence(tokenized[1], canonicalLock, "profile usage lock");
+
+  const doTokens = tokenized[2];
+  if (
+    doTokens.length !== 2 ||
+    doTokens[0].kind !== "word" ||
+    doTokens[0].value !== "do" ||
+    doTokens[1].kind !== "dollar"
+  ) {
+    throw new Error("profile usage empty preflight must be one canonical DO body");
+  }
+  const bodyStatements = splitExecutableSqlStatements(doTokens[1].value).map(
+    tokenizeSqlStatement,
+  );
+  requireTokenSequence(
+    bodyStatements[0] ?? [],
+    [
+      "word:begin",
+      "word:if",
+      "word:exists",
+      "symbol:(",
+      "word:select",
+      "word:1",
+      "word:from",
+      "word:public",
+      "symbol:.",
+      "word:ai_profile_usage_daily",
+      "symbol:)",
+      "word:then",
+      "word:raise",
+      "word:exception",
+      "string:DB-010 requires an empty ai_profile_usage_daily preflight",
+      "word:using",
+      "word:errcode",
+      "symbol:=",
+      "string:23514",
+    ],
+    "profile usage empty preflight",
+  );
+  requireTokenSequence(
+    bodyStatements[1] ?? [],
+    ["word:end", "word:if"],
+    "profile usage empty preflight IF terminator",
+  );
+  requireTokenSequence(
+    bodyStatements[2] ?? [],
+    ["word:end"],
+    "profile usage empty preflight block terminator",
+  );
+  if (bodyStatements.length !== 3) {
+    throw new Error("profile usage empty preflight contains extra executable SQL");
+  }
+
+  const alterPrefix = [
+    "word:alter",
+    "word:table",
+    "word:public",
+    "symbol:.",
+    "word:ai_profile_usage_daily",
+    "word:add",
+    "word:column",
+    "word:provider_report_incomplete_count",
+    "word:integer",
+    "word:not",
+    "word:null",
+    "word:default",
+    "word:0",
+  ];
+  const alterSignatures = tokenSignatures(tokenized[3]);
+  if (
+    JSON.stringify(alterSignatures.slice(0, alterPrefix.length)) !==
+    JSON.stringify(alterPrefix)
+  ) {
+    throw new Error(
+      `profile usage ALTER prefix drifted: ${JSON.stringify(alterSignatures)}`,
+    );
+  }
 }
 
 function completeAttemptSql(
@@ -370,6 +641,128 @@ async function runObservedBlockedRace(
     }
   }
 }
+
+describe("settlement migration SQL parser", () => {
+  const canonicalPrefix = String.raw`
+    BEGIN;
+    LOCK TABLE public.ai_profile_usage_daily IN ACCESS EXCLUSIVE MODE;
+    DO $guard$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM public.ai_profile_usage_daily) THEN
+        RAISE EXCEPTION 'DB-010 requires an empty ai_profile_usage_daily preflight'
+          USING ERRCODE = '23514';
+      END IF;
+    END;
+    $guard$;
+    ALTER TABLE public.ai_profile_usage_daily
+      ADD COLUMN provider_report_incomplete_count INTEGER NOT NULL DEFAULT 0,
+      ADD CONSTRAINT test_nonnegative
+        CHECK (provider_report_incomplete_count >= 0);
+  `;
+
+  it("accepts semantic case, whitespace, nested-comment, and dollar-tag variants", () => {
+    expect(() => validateProfileUsageExpansionPrefix(canonicalPrefix)).not.toThrow();
+    const equivalent = String.raw`
+      /* BEGIN; LOCK /* nested ; DO $bad$ */ ALTER ; */ bEgIn ;
+      LoCk /* ONLY; NOWAIT; */ TaBlE public . ai_profile_usage_daily
+        In AcCeSs ExClUsIvE MoDe ;
+      dO $$
+      BeGiN
+        -- UPDATE public.ai_profile_usage_daily; semicolon ;
+        iF ExIsTs ( SeLeCt 1 FrOm public . ai_profile_usage_daily ) ThEn
+          /* RAISE ; /* nested body ; */ SELECT ; */
+          rAiSe ExCePtIoN 'DB-010 requires an empty ai_profile_usage_daily preflight'
+            uSiNg ErRcOdE = '23514' ;
+        eNd iF ;
+      EnD ;
+      $$ ;
+      AlTeR TaBlE public . ai_profile_usage_daily
+        AdD CoLuMn provider_report_incomplete_count InTeGeR NoT NuLl DeFaUlT 0,
+        AdD CoNsTrAiNt test_nonnegative
+          ChEcK (provider_report_incomplete_count >= 0);
+    `;
+    expect(() => validateProfileUsageExpansionPrefix(equivalent)).not.toThrow();
+  });
+
+  it("keeps comments, doubled quotes, E strings, U& quotes, and dollar bodies opaque to top-level semicolons", () => {
+    const escapeString = "select E'a" + "\\'" + ";b';";
+    const statements = splitExecutableSqlStatements(String.raw`
+      -- SELECT ; LOCK ;
+      SELECT 'semi;''quote';
+      /* outer ; LOCK /* nested ; DO */ ALTER ; */
+      SELECT "semi;""identifier";
+      SELECT U&'d\0061;ta', U&"id\0061;name";
+      DO $$ BEGIN PERFORM ';'; -- body ;
+        END; $$;
+      DO $tag$ BEGIN /* nested-looking ; */ PERFORM ';'; END; $tag$;
+      ${escapeString}
+      SELECT 1; -- legal trailing line comment
+    `);
+    expect(statements).toHaveLength(7);
+    expect(tokenSignatures(tokenizeSqlStatement(statements[0]))).toEqual([
+      "word:select",
+      "string:semi;'quote",
+    ]);
+    expect(tokenSignatures(tokenizeSqlStatement(statements[1]))).toEqual([
+      "word:select",
+      'identifier:semi;"identifier',
+    ]);
+    expect(tokenSignatures(tokenizeSqlStatement(statements[2]))).toEqual([
+      "word:select",
+      "string:d\\0061;ta",
+      "symbol:,",
+      "identifier:id\\0061;name",
+    ]);
+    expect(tokenSignatures(tokenizeSqlStatement(statements[5]))).toEqual([
+      "word:select",
+      "string:a';b",
+    ]);
+  });
+
+  it("rejects extra prefix SQL, DO-body mutation, and every second profile lock variant", () => {
+    expect(() =>
+      validateProfileUsageExpansionPrefix(
+        canonicalPrefix.replace("DO $guard$", "SELECT 1; DO $guard$"),
+      ),
+    ).toThrow();
+    expect(() =>
+      validateProfileUsageExpansionPrefix(
+        canonicalPrefix.replace(
+          "END IF;",
+          "END IF; UPDATE public.ai_profile_usage_daily SET request_count = 0;",
+        ),
+      ),
+    ).toThrow();
+    for (const secondLock of [
+      "LOCK TABLE ONLY public.ai_profile_usage_daily IN ACCESS EXCLUSIVE MODE;",
+      "LOCK TABLE public.ai_profile_usage_daily IN ACCESS SHARE MODE NOWAIT;",
+      "LOCK TABLE ai_profile_usage_daily IN ACCESS EXCLUSIVE MODE;",
+      "LOCK public.ai_profile_usage_daily IN ACCESS SHARE MODE NOWAIT;",
+    ]) {
+      expect(() =>
+        validateProfileUsageExpansionPrefix(
+          canonicalPrefix.replace("DO $guard$", `${secondLock} DO $guard$`),
+        ),
+      ).toThrow(/expected one profile usage lock/u);
+    }
+  });
+
+  it("fails closed on unterminated comments and every quoted form", () => {
+    const unterminated = [
+      "/* outer /* nested */",
+      "select 'standard",
+      "select \"identifier",
+      "select U&'unicode",
+      "select U&\"unicode_identifier",
+      "do $$ begin;",
+      "do $tag$ begin;",
+      "select E'escape" + "\\",
+    ];
+    for (const sql of unterminated) {
+      expect(() => splitExecutableSqlStatements(sql)).toThrow();
+    }
+  });
+});
 
 describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", () => {
   let service: SupabaseClient;
@@ -584,28 +977,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       ),
     );
     const productionSql = readFileSync(migrationPath, "utf8");
-    const statements = splitExecutableSqlStatements(productionSql);
-    const normalized = statements.map(normalizeSqlStatement);
-    const profileLock =
-      "lock table public.ai_profile_usage_daily in access exclusive mode";
-    expect(normalized[0]).toBe("begin");
-    expect(normalized[1]).toBe(profileLock);
-    expect(normalized[2]).toMatch(/^do \$(?:[a-z_][a-z0-9_]*)?\$/u);
-    expect(
-      splitExecutableSqlStatements(extractDollarQuotedBody(statements[2]))
-        .map(normalizeSqlStatement)
-        .some((statement) =>
-          statement.includes(
-            "if exists (select 1 from public.ai_profile_usage_daily) then",
-          ),
-        ),
-    ).toBe(true);
-    expect(normalized[3]).toMatch(
-      /^alter table public\.ai_profile_usage_daily add column provider_report_incomplete_count integer not null default 0(?:,|$)/u,
-    );
-    expect(normalized.filter((statement) => statement === profileLock)).toHaveLength(
-      1,
-    );
+    expect(() => validateProfileUsageExpansionPrefix(productionSql)).not.toThrow();
 
     const suffix = randomUUID().replaceAll("-", "");
     const writerFirstTable = `db010_pf_w_${suffix}`;
