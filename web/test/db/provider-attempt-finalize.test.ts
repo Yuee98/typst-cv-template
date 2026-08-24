@@ -127,6 +127,133 @@ function jsonbSql(value: unknown): string {
   return `'${JSON.stringify(value).replaceAll("'", "''")}'::jsonb`;
 }
 
+function dollarQuoteTagAt(sql: string, index: number): string | null {
+  return /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/u.exec(sql.slice(index))?.[0] ?? null;
+}
+
+function splitExecutableSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let index = 0;
+  let quote: "'" | '"' | null = null;
+  let dollarTag: string | null = null;
+  let blockCommentDepth = 0;
+  let lineComment = false;
+
+  while (index < sql.length) {
+    const character = sql[index];
+    const next = sql[index + 1];
+
+    if (lineComment) {
+      if (character === "\n") {
+        lineComment = false;
+        current += " ";
+      }
+      index += 1;
+      continue;
+    }
+    if (blockCommentDepth > 0) {
+      if (character === "/" && next === "*") {
+        blockCommentDepth += 1;
+        index += 2;
+      } else if (character === "*" && next === "/") {
+        blockCommentDepth -= 1;
+        index += 2;
+        if (blockCommentDepth === 0) {
+          current += " ";
+        }
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+    if (dollarTag !== null) {
+      if (sql.startsWith(dollarTag, index)) {
+        current += dollarTag;
+        index += dollarTag.length;
+        dollarTag = null;
+      } else {
+        current += character;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote !== null) {
+      current += character;
+      if (character === quote) {
+        if (next === quote) {
+          current += next;
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === "-" && next === "-") {
+      lineComment = true;
+      index += 2;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      blockCommentDepth = 1;
+      index += 2;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      current += character;
+      index += 1;
+      continue;
+    }
+    const detectedDollarTag =
+      character === "$" ? dollarQuoteTagAt(sql, index) : null;
+    if (detectedDollarTag !== null) {
+      dollarTag = detectedDollarTag;
+      current += detectedDollarTag;
+      index += detectedDollarTag.length;
+      continue;
+    }
+    if (character === ";") {
+      if (current.trim() !== "") {
+        statements.push(current.trim());
+      }
+      current = "";
+      index += 1;
+      continue;
+    }
+    current += character;
+    index += 1;
+  }
+
+  if (quote !== null || dollarTag !== null || blockCommentDepth !== 0) {
+    throw new Error("migration SQL ended inside a quote or comment");
+  }
+  if (current.trim() !== "") {
+    statements.push(current.trim());
+  }
+  return statements;
+}
+
+function normalizeSqlStatement(statement: string): string {
+  return statement.toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+function extractDollarQuotedBody(statement: string): string {
+  const openingIndex = statement.indexOf("$");
+  const tag =
+    openingIndex >= 0 ? dollarQuoteTagAt(statement, openingIndex) : null;
+  if (tag === null) {
+    throw new Error("expected a dollar-quoted SQL body");
+  }
+  const closingIndex = statement.lastIndexOf(tag);
+  if (closingIndex <= openingIndex) {
+    throw new Error("dollar-quoted SQL body is not closed");
+  }
+  return statement.slice(openingIndex + tag.length, closingIndex);
+}
+
 function completeAttemptSql(
   attemptId: string,
   options: { markerBefore?: string; markerAfter?: string; commit?: boolean } = {},
@@ -456,28 +583,29 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         import.meta.url,
       ),
     );
-    const productionSql = readFileSync(migrationPath, "utf8").replaceAll(
-      "\r\n",
-      "\n",
-    );
-    const beginIndex = productionSql.indexOf("begin;");
-    const lockSql =
-      "lock table public.ai_profile_usage_daily in access exclusive mode;";
-    const lockIndex = productionSql.indexOf(lockSql);
-    const emptyCheckIndex = productionSql.indexOf(
-      "if exists (select 1 from public.ai_profile_usage_daily) then",
-    );
-    const alterIndex = productionSql.indexOf(
-      "alter table public.ai_profile_usage_daily\n  add column provider_report_incomplete_count",
-    );
-    expect(beginIndex).toBeGreaterThanOrEqual(0);
-    expect(lockIndex).toBeGreaterThan(beginIndex);
+    const productionSql = readFileSync(migrationPath, "utf8");
+    const statements = splitExecutableSqlStatements(productionSql);
+    const normalized = statements.map(normalizeSqlStatement);
+    const profileLock =
+      "lock table public.ai_profile_usage_daily in access exclusive mode";
+    expect(normalized[0]).toBe("begin");
+    expect(normalized[1]).toBe(profileLock);
+    expect(normalized[2]).toMatch(/^do \$(?:[a-z_][a-z0-9_]*)?\$/u);
     expect(
-      productionSql.slice(beginIndex + "begin;".length, lockIndex).trim(),
-    ).toBe("");
-    expect(emptyCheckIndex).toBeGreaterThan(lockIndex);
-    expect(alterIndex).toBeGreaterThan(emptyCheckIndex);
-    expect(productionSql.split(lockSql)).toHaveLength(2);
+      splitExecutableSqlStatements(extractDollarQuotedBody(statements[2]))
+        .map(normalizeSqlStatement)
+        .some((statement) =>
+          statement.includes(
+            "if exists (select 1 from public.ai_profile_usage_daily) then",
+          ),
+        ),
+    ).toBe(true);
+    expect(normalized[3]).toMatch(
+      /^alter table public\.ai_profile_usage_daily add column provider_report_incomplete_count integer not null default 0(?:,|$)/u,
+    );
+    expect(normalized.filter((statement) => statement === profileLock)).toHaveLength(
+      1,
+    );
 
     const suffix = randomUUID().replaceAll("-", "");
     const writerFirstTable = `db010_pf_w_${suffix}`;
