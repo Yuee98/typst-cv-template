@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -12,6 +10,7 @@ import {
   RUN_DB_TESTS,
   type TestUser,
 } from "./helpers";
+import { sealPriceAsDatabaseOwner } from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
 
@@ -21,66 +20,6 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
   let profileVersionId: string;
   let priceVersionId: string;
   let policyVersionId: string;
-
-  function sealPriceAsDatabaseOwner(priceId: string): void {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(priceId)) {
-      throw new Error("test price id is not a canonical UUID");
-    }
-
-    // DB-007 deliberately owns the persistent validation/sealing helper. This
-    // local-real-DB test instead uses a transaction-scoped, database-owner
-    // trigger to exercise the foundation guard's trusted nested transition.
-    // The pg_temp objects disappear with psql and no production helper/RPC is
-    // introduced by DB-003A.
-    const sql = String.raw`
-      \set ON_ERROR_STOP on
-      begin;
-      create temporary table db003a_price_seal_fixture (
-        price_version_id uuid not null
-      ) on commit drop;
-      create function pg_temp.db003a_seal_price_fixture()
-      returns trigger
-      language plpgsql
-      set search_path = ''
-      as $function$
-      begin
-        update public.ai_price_versions
-        set components_sealed_at = greatest(clock_timestamp(), created_at)
-        where id = new.price_version_id;
-        return new;
-      end;
-      $function$;
-      create trigger db003a_seal_price_fixture
-      after insert on db003a_price_seal_fixture
-      for each row execute function pg_temp.db003a_seal_price_fixture();
-      insert into db003a_price_seal_fixture (price_version_id)
-      values (:'price_id'::uuid);
-      commit;
-    `;
-    const result = spawnSync(
-      "docker",
-      [
-        "exec",
-        "-i",
-        "supabase_db_typst-cv-template",
-        "psql",
-        "-U",
-        "postgres",
-        "-d",
-        "postgres",
-        "--set",
-        "ON_ERROR_STOP=1",
-        "--set",
-        `price_id=${priceId}`,
-      ],
-      { input: sql, encoding: "utf8" },
-    );
-    if (result.status !== 0) {
-      throw new Error(
-        `database-owner price seal fixture failed: ${result.stderr || result.stdout}`,
-      );
-    }
-  }
 
   beforeAll(async () => {
     service = createServiceClient();
