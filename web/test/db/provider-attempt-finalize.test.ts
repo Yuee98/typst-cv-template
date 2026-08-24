@@ -422,6 +422,358 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     }).toEqual(beforeReplay);
   });
 
+  it("preserves unfinished V1 parser and DML database errors without partial mutation", async () => {
+    const malformedCases = [
+      {
+        label: "null-status",
+        status: null as unknown as string,
+        usage: null,
+        metadata: null,
+        code: "23514",
+      },
+      {
+        label: "usage-cast",
+        status: "succeeded",
+        usage: { input_cached_tokens: "not-a-bigint" },
+        metadata: null,
+        code: "22P02",
+      },
+      {
+        label: "metadata-cast",
+        status: "succeeded",
+        usage: null,
+        metadata: { item_count: "not-an-integer" },
+        code: "22P02",
+      },
+    ];
+
+    for (const entry of malformedCases) {
+      const user = await harness.makeUser(`v1-malformed-${entry.label}`);
+      const reserve = await tryReserve(service, user.id);
+      expect(reserve.ok).toBe(true);
+      const reservationId = (reserve as { reservationId: string }).reservationId;
+      const before = {
+        request: await getLedgerRow(service, reservationId),
+        user: await getUsageRow(service, user.id),
+        global: await getGlobalUsageRow(service),
+      };
+      const result = await service.rpc("finalize_ai_polish_request", {
+        p_reservation_id: reservationId,
+        p_status: entry.status,
+        p_quota_charged: true,
+        p_provider_billable: true,
+        p_usage: entry.usage,
+        p_metadata: entry.metadata,
+      });
+      expect(result.data).toBeNull();
+      expect(result.error?.code).toBe(entry.code);
+      expect({
+        request: await getLedgerRow(service, reservationId),
+        user: await getUsageRow(service, user.id),
+        global: await getGlobalUsageRow(service),
+      }).toEqual(before);
+    }
+
+    const overflowUser = await harness.makeUser("v1-dml-overflow");
+    const overflowReserve = await tryReserve(service, overflowUser.id);
+    expect(overflowReserve.ok).toBe(true);
+    const overflowReservationId = (
+      overflowReserve as { reservationId: string }
+    ).reservationId;
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      update public.ai_usage_daily
+      set input_cached_tokens = 9223372036854775807
+      where user_id = '${overflowUser.id}'::uuid
+        and day = (transaction_timestamp() at time zone 'utc')::date;
+    `);
+    const beforeOverflow = {
+      request: await getLedgerRow(service, overflowReservationId),
+      user: await getUsageRow(service, overflowUser.id),
+      global: await getGlobalUsageRow(service),
+    };
+    const overflow = await service.rpc("finalize_ai_polish_request", {
+      p_reservation_id: overflowReservationId,
+      p_status: "succeeded",
+      p_quota_charged: true,
+      p_provider_billable: true,
+      p_usage: {
+        input_cached_tokens: 1,
+        input_uncached_tokens: 0,
+        output_tokens: 0,
+        usage_complete: true,
+      },
+      p_metadata: null,
+    });
+    expect(overflow.data).toBeNull();
+    expect(overflow.error?.code).toBe("22003");
+    expect({
+      request: await getLedgerRow(service, overflowReservationId),
+      user: await getUsageRow(service, overflowUser.id),
+      global: await getGlobalUsageRow(service),
+    }).toEqual(beforeOverflow);
+  });
+
+  it("preserves V1 SQL-null versus JSON payload coercion and ignores selector-like unknown keys", async () => {
+    const sqlNullUser = await harness.makeUser("v1-usage-sql-null");
+    const sqlNullReserve = await tryReserve(service, sqlNullUser.id);
+    expect(sqlNullReserve.ok).toBe(true);
+    const sqlNullReservation = (
+      sqlNullReserve as { reservationId: string }
+    ).reservationId;
+    const removeSqlNullDaily = await service
+      .from("ai_usage_daily")
+      .delete()
+      .eq("user_id", sqlNullUser.id);
+    expect(removeSqlNullDaily.error).toBeNull();
+    const sqlNull = await service.rpc("finalize_ai_polish_request", {
+      p_reservation_id: sqlNullReservation,
+      p_status: "succeeded",
+      p_quota_charged: true,
+      p_provider_billable: true,
+      p_usage: null,
+      p_metadata: { usage_schema_version: "future_v99", unknown: true },
+    });
+    expect(sqlNull.error).toBeNull();
+    expect(sqlNull.data).toMatchObject({ ok: true, alreadyFinalized: false });
+    expect(await getLedgerRow(service, sqlNullReservation)).toMatchObject({
+      input_cached_tokens: null,
+      input_uncached_tokens: null,
+      output_tokens: null,
+      usage_schema_version: null,
+    });
+    expect(await getUsageRow(service, sqlNullUser.id)).toBeNull();
+
+    for (const [label, usageSql] of [
+      ["json-null", "'null'::jsonb"],
+      ["empty-object", "'{}'::jsonb"],
+      ["array", "'[]'::jsonb"],
+      ["scalar", "'\"scalar\"'::jsonb"],
+    ] as const) {
+      const user = await harness.makeUser(`v1-usage-${label}`);
+      const reserve = await tryReserve(service, user.id);
+      expect(reserve.ok).toBe(true);
+      const reservationId = (reserve as { reservationId: string }).reservationId;
+      const removeDaily = await service
+        .from("ai_usage_daily")
+        .delete()
+        .eq("user_id", user.id);
+      expect(removeDaily.error).toBeNull();
+      const result = runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        \pset format unaligned
+        \pset tuples_only on
+        begin;
+        set local role service_role;
+        select public.finalize_ai_polish_request(
+          '${reservationId}'::uuid,
+          'succeeded',
+          true,
+          true,
+          ${usageSql},
+          '{"usage_schema_version":"future_v99","unknown":true}'::jsonb
+        );
+        reset role;
+        commit;
+      `);
+      expect(result.stdout).toContain('"ok": true');
+      expect(await getLedgerRow(service, reservationId)).toMatchObject({
+        input_cached_tokens: 0,
+        input_uncached_tokens: 0,
+        output_tokens: 0,
+        usage_complete: false,
+        usage_schema_version: null,
+      });
+      expect(await getUsageRow(service, user.id)).toMatchObject({
+        request_count: 0,
+        input_cached_tokens: 0,
+        input_uncached_tokens: 0,
+        output_tokens: 0,
+      });
+    }
+
+    const coercionUser = await harness.makeUser("v1-string-coercion");
+    const coercionReserve = await tryReserve(service, coercionUser.id);
+    expect(coercionReserve.ok).toBe(true);
+    const coercionReservation = (
+      coercionReserve as { reservationId: string }
+    ).reservationId;
+    const coercion = await service.rpc("finalize_ai_polish_request", {
+      p_reservation_id: coercionReservation,
+      p_status: "succeeded",
+      p_quota_charged: true,
+      p_provider_billable: true,
+      p_usage: {
+        input_cached_tokens: "6",
+        input_uncached_tokens: "7",
+        output_tokens: "8",
+        usage_complete: "true",
+        unknown: "ignored",
+      },
+      p_metadata: {
+        usage_schema_version: "future_v99",
+        item_count: "2",
+        context_level: "1",
+        attempt_count: "9",
+        unknown: "ignored",
+      },
+    });
+    expect(coercion.error).toBeNull();
+    expect(await getLedgerRow(service, coercionReservation)).toMatchObject({
+      input_cached_tokens: 6,
+      input_uncached_tokens: 7,
+      output_tokens: 8,
+      usage_complete: true,
+      item_count: 2,
+      context_level: 1,
+      attempt_count: 9,
+      usage_schema_version: null,
+    });
+  });
+
+  it("keeps the sole V1 compatibility exception for a child-backed request", async () => {
+    const v1User = await harness.makeUser("v1-child-guard");
+    const v1Reserve = await tryReserve(service, v1User.id);
+    expect(v1Reserve.ok).toBe(true);
+    const v1ReservationId = (v1Reserve as { reservationId: string }).reservationId;
+    const v2 = await completed("v1-child-guard-donor");
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      set session_replication_role = replica;
+      update public.ai_provider_attempt_ledger
+      set reservation_id = '${v1ReservationId}'::uuid
+      where attempt_id = '${v2.attempt.attemptId}'::uuid;
+      set session_replication_role = origin;
+    `);
+
+    const before = {
+      request: await getLedgerRow(service, v1ReservationId),
+      user: await getUsageRow(service, v1User.id),
+      global: await getGlobalUsageRow(service),
+    };
+    const result = await service.rpc("finalize_ai_polish_request", {
+      p_reservation_id: v1ReservationId,
+      p_status: "succeeded",
+      p_quota_charged: true,
+      p_provider_billable: true,
+      p_usage: null,
+      p_metadata: null,
+    });
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
+    expect({
+      request: await getLedgerRow(service, v1ReservationId),
+      user: await getUsageRow(service, v1User.id),
+      global: await getGlobalUsageRow(service),
+    }).toEqual(before);
+  });
+
+  it("keeps V1 rollover attribution, finalized_at, and replay quota on one transaction clock", async () => {
+    const user = await harness.makeUser("v1-transaction-clock-rollover");
+    const reserve = await tryReserve(service, user.id);
+    expect(reserve.ok).toBe(true);
+    const reservationId = (reserve as { reservationId: string }).reservationId;
+
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      create temporary table v1_clock_results (
+        kind text primary key,
+        payload jsonb not null
+      ) on commit drop;
+      grant select, insert on v1_clock_results to service_role;
+
+      update public.ai_request_ledger
+      set reserved_at = (
+        (
+          (transaction_timestamp() at time zone 'utc')::date - 1
+        ) + time '23:59:00'
+      ) at time zone 'utc'
+      where reservation_id = '${reservationId}'::uuid;
+
+      delete from public.ai_usage_daily
+      where user_id = '${user.id}'::uuid;
+      insert into public.ai_usage_daily (user_id, day, request_count)
+      values (
+        '${user.id}'::uuid,
+        (transaction_timestamp() at time zone 'utc')::date - 1,
+        1
+      );
+
+      set local role service_role;
+      insert into v1_clock_results (kind, payload)
+      select 'first', public.finalize_ai_polish_request(
+        '${reservationId}'::uuid,
+        'failed_upstream',
+        false,
+        true,
+        '{
+          "input_cached_tokens":3,
+          "input_uncached_tokens":4,
+          "output_tokens":5,
+          "usage_complete":true
+        }'::jsonb,
+        null
+      );
+      insert into v1_clock_results (kind, payload)
+      select 'replay', public.finalize_ai_polish_request(
+        '${reservationId}'::uuid,
+        'hostile',
+        true,
+        false,
+        '{"hostile":true}'::jsonb,
+        '"hostile"'::jsonb
+      );
+      reset role;
+
+      do $assertions$
+      declare
+        v_request public.ai_request_ledger%rowtype;
+        v_previous public.ai_usage_daily%rowtype;
+        v_today public.ai_usage_daily%rowtype;
+        v_first jsonb;
+        v_replay jsonb;
+        v_expected_reset timestamptz;
+      begin
+        select * into strict v_request
+        from public.ai_request_ledger
+        where reservation_id = '${reservationId}'::uuid;
+        select * into strict v_previous
+        from public.ai_usage_daily
+        where user_id = '${user.id}'::uuid
+          and day = (transaction_timestamp() at time zone 'utc')::date - 1;
+        select * into strict v_today
+        from public.ai_usage_daily
+        where user_id = '${user.id}'::uuid
+          and day = (transaction_timestamp() at time zone 'utc')::date;
+        select payload into strict v_first
+        from v1_clock_results where kind = 'first';
+        select payload into strict v_replay
+        from v1_clock_results where kind = 'replay';
+        v_expected_reset := (
+          (transaction_timestamp() at time zone 'utc')::date + 1
+        ) at time zone 'utc';
+
+        if v_request.finalized_at is distinct from transaction_timestamp()
+           or v_request.state is distinct from 'finalized'
+           or v_previous.request_count <> 0
+           or v_today.request_count <> 0
+           or (v_today.input_cached_tokens, v_today.input_uncached_tokens, v_today.output_tokens)
+             is distinct from (3::bigint, 4::bigint, 5::bigint)
+           or (v_first ->> 'alreadyFinalized')::boolean is distinct from false
+           or (v_replay ->> 'alreadyFinalized')::boolean is distinct from true
+           or (v_first -> 'quota' ->> 'resetAt')::timestamptz
+             is distinct from v_expected_reset
+           or (v_replay -> 'quota' ->> 'resetAt')::timestamptz
+             is distinct from v_expected_reset then
+          raise exception 'V1 transaction clock or UTC rollover drifted';
+        end if;
+      end
+      $assertions$;
+      commit;
+    `);
+  });
+
   it("only releases a clean zero-attempt V2 tuple and never manufactures usage", async () => {
     const user = await harness.makeUser("finalize-zero-release");
     const reservation = await harness.reserveV2(user);

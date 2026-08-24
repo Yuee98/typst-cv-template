@@ -774,7 +774,12 @@ begin
     return pg_catalog.jsonb_build_object('ok', false, 'reason', 'NOT_FOUND');
   end if;
 
-  v_now := pg_catalog.clock_timestamp();
+  -- Genuine V1 retains the legacy transaction-stable clock for quota-day,
+  -- finalized_at and replay readback. V2 keeps the DB-010 wall-clock behavior.
+  v_now := case
+    when v_row.route_schema_version is null then pg_catalog.transaction_timestamp()
+    else pg_catalog.clock_timestamp()
+  end;
   v_today := (v_now at time zone 'utc')::date;
   v_reset_at := ((v_today + 1) at time zone 'utc');
   v_quota_day := (v_row.reserved_at at time zone 'utc')::date;
@@ -814,20 +819,17 @@ begin
     return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INVALID_STATUS');
   end if;
 
-  if p_status is null or p_status not in (
-    'succeeded',
-    'canceled',
-    'failed_upstream',
-    'invalid_output',
-    'released',
-    'abandoned'
-  ) then
-    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INVALID_STATUS');
-  end if;
-
   -- Genuine V1 requests retain the legacy parser, metadata and response.
   if v_row.route_schema_version is null then
-    if p_status = 'abandoned' then
+    -- Preserve the legacy SQL three-valued NULL behavior: a NULL status is
+    -- allowed to reach the original DML constraints and surface as a DB error.
+    if p_status not in (
+      'succeeded',
+      'canceled',
+      'failed_upstream',
+      'invalid_output',
+      'released'
+    ) then
       return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INVALID_STATUS');
     end if;
 
@@ -851,8 +853,7 @@ begin
       false
     );
 
-    begin
-      update public.ai_request_ledger
+    update public.ai_request_ledger
       set state = 'finalized',
           status = p_status,
           quota_charged = p_quota_charged,
@@ -879,15 +880,15 @@ begin
           latency_ms = coalesce((p_metadata ->> 'latency_ms')::integer, latency_ms)
       where reservation_id = p_reservation_id;
 
-      if not p_quota_charged then
-        update public.ai_usage_daily
-        set request_count = greatest(0, request_count - 1)
-        where user_id = v_row.user_id
-          and day = v_quota_day;
-      end if;
+    if not p_quota_charged then
+      update public.ai_usage_daily
+      set request_count = greatest(0, request_count - 1)
+      where user_id = v_row.user_id
+        and day = v_quota_day;
+    end if;
 
-      if p_usage is not null then
-        insert into public.ai_usage_daily (
+    if p_usage is not null then
+      insert into public.ai_usage_daily (
           user_id,
           day,
           request_count,
@@ -902,47 +903,28 @@ begin
           v_uncached,
           v_v1_output
         )
-        on conflict (user_id, day) do update
-        set input_cached_tokens = (
-              ai_usage_daily.input_cached_tokens::numeric
-              + excluded.input_cached_tokens::numeric
-            )::bigint,
-            input_uncached_tokens = (
-              ai_usage_daily.input_uncached_tokens::numeric
-              + excluded.input_uncached_tokens::numeric
-            )::bigint,
-            output_tokens = (
-              ai_usage_daily.output_tokens::numeric
-              + excluded.output_tokens::numeric
-            )::bigint;
+      on conflict (user_id, day) do update
+      set input_cached_tokens =
+            ai_usage_daily.input_cached_tokens + excluded.input_cached_tokens,
+          input_uncached_tokens =
+            ai_usage_daily.input_uncached_tokens + excluded.input_uncached_tokens,
+          output_tokens =
+            ai_usage_daily.output_tokens + excluded.output_tokens;
 
-        insert into public.ai_global_usage_daily (
+      insert into public.ai_global_usage_daily (
           day,
           input_cached_tokens,
           input_uncached_tokens,
           output_tokens
         ) values (v_today, v_cached, v_uncached, v_v1_output)
-        on conflict (day) do update
-        set input_cached_tokens = (
-              ai_global_usage_daily.input_cached_tokens::numeric
-              + excluded.input_cached_tokens::numeric
-            )::bigint,
-            input_uncached_tokens = (
-              ai_global_usage_daily.input_uncached_tokens::numeric
-              + excluded.input_uncached_tokens::numeric
-            )::bigint,
-            output_tokens = (
-              ai_global_usage_daily.output_tokens::numeric
-              + excluded.output_tokens::numeric
-            )::bigint;
-      end if;
-    exception
-      when numeric_value_out_of_range or check_violation then
-        return pg_catalog.jsonb_build_object(
-          'ok', false,
-          'reason', 'SERVICE_UNAVAILABLE'
-        );
-    end;
+      on conflict (day) do update
+      set input_cached_tokens =
+            ai_global_usage_daily.input_cached_tokens + excluded.input_cached_tokens,
+          input_uncached_tokens =
+            ai_global_usage_daily.input_uncached_tokens + excluded.input_uncached_tokens,
+          output_tokens =
+            ai_global_usage_daily.output_tokens + excluded.output_tokens;
+    end if;
 
     select request_count into v_today_count
     from public.ai_usage_daily
@@ -960,6 +942,17 @@ begin
       'quotaCharged', p_quota_charged,
       'quota', v_quota
     );
+  end if;
+
+  if p_status is null or p_status not in (
+    'succeeded',
+    'canceled',
+    'failed_upstream',
+    'invalid_output',
+    'released',
+    'abandoned'
+  ) then
+    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INVALID_STATUS');
   end if;
 
   -- Unfinished rows outside the genuine V1 or exact V2 route domains are not
