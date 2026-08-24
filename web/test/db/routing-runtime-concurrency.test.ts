@@ -13,6 +13,7 @@ import {
   runOwnerSql,
   sealPriceAsDatabaseOwner,
   startOwnerSql,
+  transitionPolicyAsDatabaseOwner,
 } from "./runtime-contract-fixtures";
 
 interface LiveRoute {
@@ -79,7 +80,10 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     }
   }
 
-  async function createLiveRoute(label: string): Promise<LiveRoute> {
+  async function createLiveRoute(
+    label: string,
+    options: { activateCanary?: boolean } = {},
+  ): Promise<LiveRoute> {
     await clearPointer(`prepare ${label}`);
     const suffix = crypto.randomUUID();
     const profileKey = `test.concurrent.${label}.${suffix}`;
@@ -170,39 +174,27 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       .select("id")
       .single();
     expect(policyError).toBeNull();
-    expect(
-      (
-        await service
-          .from("ai_routing_policy_versions")
-          .update({ status: "validated" })
-          .eq("id", policy!.id)
-      ).error,
-    ).toBeNull();
-    expect(
-      (
-        await service
-          .from("ai_provider_profile_versions")
-          .update({ status: "canary" })
-          .eq("id", version!.id)
-      ).error,
-    ).toBeNull();
-    expect(
-      (
-        await service
-          .from("ai_routing_policy_versions")
-          .update({ status: "canary" })
-          .eq("id", policy!.id)
-      ).error,
-    ).toBeNull();
-    const pointer = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: policy!.id,
-        routing_updated_by: "runtime-concurrency",
-        routing_change_reason: `activate ${label} ${suffix}`,
-      })
-      .eq("id", true);
-    expect(pointer.error).toBeNull();
+    if (options.activateCanary !== false) {
+      transitionPolicyAsDatabaseOwner(policy!.id, "validated");
+      expect(
+        (
+          await service
+            .from("ai_provider_profile_versions")
+            .update({ status: "canary" })
+            .eq("id", version!.id)
+        ).error,
+      ).toBeNull();
+      transitionPolicyAsDatabaseOwner(policy!.id, "canary");
+      const pointer = await service
+        .from("ai_feature_config")
+        .update({
+          active_routing_policy_version_id: policy!.id,
+          routing_updated_by: "runtime-concurrency",
+          routing_change_reason: `activate ${label} ${suffix}`,
+        })
+        .eq("id", true);
+      expect(pointer.error).toBeNull();
+    }
 
     return {
       profileId: profile!.id,
@@ -237,6 +229,46 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
           routing_updated_by = 'runtime-concurrency',
           routing_change_reason = '${label}.${crypto.randomUUID()}'
       where id = true;
+      select pg_sleep(${holdSeconds});
+      commit;
+    `;
+  }
+
+  function promotePolicySql(route: LiveRoute, holdSeconds: number) {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      set local statement_timeout = '10s';
+      select public.transition_ai_routing_policy_v1(
+        '${route.policyVersionId}'::uuid,
+        'validated'
+      );
+      select pg_sleep(${holdSeconds});
+      commit;
+    `;
+  }
+
+  function retireProfileSql(route: LiveRoute, holdSeconds: number) {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      set local statement_timeout = '10s';
+      update public.ai_provider_profiles
+      set retired_at = greatest(clock_timestamp(), created_at)
+      where id = '${route.profileId}'::uuid;
+      select pg_sleep(${holdSeconds});
+      commit;
+    `;
+  }
+
+  function closePriceSql(route: LiveRoute, holdSeconds: number) {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      set local statement_timeout = '10s';
+      update public.ai_price_versions
+      set valid_to = greatest(clock_timestamp(), valid_from + interval '1 microsecond')
+      where id = '${route.priceVersionId}'::uuid;
       select pg_sleep(${holdSeconds});
       commit;
     `;
@@ -337,6 +369,68 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     expect(staleAssertion.status).not.toBe(0);
     expect(staleAssertion.stderr).toMatch(/price is unavailable/i);
     await clearPointer("price concurrency cleanup");
+  });
+
+  it("serializes owner policy promotion and profile retirement in both orders", async () => {
+    const promotionFirst = await createLiveRoute("promote-before-retire", {
+      activateCanary: false,
+    });
+    const [promoted, retired] = await interleave(
+      promotePolicySql(promotionFirst, 0.6),
+      retireProfileSql(promotionFirst, 0),
+    );
+    expect(promoted.status, promoted.stderr).toBe(0);
+    expect(retired.status, retired.stderr).toBe(0);
+
+    const retirementFirst = await createLiveRoute("retire-before-promote", {
+      activateCanary: false,
+    });
+    const [retirement, rejectedPromotion] = await interleave(
+      retireProfileSql(retirementFirst, 0.6),
+      promotePolicySql(retirementFirst, 0),
+    );
+    expect(retirement.status, retirement.stderr).toBe(0);
+    expect(rejectedPromotion.status).not.toBe(0);
+    expect(rejectedPromotion.stderr).toMatch(/profile is unavailable/i);
+
+    const { data: unchangedPolicy, error } = await service
+      .from("ai_routing_policy_versions")
+      .select("status")
+      .eq("id", retirementFirst.policyVersionId)
+      .single();
+    expect(error).toBeNull();
+    expect(unchangedPolicy?.status).toBe("draft");
+  });
+
+  it("serializes owner policy promotion and price closure in both orders", async () => {
+    const promotionFirst = await createLiveRoute("promote-before-close", {
+      activateCanary: false,
+    });
+    const [promoted, closed] = await interleave(
+      promotePolicySql(promotionFirst, 0.6),
+      closePriceSql(promotionFirst, 0),
+    );
+    expect(promoted.status, promoted.stderr).toBe(0);
+    expect(closed.status, closed.stderr).toBe(0);
+
+    const closureFirst = await createLiveRoute("close-before-promote", {
+      activateCanary: false,
+    });
+    const [closure, rejectedPromotion] = await interleave(
+      closePriceSql(closureFirst, 0.6),
+      promotePolicySql(closureFirst, 0),
+    );
+    expect(closure.status, closure.stderr).toBe(0);
+    expect(rejectedPromotion.status).not.toBe(0);
+    expect(rejectedPromotion.stderr).toMatch(/price is unavailable/i);
+
+    const { data: unchangedPolicy, error } = await service
+      .from("ai_routing_policy_versions")
+      .select("status")
+      .eq("id", closureFirst.policyVersionId)
+      .single();
+    expect(error).toBeNull();
+    expect(unchangedPolicy?.status).toBe("draft");
   });
 
   function createRaceTarget(suffix: string, label: string): RuntimeRaceTarget {
