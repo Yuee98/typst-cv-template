@@ -19,8 +19,8 @@
       "eyj",
       "ghp_",
       "github_pat_",
-      "password",
       "passwd",
+      "password",
       "refresh-token",
       "refresh_token",
       "secret",
@@ -91,8 +91,83 @@
         "rawIdUtf8Length": 16,
         "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31360a7261775f69643a676174657761795f3138304530303031",
         "expectedTag": "hmac-sha256:0793ce8c3ce17bf8c12e08ad638d9c1808420688d16b36abce87542fad542931"
+      },
+      {
+        "name": "gateway-interior-contract-whitespace-is-preserved",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "A\u2001B",
+        "trimmedSecretUtf8Hex": "41e2808142",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:a7e0636c15aa83d64473f6bf6e17c6749072772ade68a5058904e71c483509b0"
+      },
+      {
+        "name": "gateway-u180e-at-both-edges-is-preserved",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "\u180eedge-secret\u180e",
+        "trimmedSecretUtf8Hex": "e1a08e656467652d736563726574e1a08e",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:fcd504dbcfb6cc05bac0a8207a630cef2929b232a64ec7612f3acc4b6f66d151"
+      },
+      {
+        "name": "gateway-u180e-in-interior-is-preserved",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "edge\u180esecret",
+        "trimmedSecretUtf8Hex": "65646765e1a08e736563726574",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:ca777f8884e0a0990a40b2defe315dc9bfd8b2001e790c56652ba1a11a7713f1"
+      },
+      {
+        "name": "gateway-valid-supplementary-plane-secret",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "\ud83d\udd10edge-secret\ud83d\udd10",
+        "trimmedSecretUtf8Hex": "f09f9490656467652d736563726574f09f9490",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:2121dceb45560f9f3f9caccb04b6c4c611a314cd09c1fc373d7c17ff091b0971"
       }
     ],
+    "edgeTrimVectors": {
+      "fieldKind": "gateway_request_id",
+      "rawId": "trim_ABC12345",
+      "secretCore": "edge-secret",
+      "expectedTrimmedSecretUtf8Hex": "656467652d736563726574",
+      "expectedMessageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+      "expectedTag": "hmac-sha256:63baa58c381931b4d5a6659eaa611688cdeef87454cd639f9274cd2a5d1ef872",
+      "cases": [
+        { "name": "u0009", "scalarCodePointHex": "0009" },
+        { "name": "u000a", "scalarCodePointHex": "000a" },
+        { "name": "u000b", "scalarCodePointHex": "000b" },
+        { "name": "u000c", "scalarCodePointHex": "000c" },
+        { "name": "u000d", "scalarCodePointHex": "000d" },
+        { "name": "u0020", "scalarCodePointHex": "0020" },
+        { "name": "u00a0", "scalarCodePointHex": "00a0" },
+        { "name": "u1680", "scalarCodePointHex": "1680" },
+        { "name": "u2000", "scalarCodePointHex": "2000" },
+        { "name": "u2001", "scalarCodePointHex": "2001" },
+        { "name": "u2002", "scalarCodePointHex": "2002" },
+        { "name": "u2003", "scalarCodePointHex": "2003" },
+        { "name": "u2004", "scalarCodePointHex": "2004" },
+        { "name": "u2005", "scalarCodePointHex": "2005" },
+        { "name": "u2006", "scalarCodePointHex": "2006" },
+        { "name": "u2007", "scalarCodePointHex": "2007" },
+        { "name": "u2008", "scalarCodePointHex": "2008" },
+        { "name": "u2009", "scalarCodePointHex": "2009" },
+        { "name": "u200a", "scalarCodePointHex": "200a" },
+        { "name": "u2028", "scalarCodePointHex": "2028" },
+        { "name": "u2029", "scalarCodePointHex": "2029" },
+        { "name": "u202f", "scalarCodePointHex": "202f" },
+        { "name": "u205f", "scalarCodePointHex": "205f" },
+        { "name": "u3000", "scalarCodePointHex": "3000" },
+        { "name": "ufeff", "scalarCodePointHex": "feff" }
+      ]
+    },
     "dropVectors": [
       {
         "name": "absent-null",
@@ -150,6 +225,48 @@
       {
         "name": "whitespace",
         "input": "req ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "leading-ascii-space-is-not-trimmed",
+        "input": " req_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "trailing-ascii-space-is-not-trimmed",
+        "input": "req_ABC12345 ",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "leading-tab-is-not-trimmed",
+        "input": "\treq_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "trailing-tab-is-not-trimmed",
+        "input": "req_ABC12345\t",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "leading-nbsp-is-not-trimmed",
+        "input": "\u00a0req_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "trailing-nbsp-is-not-trimmed",
+        "input": "req_ABC12345\u00a0",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "nfkc-compatible-fullwidth-id-is-not-normalized",
+        "input": "\uff52\uff45\uff51\uff3f\uff21\uff22\uff23\uff11\uff12\uff13\uff14\uff15",
         "expectedKind": "dropped",
         "expectedReason": "invalid_ascii_grammar"
       },
@@ -242,7 +359,7 @@
       {
         "name": "unicode-whitespace-only",
         "inputEncoding": "json_value",
-        "input": "\t\r\n \u00a0\u1680\u2000\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
+        "input": "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
         "expectedCode": "secret_empty_after_trim"
       },
       {
@@ -259,6 +376,65 @@
       }
     ]
   },
+  "priceSnapshotValidation": {
+    "successes": [
+      {
+        "name": "linear-postgres-bigint-maximum",
+        "value": {
+          "schemaVersion": "price_snapshot_v1",
+          "priceVersionId": "33333333-3333-4333-8333-333333333333",
+          "currency": "USD",
+          "calculatorKind": "linear_token_v1",
+          "components": {
+            "input_standard": "9223372036854775807",
+            "input_cache_read": "0",
+            "output": "1"
+          },
+          "parameters": {}
+        }
+      },
+      {
+        "name": "openai-gpt56-long-context",
+        "value": {
+          "schemaVersion": "price_snapshot_v1",
+          "priceVersionId": "44444444-4444-4444-8444-444444444441",
+          "currency": "USD",
+          "calculatorKind": "openai_gpt56_v1",
+          "components": {
+            "input_standard": "2500000000",
+            "input_cache_read": "250000000",
+            "input_cache_write": "3125000000",
+            "output": "15000000000"
+          },
+          "parameters": {
+            "longContext": {
+              "thresholdInputTokens": 272000,
+              "inputMultiplierBps": 20000,
+              "outputMultiplierBps": 15000
+            }
+          }
+        }
+      },
+      {
+        "name": "openai-gpt56-null-long-context",
+        "value": {
+          "schemaVersion": "price_snapshot_v1",
+          "priceVersionId": "44444444-4444-4444-8444-444444444442",
+          "currency": "USD",
+          "calculatorKind": "openai_gpt56_v1",
+          "components": {
+            "input_standard": "2500000000",
+            "input_cache_read": "250000000",
+            "input_cache_write": "3125000000",
+            "output": "15000000000"
+          },
+          "parameters": {
+            "longContext": null
+          }
+        }
+      }
+    ]
+  },
   "executionSnapshot": {
     "successes": [
       {
@@ -269,7 +445,7 @@
           "reservationId": "33333333-3333-4333-8333-333333333331",
           "routeSnapshot": {
             "schemaVersion": "route_snapshot_v1",
-            "configGeneration": "42",
+            "configGeneration": "9223372036854775807",
             "routingPolicyVersionId": "33333333-3333-4333-8333-333333333332",
             "profileVersionId": "11111111-1111-4111-8111-111111111111",
             "priceVersionId": "11111111-1111-4111-8111-111111111112",
