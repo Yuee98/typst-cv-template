@@ -250,6 +250,34 @@ function ownerRewriteAttempt(
   `);
 }
 
+function ownerCorruptRequestAsLegacyProviderStarted(reservationId: string): void {
+  runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    begin;
+    alter table public.ai_request_ledger
+      disable trigger guard_ai_request_route_snapshot;
+    update public.ai_request_ledger
+    set route_schema_version = null,
+        config_generation = null,
+        routing_policy_version_id = null,
+        profile_version_id = null,
+        price_version_id = null,
+        legal_bundle_version = null,
+        runtime_contract_id = null,
+        runtime_contract_sha256 = null,
+        gateway_kind = null,
+        model_id = null,
+        wire_api_kind = null,
+        display_disclosure_key = null,
+        state = 'provider_started',
+        provider_started_at = pg_catalog.transaction_timestamp() - interval '2 minutes'
+    where reservation_id = ${sqlLiteral(reservationId)}::uuid;
+    alter table public.ai_request_ledger
+      enable trigger guard_ai_request_route_snapshot;
+    commit;
+  `);
+}
+
 describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", () => {
   let service: SupabaseClient;
   let harness: SettlementHarness;
@@ -504,6 +532,47 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       attempt_count: 0,
     });
     expect((await request(startDrift.reservationId)).provider_started_at).toBeTruthy();
+  });
+
+  it("fails closed when a route-null provider-started parent owns any attempt child", async () => {
+    for (const childState of ["started", "terminal-known"] as const) {
+      const user = await harness.makeUser(`reconcile-v1-child-corruption-${childState}`);
+      const reservation = await harness.reserveV2(user);
+      const child = await harness.startAttempt(reservation.reservationId, 1);
+      if (childState === "terminal-known") {
+        expect(await harness.complete(completePayload(child.attemptId))).toMatchObject({
+          ok: true,
+          alreadyCompleted: false,
+          status: "succeeded",
+        });
+      }
+
+      ownerCorruptRequestAsLegacyProviderStarted(reservation.reservationId);
+      const before = {
+        settlement: await settlementSnapshot(
+          user.id,
+          reservation.reservationId,
+          reservation.routeSnapshot.profileVersionId,
+        ),
+        attempt: await attempt(child.attemptId),
+      };
+
+      const result = await reconcile();
+      expect(result.error).toBeNull();
+      expect(result.data).toEqual({
+        releasedCount: 0,
+        abandonedCount: 0,
+        latencyOverflowCount: 0,
+      });
+      expect({
+        settlement: await settlementSnapshot(
+          user.id,
+          reservation.reservationId,
+          reservation.routeSnapshot.profileVersionId,
+        ),
+        attempt: await attempt(child.attemptId),
+      }).toEqual(before);
+    }
   });
 
   it("terminalizes a stale started attempt to the canonical unknown shape and settles once", async () => {

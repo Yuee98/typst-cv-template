@@ -26,6 +26,7 @@ declare
   v_attempt_nos smallint[];
   v_started_count integer;
   v_overflow_count integer;
+  v_has_child boolean;
   v_reservation_eligible boolean;
   v_any_billable boolean;
   v_all_nonbillable boolean;
@@ -98,6 +99,21 @@ begin
   loop
     -- Genuine V1 compatibility remains byte-for-byte at the response level.
     if v_request.route_schema_version is null then
+      -- A genuine V1 reservation predates the attempt ledger and therefore
+      -- cannot own any attempt child. The parent lock serializes every
+      -- supported lifecycle writer, so this plain existence read is enough to
+      -- reject owner/migration corruption without taking a child row lock.
+      select exists (
+        select 1
+        from public.ai_provider_attempt_ledger as legacy_child
+        where legacy_child.reservation_id = v_request.reservation_id
+      )
+      into v_has_child;
+
+      if v_has_child then
+        continue;
+      end if;
+
       if v_request.state = 'reserved'
          and v_request.reserved_at < v_cutoff then
         v_result := public.finalize_ai_polish_request(
