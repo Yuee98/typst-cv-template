@@ -105,8 +105,15 @@ begin
   end if;
 
   v_expected_generation_text := p_expected_route->>'config_generation';
-  if length(v_expected_generation_text) > 19
-     or v_expected_generation_text::numeric > 9223372036854775807::numeric then
+  if length(v_expected_generation_text) > 19 then
+    return jsonb_build_object(
+      'allowed', false,
+      'reason', 'AI_ROUTE_CHANGED',
+      'message', 'The AI route changed; refresh availability and confirm again.'
+    );
+  end if;
+
+  if v_expected_generation_text::numeric > 9223372036854775807::numeric then
     return jsonb_build_object(
       'allowed', false,
       'reason', 'AI_ROUTE_CHANGED',
@@ -122,6 +129,19 @@ begin
     p_expected_route->>'runtime_contract_id';
   v_expected_runtime_contract_sha256 :=
     p_expected_route->>'runtime_contract_sha256';
+
+  -- Identity values are server facts, but NULL still must fail closed before
+  -- advisory, quota, rate, or ledger state.  Malformed route precedence above
+  -- remains unconditional so stale/old clients always receive ROUTE_CHANGED.
+  if p_user_id is null
+     or p_request_id is null
+     or p_client_request_id is null then
+    return jsonb_build_object(
+      'allowed', false,
+      'reason', 'SERVICE_UNAVAILABLE',
+      'message', 'AI polish is temporarily unavailable.'
+    );
+  end if;
 
   -- All configuration work is isolated in a subtransaction.  Invalid,
   -- missing, retired, unsealed, or internally inconsistent configuration is a
