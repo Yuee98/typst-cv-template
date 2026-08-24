@@ -13,6 +13,7 @@ import {
 } from "./helpers";
 import {
   authorSyntheticRuntimeContract,
+  runOwnerSql,
   sealPriceAsDatabaseOwner,
 } from "./runtime-contract-fixtures";
 
@@ -22,6 +23,10 @@ const PERMISSION_DENIED = "42501";
 const SAFE_INTEGER_MAX = "9007199254740991";
 const GATEWAY_CORRELATION_TAG = `hmac-sha256:${"a".repeat(64)}`;
 const PROVIDER_CORRELATION_TAG = `hmac-sha256:${"b".repeat(64)}`;
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
 
 interface FrozenFixture {
   reservationId: string;
@@ -39,6 +44,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   let legalBundleVersion: string;
   let runtimeContractId: string;
   let runtimeContractSha256: string;
+  let secondRuntimeContractId: string;
+  let secondRuntimeContractSha256: string;
 
   beforeAll(async () => {
     service = createServiceClient();
@@ -115,6 +122,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     const runtime = authorSyntheticRuntimeContract({ profileKey });
     runtimeContractId = runtime.runtimeContractId;
     runtimeContractSha256 = runtime.runtimeContractSha256;
+    const secondRuntime = authorSyntheticRuntimeContract({ profileKey });
+    secondRuntimeContractId = secondRuntime.runtimeContractId;
+    secondRuntimeContractSha256 = secondRuntime.runtimeContractSha256;
+    expect(secondRuntimeContractId).not.toBe(runtimeContractId);
+    expect(secondRuntimeContractSha256).not.toBe(runtimeContractSha256);
 
     const policy = await service
       .from("ai_routing_policy_versions")
@@ -304,13 +316,10 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   }
 
   function startedAttempt(fixture: FrozenFixture, attemptNo = 1) {
-    const db008Snapshot = { ...fixture.snapshot };
-    delete db008Snapshot.runtime_contract_id;
-    delete db008Snapshot.runtime_contract_sha256;
     return {
       reservation_id: fixture.reservationId,
       attempt_no: attemptNo,
-      ...db008Snapshot,
+      ...fixture.snapshot,
       ...(fixture.attemptAliases ?? {
         adapter_kind: "deepseek_chat_v1",
         credential_alias: "deepseek_api_key_v1",
@@ -407,16 +416,281 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(finalized.data?.state).toBe("finalized");
   }
 
+  it("defines a not-null shaped MATCH FULL runtime pair without changing temporary grants", () => {
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      do $assertions$
+      declare
+        role_name text;
+        privilege_name text;
+      begin
+        if (
+          select count(*)
+          from pg_catalog.pg_attribute
+          where attrelid = 'public.ai_provider_attempt_ledger'::regclass
+            and attname in ('runtime_contract_id', 'runtime_contract_sha256')
+            and attnotnull
+            and not atthasdef
+            and not attisdropped
+        ) <> 2 then
+          raise exception 'attempt runtime pair must be not-null with no defaults';
+        end if;
+
+        if not exists (
+          select 1
+          from pg_catalog.pg_constraint
+          where conrelid = 'public.ai_provider_attempt_ledger'::regclass
+            and confrelid = 'public.ai_service_runtime_contract_versions'::regclass
+            and conname = 'ai_provider_attempt_ledger_runtime_contract_fkey'
+            and contype = 'f'
+            and confmatchtype = 'f'
+        ) then
+          raise exception 'attempt runtime pair must use a MATCH FULL composite FK';
+        end if;
+
+        if not (
+          select relrowsecurity
+          from pg_catalog.pg_class
+          where oid = 'public.ai_provider_attempt_ledger'::regclass
+        ) then
+          raise exception 'attempt ledger RLS is not enabled';
+        end if;
+
+        foreach role_name in array array['anon', 'authenticated'] loop
+          foreach privilege_name in array array[
+            'SELECT', 'INSERT', 'UPDATE', 'DELETE',
+            'TRUNCATE', 'REFERENCES', 'TRIGGER'
+          ] loop
+            if has_table_privilege(
+              role_name,
+              'public.ai_provider_attempt_ledger',
+              privilege_name
+            ) then
+              raise exception '% unexpectedly has % on attempt ledger',
+                role_name, privilege_name;
+            end if;
+          end loop;
+        end loop;
+
+        foreach privilege_name in array array[
+          'SELECT', 'INSERT', 'UPDATE', 'DELETE'
+        ] loop
+          if not has_table_privilege(
+            'service_role',
+            'public.ai_provider_attempt_ledger',
+            privilege_name
+          ) then
+            raise exception 'service_role lacks temporary DB-008 % grant',
+              privilege_name;
+          end if;
+        end loop;
+
+        if has_function_privilege(
+          'service_role',
+          'public.guard_ai_provider_attempt_ledger()',
+          'EXECUTE'
+        ) then
+          raise exception 'service_role can execute the attempt guard directly';
+        end if;
+      end;
+      $assertions$;
+    `);
+  });
+
   it("stores a frozen started attempt and rejects duplicate caller identity", async () => {
     const fixture = await createReservation();
-    const first = await insertStarted(fixture);
+    const first = await service
+      .from("ai_provider_attempt_ledger")
+      .insert(startedAttempt(fixture))
+      .select("attempt_id,status,runtime_contract_id,runtime_contract_sha256")
+      .single();
     expect(first.error).toBeNull();
-    expect(first.data?.status).toBe("started");
+    expect(first.data).toMatchObject({
+      status: "started",
+      runtime_contract_id: runtimeContractId,
+      runtime_contract_sha256: runtimeContractSha256,
+    });
 
     const duplicate = await service
       .from("ai_provider_attempt_ledger")
       .insert(startedAttempt(fixture));
     expect(duplicate.error?.code).toBe(UNIQUE_VIOLATION);
+  });
+
+  it("rejects missing, null, one-sided, and malformed runtime identities at row boundaries", async () => {
+    const fixture = await createReservation();
+    const exact = startedAttempt(fixture) as Record<string, unknown>;
+    const withoutId = { ...exact };
+    const withoutHash = { ...exact };
+    const withoutPair = { ...exact };
+    delete withoutId.runtime_contract_id;
+    delete withoutHash.runtime_contract_sha256;
+    delete withoutPair.runtime_contract_id;
+    delete withoutPair.runtime_contract_sha256;
+
+    const notNullCases = [
+      ["missing id", withoutId],
+      ["missing hash", withoutHash],
+      ["missing pair", withoutPair],
+      ["null id", { ...exact, runtime_contract_id: null }],
+      ["null hash", { ...exact, runtime_contract_sha256: null }],
+      ["null pair", {
+        ...exact,
+        runtime_contract_id: null,
+        runtime_contract_sha256: null,
+      }],
+    ] as const;
+
+    for (const [label, attempt] of notNullCases) {
+      const result = await service
+        .from("ai_provider_attempt_ledger")
+        .insert(attempt);
+      expect(result.error?.code, label).toBe("23502");
+    }
+
+    const malformedCases = [
+      ["uppercase id", { runtime_contract_id: "Bad_Runtime" }],
+      ["invalid first id character", { runtime_contract_id: "-bad-runtime" }],
+      ["empty id", { runtime_contract_id: "" }],
+      ["oversized id", { runtime_contract_id: `a${"b".repeat(200)}` }],
+      ["uppercase hash", { runtime_contract_sha256: "A".repeat(64) }],
+      ["short hash", { runtime_contract_sha256: "a".repeat(63) }],
+      ["non-hex hash", { runtime_contract_sha256: "g".repeat(64) }],
+    ] as const;
+
+    for (const [label, drift] of malformedCases) {
+      const result = await service
+        .from("ai_provider_attempt_ledger")
+        .insert({ ...exact, ...drift });
+      expect(result.error?.code, label).toBe(CHECK_VIOLATION);
+      expect(result.error?.message, label).toContain(
+        "ai_provider_attempt_ledger_snapshot_shape_check",
+      );
+    }
+  });
+
+  it("enforces the runtime composite FK independently of the parent guard", async () => {
+    const fixture = await createReservation();
+    const started = await insertStarted(fixture);
+    expect(started.error).toBeNull();
+    const attemptId = started.data!.attempt_id;
+    const unknownRuntimeId = `unknown-runtime.${crypto.randomUUID()}`;
+    const unknownRuntimeHash = "0".repeat(64);
+    const wrongHash = secondRuntimeContractSha256;
+    expect(wrongHash).not.toBe(runtimeContractSha256);
+
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      alter table public.ai_provider_attempt_ledger
+        disable trigger guard_ai_provider_attempt_ledger;
+      do $assertions$
+      declare
+        rejected boolean;
+      begin
+        rejected := false;
+        begin
+          update public.ai_provider_attempt_ledger
+          set runtime_contract_id = ${sqlLiteral(unknownRuntimeId)},
+              runtime_contract_sha256 = ${sqlLiteral(unknownRuntimeHash)}
+          where attempt_id = ${sqlLiteral(attemptId)}::uuid;
+        exception when foreign_key_violation then
+          rejected := true;
+        end;
+        if not rejected then
+          raise exception 'unknown runtime pair bypassed composite FK';
+        end if;
+
+        rejected := false;
+        begin
+          update public.ai_provider_attempt_ledger
+          set runtime_contract_id = ${sqlLiteral(runtimeContractId)},
+              runtime_contract_sha256 = ${sqlLiteral(wrongHash)}
+          where attempt_id = ${sqlLiteral(attemptId)}::uuid;
+        exception when foreign_key_violation then
+          rejected := true;
+        end;
+        if not rejected then
+          raise exception 'right runtime id with wrong hash bypassed composite FK';
+        end if;
+      end;
+      $assertions$;
+      alter table public.ai_provider_attempt_ledger
+        enable trigger guard_ai_provider_attempt_ledger;
+      commit;
+    `);
+  });
+
+  it("rejects a different known sealed runtime pair at the parent equality guard", async () => {
+    const fixture = await createReservation();
+    const knownPairDrift = await service
+      .from("ai_provider_attempt_ledger")
+      .insert({
+        ...startedAttempt(fixture),
+        runtime_contract_id: secondRuntimeContractId,
+        runtime_contract_sha256: secondRuntimeContractSha256,
+      });
+    expect(knownPairDrift.error?.code).toBe(CHECK_VIOLATION);
+    expect(knownPairDrift.error?.message).toContain(
+      "provider attempt route snapshot differs from its reservation",
+    );
+  });
+
+  it("rejects runtime pair clear, swap, and drift on started and terminal rows", async () => {
+    const fixture = await createReservation();
+    const started = await insertStarted(fixture);
+    expect(started.error).toBeNull();
+
+    for (const [label, drift] of [
+      ["clear started id", { runtime_contract_id: null }],
+      ["clear started hash", { runtime_contract_sha256: null }],
+      ["swap started pair", {
+        runtime_contract_id: secondRuntimeContractId,
+        runtime_contract_sha256: secondRuntimeContractSha256,
+      }],
+      ["drift started hash", { runtime_contract_sha256: "f".repeat(64) }],
+    ] as const) {
+      const update = await service
+        .from("ai_provider_attempt_ledger")
+        .update(drift)
+        .eq("attempt_id", started.data!.attempt_id);
+      expect(update.error?.code, label).toBe(CHECK_VIOLATION);
+    }
+
+    const completed = await service
+      .from("ai_provider_attempt_ledger")
+      .update(observedCompletion())
+      .eq("attempt_id", started.data!.attempt_id);
+    expect(completed.error).toBeNull();
+
+    for (const [label, drift] of [
+      ["clear terminal id", { runtime_contract_id: null }],
+      ["clear terminal hash", { runtime_contract_sha256: null }],
+      ["swap terminal pair", {
+        runtime_contract_id: secondRuntimeContractId,
+        runtime_contract_sha256: secondRuntimeContractSha256,
+      }],
+      ["drift terminal hash", { runtime_contract_sha256: "f".repeat(64) }],
+      ["mutate terminal observation", { latency_ms: 9999 }],
+    ] as const) {
+      const update = await service
+        .from("ai_provider_attempt_ledger")
+        .update(drift)
+        .eq("attempt_id", started.data!.attempt_id);
+      expect(update.error?.code, label).toBe(CHECK_VIOLATION);
+    }
+
+    const unchanged = await service
+      .from("ai_provider_attempt_ledger")
+      .select("runtime_contract_id,runtime_contract_sha256,latency_ms")
+      .eq("attempt_id", started.data!.attempt_id)
+      .single();
+    expect(unchanged.error).toBeNull();
+    expect(unchanged.data).toEqual({
+      runtime_contract_id: runtimeContractId,
+      runtime_contract_sha256: runtimeContractSha256,
+      latency_ms: 1234,
+    });
   });
 
   it("admits only started attempts and only a started-to-terminal update", async () => {
@@ -484,6 +758,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       .single();
     expect(completed.error).toBeNull();
     expect(completed.data).toMatchObject({
+      runtime_contract_id: runtimeContractId,
+      runtime_contract_sha256: runtimeContractSha256,
       usage_observation_kind: "observed",
       input_total_tokens: 100,
       input_cache_read_tokens: 60,
@@ -1012,6 +1288,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       openApi.definitions?.ai_provider_attempt_ledger?.properties ?? {},
     );
     expect(columns).toContain("output_tokens");
+    expect(columns).toContain("runtime_contract_id");
+    expect(columns).toContain("runtime_contract_sha256");
     expect(columns.filter((column) =>
       /(^|_)(prompt|cv|content|body|message|raw|text)($|_)/.test(column),
     )).toEqual([]);
