@@ -29,13 +29,13 @@ import {
 } from "./provider-attempt-settlement-fixtures";
 import {
   runOwnerSql,
-  startOwnerSql,
   type OwnerSqlResult,
 } from "./runtime-contract-fixtures";
 
 const INT_MAX = 2_147_483_647;
 const DB_CONTAINER = "supabase_db_typst-cv-template";
 const LOCK_OBSERVATION_MS = 150;
+const NONBLOCKING_TIMEOUT_MS = 2_000;
 
 interface BarrierSqlProcess {
   ready: Promise<void>;
@@ -735,23 +735,16 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     });
   });
 
-  it("settles all-old terminal siblings plus stale started children in the same invocation", async () => {
-    const user = await harness.makeUser("reconcile-mixed-old");
+  it("preserves known lower bounds when a stale sibling becomes unknown", async () => {
+    await harness.activateFreshRouteFixture();
+    const user = await harness.makeUser("reconcile-mixed-known-unknown");
     const reservation = await harness.reserveV2(user);
     const first = await harness.startAttempt(reservation.reservationId, 1);
-    await harness.complete(completePayload(first.attemptId, {
-      p_provider_billable: false,
-      p_usage: null,
-      p_cost: costObservation({
-        estimated_currency: null,
-        estimated_cost_nanos: null,
-        reconciliation_status: "incomplete_usage",
-      }),
-      p_metadata: attemptMetadata({
-        finish_reason: null,
-        failure_stage: "pre_transmission",
-      }),
-    }));
+    expect(await harness.complete(completePayload(first.attemptId))).toMatchObject({
+      ok: true,
+      alreadyCompleted: false,
+      status: "succeeded",
+    });
     const second = await harness.startAttempt(reservation.reservationId, 2);
     ownerRewriteAttempt(
       first.attemptId,
@@ -761,19 +754,121 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       second.attemptId,
       "started_at = pg_catalog.transaction_timestamp() - interval '2 minutes'",
     );
+    const firstBeforeReconcile = await attempt(first.attemptId);
 
     const result = await reconcile();
+    expect(result.error).toBeNull();
     expect(result.data).toEqual({
       releasedCount: 0,
       abandonedCount: 1,
       latencyOverflowCount: 0,
     });
-    expect(await attempt(second.attemptId)).toMatchObject({ status: "unknown" });
-    expect(await request(reservation.reservationId)).toMatchObject({
+    expect(await attempt(first.attemptId)).toEqual(firstBeforeReconcile);
+    expect(await attempt(second.attemptId)).toMatchObject({
+      status: "unknown",
+      provider_billable: null,
+      usage_observation_kind: "unavailable",
+      usage_schema_version: null,
+      input_total_tokens: null,
+      input_cache_read_tokens: null,
+      input_cache_write_tokens: null,
+      input_standard_tokens: null,
+      output_tokens: null,
+      reasoning_tokens: null,
+      cache_usage_reporting: null,
+      usage_complete: false,
+      route_observation_schema_version: "route_observation_v1",
+      gateway_request_id: null,
+      provider_request_id: null,
+      actual_upstream_endpoint: null,
+      actual_model_id: null,
+      router_attempt_count: null,
+      cost_observation_schema_version: "cost_observation_v1",
+      estimated_currency: null,
+      estimated_cost_nanos: null,
+      provider_reported_currency: null,
+      provider_reported_cost_nanos: null,
+      cost_reconciliation_status: "incomplete_usage",
+      finish_reason: null,
+      failure_stage: "provider_timeout",
+    });
+
+    const settled = await request(reservation.reservationId);
+    expect(settled).toMatchObject({
       state: "finalized",
       status: "abandoned",
-      provider_billable: null,
+      quota_charged: false,
+      provider_billable: true,
+      usage_schema_version: "request_usage_aggregate_v2",
+      input_total_tokens: 100,
+      input_cache_read_tokens: 60,
+      input_cache_write_tokens: null,
+      input_standard_tokens: 30,
+      output_tokens: 20,
+      reasoning_tokens: null,
+      cache_usage_reporting: "unavailable",
+      usage_complete: false,
+      incomplete_fields: expect.arrayContaining([
+        "attempt_usage",
+        "input_cache_write",
+        "reasoning",
+        "estimated_cost",
+      ]),
+      billing_currency: "CNY",
+      known_estimated_cost_nanos: 1234,
+      estimated_cost_nanos: null,
+      provider_reported_currency: null,
+      provider_reported_cost_nanos: null,
+      cost_reconciliation_status: "incomplete_usage",
     });
+    expect(settled.incomplete_fields).not.toContain("provider_billable");
+
+    const daily = await service
+      .from("ai_profile_usage_daily")
+      .select("*")
+      .eq("profile_version_id", reservation.routeSnapshot.profileVersionId)
+      .eq("billing_currency", "CNY")
+      .single();
+    expect(daily.error).toBeNull();
+    expect(daily.data).toMatchObject({
+      request_count: 1,
+      usage_incomplete_count: 1,
+      cost_incomplete_count: 1,
+      provider_report_incomplete_count: 1,
+      input_total_tokens: 100,
+      input_cache_read_tokens: 60,
+      input_cache_write_tokens: null,
+      input_standard_tokens: 30,
+      output_tokens: 20,
+      reasoning_tokens: null,
+      known_estimated_cost_nanos: 1234,
+      estimated_cost_nanos: null,
+      provider_reported_cost_nanos: null,
+    });
+
+    const afterSettlement = {
+      settlement: await settlementSnapshot(
+        user.id,
+        reservation.reservationId,
+        reservation.routeSnapshot.profileVersionId,
+      ),
+      first: await attempt(first.attemptId),
+      second: await attempt(second.attemptId),
+    };
+    expect((await reconcile()).data).toEqual({
+      releasedCount: 0,
+      abandonedCount: 0,
+      latencyOverflowCount: 0,
+    });
+    expect({
+      settlement: await settlementSnapshot(
+        user.id,
+        reservation.reservationId,
+        reservation.routeSnapshot.profileVersionId,
+      ),
+      first: await attempt(first.attemptId),
+      second: await attempt(second.attemptId),
+    }).toEqual(afterSettlement);
   });
 
   it("requires every pre-existing terminal child to be strictly older than the cutoff", async () => {
@@ -1224,7 +1319,8 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     }
   });
 
-  it("serializes concurrent reconcilers and rejects a late completion without duplicate settlement", async () => {
+  it("proves a second reconciler skips the first transaction's locked parent", async () => {
+    await harness.activateFreshRouteFixture();
     const user = await harness.makeUser("reconcile-double");
     const reservation = await harness.reserveV2(user);
     const started = await harness.startAttempt(reservation.reservationId, 1);
@@ -1233,21 +1329,59 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       "started_at = pg_catalog.transaction_timestamp() - interval '2 minutes'",
     );
 
-    const sql = String.raw`
-      \set ON_ERROR_STOP on
-      \pset format unaligned
-      \pset tuples_only on
-      begin;
-      set local role service_role;
-      select public.reconcile_stale_ai_polish_reservations(interval '60 seconds');
-      commit;
-    `;
-    const [first, second] = await Promise.all([startOwnerSql(sql), startOwnerSql(sql)]);
-    expect(first.status, first.stderr).toBe(0);
-    expect(second.status, second.stderr).toBe(0);
-    const combined = `${first.stdout}\n${second.stdout}`;
-    expect((combined.match(/"abandonedCount": 1/gu) ?? [])).toHaveLength(1);
-    expect((combined.match(/"abandonedCount": 0/gu) ?? [])).toHaveLength(1);
+    const firstReady = "DB011_FIRST_RECONCILER_HOLDS_PARENT";
+    const secondReady = "DB011_SECOND_RECONCILER_SKIPPED_PARENT";
+    const first = startOwnerSqlWithBarrier(
+      reconcileSql({ markerAfter: firstReady, commit: false }),
+      firstReady,
+      "commit;\n",
+    );
+    let second: BarrierSqlProcess | undefined;
+    try {
+      await first.ready;
+      second = startOwnerSqlWithBarrier(
+        reconcileSql({ markerAfter: secondReady }),
+        secondReady,
+      );
+      await Promise.race([
+        second.ready,
+        sleep(NONBLOCKING_TIMEOUT_MS).then(() => {
+          throw new Error("second reconciler did not skip the locked parent promptly");
+        }),
+      ]);
+      const skipped = await second.result;
+      expect(skipped.status, skipped.stderr).toBe(0);
+      expect(skipped.stdout).toContain('"abandonedCount": 0');
+
+      first.release();
+      const settled = await first.result;
+      expect(settled.status, settled.stderr).toBe(0);
+      expect(settled.stdout).toContain('"abandonedCount": 1');
+    } finally {
+      first.release();
+      await Promise.allSettled([
+        first.result,
+        ...(second ? [second.result] : []),
+      ]);
+    }
+
+    const settledSnapshot = await settlementSnapshot(
+      user.id,
+      reservation.reservationId,
+      reservation.routeSnapshot.profileVersionId,
+    );
+    expect(settledSnapshot.request).toMatchObject({
+      state: "finalized",
+      status: "abandoned",
+      quota_charged: false,
+    });
+    expect(settledSnapshot.profile).toHaveLength(1);
+    expect(settledSnapshot.profile?.[0]).toMatchObject({
+      request_count: 1,
+      usage_incomplete_count: 1,
+      cost_incomplete_count: 1,
+      provider_report_incomplete_count: 1,
+    });
 
     const late = await service.rpc("complete_ai_polish_provider_attempt", {
       ...completePayload(started.attemptId),
@@ -1256,9 +1390,17 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     });
     expect(late.error).toBeNull();
     expect(late.data).toEqual({ ok: false, reason: "REQUEST_ALREADY_FINALIZED" });
-    expect(await request(reservation.reservationId)).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
+    expect((await reconcile()).data).toEqual({
+      releasedCount: 0,
+      abandonedCount: 0,
+      latencyOverflowCount: 0,
     });
+    expect(
+      await settlementSnapshot(
+        user.id,
+        reservation.reservationId,
+        reservation.routeSnapshot.profileVersionId,
+      ),
+    ).toEqual(settledSnapshot);
   });
 });
