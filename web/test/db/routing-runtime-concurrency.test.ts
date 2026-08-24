@@ -3,7 +3,17 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { createServiceClient, RUN_DB_TESTS, sleep } from "./helpers";
+import {
+  configureFeature,
+  createServiceClient,
+  createTestUser,
+  deleteTestUser,
+  getLedgerRows,
+  getRateBuckets,
+  getUsageRow,
+  RUN_DB_TESTS,
+  sleep,
+} from "./helpers";
 import {
   authorSyntheticRuntimeContract,
   DEEPSEEK_LEGAL_MANIFEST_ID,
@@ -21,6 +31,9 @@ interface LiveRoute {
   profileVersionId: string;
   priceVersionId: string;
   policyVersionId: string;
+  runtimeContractId: string;
+  runtimeContractSha256: string;
+  configGeneration: string | null;
 }
 
 interface RuntimeRaceTarget {
@@ -196,12 +209,88 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       expect(pointer.error).toBeNull();
     }
 
+    let configGeneration: string | null = null;
+    if (options.activateCanary !== false) {
+      const { data: config, error: configError } = await service
+        .from("ai_feature_config")
+        .select("config_generation")
+        .eq("id", true)
+        .single();
+      expect(configError).toBeNull();
+      configGeneration = String(config!.config_generation);
+    }
+
     return {
       profileId: profile!.id,
       profileVersionId: version!.id,
       priceVersionId: price!.id,
       policyVersionId: policy!.id,
+      runtimeContractId: runtime.runtimeContractId,
+      runtimeContractSha256: runtime.runtimeContractSha256,
+      configGeneration,
     };
+  }
+
+  function reserveV2Sql(
+    route: LiveRoute,
+    userId: string,
+    holdSeconds: number,
+    lockTimeoutMs?: number,
+  ) {
+    if (route.configGeneration === null) {
+      throw new Error("V2 concurrency route must be active");
+    }
+    const expectedRoute = JSON.stringify({
+      schema_version: "expected_route_v1",
+      config_generation: route.configGeneration,
+      profile_version_id: route.profileVersionId,
+      legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+      runtime_contract_id: route.runtimeContractId,
+      runtime_contract_sha256: route.runtimeContractSha256,
+    });
+    return String.raw`
+      \set ON_ERROR_STOP on
+      \pset format unaligned
+      \pset tuples_only on
+      begin;
+      set local statement_timeout = '10s';
+      ${
+        lockTimeoutMs === undefined
+          ? ""
+          : `set local lock_timeout = '${lockTimeoutMs}ms';`
+      }
+      set local role service_role;
+      select public.reserve_ai_polish_request_v2(
+        '${userId}'::uuid,
+        '${crypto.randomUUID()}'::uuid,
+        '${crypto.randomUUID()}'::uuid,
+        '${expectedRoute}'::jsonb
+      );
+      reset role;
+      select pg_sleep(${holdSeconds});
+      commit;
+    `;
+  }
+
+  async function expectCoherentV2Snapshot(route: LiveRoute, userId: string) {
+    const rows = await getLedgerRows(service, userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      route_schema_version: "route_snapshot_v1",
+      config_generation: Number(route.configGeneration),
+      routing_policy_version_id: route.policyVersionId,
+      profile_version_id: route.profileVersionId,
+      price_version_id: route.priceVersionId,
+      legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+      runtime_contract_id: route.runtimeContractId,
+      runtime_contract_sha256: route.runtimeContractSha256,
+    });
+  }
+
+  async function expectNoV2Admission(userId: string) {
+    expect(await getLedgerRows(service, userId)).toEqual([]);
+    expect(await getUsageRow(service, userId)).toBeNull();
+    expect(await getRateBuckets(service, userId)).toEqual([]);
   }
 
   function assertReserveSql(route: LiveRoute, holdSeconds: number) {
@@ -232,6 +321,57 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       select pg_sleep(${holdSeconds});
       commit;
     `;
+  }
+
+  function switchPointerSql(
+    replacement: LiveRoute,
+    label: string,
+    holdSeconds: number,
+  ) {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      set local statement_timeout = '10s';
+      update public.ai_feature_config
+      set active_routing_policy_version_id = '${replacement.policyVersionId}'::uuid,
+          routing_updated_by = 'runtime-concurrency',
+          routing_change_reason = '${label}.${crypto.randomUUID()}'
+      where id = true;
+      select pg_sleep(${holdSeconds});
+      commit;
+    `;
+  }
+
+  async function createPointerRacePair(label: string) {
+    const current = await createLiveRoute(`${label}-current`);
+    const replacement = await createLiveRoute(`${label}-replacement`, {
+      activateCanary: false,
+    });
+    transitionPolicyAsDatabaseOwner(replacement.policyVersionId, "validated");
+    const replacementCanary = await service
+      .from("ai_provider_profile_versions")
+      .update({ status: "canary" })
+      .eq("id", replacement.profileVersionId);
+    expect(replacementCanary.error).toBeNull();
+    transitionPolicyAsDatabaseOwner(replacement.policyVersionId, "canary");
+
+    const restoreCurrent = await service
+      .from("ai_feature_config")
+      .update({
+        active_routing_policy_version_id: current.policyVersionId,
+        routing_updated_by: "runtime-concurrency",
+        routing_change_reason: `restore current ${label} ${crypto.randomUUID()}`,
+      })
+      .eq("id", true);
+    expect(restoreCurrent.error).toBeNull();
+    const { data: config, error: configError } = await service
+      .from("ai_feature_config")
+      .select("config_generation")
+      .eq("id", true)
+      .single();
+    expect(configError).toBeNull();
+    current.configGeneration = String(config!.config_generation);
+    return { current, replacement };
   }
 
   function promotePolicySql(route: LiveRoute, holdSeconds: number) {
@@ -293,6 +433,73 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     expect(staleAssertion.stderr).toMatch(/current routing pointer/i);
   });
 
+  it("serializes actual V2 reserve and pointer switch in both orders", async () => {
+    const reserveFirst = await createPointerRacePair("v2-pointer-reserve-first");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const firstUser = await createTestUser(service, "v2-pointer-reserve-first");
+    try {
+      const [reserved, switched] = await interleave(
+        reserveV2Sql(reserveFirst.current, firstUser.id, 0.6),
+        switchPointerSql(
+          reserveFirst.replacement,
+          "v2-pointer-after-reserve",
+          0,
+        ),
+      );
+      expect(reserved.status, reserved.stderr).toBe(0);
+      expect(reserved.stdout).toContain('"allowed": true');
+      expect(switched.status, switched.stderr).toBe(0);
+      await expectCoherentV2Snapshot(reserveFirst.current, firstUser.id);
+    } finally {
+      await deleteTestUser(service, firstUser.id);
+    }
+
+    const switchFirst = await createPointerRacePair("v2-pointer-switch-first");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const secondUser = await createTestUser(service, "v2-pointer-switch-first");
+    try {
+      const [switched, denied] = await interleave(
+        switchPointerSql(
+          switchFirst.replacement,
+          "v2-pointer-before-reserve",
+          0.6,
+        ),
+        reserveV2Sql(switchFirst.current, secondUser.id, 0),
+      );
+      expect(switched.status, switched.stderr).toBe(0);
+      expect(denied.status, denied.stderr).toBe(0);
+      expect(denied.stdout).toContain('"reason": "AI_ROUTE_CHANGED"');
+      await expectNoV2Admission(secondUser.id);
+    } finally {
+      await deleteTestUser(service, secondUser.id);
+      await configureFeature(service, { enabled: false });
+    }
+  });
+
+  it("keeps same-price V2 reservations on compatible shared locks", async () => {
+    const route = await createLiveRoute("v2-shared-price-locks");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const firstUser = await createTestUser(service, "v2-shared-price-lock-a");
+    const secondUser = await createTestUser(service, "v2-shared-price-lock-b");
+    try {
+      const [first, second] = await interleave(
+        reserveV2Sql(route, firstUser.id, 0.6),
+        reserveV2Sql(route, secondUser.id, 0, 250),
+      );
+      expect(first.status, first.stderr).toBe(0);
+      expect(second.status, second.stderr).toBe(0);
+      expect(first.stdout).toContain('"allowed": true');
+      expect(second.stdout).toContain('"allowed": true');
+      await expectCoherentV2Snapshot(route, firstUser.id);
+      await expectCoherentV2Snapshot(route, secondUser.id);
+    } finally {
+      await deleteTestUser(service, firstUser.id);
+      await deleteTestUser(service, secondUser.id);
+      await clearPointer("V2 shared price lock cleanup");
+      await configureFeature(service, { enabled: false });
+    }
+  });
+
   it("locks profile parents before authoritative reserve revalidation", async () => {
     const assertionFirst = await createLiveRoute("profile-assert-first");
     const retireAfterAssert = String.raw`
@@ -332,6 +539,42 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     await clearPointer("profile concurrency cleanup");
   });
 
+  it("serializes actual V2 reserve and profile retirement in both orders", async () => {
+    const reserveFirst = await createLiveRoute("v2-profile-reserve-first");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const firstUser = await createTestUser(service, "v2-profile-reserve-first");
+    try {
+      const [reserved, retired] = await interleave(
+        reserveV2Sql(reserveFirst, firstUser.id, 0.6),
+        retireProfileSql(reserveFirst, 0),
+      );
+      expect(reserved.status, reserved.stderr).toBe(0);
+      expect(reserved.stdout).toContain('"allowed": true');
+      expect(retired.status, retired.stderr).toBe(0);
+      await expectCoherentV2Snapshot(reserveFirst, firstUser.id);
+    } finally {
+      await deleteTestUser(service, firstUser.id);
+    }
+
+    const retirementFirst = await createLiveRoute("v2-profile-retire-first");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const secondUser = await createTestUser(service, "v2-profile-retire-first");
+    try {
+      const [retired, denied] = await interleave(
+        retireProfileSql(retirementFirst, 0.6),
+        reserveV2Sql(retirementFirst, secondUser.id, 0),
+      );
+      expect(retired.status, retired.stderr).toBe(0);
+      expect(denied.status, denied.stderr).toBe(0);
+      expect(denied.stdout).toContain('"reason": "SERVICE_UNAVAILABLE"');
+      await expectNoV2Admission(secondUser.id);
+      await clearPointer("V2 profile race cleanup");
+    } finally {
+      await deleteTestUser(service, secondUser.id);
+      await configureFeature(service, { enabled: false });
+    }
+  });
+
   it("serializes price closure and reserve assertion in both orders", async () => {
     const assertionFirst = await createLiveRoute("price-assert-first");
     const closeAfterAssert = String.raw`
@@ -369,6 +612,42 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     expect(staleAssertion.status).not.toBe(0);
     expect(staleAssertion.stderr).toMatch(/price is unavailable/i);
     await clearPointer("price concurrency cleanup");
+  });
+
+  it("serializes actual V2 reserve and price closure in both orders", async () => {
+    const reserveFirst = await createLiveRoute("v2-price-reserve-first");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const firstUser = await createTestUser(service, "v2-price-reserve-first");
+    try {
+      const [reserved, closed] = await interleave(
+        reserveV2Sql(reserveFirst, firstUser.id, 0.6),
+        closePriceSql(reserveFirst, 0),
+      );
+      expect(reserved.status, reserved.stderr).toBe(0);
+      expect(reserved.stdout).toContain('"allowed": true');
+      expect(closed.status, closed.stderr).toBe(0);
+      await expectCoherentV2Snapshot(reserveFirst, firstUser.id);
+    } finally {
+      await deleteTestUser(service, firstUser.id);
+    }
+
+    const closureFirst = await createLiveRoute("v2-price-close-first");
+    await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
+    const secondUser = await createTestUser(service, "v2-price-close-first");
+    try {
+      const [closed, denied] = await interleave(
+        closePriceSql(closureFirst, 0.6),
+        reserveV2Sql(closureFirst, secondUser.id, 0),
+      );
+      expect(closed.status, closed.stderr).toBe(0);
+      expect(denied.status, denied.stderr).toBe(0);
+      expect(denied.stdout).toContain('"reason": "SERVICE_UNAVAILABLE"');
+      await expectNoV2Admission(secondUser.id);
+      await clearPointer("V2 price race cleanup");
+    } finally {
+      await deleteTestUser(service, secondUser.id);
+      await configureFeature(service, { enabled: false });
+    }
   });
 
   it("serializes owner policy promotion and profile retirement in both orders", async () => {
