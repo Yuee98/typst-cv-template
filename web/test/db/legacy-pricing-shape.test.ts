@@ -209,7 +209,7 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
     }
   });
 
-  it("accepts only the complete sealed historical shape and freezes its binding", async () => {
+  it("rejects direct service-role promotion of a bare row to historical pricing", async () => {
     const { data: row, error: rowError } = await service
       .from("ai_request_ledger")
       .insert(identity())
@@ -217,31 +217,26 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
       .single();
     expect(rowError).toBeNull();
 
-    const completeBinding = await service
+    const directHistoricalBinding = await service
       .from("ai_request_ledger")
       .update(exactLegacyShape())
-      .eq("reservation_id", row!.reservation_id)
-      .select(
-        "route_schema_version,profile_version_id,price_version_id,usage_schema_version,cost_basis",
-      )
-      .single();
-    expect(completeBinding.error).toBeNull();
-    expect(completeBinding.data).toEqual({
-      route_schema_version: "legacy_pricing_v1",
-      profile_version_id: profileVersionId,
-      price_version_id: priceVersionId,
-      usage_schema_version: "legacy_v1",
-      cost_basis: "legacy_request_aggregate",
-    });
-
-    const mutateBinding = await service
-      .from("ai_request_ledger")
-      .update({ profile_version_id: crypto.randomUUID() })
       .eq("reservation_id", row!.reservation_id);
-    expect(mutateBinding.error?.code).toBe(CHECK_VIOLATION);
-    expect(mutateBinding.error?.message).toContain(
-      "ai_request_ledger route binding is immutable once frozen",
+    expect(directHistoricalBinding.error?.code).toBe(CHECK_VIOLATION);
+    expect(directHistoricalBinding.error?.message).toContain(
+      "legacy pricing bindings cannot be created by direct ledger writes",
     );
+
+    const unchanged = await service
+      .from("ai_request_ledger")
+      .select("route_schema_version,profile_version_id,price_version_id")
+      .eq("reservation_id", row!.reservation_id)
+      .single();
+    expect(unchanged.error).toBeNull();
+    expect(unchanged.data).toEqual({
+      route_schema_version: null,
+      profile_version_id: null,
+      price_version_id: null,
+    });
   });
 
   it("treats a NULL route discriminator with all current facts as invalid", async () => {

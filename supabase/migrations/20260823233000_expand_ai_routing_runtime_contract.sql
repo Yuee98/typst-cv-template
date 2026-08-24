@@ -477,6 +477,7 @@ language plpgsql
 set search_path = ''
 as $$
 declare
+  v_profile_display_disclosure_key text;
   v_components_sealed_at timestamptz;
   v_pricing_lane text;
 begin
@@ -511,10 +512,52 @@ begin
       using errcode = '23514';
   end if;
 
-  if tg_op = 'INSERT'
-     and new.route_schema_version is not distinct from 'legacy_pricing_v1' then
-    raise exception 'legacy pricing bindings cannot be created by reservation insert'
-      using errcode = '23514';
+  if new.route_schema_version is not distinct from 'legacy_pricing_v1'
+     and (
+       tg_op = 'INSERT'
+       or (
+         tg_op = 'UPDATE'
+         and old.route_schema_version is null
+       )
+     ) then
+    if new.profile_version_id is not null
+       and new.price_version_id is not null
+       and num_nonnulls(
+         new.config_generation,
+         new.routing_policy_version_id,
+         new.legal_bundle_version,
+         new.runtime_contract_id,
+         new.runtime_contract_sha256,
+         new.gateway_kind,
+         new.model_id,
+         new.wire_api_kind,
+         new.display_disclosure_key
+       ) = 0
+       and new.usage_schema_version is not distinct from 'legacy_v1'
+       and new.cost_basis is not distinct from 'legacy_request_aggregate' then
+      raise exception 'legacy pricing bindings cannot be created by direct ledger writes'
+        using errcode = '23514';
+    end if;
+  end if;
+
+  if new.route_schema_version is not distinct from 'route_snapshot_v1'
+     and new.profile_version_id is not null then
+    select display_disclosure_key
+    into v_profile_display_disclosure_key
+    from public.ai_provider_profile_versions
+    where id = new.profile_version_id
+    for share;
+
+    if not found then
+      raise exception 'request route profile version does not exist'
+        using errcode = '23503';
+    end if;
+
+    if new.display_disclosure_key
+       is distinct from v_profile_display_disclosure_key then
+      raise exception 'request route disclosure differs from immutable profile disclosure'
+        using errcode = '23514';
+    end if;
   end if;
 
   if new.price_version_id is not null then
@@ -1134,6 +1177,285 @@ begin
 end;
 $$;
 
+-- DB-013 will introduce the audited operator lifecycle. Until then, direct
+-- role DML is not lifecycle authority: an ungranted owner-only primitive must
+-- prove the complete lock-ordered snapshot and leave a transaction-bound,
+-- single-use intent for the existing row guard.
+create table public.ai_routing_policy_transition_intents (
+  policy_version_id uuid primary key
+    references public.ai_routing_policy_versions(id),
+  from_status text not null,
+  to_status text not null,
+  requested_at timestamptz not null,
+  requested_txid bigint not null,
+  constraint ai_routing_policy_transition_intents_status_check check (
+    from_status in ('draft', 'validated', 'canary')
+    and to_status in ('validated', 'canary', 'active')
+    and from_status <> to_status
+  )
+);
+
+alter table public.ai_routing_policy_transition_intents enable row level security;
+revoke all on public.ai_routing_policy_transition_intents
+  from public, anon, authenticated, service_role;
+
+create or replace function public.guard_ai_routing_policy_version()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_allowed boolean;
+  v_consumed_policy_id uuid;
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'ai_routing_policy_versions rows cannot be deleted'
+      using errcode = '23514';
+  end if;
+
+  if tg_op = 'INSERT' then
+    if new.status <> 'draft' then
+      raise exception 'ai_routing_policy_versions must be inserted as draft'
+        using errcode = '23514';
+    end if;
+    if num_nonnulls(new.validated_at, new.activated_at, new.retired_at) > 0 then
+      raise exception 'ai_routing_policy_versions lifecycle timestamps are trigger-managed'
+        using errcode = '23514';
+    end if;
+  end if;
+
+  if tg_op = 'UPDATE' then
+    if (to_jsonb(new) - array['status', 'validated_at', 'activated_at', 'retired_at'])
+       is distinct from
+       (to_jsonb(old) - array['status', 'validated_at', 'activated_at', 'retired_at']) then
+      raise exception 'ai_routing_policy_versions execution fields are immutable'
+        using errcode = '23514';
+    end if;
+    if new.validated_at is distinct from old.validated_at
+       or new.activated_at is distinct from old.activated_at
+       or new.retired_at is distinct from old.retired_at then
+      raise exception 'ai_routing_policy_versions lifecycle timestamps are trigger-managed'
+        using errcode = '23514';
+    end if;
+
+    v_allowed := case old.status
+      when 'draft' then new.status in ('draft', 'validated', 'retired')
+      when 'validated' then new.status in ('validated', 'canary', 'active', 'retired')
+      when 'canary' then new.status in ('canary', 'active', 'retired')
+      when 'active' then new.status in ('active', 'retired')
+      when 'retired' then new.status = 'retired'
+      else false
+    end;
+    if not v_allowed then
+      raise exception 'invalid ai_routing_policy_versions status transition: % -> %',
+        old.status, new.status using errcode = '23514';
+    end if;
+
+    if new.status is distinct from old.status then
+      delete from public.ai_routing_policy_transition_intents
+      where policy_version_id = old.id
+        and from_status = old.status
+        and to_status = new.status
+        and requested_txid = txid_current()
+      returning policy_version_id into v_consumed_policy_id;
+
+      if v_consumed_policy_id is null then
+        raise exception 'direct routing policy lifecycle transitions await DB-013 authority'
+          using errcode = '23514';
+      end if;
+    end if;
+  end if;
+
+  if new.status in ('validated', 'canary', 'active') and new.validated_at is null then
+    new.validated_at := greatest(clock_timestamp(), new.created_at);
+  end if;
+  if new.status = 'active' and new.activated_at is null then
+    new.activated_at := greatest(clock_timestamp(), new.created_at, new.validated_at);
+  end if;
+  if new.status = 'retired' and new.retired_at is null then
+    new.retired_at := greatest(
+      clock_timestamp(),
+      new.created_at,
+      new.validated_at,
+      new.activated_at
+    );
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.lock_and_validate_ai_routing_policy_row_v1(
+  p_policy public.ai_routing_policy_versions,
+  p_phase text,
+  p_at timestamptz
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  -- This first pass is parse/ID discovery only. Callers already hold config
+  -- then policy; dependency locks below preserve runtime -> profile parent ->
+  -- profile version -> price ordering before authoritative revalidation.
+  perform public.validate_ai_routing_policy_row_v1(
+    p_policy,
+    p_phase,
+    p_at,
+    true
+  );
+
+  perform 1
+  from public.ai_service_runtime_contract_versions
+  where runtime_contract_id = p_policy.runtime_contract_id
+    and runtime_contract_sha256 = p_policy.runtime_contract_sha256
+  for share;
+
+  perform 1
+  from public.ai_provider_profiles as profile
+  join public.ai_provider_profile_versions as version
+    on version.profile_id = profile.id
+  where version.id in (
+    select distinct target.profile_version_id
+    from (
+      select (p_policy.rules->'defaultRoute'->>'profileVersionId')::uuid
+        as profile_version_id
+      union all
+      select (window_entry.value->'route'->>'profileVersionId')::uuid
+      from jsonb_array_elements(p_policy.rules->'windows') as window_entry(value)
+    ) as target
+  )
+  order by profile.id
+  for share of profile;
+
+  perform 1
+  from public.ai_provider_profile_versions as version
+  where version.id in (
+    select distinct target.profile_version_id
+    from (
+      select (p_policy.rules->'defaultRoute'->>'profileVersionId')::uuid
+        as profile_version_id
+      union all
+      select (window_entry.value->'route'->>'profileVersionId')::uuid
+      from jsonb_array_elements(p_policy.rules->'windows') as window_entry(value)
+    ) as target
+  )
+  order by version.id
+  for share;
+
+  perform 1
+  from public.ai_price_versions as price
+  where price.id in (
+    select distinct target.price_version_id
+    from (
+      select (p_policy.rules->'defaultRoute'->>'priceVersionId')::uuid
+        as price_version_id
+      union all
+      select (window_entry.value->'route'->>'priceVersionId')::uuid
+      from jsonb_array_elements(p_policy.rules->'windows') as window_entry(value)
+    ) as target
+  )
+  order by price.id
+  for share;
+
+  perform public.validate_ai_routing_policy_row_v1(
+    p_policy,
+    p_phase,
+    p_at,
+    false
+  );
+end;
+$$;
+
+create or replace function public.transition_ai_routing_policy_v1(
+  p_policy_id uuid,
+  p_to_status text
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_policy public.ai_routing_policy_versions%rowtype;
+  v_candidate public.ai_routing_policy_versions%rowtype;
+  v_at timestamptz := clock_timestamp();
+  v_allowed boolean;
+begin
+  if p_policy_id is null
+     or p_to_status is null
+     or p_to_status not in ('validated', 'canary', 'active') then
+    raise exception 'owner transition requires a policy id and promotion phase'
+      using errcode = '23514';
+  end if;
+
+  perform 1
+  from public.ai_feature_config
+  where id = true
+  for share;
+  if not found then
+    raise exception 'ai feature config singleton is missing'
+      using errcode = '23514';
+  end if;
+
+  select * into v_policy
+  from public.ai_routing_policy_versions
+  where id = p_policy_id
+  for update;
+  if not found then
+    raise exception 'routing policy does not exist'
+      using errcode = '23503';
+  end if;
+
+  v_allowed := case v_policy.status
+    when 'draft' then p_to_status = 'validated'
+    when 'validated' then p_to_status in ('canary', 'active')
+    when 'canary' then p_to_status = 'active'
+    else false
+  end;
+  if not v_allowed then
+    raise exception 'owner routing policy promotion is invalid: % -> %',
+      v_policy.status, p_to_status using errcode = '23514';
+  end if;
+
+  v_candidate := v_policy;
+  v_candidate.status := p_to_status;
+  perform public.lock_and_validate_ai_routing_policy_row_v1(
+    v_candidate,
+    p_to_status,
+    v_at
+  );
+
+  insert into public.ai_routing_policy_transition_intents (
+    policy_version_id,
+    from_status,
+    to_status,
+    requested_at,
+    requested_txid
+  ) values (
+    v_policy.id,
+    v_policy.status,
+    p_to_status,
+    v_at,
+    txid_current()
+  );
+
+  update public.ai_routing_policy_versions
+  set status = p_to_status
+  where id = v_policy.id;
+
+  if exists (
+    select 1
+    from public.ai_routing_policy_transition_intents
+    where policy_version_id = v_policy.id
+  ) then
+    raise exception 'routing policy transition intent was not consumed'
+      using errcode = '23514';
+  end if;
+end;
+$$;
+
 create or replace function public.assert_ai_routing_policy_v1(
   p_policy_id uuid,
   p_phase text,
@@ -1155,9 +1477,6 @@ begin
       using errcode = '23514';
   end if;
 
-  -- Public assert owns the frozen lock order. The transition trigger below is
-  -- a temporary direct-DML defense and validates its NEW row without trying
-  -- to reacquire config after PostgreSQL has already locked the policy row.
   perform 1
   from public.ai_feature_config
   where id = true
@@ -1176,73 +1495,10 @@ begin
       using errcode = '23503';
   end if;
 
-  perform public.validate_ai_routing_policy_row_v1(
+  perform public.lock_and_validate_ai_routing_policy_row_v1(
     v_policy,
     p_phase,
-    p_at,
-    true
-  );
-
-  perform 1
-  from public.ai_service_runtime_contract_versions
-  where runtime_contract_id = v_policy.runtime_contract_id
-    and runtime_contract_sha256 = v_policy.runtime_contract_sha256
-  for share;
-
-  perform 1
-  from public.ai_provider_profiles as profile
-  join public.ai_provider_profile_versions as version
-    on version.profile_id = profile.id
-  where version.id in (
-    select distinct target.profile_version_id
-    from (
-      select (v_policy.rules->'defaultRoute'->>'profileVersionId')::uuid
-        as profile_version_id
-      union all
-      select (window_entry.value->'route'->>'profileVersionId')::uuid
-      from jsonb_array_elements(v_policy.rules->'windows') as window_entry(value)
-    ) as target
-  )
-  order by profile.id
-  for share of profile;
-
-  perform 1
-  from public.ai_provider_profile_versions as version
-  where version.id in (
-    select distinct target.profile_version_id
-    from (
-      select (v_policy.rules->'defaultRoute'->>'profileVersionId')::uuid
-        as profile_version_id
-      union all
-      select (window_entry.value->'route'->>'profileVersionId')::uuid
-      from jsonb_array_elements(v_policy.rules->'windows') as window_entry(value)
-    ) as target
-  )
-  order by version.id
-  for share;
-
-  perform 1
-  from public.ai_price_versions as price
-  where price.id in (
-    select distinct target.price_version_id
-    from (
-      select (v_policy.rules->'defaultRoute'->>'priceVersionId')::uuid
-        as price_version_id
-      union all
-      select (window_entry.value->'route'->>'priceVersionId')::uuid
-      from jsonb_array_elements(v_policy.rules->'windows') as window_entry(value)
-    ) as target
-  )
-  order by price.id
-  for share;
-
-  -- Revalidate inside the complete lock set so no lifecycle/price fact can be
-  -- mixed between the first strict parse and the authoritative assertion.
-  perform public.validate_ai_routing_policy_row_v1(
-    v_policy,
-    p_phase,
-    p_at,
-    false
+    p_at
   );
 end;
 $$;
@@ -1339,6 +1595,15 @@ revoke execute on function public.validate_ai_routing_policy_row_v1(
   timestamptz,
   boolean
 ) from public, anon, authenticated, service_role;
+revoke execute on function public.guard_ai_routing_policy_version()
+  from public, anon, authenticated, service_role;
+revoke execute on function public.lock_and_validate_ai_routing_policy_row_v1(
+  public.ai_routing_policy_versions,
+  text,
+  timestamptz
+) from public, anon, authenticated, service_role;
+revoke execute on function public.transition_ai_routing_policy_v1(uuid, text)
+  from public, anon, authenticated, service_role;
 revoke execute on function public.assert_ai_routing_policy_v1(uuid, text, timestamptz)
   from public, anon, authenticated, service_role;
 revoke execute on function public.validate_ai_routing_policy_transition_v1()

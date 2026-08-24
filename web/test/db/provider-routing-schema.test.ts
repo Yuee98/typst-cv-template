@@ -7,6 +7,7 @@ import {
   MIMO_LEGAL_MANIFEST_ID,
   MIMO_LEGAL_MANIFEST_SHA256,
   sealPriceAsDatabaseOwner,
+  transitionPolicyAsDatabaseOwner,
   type SyntheticRuntimeContract,
 } from "./runtime-contract-fixtures";
 
@@ -176,11 +177,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
 
     let current = data!;
     for (const nextStatus of ["validated", "canary", "active"] as const) {
+      transitionPolicyAsDatabaseOwner(current.id, nextStatus);
       const transition = await service
         .from("ai_routing_policy_versions")
-        .update({ status: nextStatus })
-        .eq("id", current.id)
         .select("*")
+        .eq("id", current.id)
         .single();
       expect(transition.error).toBeNull();
       current = transition.data!;
@@ -263,11 +264,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       "draft-profile",
       "draft",
     );
-    const invalidTransition = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", draftProfilePolicy.id);
-    expect(invalidTransition.error?.code).toBe(CHECK_VIOLATION);
+    const invalidTransition = transitionPolicyAsDatabaseOwner(
+      draftProfilePolicy.id,
+      "validated",
+      { expectFailure: true },
+    );
+    expect(invalidTransition.stderr).toMatch(/profile is unavailable/i);
 
     const validatedProfile = await createProfileVersion(
       "draft-policy",
@@ -294,11 +296,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       "draft",
       "2026-08-04",
     );
-    const staleTransition = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", staleLegalPolicy.id);
-    expect(staleTransition.error?.code).toBe(CHECK_VIOLATION);
+    const staleTransition = transitionPolicyAsDatabaseOwner(
+      staleLegalPolicy.id,
+      "validated",
+      { expectFailure: true },
+    );
+    expect(staleTransition.stderr).toMatch(/current legal bundle/i);
   });
 
   it("increments generation and requires audit fields for canary pointer changes", async () => {
@@ -405,11 +408,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .single();
     expect(insertError).toBeNull();
 
+    transitionPolicyAsDatabaseOwner(policy!.id, "validated");
     const validated = await service
       .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", policy!.id)
       .select("created_at,validated_at")
+      .eq("id", policy!.id)
       .single();
     expect(validated.error).toBeNull();
     expect(Date.parse(validated.data!.validated_at!)).toBeGreaterThanOrEqual(
@@ -421,11 +424,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .update({ status: "active" })
       .eq("id", profile.id);
     expect(profileActive.error).toBeNull();
+    transitionPolicyAsDatabaseOwner(policy!.id, "active");
     const active = await service
       .from("ai_routing_policy_versions")
-      .update({ status: "active" })
-      .eq("id", policy!.id)
       .select("created_at,validated_at,activated_at")
+      .eq("id", policy!.id)
       .single();
     expect(active.error).toBeNull();
     expect(Date.parse(active.data!.activated_at!)).toBeGreaterThanOrEqual(
@@ -438,9 +441,16 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .eq("id", policy!.id)
       .select("created_at,validated_at,activated_at,retired_at")
       .single();
-    expect(retired.error).toBeNull();
-    expect(Date.parse(retired.data!.retired_at!)).toBeGreaterThanOrEqual(
-      Date.parse(retired.data!.activated_at!),
+    expect(retired.error?.code).toBe(CHECK_VIOLATION);
+
+    const retained = await service
+      .from("ai_routing_policy_versions")
+      .select("status,retired_at")
+      .eq("id", policy!.id)
+      .single();
+    expect(retained.error).toBeNull();
+    expect(retained.data).toEqual(
+      expect.objectContaining({ status: "active", retired_at: null }),
     );
   });
 });

@@ -120,6 +120,30 @@ export function sealPriceAsDatabaseOwner(priceId: string): void {
   `);
 }
 
+export type RoutingPolicyPromotionStatus = "validated" | "canary" | "active";
+
+export function transitionPolicyAsDatabaseOwner(
+  policyId: string,
+  toStatus: RoutingPolicyPromotionStatus,
+  options: { expectFailure?: boolean } = {},
+): OwnerSqlResult {
+  if (!CANONICAL_UUID.test(policyId)) {
+    throw new Error("test policy id is not a canonical UUID");
+  }
+  return runOwnerSql(
+    String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      select public.transition_ai_routing_policy_v1(
+        ${sqlLiteral(policyId)}::uuid,
+        ${sqlLiteral(toStatus)}::text
+      );
+      commit;
+    `,
+    options,
+  );
+}
+
 export interface SyntheticRuntimeContract {
   runtimeContractId: string;
   runtimeContractSha256: string;

@@ -15,6 +15,7 @@ import {
   MIMO_LEGAL_MANIFEST_ID,
   MIMO_LEGAL_MANIFEST_SHA256,
   sealPriceAsDatabaseOwner,
+  transitionPolicyAsDatabaseOwner,
 } from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
@@ -28,6 +29,7 @@ interface RouteFixture {
   policyVersionId: string;
   runtimeContractId: string;
   runtimeContractSha256: string;
+  displayDisclosureKey: string;
 }
 
 describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () => {
@@ -151,11 +153,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .single();
     expect(policyError).toBeNull();
     if (sealPrice) {
-      const { error: validatePolicyError } = await service
-        .from("ai_routing_policy_versions")
-        .update({ status: "validated" })
-        .eq("id", policy!.id);
-      expect(validatePolicyError).toBeNull();
+      transitionPolicyAsDatabaseOwner(policy!.id, "validated");
     }
 
     return {
@@ -164,6 +162,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       policyVersionId: policy!.id,
       runtimeContractId: runtime.runtimeContractId,
       runtimeContractSha256: runtime.runtimeContractSha256,
+      displayDisclosureKey: "mimo.official",
     };
   }
 
@@ -188,7 +187,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       gateway_kind: "direct_mimo",
       model_id: "fixture-model",
       wire_api_kind: "responses_v1",
-      display_disclosure_key: "fixture-disclosure-v1",
+      display_disclosure_key: fixture.displayDisclosureKey,
     };
   }
 
@@ -305,6 +304,16 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
         config_generation: 7,
       });
     expect(nullSchemaWithConfig.error?.code).toBe(CHECK_VIOLATION);
+
+    const mismatchedDisclosure = await service.from("ai_request_ledger").insert({
+      ...requestIdentity(),
+      ...routeSnapshot(),
+      display_disclosure_key: "mimo.unreviewed",
+    });
+    expect(mismatchedDisclosure.error?.code).toBe(CHECK_VIOLATION);
+    expect(mismatchedDisclosure.error?.message).toContain(
+      "request route disclosure differs from immutable profile disclosure",
+    );
 
     const otherRoute = await createRouteFixture("other-profile");
     const mixed = await service.from("ai_request_ledger").insert({

@@ -152,7 +152,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       gateway_kind: "direct_deepseek",
       model_id: "deepseek-v4-flash",
       wire_api_kind: "chat_completions_v1",
-      display_disclosure_key: "deepseek-official-v1",
+      display_disclosure_key: "deepseek.official",
     };
     const request = await service
       .from("ai_request_ledger")
@@ -193,6 +193,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     const capabilityContractId = `${input.key}_capabilities_v1`;
     const cachePolicyId = "automatic_cache_v1";
     const legalManifestId = `${input.key}-legal-v1`;
+    const displayDisclosureKey = `${input.key}-disclosure-v1`;
     const version = await service
       .from("ai_provider_profile_versions")
       .insert({
@@ -207,6 +208,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         capability_contract_id: capabilityContractId,
         cache_policy_id: cachePolicyId,
         legal_manifest_id: legalManifestId,
+        display_disclosure_key: displayDisclosureKey,
         config: {},
         config_sha256: "d".repeat(64),
       })
@@ -271,7 +273,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       gateway_kind: input.gatewayKind,
       model_id: input.modelId,
       wire_api_kind: input.wireApiKind,
-      display_disclosure_key: `${input.key}-disclosure-v1`,
+      display_disclosure_key: displayDisclosureKey,
     };
     const request = await service
       .from("ai_request_ledger")

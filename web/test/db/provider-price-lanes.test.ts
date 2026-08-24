@@ -41,6 +41,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider price lanes and provenance (real DB)", 
         capability_contract_id: "fixture_capability_v1",
         cache_policy_id: "fixture_cache_v1",
         legal_manifest_id: "fixture_legal_v1",
+        display_disclosure_key: "fixture-v1",
         config_sha256: "a".repeat(64),
       })
       .select("id")

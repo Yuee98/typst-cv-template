@@ -78,8 +78,12 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
           'service_role',
           'public.ai_service_runtime_contract_targets',
           'SELECT,INSERT,UPDATE,DELETE'
+        ) or has_table_privilege(
+          'service_role',
+          'public.ai_routing_policy_transition_intents',
+          'SELECT,INSERT,UPDATE,DELETE'
         ) then
-          raise exception 'service_role has direct runtime catalog privileges';
+          raise exception 'service_role has direct runtime/private-intent privileges';
         end if;
 
         if has_function_privilege(
@@ -90,8 +94,12 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
           'service_role',
           'public.assert_ai_routing_policy_v1(uuid,text,timestamptz)',
           'EXECUTE'
+        ) or has_function_privilege(
+          'service_role',
+          'public.transition_ai_routing_policy_v1(uuid,text)',
+          'EXECUTE'
         ) then
-          raise exception 'service_role has private validator/seal execute';
+          raise exception 'service_role has private validator/seal/transition execute';
         end if;
       end;
       $$;
@@ -377,6 +385,7 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
         "ai_service_runtime_contract_versions",
         "ai_service_runtime_target_versions",
         "ai_service_runtime_contract_targets",
+        "ai_routing_policy_transition_intents",
       ] as const) {
         const read = await client.from(table).select("*").limit(1);
         expect(read.data, table).toBeNull();
