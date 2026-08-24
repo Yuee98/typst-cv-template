@@ -1,0 +1,699 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { describe, expect, it, vi } from "vitest";
+
+import fixture from "../../../test/fixtures/ai-runtime-execution-contract-v1.json";
+import { parseRouteSnapshotV1, type ExpectedRouteV1 } from "./lifecycle-v2-contract";
+import type { PolishAttemptCompletedFactV2 } from "./orchestrator";
+import {
+  completePolishProviderAttemptV2,
+  finalizePolishRequestV2,
+  getPolishExecutionSnapshotV1,
+  PolishLifecycleV2RpcError,
+  reservePolishRequestV2,
+  serializePolishAttemptCompletionV2,
+  serializePolishFinalizeV2,
+  startPolishProviderAttemptV2,
+  type PolishFinalizeMetadataV2,
+  type ProviderAttemptStartV2,
+} from "./quota";
+
+type RpcReply = Readonly<{
+  data: unknown;
+  error?: Readonly<{ message: string }> | null;
+}>;
+type RpcStep = RpcReply | Error;
+
+function sequenceClient(...initialSteps: RpcStep[]) {
+  const steps = [...initialSteps];
+  const rpc = vi.fn(async (functionName: string, args: unknown) => {
+    void functionName;
+    void args;
+    const step = steps.shift();
+    if (step === undefined) throw new Error("unexpected extra RPC call");
+    if (step instanceof Error) throw step;
+    return { error: null, ...step };
+  });
+  return { rpc, client: { rpc } as unknown as SupabaseClient };
+}
+
+async function capturedError(promise: Promise<unknown>): Promise<PolishLifecycleV2RpcError> {
+  const error = await promise.catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(PolishLifecycleV2RpcError);
+  return error as PolishLifecycleV2RpcError;
+}
+
+const USER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+const REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
+const CLIENT_REQUEST_ID = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+const ATTEMPT_ID = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1";
+const executionSuccess = structuredClone(fixture.executionSnapshot.successes[0].value);
+const RESERVATION_ID = executionSuccess.reservationId;
+const ROUTE = parseRouteSnapshotV1(executionSuccess.routeSnapshot);
+const EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
+  schemaVersion: "expected_route_v1",
+  configGeneration: ROUTE.configGeneration,
+  profileVersionId: ROUTE.profileVersionId,
+  legalBundleVersion: ROUTE.legalBundleVersion,
+  runtimeContractId: ROUTE.runtimeContractId,
+  runtimeContractSha256: ROUTE.runtimeContractSha256,
+});
+const FINALIZE_METADATA: PolishFinalizeMetadataV2 = Object.freeze({
+  granularity: "group",
+  itemCount: 2,
+  contextLevel: 1,
+  language: "zh",
+  promptVersion: "2026-08-prompt-v1",
+  validatorVersion: "2026-08-validator-v1",
+});
+
+function reserveSuccess() {
+  return {
+    allowed: true,
+    reservationId: RESERVATION_ID,
+    limit: 20,
+    remaining: 19,
+    resetAt: "2026-08-25T16:00:00.000Z",
+    routeSnapshot: ROUTE,
+  };
+}
+
+function attemptStart(
+  overrides: Partial<ProviderAttemptStartV2> = {},
+): ProviderAttemptStartV2 {
+  return {
+    ok: true,
+    attemptId: ATTEMPT_ID,
+    attemptNo: 1,
+    alreadyStarted: false,
+    status: "started",
+    routeSnapshot: ROUTE,
+    ...overrides,
+  };
+}
+
+function completedFact(
+  overrides: Partial<PolishAttemptCompletedFactV2> = {},
+): PolishAttemptCompletedFactV2 {
+  return {
+    schemaVersion: "polish_attempt_completed_v2",
+    started: {
+      schemaVersion: "polish_attempt_started_v2",
+      attemptNo: 1,
+      startedAtMs: 1_000,
+      deadlineAtMs: 31_000,
+    },
+    status: "succeeded",
+    transmitted: true,
+    providerBillable: true,
+    usageObservation: {
+      kind: "observed",
+      usage: {
+        schemaVersion: "normalized_usage_v2",
+        inputTotalTokens: 15,
+        inputCacheReadTokens: 5,
+        inputCacheWriteTokens: null,
+        inputStandardTokens: 10,
+        outputTokens: 4,
+        reasoningTokens: null,
+        cacheUsageReporting: "unavailable",
+        usageComplete: true,
+      },
+    },
+    route: {
+      schemaVersion: "route_observation_v1",
+      gatewayRequestId: "req_ABC12345",
+      providerRequestId: "provider_12345678",
+      actualUpstreamEndpoint: "https://api.deepseek.com/chat/completions",
+      actualModelId: ROUTE.modelId,
+      routerAttemptCount: 1,
+    },
+    cost: {
+      schemaVersion: "cost_observation_v1",
+      estimatedCost: { currency: "CNY", nanos: "17" },
+      estimationStatus: "complete",
+      incompleteReasons: [],
+      providerReportedCost: { currency: "CNY", nanos: "17" },
+    },
+    finishReason: "stop",
+    failureStage: null,
+    error: null,
+    transportStartedAtMs: 1_100,
+    completedAtMs: 1_250,
+    latencyMs: 150,
+    ...overrides,
+  };
+}
+
+describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
+  it("serializes the exact reserve assertion and returns only an equal frozen route", async () => {
+    const { client, rpc } = sequenceClient({ data: reserveSuccess() });
+
+    await expect(
+      reservePolishRequestV2(client, {
+        userId: USER_ID,
+        requestId: REQUEST_ID,
+        clientRequestId: CLIENT_REQUEST_ID,
+        expectedRoute: EXPECTED_ROUTE,
+      }),
+    ).resolves.toEqual(reserveSuccess());
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("reserve_ai_polish_request_v2", {
+      p_user_id: USER_ID,
+      p_request_id: REQUEST_ID,
+      p_client_request_id: CLIENT_REQUEST_ID,
+      p_expected_route: {
+        schema_version: "expected_route_v1",
+        config_generation: ROUTE.configGeneration,
+        profile_version_id: ROUTE.profileVersionId,
+        legal_bundle_version: ROUTE.legalBundleVersion,
+        runtime_contract_id: ROUTE.runtimeContractId,
+        runtime_contract_sha256: ROUTE.runtimeContractSha256,
+      },
+    });
+  });
+
+  it("does not retry either a definite denial or an ambiguous reserve response", async () => {
+    const denied = sequenceClient({
+      data: {
+        allowed: false,
+        reason: "QUOTA_EXCEEDED",
+        message: "untrusted DB prose",
+        remaining: 0,
+        resetAt: "2026-08-25T16:00:00.000Z",
+      },
+    });
+    const denial = await capturedError(
+      reservePolishRequestV2(denied.client, {
+        userId: USER_ID,
+        requestId: REQUEST_ID,
+        clientRequestId: CLIENT_REQUEST_ID,
+        expectedRoute: EXPECTED_ROUTE,
+      }),
+    );
+    expect(denial).toMatchObject({
+      kind: "RESERVE_DENIED",
+      reason: "QUOTA_EXCEEDED",
+      remaining: 0,
+      resetAt: "2026-08-25T16:00:00.000Z",
+    });
+    expect(denial.message).not.toContain("untrusted");
+    expect(denied.rpc).toHaveBeenCalledTimes(1);
+
+    const ambiguous = sequenceClient({
+      data: null,
+      error: { message: "raw PostgREST connection text" },
+    });
+    const unknown = await capturedError(
+      reservePolishRequestV2(ambiguous.client, {
+        userId: USER_ID,
+        requestId: REQUEST_ID,
+        clientRequestId: CLIENT_REQUEST_ID,
+        expectedRoute: EXPECTED_ROUTE,
+      }),
+    );
+    expect(unknown.kind).toBe("RESERVE_UNKNOWN");
+    expect(unknown.message).not.toContain("PostgREST");
+    expect(ambiguous.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a route-drifted reserve response as unknown after possible admission", async () => {
+    const { client } = sequenceClient({
+      data: {
+        ...reserveSuccess(),
+        routeSnapshot: { ...ROUTE, configGeneration: "1" },
+      },
+    });
+    const error = await capturedError(
+      reservePolishRequestV2(client, {
+        userId: USER_ID,
+        requestId: REQUEST_ID,
+        clientRequestId: CLIENT_REQUEST_ID,
+        expectedRoute: EXPECTED_ROUTE,
+      }),
+    );
+    expect(error).toMatchObject({ kind: "RESERVE_UNKNOWN", reason: "ROUTE_MISMATCH" });
+  });
+
+  it("validates the execution snapshot and exact runtime target before returning", async () => {
+    const { client, rpc } = sequenceClient({ data: executionSuccess });
+    let resolverCalls = 0;
+    await expect(
+      getPolishExecutionSnapshotV1(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE,
+        runtimeTargetResolver: (target) => {
+          resolverCalls += 1;
+          return target.profileVersionId === ROUTE.profileVersionId;
+        },
+      }),
+    ).resolves.toEqual(executionSuccess);
+    expect(resolverCalls).toBe(1);
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v1", {
+      p_reservation_id: RESERVATION_ID,
+      p_user_id: USER_ID,
+    });
+  });
+
+  it("distinguishes a safe snapshot denial from unavailable runtime authority", async () => {
+    const denied = sequenceClient({
+      data: {
+        schemaVersion: "ai_polish_execution_snapshot_v1",
+        ok: false,
+        reason: "NOT_FOUND",
+      },
+    });
+    const denial = await capturedError(
+      getPolishExecutionSnapshotV1(denied.client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE,
+        runtimeTargetResolver: () => true,
+      }),
+    );
+    expect(denial).toMatchObject({ kind: "SNAPSHOT_DENIED", reason: "NOT_FOUND" });
+
+    const unavailable = sequenceClient({ data: executionSuccess });
+    const authority = await capturedError(
+      getPolishExecutionSnapshotV1(unavailable.client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE,
+        runtimeTargetResolver: () => false,
+      }),
+    );
+    expect(authority).toMatchObject({
+      kind: "SNAPSHOT_UNAVAILABLE",
+      reason: "RUNTIME_TARGET_UNAVAILABLE",
+    });
+  });
+});
+
+describe("RT-009 V2 attempt admission", () => {
+  it("returns a fresh exact start receipt without replay", async () => {
+    const { client, rpc } = sequenceClient({ data: attemptStart() });
+    await expect(
+      startPolishProviderAttemptV2(client, {
+        reservationId: RESERVATION_ID,
+        attemptNo: 1,
+        expectedRoute: ROUTE,
+      }),
+    ).resolves.toEqual(attemptStart());
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a first-observation replay and never retries or authorizes transmission", async () => {
+    const { client, rpc } = sequenceClient({
+      data: attemptStart({ alreadyStarted: true }),
+    });
+    const error = await capturedError(
+      startPolishProviderAttemptV2(client, {
+        reservationId: RESERVATION_ID,
+        attemptNo: 1,
+        expectedRoute: ROUTE,
+      }),
+    );
+    expect(error.kind).toBe("ATTEMPT_START_REPLAY");
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries identical arguments once after response loss and accepts its replay", async () => {
+    const { client, rpc } = sequenceClient(
+      { data: null, error: { message: "response lost" } },
+      { data: attemptStart({ alreadyStarted: true }) },
+    );
+    await expect(
+      startPolishProviderAttemptV2(client, {
+        reservationId: RESERVATION_ID,
+        attemptNo: 1,
+        expectedRoute: ROUTE,
+      }),
+    ).resolves.toMatchObject({ alreadyStarted: true, status: "started" });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls[0][1]).toBe(rpc.mock.calls[1][1]);
+  });
+
+  it("never retries a definite start denial and marks two ambiguous observations unknown", async () => {
+    const denied = sequenceClient({ data: { ok: false, reason: "AI_DISABLED" } });
+    const denial = await capturedError(
+      startPolishProviderAttemptV2(denied.client, {
+        reservationId: RESERVATION_ID,
+        attemptNo: 1,
+        expectedRoute: ROUTE,
+      }),
+    );
+    expect(denial).toMatchObject({ kind: "ATTEMPT_START_DENIED", reason: "AI_DISABLED" });
+    expect(denied.rpc).toHaveBeenCalledTimes(1);
+
+    const unknown = sequenceClient(new Error("first raw error"), new Error("second raw error"));
+    const ambiguity = await capturedError(
+      startPolishProviderAttemptV2(unknown.client, {
+        reservationId: RESERVATION_ID,
+        attemptNo: 1,
+        expectedRoute: ROUTE,
+      }),
+    );
+    expect(ambiguity.kind).toBe("ATTEMPT_START_UNKNOWN");
+    expect(ambiguity.message).not.toContain("raw error");
+    expect(unknown.rpc).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("RT-009 V2 terminal attempt persistence", () => {
+  it("serializes exact usage, tagged route, cost reconciliation, and metadata", () => {
+    const payload = serializePolishAttemptCompletionV2({
+      attempt: attemptStart(),
+      fact: completedFact(),
+      billingCurrency: "CNY",
+      routeObservationSecret: "  route-secret  ",
+    });
+    expect(payload).toEqual({
+      p_attempt_id: ATTEMPT_ID,
+      p_status: "succeeded",
+      p_provider_billable: true,
+      p_usage: {
+        schema_version: "normalized_usage_v2",
+        input_total_tokens: 15,
+        input_cache_read_tokens: 5,
+        input_cache_write_tokens: null,
+        input_standard_tokens: 10,
+        output_tokens: 4,
+        reasoning_tokens: null,
+        cache_usage_reporting: "unavailable",
+        usage_complete: true,
+      },
+      p_route: {
+        schema_version: "route_observation_v1",
+        gateway_request_id:
+          "hmac-sha256:57affe2f016deb43b71a8d95eee3c9b5ae5cb701e8d42fbac164bf555c0b9ff1",
+        provider_request_id: expect.stringMatching(/^hmac-sha256:[0-9a-f]{64}$/u),
+        actual_upstream_endpoint: "https://api.deepseek.com/chat/completions",
+        actual_model_id: ROUTE.modelId,
+        router_attempt_count: 1,
+      },
+      p_cost: {
+        schema_version: "cost_observation_v1",
+        estimated_currency: "CNY",
+        estimated_cost_nanos: "17",
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: "17",
+        reconciliation_status: "matched",
+      },
+      p_metadata: {
+        schema_version: "attempt_metadata_v1",
+        finish_reason: "stop",
+        failure_stage: null,
+        latency_ms: 150,
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain("req_ABC12345");
+    expect(JSON.stringify(payload)).not.toContain("provider_12345678");
+    expect(Object.isFrozen(payload.p_route)).toBe(true);
+  });
+
+  it("preserves unavailable usage and drops unsafe raw route IDs without needing their text", () => {
+    const fact = completedFact({
+      status: "failed_upstream",
+      providerBillable: null,
+      usageObservation: { kind: "unavailable", usage: null, usageComplete: false },
+      route: {
+        ...completedFact().route,
+        gatewayRequestId: "Bearer_ABC12345",
+        providerRequestId: "/v1/responses/raw-secret",
+        actualUpstreamEndpoint: null,
+        actualModelId: null,
+        routerAttemptCount: null,
+      },
+      cost: {
+        schemaVersion: "cost_observation_v1",
+        estimatedCost: null,
+        estimationStatus: "incomplete_usage",
+        incompleteReasons: ["usage_incomplete"],
+        providerReportedCost: null,
+      },
+      finishReason: null,
+      failureStage: "transport",
+    });
+    const payload = serializePolishAttemptCompletionV2({
+      attempt: attemptStart(),
+      fact,
+      billingCurrency: "CNY",
+      routeObservationSecret: null,
+    });
+    expect(payload.p_usage).toBeNull();
+    expect(payload.p_route.gateway_request_id).toBeNull();
+    expect(payload.p_route.provider_request_id).toBeNull();
+    expect(payload.p_cost).toMatchObject({
+      estimated_cost_nanos: null,
+      provider_reported_cost_nanos: null,
+      reconciliation_status: "incomplete_usage",
+    });
+  });
+
+  it.each([
+    ["currency drift", { billingCurrency: "USD" }],
+    ["model drift", { fact: completedFact({ route: { ...completedFact().route, actualModelId: "other" } }) }],
+    [
+      "non-billable nonzero report",
+      {
+        fact: completedFact({
+          providerBillable: false,
+          cost: {
+            ...completedFact().cost,
+            providerReportedCost: { currency: "CNY", nanos: "1" },
+          },
+        }),
+      },
+    ],
+    ["latency overflow", { fact: completedFact({ latencyMs: 2_147_483_648 }) }],
+  ] as const)("rejects %s before any persistence call", (_name, override) => {
+    expect(() =>
+      serializePolishAttemptCompletionV2({
+        attempt: attemptStart(),
+        fact: "fact" in override ? override.fact : completedFact(),
+        billingCurrency: "billingCurrency" in override ? override.billingCurrency : "CNY",
+        routeObservationSecret: "route-secret",
+      }),
+    ).toThrow(PolishLifecycleV2RpcError);
+  });
+
+  it("retries an identical completion payload once and accepts exact idempotent readback", async () => {
+    const { client, rpc } = sequenceClient(
+      { data: null, error: { message: "lost after commit" } },
+      {
+        data: {
+          ok: true,
+          alreadyCompleted: true,
+          status: "succeeded",
+          usageComplete: true,
+        },
+      },
+    );
+    await expect(
+      completePolishProviderAttemptV2(client, {
+        attempt: attemptStart(),
+        fact: completedFact(),
+        billingCurrency: "CNY",
+        routeObservationSecret: "route-secret",
+      }),
+    ).resolves.toMatchObject({ alreadyCompleted: true, status: "succeeded" });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls[0][1]).toBe(rpc.mock.calls[1][1]);
+  });
+
+  it("does not retry a definite completion rejection or accept conflicting readback", async () => {
+    const rejected = sequenceClient({ data: { ok: false, reason: "INTERNAL_ERROR" } });
+    const rejection = await capturedError(
+      completePolishProviderAttemptV2(rejected.client, {
+        attempt: attemptStart(),
+        fact: completedFact(),
+        billingCurrency: "CNY",
+        routeObservationSecret: "route-secret",
+      }),
+    );
+    expect(rejection.kind).toBe("ATTEMPT_COMPLETE_REJECTED");
+    expect(rejected.rpc).toHaveBeenCalledTimes(1);
+
+    const conflict = sequenceClient({
+      data: {
+        ok: true,
+        alreadyCompleted: true,
+        status: "failed_upstream",
+        usageComplete: false,
+      },
+    });
+    const mismatch = await capturedError(
+      completePolishProviderAttemptV2(conflict.client, {
+        attempt: attemptStart(),
+        fact: completedFact(),
+        billingCurrency: "CNY",
+        routeObservationSecret: "route-secret",
+      }),
+    );
+    expect(mismatch).toMatchObject({
+      kind: "ATTEMPT_COMPLETE_REJECTED",
+      reason: "READBACK_MISMATCH",
+    });
+  });
+
+  it("keeps completion unknown when a response-loss retry is then rejected", async () => {
+    const { client, rpc } = sequenceClient(
+      { data: null, error: { message: "first response lost" } },
+      { data: { ok: false, reason: "REQUEST_ALREADY_FINALIZED" } },
+    );
+    const error = await capturedError(
+      completePolishProviderAttemptV2(client, {
+        attempt: attemptStart(),
+        fact: completedFact(),
+        billingCurrency: "CNY",
+        routeObservationSecret: "route-secret",
+      }),
+    );
+    expect(error).toMatchObject({
+      kind: "ATTEMPT_COMPLETE_UNKNOWN",
+      reason: "REQUEST_ALREADY_FINALIZED",
+    });
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("RT-009 V2 request settlement", () => {
+  it("selects child aggregation with null request usage and derives quota charging", () => {
+    expect(
+      serializePolishFinalizeV2({
+        settlementKind: "attempt_v2",
+        reservationId: RESERVATION_ID,
+        status: "succeeded",
+        providerBillable: true,
+        metadata: FINALIZE_METADATA,
+      }),
+    ).toEqual({
+      p_reservation_id: RESERVATION_ID,
+      p_status: "succeeded",
+      p_quota_charged: true,
+      p_provider_billable: true,
+      p_usage: null,
+      p_metadata: {
+        usage_schema_version: "attempt_v2",
+        granularity: "group",
+        item_count: 2,
+        context_level: 1,
+        language: "zh",
+        prompt_version: "2026-08-prompt-v1",
+        validator_version: "2026-08-validator-v1",
+      },
+    });
+    expect(
+      serializePolishFinalizeV2({
+        settlementKind: "attempt_v2",
+        reservationId: RESERVATION_ID,
+        status: "failed_upstream",
+        providerBillable: null,
+        metadata: FINALIZE_METADATA,
+      }).p_quota_charged,
+    ).toBe(false);
+  });
+
+  it("uses the exact zero-child release shape without the attempt selector", () => {
+    const withMetadata = serializePolishFinalizeV2({
+      settlementKind: "zero_child_release",
+      reservationId: RESERVATION_ID,
+      metadata: FINALIZE_METADATA,
+    });
+    expect(withMetadata).toMatchObject({
+      p_status: "released",
+      p_quota_charged: false,
+      p_provider_billable: false,
+      p_usage: null,
+    });
+    expect(withMetadata.p_metadata).not.toHaveProperty("usage_schema_version");
+    expect(
+      serializePolishFinalizeV2({
+        settlementKind: "zero_child_release",
+        reservationId: RESERVATION_ID,
+      }).p_metadata,
+    ).toBeNull();
+  });
+
+  it("retries identical finalize arguments once after response loss", async () => {
+    const { client, rpc } = sequenceClient(
+      new Error("lost response"),
+      {
+        data: {
+          ok: true,
+          alreadyFinalized: true,
+          status: "succeeded",
+          quotaCharged: true,
+          quota: { limit: 20, remaining: 19, resetAt: "2026-08-25T16:00:00.000Z" },
+        },
+      },
+    );
+    await expect(
+      finalizePolishRequestV2(client, {
+        settlementKind: "attempt_v2",
+        reservationId: RESERVATION_ID,
+        status: "succeeded",
+        providerBillable: true,
+        metadata: FINALIZE_METADATA,
+      }),
+    ).resolves.toMatchObject({ alreadyFinalized: true, status: "succeeded" });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls[0][1]).toBe(rpc.mock.calls[1][1]);
+  });
+
+  it("withholds success on conflicting settlement and leaves double ambiguity unknown", async () => {
+    const conflict = sequenceClient({
+      data: {
+        ok: true,
+        alreadyFinalized: true,
+        status: "released",
+        quotaCharged: false,
+        quota: { limit: 20, remaining: 20, resetAt: "2026-08-25T16:00:00.000Z" },
+      },
+    });
+    const mismatch = await capturedError(
+      finalizePolishRequestV2(conflict.client, {
+        settlementKind: "attempt_v2",
+        reservationId: RESERVATION_ID,
+        status: "succeeded",
+        providerBillable: true,
+        metadata: FINALIZE_METADATA,
+      }),
+    );
+    expect(mismatch.kind).toBe("FINALIZE_CONFLICT");
+
+    const unknown = sequenceClient(
+      { data: null, error: { message: "first DB text" } },
+      { data: null, error: { message: "second DB text" } },
+    );
+    const ambiguity = await capturedError(
+      finalizePolishRequestV2(unknown.client, {
+        settlementKind: "zero_child_release",
+        reservationId: RESERVATION_ID,
+      }),
+    );
+    expect(ambiguity.kind).toBe("FINALIZE_UNKNOWN");
+    expect(ambiguity.message).not.toContain("DB text");
+    expect(unknown.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a definite finalize rejection", async () => {
+    const { client, rpc } = sequenceClient({
+      data: { ok: false, reason: "ATTEMPT_IN_PROGRESS" },
+    });
+    const error = await capturedError(
+      finalizePolishRequestV2(client, {
+        settlementKind: "attempt_v2",
+        reservationId: RESERVATION_ID,
+        status: "failed_upstream",
+        providerBillable: null,
+        metadata: FINALIZE_METADATA,
+      }),
+    );
+    expect(error).toMatchObject({
+      kind: "FINALIZE_REJECTED",
+      reason: "ATTEMPT_IN_PROGRESS",
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+});
