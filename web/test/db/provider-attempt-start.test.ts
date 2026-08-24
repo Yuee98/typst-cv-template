@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -11,6 +13,7 @@ import {
   getGlobalStartedCount,
   getLedgerRow,
   RUN_DB_TESTS,
+  sleep,
   tryReserve,
   type TestUser,
 } from "./helpers";
@@ -20,12 +23,18 @@ import {
   INITIAL_LEGAL_BUNDLE_VERSION,
   runOwnerSql,
   sealPriceAsDatabaseOwner,
+  startOwnerSql,
   transitionPolicyAsDatabaseOwner,
+  type OwnerSqlResult,
 } from "./runtime-contract-fixtures";
 
 const V1_MARK_SHA256 =
   "85b5d5b362e4b116f03d43217667c4e6c342d1f45f0a23e1d78424eab63179a6";
 const LARGE_GLOBAL_LIMIT = 2_000_000;
+const DB_CONTAINER = "supabase_db_typst-cv-template";
+const HOLDER_READY = "DB009_HOLDER_READY";
+const CONTENDER_READY = "DB009_CONTENDER_READY";
+const LOCK_HOLD_SECONDS = 0.8;
 
 interface RouteSnapshot {
   schemaVersion: "route_snapshot_v1";
@@ -70,6 +79,101 @@ interface StartReceipt {
 interface StartDenial {
   ok: false;
   reason: string;
+}
+
+interface BarrierSqlProcess {
+  ready: Promise<void>;
+  result: Promise<OwnerSqlResult>;
+}
+
+function startOwnerSqlWithBarrier(
+  sql: string,
+  marker: string,
+): BarrierSqlProcess {
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  const result = new Promise<OwnerSqlResult>((resolve, reject) => {
+    const child = spawn(
+      "docker",
+      [
+        "exec",
+        "-i",
+        DB_CONTAINER,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "--set",
+        "ON_ERROR_STOP=1",
+        "--no-psqlrc",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (!readySettled && stdout.includes(marker)) {
+        readySettled = true;
+        resolveReady();
+      }
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(error);
+      }
+      reject(error);
+    });
+    child.on("close", (status) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(
+          new Error(
+            `owner SQL exited before barrier ${marker}: ${stderr || stdout}`,
+          ),
+        );
+      }
+      resolve({ status: status ?? -1, stdout, stderr });
+    });
+    child.stdin.end(sql);
+  });
+
+  return { ready, result };
+}
+
+async function runObservedBlockedRace(
+  holderSql: string,
+  contenderSql: string,
+): Promise<{ holder: OwnerSqlResult; contender: OwnerSqlResult }> {
+  const holder = startOwnerSqlWithBarrier(holderSql, HOLDER_READY);
+  await holder.ready;
+
+  const contender = startOwnerSqlWithBarrier(contenderSql, CONTENDER_READY);
+  let contenderSettled = false;
+  const contenderResult = contender.result.then((result) => {
+    contenderSettled = true;
+    return result;
+  });
+  await contender.ready;
+  await sleep(150);
+  expect(contenderSettled).toBe(false);
+
+  const holderResult = await holder.result;
+  const completedContender = await contenderResult;
+  return { holder: holderResult, contender: completedContender };
 }
 
 describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => {
@@ -250,7 +354,9 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     return user;
   }
 
-  async function expectedRoute(): Promise<Record<string, string>> {
+  async function expectedRoute(
+    target = fixture,
+  ): Promise<Record<string, string>> {
     const config = await service
       .from("ai_feature_config")
       .select("config_generation")
@@ -260,19 +366,22 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     return {
       schema_version: "expected_route_v1",
       config_generation: String(config.data!.config_generation),
-      profile_version_id: fixture.profileVersionId,
+      profile_version_id: target.profileVersionId,
       legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-      runtime_contract_id: fixture.runtimeContractId,
-      runtime_contract_sha256: fixture.runtimeContractSha256,
+      runtime_contract_id: target.runtimeContractId,
+      runtime_contract_sha256: target.runtimeContractSha256,
     };
   }
 
-  async function reserveV2(user: TestUser): Promise<ReservationReceipt> {
+  async function reserveV2(
+    user: TestUser,
+    target = fixture,
+  ): Promise<ReservationReceipt> {
     const result = await service.rpc("reserve_ai_polish_request_v2", {
       p_user_id: user.id,
       p_request_id: crypto.randomUUID(),
       p_client_request_id: crypto.randomUUID(),
-      p_expected_route: await expectedRoute(),
+      p_expected_route: await expectedRoute(target),
     });
     expect(result.error).toBeNull();
     expect(result.data?.allowed).toBe(true);
@@ -292,6 +401,108 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     });
     expect(result.error).toBeNull();
     return result.data as StartReceipt | StartDenial;
+  }
+
+  function startAttemptSql(
+    reservationId: string,
+    attemptNo: 1 | 2,
+    options: {
+      markerBefore?: string;
+      markerAfter?: string;
+      holdSeconds?: number;
+    } = {},
+  ): string {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      \pset format unaligned
+      \pset tuples_only on
+      begin;
+      set local statement_timeout = '10s';
+      set local role service_role;
+      ${options.markerBefore ? `\\echo ${options.markerBefore}` : ""}
+      select public.start_ai_polish_provider_attempt(
+        '${reservationId}'::uuid,
+        ${attemptNo}
+      );
+      reset role;
+      ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
+      ${
+        options.holdSeconds
+          ? `select pg_sleep(${options.holdSeconds});`
+          : ""
+      }
+      commit;
+    `;
+  }
+
+  function markV1Sql(
+    reservationId: string,
+    markerBefore?: string,
+  ): string {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      \pset format unaligned
+      \pset tuples_only on
+      begin;
+      set local statement_timeout = '10s';
+      set local role service_role;
+      ${markerBefore ? `\\echo ${markerBefore}` : ""}
+      select public.mark_ai_polish_provider_started(
+        '${reservationId}'::uuid,
+        null
+      );
+      reset role;
+      commit;
+    `;
+  }
+
+  function mutateAndHoldSql(statement: string): string {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      set local statement_timeout = '10s';
+      ${statement}
+      \echo ${HOLDER_READY}
+      select pg_sleep(${LOCK_HOLD_SECONDS});
+      commit;
+    `;
+  }
+
+  async function insertDirectStartedAttempt(
+    reservation: ReservationReceipt,
+    attemptNo: 1 | 2,
+  ) {
+    return service
+      .from("ai_provider_attempt_ledger")
+      .insert({
+        reservation_id: reservation.reservationId,
+        attempt_no: attemptNo,
+        route_schema_version: reservation.routeSnapshot.schemaVersion,
+        config_generation: Number(reservation.routeSnapshot.configGeneration),
+        routing_policy_version_id:
+          reservation.routeSnapshot.routingPolicyVersionId,
+        profile_version_id: reservation.routeSnapshot.profileVersionId,
+        price_version_id: reservation.routeSnapshot.priceVersionId,
+        legal_bundle_version: reservation.routeSnapshot.legalBundleVersion,
+        runtime_contract_id: reservation.routeSnapshot.runtimeContractId,
+        runtime_contract_sha256:
+          reservation.routeSnapshot.runtimeContractSha256,
+        gateway_kind: reservation.routeSnapshot.gatewayKind,
+        model_id: reservation.routeSnapshot.modelId,
+        wire_api_kind: reservation.routeSnapshot.wireApiKind,
+        display_disclosure_key:
+          reservation.routeSnapshot.displayDisclosureKey,
+        adapter_kind: "deepseek_chat_v1",
+        credential_alias: "deepseek_api_key",
+        endpoint_alias: "deepseek_official",
+        capability_contract_id: "polish_v2",
+        cache_policy_id: "automatic_cache_v1",
+        legal_manifest_id: DEEPSEEK_LEGAL_MANIFEST_ID,
+        calculator_kind: "linear_token_v1",
+        billing_currency: "CNY",
+      })
+      .select("attempt_id,attempt_no,status")
+      .single();
   }
 
   async function attemptRows(reservationId: string) {
@@ -529,6 +740,34 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     expect(await getGlobalStartedCount(service)).toBe(globalBefore + 1);
   });
 
+  it("observably blocks a same-attempt contender until the first start commits", async () => {
+    const user = await makeUser("attempt-start-observed-replay");
+    const reservation = await reserveV2(user);
+    const globalBefore = await getGlobalStartedCount(service);
+
+    const race = await runObservedBlockedRace(
+      startAttemptSql(reservation.reservationId, 1, {
+        markerAfter: HOLDER_READY,
+        holdSeconds: LOCK_HOLD_SECONDS,
+      }),
+      startAttemptSql(reservation.reservationId, 1, {
+        markerBefore: CONTENDER_READY,
+      }),
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.holder.stdout).toContain('"alreadyStarted": false');
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain('"alreadyStarted": true');
+    expect(await attemptRows(reservation.reservationId)).toHaveLength(1);
+    expect(await getLedgerRow(service, reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      provider_started_at: null,
+      attempt_count: 1,
+    });
+    expect(await getGlobalStartedCount(service)).toBe(globalBefore + 1);
+  });
+
   it("admits caller-stable attempts 1 and 2 exactly once each", async () => {
     const user = await makeUser("attempt-start-two-attempts");
     const reservation = await reserveV2(user);
@@ -544,6 +783,83 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     ]);
     expect((await getLedgerRow(service, reservation.reservationId))?.attempt_count).toBe(2);
     expect(await getGlobalStartedCount(service)).toBe(globalBefore + 2);
+  });
+
+  it("rejects attempt 2 as the first child with zero admission mutation", async () => {
+    const user = await makeUser("attempt-start-two-first");
+    const reservation = await reserveV2(user);
+    const globalBefore = await getGlobalStartedCount(service);
+
+    expect(await startAttempt(reservation.reservationId, 2)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    await assertUnstarted(reservation.reservationId, globalBefore);
+  });
+
+  it("refuses to replay a direct child whose parent count was not admitted", async () => {
+    const user = await makeUser("attempt-start-child-only-drift");
+    const reservation = await reserveV2(user);
+    const globalBefore = await getGlobalStartedCount(service);
+    const direct = await insertDirectStartedAttempt(reservation, 1);
+    expect(direct.error).toBeNull();
+
+    expect(await startAttempt(reservation.reservationId, 1)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect(await attemptRows(reservation.reservationId)).toMatchObject([
+      {
+        attempt_id: direct.data!.attempt_id,
+        attempt_no: 1,
+        status: "started",
+      },
+    ]);
+    expect(await getGlobalStartedCount(service)).toBe(globalBefore);
+    expect(await getLedgerRow(service, reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      attempt_count: 0,
+    });
+  });
+
+  it("refuses a parent-only count drift before creating a child", async () => {
+    const user = await makeUser("attempt-start-parent-only-drift");
+    const reservation = await reserveV2(user);
+    const drift = await service
+      .from("ai_request_ledger")
+      .update({ attempt_count: 1 })
+      .eq("reservation_id", reservation.reservationId);
+    expect(drift.error).toBeNull();
+    const globalBefore = await getGlobalStartedCount(service);
+
+    expect(await startAttempt(reservation.reservationId, 1)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect(await attemptRows(reservation.reservationId)).toEqual([]);
+    expect(await getGlobalStartedCount(service)).toBe(globalBefore);
+    expect((await getLedgerRow(service, reservation.reservationId))?.attempt_count).toBe(1);
+  });
+
+  it("refuses an aligned but impossible child set containing only attempt 2", async () => {
+    const user = await makeUser("attempt-start-invalid-two-set");
+    const reservation = await reserveV2(user);
+    const direct = await insertDirectStartedAttempt(reservation, 2);
+    expect(direct.error).toBeNull();
+    const alignCount = await service
+      .from("ai_request_ledger")
+      .update({ attempt_count: 1 })
+      .eq("reservation_id", reservation.reservationId);
+    expect(alignCount.error).toBeNull();
+    const globalBefore = await getGlobalStartedCount(service);
+
+    expect(await startAttempt(reservation.reservationId, 2)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect((await attemptRows(reservation.reservationId)).map((row) => row.attempt_no)).toEqual([2]);
+    expect(await getGlobalStartedCount(service)).toBe(globalBefore);
+    expect((await getLedgerRow(service, reservation.reservationId))?.attempt_count).toBe(1);
   });
 
   it("returns ALREADY_FINALIZED without touching attempt or global accounting", async () => {
@@ -594,6 +910,28 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       reason: "AI_DISABLED",
     });
     await assertUnstarted(excludedReservation.reservationId, globalBefore);
+  });
+
+  it("waits on a concurrent config disable and then denies without admission", async () => {
+    const user = await makeUser("attempt-start-observed-disable");
+    const reservation = await reserveV2(user);
+    const globalBefore = await getGlobalStartedCount(service);
+
+    const race = await runObservedBlockedRace(
+      mutateAndHoldSql(String.raw`
+        update public.ai_feature_config
+        set ai_polish_enabled = false
+        where id = true;
+      `),
+      startAttemptSql(reservation.reservationId, 1, {
+        markerBefore: CONTENDER_READY,
+      }),
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain('"reason": "AI_DISABLED"');
+    await assertUnstarted(reservation.reservationId, globalBefore);
   });
 
   it("denies a full global gate without mutating request or attempt counts", async () => {
@@ -664,6 +1002,46 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     }
   });
 
+  it("observably serializes V2 ahead of V1 on the final global slot", async () => {
+    const v1User = await makeUser("attempt-start-observed-v1-race");
+    const v2User = await makeUser("attempt-start-observed-v2-race");
+    const v1Reservation = await tryReserve(service, v1User.id);
+    const v2Reservation = await reserveV2(v2User);
+    expect(v1Reservation.ok).toBe(true);
+    const v1ReservationId = (v1Reservation as { reservationId: string })
+      .reservationId;
+
+    const globalBefore = await getGlobalStartedCount(service);
+    await configureFeature(service, { globalDailyLimit: globalBefore + 1 });
+    const race = await runObservedBlockedRace(
+      startAttemptSql(v2Reservation.reservationId, 1, {
+        markerAfter: HOLDER_READY,
+        holdSeconds: LOCK_HOLD_SECONDS,
+      }),
+      markV1Sql(v1ReservationId, CONTENDER_READY),
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.holder.stdout).toContain('"alreadyStarted": false');
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain(
+      '"reason": "SERVICE_UNAVAILABLE"',
+    );
+    expect(await getGlobalStartedCount(service)).toBe(globalBefore + 1);
+    expect(await getLedgerRow(service, v1ReservationId)).toMatchObject({
+      state: "reserved",
+      provider_started_at: null,
+      attempt_count: 0,
+    });
+    expect(await attemptRows(v1ReservationId)).toEqual([]);
+    expect(await getLedgerRow(service, v2Reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      provider_started_at: null,
+      attempt_count: 1,
+    });
+    expect(await attemptRows(v2Reservation.reservationId)).toHaveLength(1);
+  });
+
   it("keeps a frozen closed price eligible but denies a subsequently retired profile", async () => {
     await configureFeature(service, { globalDailyLimit: LARGE_GLOBAL_LIMIT, allowlist: [] });
     const priceUser = await makeUser("attempt-start-closed-price");
@@ -697,5 +1075,62 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       reason: "SERVICE_UNAVAILABLE",
     });
     await assertUnstarted(retiredReservation.reservationId, globalBeforeRetiredStart);
+  });
+
+  it("waits for a concurrent price close and then starts on the frozen price", async () => {
+    const target = await createActiveRouteFixture();
+    const user = await makeUser("attempt-start-observed-price-close");
+    const reservation = await reserveV2(user, target);
+    const globalBefore = await getGlobalStartedCount(service);
+
+    const race = await runObservedBlockedRace(
+      mutateAndHoldSql(String.raw`
+        update public.ai_price_versions
+        set valid_to = greatest(
+          clock_timestamp(),
+          valid_from + interval '1 microsecond'
+        )
+        where id = '${target.priceVersionId}'::uuid;
+      `),
+      startAttemptSql(reservation.reservationId, 1, {
+        markerBefore: CONTENDER_READY,
+      }),
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain('"alreadyStarted": false');
+    expect(await attemptRows(reservation.reservationId)).toHaveLength(1);
+    expect(await getLedgerRow(service, reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      provider_started_at: null,
+      attempt_count: 1,
+    });
+    expect(await getGlobalStartedCount(service)).toBe(globalBefore + 1);
+  });
+
+  it("waits for a concurrent profile retirement and then denies admission", async () => {
+    const target = await createActiveRouteFixture();
+    const user = await makeUser("attempt-start-observed-profile-retire");
+    const reservation = await reserveV2(user, target);
+    const globalBefore = await getGlobalStartedCount(service);
+
+    const race = await runObservedBlockedRace(
+      mutateAndHoldSql(String.raw`
+        update public.ai_provider_profiles
+        set retired_at = greatest(clock_timestamp(), created_at)
+        where id = '${target.profileId}'::uuid;
+      `),
+      startAttemptSql(reservation.reservationId, 1, {
+        markerBefore: CONTENDER_READY,
+      }),
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain(
+      '"reason": "SERVICE_UNAVAILABLE"',
+    );
+    await assertUnstarted(reservation.reservationId, globalBefore);
   });
 });
