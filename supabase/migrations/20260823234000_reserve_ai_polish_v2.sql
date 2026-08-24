@@ -552,6 +552,232 @@ begin
 end;
 $$;
 
+-- Request-bound immutable execution facts for the server runtime.  The exact
+-- request row is the only lock: profile identity/version history is guarded
+-- immutable, price history is sealed, and legal/runtime roots are immutable
+-- once sealed.  Current routing configuration and wall-clock selection are
+-- deliberately outside this projection.
+create function public.get_ai_polish_execution_snapshot_v1(
+  p_reservation_id uuid,
+  p_user_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_request public.ai_request_ledger%rowtype;
+  v_profile_version public.ai_provider_profile_versions%rowtype;
+  v_profile public.ai_provider_profiles%rowtype;
+  v_price public.ai_price_versions%rowtype;
+  v_bundle public.ai_legal_bundle_versions%rowtype;
+  v_runtime public.ai_service_runtime_contract_versions%rowtype;
+  v_components jsonb;
+begin
+  begin
+    select * into v_request
+    from public.ai_request_ledger
+    where reservation_id = p_reservation_id
+      and user_id = p_user_id
+    for share;
+
+    if not found then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'NOT_FOUND'
+      );
+    end if;
+
+    -- Finalized precedence is intentional even for legacy or corrupted rows.
+    if v_request.state = 'finalized' then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'ALREADY_FINALIZED'
+      );
+    end if;
+
+    if v_request.state is distinct from 'reserved'
+       or v_request.route_schema_version is distinct from 'route_snapshot_v1'
+       or v_request.config_generation is null
+       or v_request.config_generation < 0
+       or v_request.routing_policy_version_id is null
+       or v_request.profile_version_id is null
+       or v_request.price_version_id is null
+       or v_request.legal_bundle_version is null
+       or v_request.runtime_contract_id is null
+       or v_request.runtime_contract_sha256 is null
+       or v_request.gateway_kind is null
+       or v_request.model_id is null
+       or v_request.wire_api_kind is null
+       or v_request.display_disclosure_key is null then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+    end if;
+
+    -- Plain reads only after the request-parent lock.  Existing guards make
+    -- every projected field immutable except lifecycle/availability fields,
+    -- which are intentionally rechecked later by attempt start.
+    select * into v_profile_version
+    from public.ai_provider_profile_versions
+    where id = v_request.profile_version_id;
+
+    if not found then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+    end if;
+
+    select * into v_profile
+    from public.ai_provider_profiles
+    where id = v_profile_version.profile_id;
+
+    if not found
+       or v_profile.id is distinct from v_profile_version.profile_id
+       or v_profile.gateway_kind is distinct from v_request.gateway_kind
+       or v_profile_version.model_id is distinct from v_request.model_id
+       or v_profile_version.wire_api_kind is distinct from v_request.wire_api_kind
+       or v_profile_version.display_disclosure_key
+         is distinct from v_request.display_disclosure_key
+       or jsonb_typeof(v_profile_version.config) is distinct from 'object' then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+    end if;
+
+    select * into v_price
+    from public.ai_price_versions
+    where id = v_request.price_version_id;
+
+    if not found
+       or v_price.profile_version_id is distinct from v_request.profile_version_id
+       or v_price.components_sealed_at is null
+       or jsonb_typeof(v_price.parameters) is distinct from 'object' then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+    end if;
+
+    perform public.assert_ai_price_structure_v1(v_price.id);
+
+    select jsonb_object_agg(
+      component,
+      nanos_per_million::text
+      order by component collate "C"
+    ) into v_components
+    from public.ai_price_components
+    where price_version_id = v_price.id;
+
+    if v_components is null then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+    end if;
+
+    select * into v_bundle
+    from public.ai_legal_bundle_versions
+    where legal_bundle_version = v_request.legal_bundle_version;
+
+    if not found
+       or v_bundle.sealed_at is null
+       or not exists (
+         select 1
+         from public.ai_legal_bundle_manifests as membership
+         where membership.legal_bundle_version = v_bundle.legal_bundle_version
+           and membership.legal_manifest_id = v_profile_version.legal_manifest_id
+       ) then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+    end if;
+
+    select * into v_runtime
+    from public.ai_service_runtime_contract_versions
+    where runtime_contract_id = v_request.runtime_contract_id
+      and runtime_contract_sha256 = v_request.runtime_contract_sha256;
+
+    if not found
+       or v_runtime.sealed_at is null
+       or v_runtime.legal_bundle_version
+         is distinct from v_request.legal_bundle_version
+       or v_runtime.bundle_contract_sha256
+         is distinct from v_bundle.bundle_contract_sha256 then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+    end if;
+
+    return jsonb_build_object(
+      'schemaVersion', 'ai_polish_execution_snapshot_v1',
+      'ok', true,
+      'reservationId', v_request.reservation_id,
+      'routeSnapshot', jsonb_build_object(
+        'schemaVersion', v_request.route_schema_version,
+        'configGeneration', v_request.config_generation::text,
+        'routingPolicyVersionId', v_request.routing_policy_version_id,
+        'profileVersionId', v_request.profile_version_id,
+        'priceVersionId', v_request.price_version_id,
+        'legalBundleVersion', v_request.legal_bundle_version,
+        'runtimeContractId', v_request.runtime_contract_id,
+        'runtimeContractSha256', v_request.runtime_contract_sha256,
+        'gatewayKind', v_request.gateway_kind,
+        'modelId', v_request.model_id,
+        'wireApiKind', v_request.wire_api_kind,
+        'displayDisclosureKey', v_request.display_disclosure_key
+      ),
+      'profileExecutionConfig', jsonb_build_object(
+        'schemaVersion', 'profile_execution_config_v1',
+        'profileKey', v_profile.profile_key,
+        'gatewayKind', v_profile.gateway_kind,
+        'adapterKind', v_profile_version.adapter_kind,
+        'wireApiKind', v_profile_version.wire_api_kind,
+        'credentialAlias', v_profile_version.credential_alias,
+        'endpointAlias', v_profile_version.endpoint_alias,
+        'modelId', v_profile_version.model_id,
+        'capabilityContractId', v_profile_version.capability_contract_id,
+        'cachePolicyId', v_profile_version.cache_policy_id,
+        'legalManifestId', v_profile_version.legal_manifest_id,
+        'calculatorKind', v_price.calculator_kind,
+        'displayDisclosureKey', v_profile_version.display_disclosure_key,
+        'config', v_profile_version.config
+      ),
+      'priceSnapshot', jsonb_build_object(
+        'schemaVersion', 'price_snapshot_v1',
+        'priceVersionId', v_price.id,
+        'currency', v_price.currency,
+        'calculatorKind', v_price.calculator_kind,
+        'components', v_components,
+        'parameters', v_price.parameters
+      )
+    );
+  exception
+    when others then
+      return jsonb_build_object(
+        'schemaVersion', 'ai_polish_execution_snapshot_v1',
+        'ok', false,
+        'reason', 'SERVICE_UNAVAILABLE'
+      );
+  end;
+end;
+$$;
+
 -- Read-only, DB-authoritative availability for authenticated UI discovery.
 -- The function intentionally duplicates the reserve selector under the same
 -- lock order; reserve still recomputes and compares the route before mutation.
@@ -794,6 +1020,12 @@ revoke all on function public.get_ai_polish_availability_v1(uuid)
   from public, anon, authenticated, service_role;
 
 grant execute on function public.get_ai_polish_availability_v1(uuid)
+  to service_role;
+
+revoke all on function public.get_ai_polish_execution_snapshot_v1(uuid, uuid)
+  from public, anon, authenticated, service_role;
+
+grant execute on function public.get_ai_polish_execution_snapshot_v1(uuid, uuid)
   to service_role;
 
 commit;
