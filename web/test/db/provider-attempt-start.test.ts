@@ -544,29 +544,44 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       begin;
       set local statement_timeout = '10s';
       set local role service_role;
-      update public.ai_provider_attempt_ledger
-      set status = 'succeeded',
-          terminal_at = pg_catalog.clock_timestamp(),
-          provider_billable = true,
-          usage_observation_kind = 'observed',
-          usage_schema_version = 'normalized_usage_v2',
-          input_total_tokens = 100,
-          input_cache_read_tokens = 60,
-          input_cache_write_tokens = null,
-          input_standard_tokens = 40,
-          output_tokens = 20,
-          reasoning_tokens = 5,
-          cache_usage_reporting = 'unavailable',
-          usage_complete = true,
-          route_observation_schema_version = 'route_observation_v1',
-          cost_observation_schema_version = 'cost_observation_v1',
-          estimated_currency = 'CNY',
-          estimated_cost_nanos = 1234,
-          cost_reconciliation_status = 'not_available',
-          finish_reason = 'stop',
-          latency_ms = 1234
-      where attempt_id = '${attemptId}'::uuid
-      returning status;
+      select public.complete_ai_polish_provider_attempt(
+        '${attemptId}'::uuid,
+        'succeeded',
+        true,
+        '{
+          "schema_version":"normalized_usage_v2",
+          "input_total_tokens":100,
+          "input_cache_read_tokens":60,
+          "input_cache_write_tokens":null,
+          "input_standard_tokens":40,
+          "output_tokens":20,
+          "reasoning_tokens":5,
+          "cache_usage_reporting":"unavailable",
+          "usage_complete":true
+        }'::jsonb,
+        '{
+          "schema_version":"route_observation_v1",
+          "gateway_request_id":null,
+          "provider_request_id":null,
+          "actual_upstream_endpoint":null,
+          "actual_model_id":null,
+          "router_attempt_count":null
+        }'::jsonb,
+        '{
+          "schema_version":"cost_observation_v1",
+          "estimated_currency":"CNY",
+          "estimated_cost_nanos":"1234",
+          "provider_reported_currency":null,
+          "provider_reported_cost_nanos":null,
+          "reconciliation_status":"not_available"
+        }'::jsonb,
+        '{
+          "schema_version":"attempt_metadata_v1",
+          "finish_reason":"stop",
+          "failure_stage":null,
+          "latency_ms":1234
+        }'::jsonb
+      );
       reset role;
       commit;
     `;
@@ -576,37 +591,65 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     reservation: ReservationReceipt,
     attemptNo: 1 | 2,
   ) {
-    return service
-      .from("ai_provider_attempt_ledger")
-      .insert({
-        reservation_id: reservation.reservationId,
-        attempt_no: attemptNo,
-        route_schema_version: reservation.routeSnapshot.schemaVersion,
-        config_generation: Number(reservation.routeSnapshot.configGeneration),
-        routing_policy_version_id:
-          reservation.routeSnapshot.routingPolicyVersionId,
-        profile_version_id: reservation.routeSnapshot.profileVersionId,
-        price_version_id: reservation.routeSnapshot.priceVersionId,
-        legal_bundle_version: reservation.routeSnapshot.legalBundleVersion,
-        runtime_contract_id: reservation.routeSnapshot.runtimeContractId,
-        runtime_contract_sha256:
-          reservation.routeSnapshot.runtimeContractSha256,
-        gateway_kind: reservation.routeSnapshot.gatewayKind,
-        model_id: reservation.routeSnapshot.modelId,
-        wire_api_kind: reservation.routeSnapshot.wireApiKind,
-        display_disclosure_key:
-          reservation.routeSnapshot.displayDisclosureKey,
-        adapter_kind: "deepseek_chat_v1",
-        credential_alias: "deepseek_api_key",
-        endpoint_alias: "deepseek_official",
-        capability_contract_id: "polish_v2",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: DEEPSEEK_LEGAL_MANIFEST_ID,
-        calculator_kind: "linear_token_v1",
-        billing_currency: "CNY",
-      })
-      .select("attempt_id,attempt_no,status")
-      .single();
+    const attemptId = crypto.randomUUID();
+    const snapshot = reservation.routeSnapshot;
+    const result = runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      insert into public.ai_provider_attempt_ledger (
+        attempt_id,
+        reservation_id,
+        attempt_no,
+        route_schema_version,
+        config_generation,
+        routing_policy_version_id,
+        profile_version_id,
+        price_version_id,
+        legal_bundle_version,
+        runtime_contract_id,
+        runtime_contract_sha256,
+        gateway_kind,
+        model_id,
+        wire_api_kind,
+        display_disclosure_key,
+        adapter_kind,
+        credential_alias,
+        endpoint_alias,
+        capability_contract_id,
+        cache_policy_id,
+        legal_manifest_id,
+        calculator_kind,
+        billing_currency
+      ) values (
+        '${attemptId}'::uuid,
+        '${reservation.reservationId}'::uuid,
+        ${attemptNo},
+        '${snapshot.schemaVersion}',
+        ${snapshot.configGeneration}::bigint,
+        '${snapshot.routingPolicyVersionId}'::uuid,
+        '${snapshot.profileVersionId}'::uuid,
+        '${snapshot.priceVersionId}'::uuid,
+        '${snapshot.legalBundleVersion}',
+        '${snapshot.runtimeContractId}',
+        '${snapshot.runtimeContractSha256}',
+        '${snapshot.gatewayKind}',
+        '${snapshot.modelId}',
+        '${snapshot.wireApiKind}',
+        '${snapshot.displayDisclosureKey}',
+        'deepseek_chat_v1',
+        'deepseek_api_key',
+        'deepseek_official',
+        'polish_v2',
+        'automatic_cache_v1',
+        '${DEEPSEEK_LEGAL_MANIFEST_ID}',
+        'linear_token_v1',
+        'CNY'
+      );
+    `);
+    expect(result.status, result.stderr).toBe(0);
+    return {
+      data: { attempt_id: attemptId, attempt_no: attemptNo, status: "started" },
+      error: null,
+    };
   }
 
   async function attemptRows(reservationId: string) {
@@ -872,7 +915,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     expect(await getGlobalStartedCount(service)).toBe(globalBefore + 1);
   });
 
-  it("serializes a direct child completion against replay without a parent-child deadlock", async () => {
+  it("serializes lifecycle RPC completion against replay without a parent-child deadlock", async () => {
     const user = await makeUser("attempt-start-direct-update-replay");
     const reservation = await reserveV2(user);
     const first = (await startAttempt(reservation.reservationId, 1)) as StartReceipt;
@@ -918,7 +961,6 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
 
       contender = startOwnerSqlWithBarrier(
         startAttemptSql(reservation.reservationId, 1, {
-          lockParentBefore: true,
           markerBefore: CONTENDER_READY,
           holdSeconds: LOCK_HOLD_SECONDS,
         }),
@@ -931,12 +973,18 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
         holderSettled = true;
         return result;
       });
-      gate.release();
+      let contenderSettled = false;
+      const contenderResult = contender.result.then((result) => {
+        contenderSettled = true;
+        return result;
+      });
       await sleep(150);
       expect(holderSettled).toBe(false);
+      expect(contenderSettled).toBe(false);
+      gate.release();
 
       const [completedContender, completedHolder, completedGate] =
-        await Promise.all([contender.result, holderResult, gate.result]);
+        await Promise.all([contenderResult, holderResult, gate.result]);
       expect(completedContender.status, completedContender.stderr).toBe(0);
       expect(completedHolder.status, completedHolder.stderr).toBe(0);
       expect(completedHolder.stdout).toContain("succeeded");
@@ -950,6 +998,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       expect(JSON.parse(replayLine!)).toEqual({
         ...first,
         alreadyStarted: true,
+        status: "succeeded",
       });
     } finally {
       gate.release();
