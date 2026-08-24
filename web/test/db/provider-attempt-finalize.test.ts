@@ -128,6 +128,21 @@ function jsonbSql(value: unknown): string {
 }
 
 function dollarQuoteTagAt(sql: string, index: number): string | null {
+  if (index > 0) {
+    const trailingCodeUnit = sql.charCodeAt(index - 1);
+    const previousStart =
+      trailingCodeUnit >= 0xdc00 &&
+      trailingCodeUnit <= 0xdfff &&
+      index > 1 &&
+      sql.charCodeAt(index - 2) >= 0xd800 &&
+      sql.charCodeAt(index - 2) <= 0xdbff
+        ? index - 2
+        : index - 1;
+    const previousCharacter = sql.slice(previousStart, index);
+    if (/[$\p{L}\p{M}\p{N}\p{Pc}]/u.test(previousCharacter)) {
+      return null;
+    }
+  }
   return /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/u.exec(sql.slice(index))?.[0] ?? null;
 }
 
@@ -717,6 +732,34 @@ describe("settlement migration SQL parser", () => {
       "word:select",
       "string:a';b",
     ]);
+  });
+
+  it("does not start dollar quotes inside ASCII or Unicode identifiers", () => {
+    const appended = `${canonicalPrefix}
+      SELECT foo$tag$bar;
+      LOCK TABLE public.ai_profile_usage_daily IN ACCESS SHARE MODE;
+      SELECT baz$tag$qux;
+    `;
+    const statements = splitExecutableSqlStatements(appended);
+    expect(statements).toHaveLength(7);
+    expect(tokenSignatures(tokenizeSqlStatement(statements[4]))).toEqual([
+      "word:select",
+      "word:foo$tag$bar",
+    ]);
+    expect(tokenSignatures(tokenizeSqlStatement(statements[6]))).toEqual([
+      "word:select",
+      "word:baz$tag$qux",
+    ]);
+    expect(() => validateProfileUsageExpansionPrefix(appended)).toThrow(
+      /expected one profile usage lock/u,
+    );
+
+    expect(
+      splitExecutableSqlStatements(
+        "SELECT alpha$tag$beta, foo$$bar, 名$tag$字, a\u0301$tag$b, " +
+          "a\u203f$tag$b, 𐐀$tag$x;",
+      ),
+    ).toHaveLength(1);
   });
 
   it("rejects extra prefix SQL, DO-body mutation, and every second profile lock variant", () => {
