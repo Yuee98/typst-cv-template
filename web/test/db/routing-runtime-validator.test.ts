@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import routingRulesFixture from "../fixtures/routing-rules-v1.json";
 import { createServiceClient, RUN_DB_TESTS } from "./helpers";
 import {
   authorSyntheticRuntimeContract,
@@ -8,6 +9,7 @@ import {
   INITIAL_LEGAL_BUNDLE_VERSION,
   runOwnerSql,
   sealPriceAsDatabaseOwner,
+  transitionPolicyAsDatabaseOwner,
   type SyntheticRuntimeContract,
 } from "./runtime-contract-fixtures";
 
@@ -20,6 +22,41 @@ interface RouteFixture {
   profileVersionId: string;
   priceVersionId: string;
   runtime: SyntheticRuntimeContract;
+}
+
+const FIXTURE_PROFILE_VERSION_IDS = new Set(
+  Object.values(routingRulesFixture.routes).map(({ profileVersionId }) =>
+    profileVersionId,
+  ),
+);
+const FIXTURE_PRICE_VERSION_IDS = new Set(
+  Object.values(routingRulesFixture.routes).map(({ priceVersionId }) =>
+    priceVersionId,
+  ),
+);
+
+function mapFixtureRouteIds(value: unknown, route: RouteFixture): unknown {
+  if (typeof value === "string") {
+    if (FIXTURE_PROFILE_VERSION_IDS.has(value)) {
+      return route.profileVersionId;
+    }
+    if (FIXTURE_PRICE_VERSION_IDS.has(value)) {
+      return route.priceVersionId;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => mapFixtureRouteIds(entry, route));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        mapFixtureRouteIds(entry, route),
+      ]),
+    );
+  }
+  return value;
 }
 
 describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
@@ -190,11 +227,25 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     await validateProfile(route);
     const policy = await createPolicy(route);
 
-    const validated = await service
+    const directValidated = await service
       .from("ai_routing_policy_versions")
       .update({ status: "validated" })
       .eq("id", policy.id);
-    expect(validated.error).toBeNull();
+    expect(directValidated.error?.code).toBe(CHECK_VIOLATION);
+    expect(directValidated.error?.message).toContain(
+      "direct routing policy lifecycle transitions await DB-013 authority",
+    );
+
+    const unauthorizedTransition = await service.rpc(
+      "transition_ai_routing_policy_v1",
+      {
+        p_policy_id: policy.id,
+        p_to_status: "validated",
+      },
+    );
+    expect(unauthorizedTransition.error?.code).toBe(PERMISSION_DENIED);
+
+    transitionPolicyAsDatabaseOwner(policy.id, "validated");
 
     const validatedPointer = await service
       .from("ai_feature_config")
@@ -211,11 +262,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
       .update({ status: "canary" })
       .eq("id", route.profileVersionId);
     expect(canaryProfile.error).toBeNull();
-    const canaryPolicy = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "canary" })
-      .eq("id", policy.id);
-    expect(canaryPolicy.error).toBeNull();
+    transitionPolicyAsDatabaseOwner(policy.id, "canary");
 
     const activation = await service
       .from("ai_feature_config")
@@ -248,54 +295,72 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     expect(cleanup.error).toBeNull();
   });
 
-  it("strictly rejects unknown keys, malformed UUIDs, and overlapping windows", async () => {
-    const route = await createRouteFixture({ label: "strict-rules" });
+  it("matches every shared routing-rules shape and window-count case", async () => {
+    const route = await createRouteFixture({ label: "shared-rules-parity" });
     sealPriceAsDatabaseOwner(route.priceVersionId);
     await validateProfile(route);
 
-    const overlappingWindow = {
-      weekdays: [1, 2],
-      startMinute: 540,
-      endMinute: 720,
-      route: {
-        profileVersionId: route.profileVersionId,
-        priceVersionId: route.priceVersionId,
-      },
-    };
-    const invalidRules = [
-      { ...validRules(route), unknown: true },
-      {
-        ...validRules(route),
-        defaultRoute: {
-          profileVersionId: route.profileVersionId.toUpperCase(),
-          priceVersionId: route.priceVersionId,
-        },
-      },
-      {
-        ...validRules(route),
-        windows: [
-          overlappingWindow,
-          { ...overlappingWindow, startMinute: 600, endMinute: 780 },
-        ],
-      },
-      {
-        ...validRules(route),
-        windows: [
-          {
-            ...overlappingWindow,
-            weekdays: [1, 1],
-          },
-        ],
-      },
+    const sharedValidCases = [
+      ...Object.entries(routingRulesFixture.validRules).map(([name, value]) => ({
+        name,
+        value,
+      })),
+      ...routingRulesFixture.validShapeCases,
     ];
-
-    for (const rules of invalidRules) {
+    for (const sharedCase of sharedValidCases) {
+      const rules = mapFixtureRouteIds(
+        sharedCase.value,
+        route,
+      ) as Record<string, unknown>;
       const policy = await createPolicy(route, rules);
-      const transition = await service
-        .from("ai_routing_policy_versions")
-        .update({ status: "validated" })
-        .eq("id", policy.id);
-      expect(transition.error?.code).toBe(CHECK_VIOLATION);
+      expect(() =>
+        transitionPolicyAsDatabaseOwner(policy.id, "validated"),
+      ).not.toThrow();
+    }
+
+    for (const sharedCase of routingRulesFixture.invalidCases) {
+      const rules = mapFixtureRouteIds(
+        sharedCase.value,
+        route,
+      ) as Record<string, unknown>;
+      const policy = await createPolicy(route, rules);
+      const transition = transitionPolicyAsDatabaseOwner(
+        policy.id,
+        "validated",
+        { expectFailure: true },
+      );
+      expect(
+        transition.stderr,
+        `shared invalid DB case unexpectedly passed: ${sharedCase.name}`,
+      ).toMatch(/routing_rules_v1|windows overlap/i);
+    }
+
+    for (const sharedCase of routingRulesFixture.generatedWindowCountCases) {
+      const rules = {
+        ...validRules(route),
+        windows: Array.from({ length: sharedCase.count }, (_, index) => ({
+          weekdays: [1],
+          startMinute: index,
+          endMinute: index + 1,
+          route: {
+            profileVersionId: route.profileVersionId,
+            priceVersionId: route.priceVersionId,
+          },
+        })),
+      };
+      const policy = await createPolicy(route, rules);
+      if (sharedCase.accepted) {
+        expect(() =>
+          transitionPolicyAsDatabaseOwner(policy.id, "validated"),
+        ).not.toThrow();
+      } else {
+        const transition = transitionPolicyAsDatabaseOwner(
+          policy.id,
+          "validated",
+          { expectFailure: true },
+        );
+        expect(transition.stderr).toMatch(/top-level shape is invalid/i);
+      }
     }
   });
 
@@ -307,11 +372,12 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     sealPriceAsDatabaseOwner(missingDisclosure.priceVersionId);
     await validateProfile(missingDisclosure);
     const missingDisclosurePolicy = await createPolicy(missingDisclosure);
-    const disclosureTransition = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", missingDisclosurePolicy.id);
-    expect(disclosureTransition.error?.code).toBe(CHECK_VIOLATION);
+    const disclosureTransition = transitionPolicyAsDatabaseOwner(
+      missingDisclosurePolicy.id,
+      "validated",
+      { expectFailure: true },
+    );
+    expect(disclosureTransition.stderr).toMatch(/profile is unavailable/i);
 
     const mismatchedRuntime = await createRouteFixture({
       label: "runtime-mismatch",
@@ -321,11 +387,12 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     const unrelatedRuntime = authorSyntheticRuntimeContract();
     mismatchedRuntime.runtime = unrelatedRuntime;
     const mismatchedPolicy = await createPolicy(mismatchedRuntime);
-    const runtimeTransition = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", mismatchedPolicy.id);
-    expect(runtimeTransition.error?.code).toBe(CHECK_VIOLATION);
+    const runtimeTransition = transitionPolicyAsDatabaseOwner(
+      mismatchedPolicy.id,
+      "validated",
+      { expectFailure: true },
+    );
+    expect(runtimeTransition.stderr).toMatch(/legal\/runtime coverage/i);
 
     const mismatchedManifest = await createRouteFixture({
       label: "manifest-mismatch",
@@ -334,11 +401,12 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     sealPriceAsDatabaseOwner(mismatchedManifest.priceVersionId);
     await validateProfile(mismatchedManifest);
     const manifestPolicy = await createPolicy(mismatchedManifest);
-    const manifestTransition = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", manifestPolicy.id);
-    expect(manifestTransition.error?.code).toBe(CHECK_VIOLATION);
+    const manifestTransition = transitionPolicyAsDatabaseOwner(
+      manifestPolicy.id,
+      "validated",
+      { expectFailure: true },
+    );
+    expect(manifestTransition.stderr).toMatch(/legal\/runtime coverage/i);
   });
 
   it("allows future price validation but rejects canary before lower bounds", async () => {
@@ -350,22 +418,17 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     await validateProfile(route);
     const policy = await createPolicy(route);
 
-    const validated = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", policy.id);
-    expect(validated.error).toBeNull();
+    transitionPolicyAsDatabaseOwner(policy.id, "validated");
 
     const profileCanary = await service
       .from("ai_provider_profile_versions")
       .update({ status: "canary" })
       .eq("id", route.profileVersionId);
     expect(profileCanary.error).toBeNull();
-    const canary = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "canary" })
-      .eq("id", policy.id);
-    expect(canary.error?.code).toBe(CHECK_VIOLATION);
+    const canary = transitionPolicyAsDatabaseOwner(policy.id, "canary", {
+      expectFailure: true,
+    });
+    expect(canary.stderr).toMatch(/price is unavailable/i);
   });
 
   it("uses owner intent authority and rejects service-role nested-trigger forgery", async () => {

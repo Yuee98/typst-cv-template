@@ -71,41 +71,29 @@ describe("routing_rules_v1", () => {
     expect(() => validateRoutingRulesV1(value)).toThrow(RoutingRulesV1Error);
   });
 
-  it("enforces the 32-window maximum", () => {
-    const route = fixture.routes.mimoDefault;
-    const windows = Array.from({ length: 33 }, (_, index) => ({
-      weekdays: [(index % 7) + 1],
+  it.each(fixture.generatedWindowCountCases)("$name", ({ accepted, count }) => {
+    const windows = Array.from({ length: count }, (_, index) => ({
+      weekdays: [1],
       startMinute: index,
       endMinute: index + 1,
-      route,
+      route: fixture.routes.mimoDefault,
     }));
-
-    expect(() =>
+    const validate = () =>
       validateRoutingRulesV1({
         schemaVersion: "routing_rules_v1",
         defaultRoute: fixture.routes.deepseekOffpeak,
         windows,
-      }),
-    ).toThrow(/at most 32/);
+      });
+
+    if (accepted) {
+      expect(validate).not.toThrow();
+    } else {
+      expect(validate).toThrow(/at most 32/);
+    }
   });
 
-  it("allows adjacent windows and equal clock ranges on disjoint weekdays", () => {
-    expect(() =>
-      validateRoutingRulesV1({
-        schemaVersion: "routing_rules_v1",
-        defaultRoute: fixture.routes.deepseekOffpeak,
-        windows: [
-          { weekdays: [1], startMinute: 0, endMinute: 720, route: fixture.routes.mimoDefault },
-          {
-            weekdays: [1],
-            startMinute: 720,
-            endMinute: 1440,
-            route: fixture.routes.mimoDefault,
-          },
-          { weekdays: [2], startMinute: 0, endMinute: 720, route: fixture.routes.mimoDefault },
-        ],
-      }),
-    ).not.toThrow();
+  it.each(fixture.validShapeCases)("accepts shared valid shape: $name", ({ value }) => {
+    expect(() => validateRoutingRulesV1(value)).not.toThrow();
   });
 
   it("mirrors every frozen profile's route observation identity from the real registry", () => {
