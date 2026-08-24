@@ -20,6 +20,8 @@ create table public.ai_provider_attempt_ledger (
   profile_version_id uuid not null,
   price_version_id uuid not null,
   legal_bundle_version text not null,
+  runtime_contract_id text not null,
+  runtime_contract_sha256 text not null,
   gateway_kind text not null,
   model_id text not null,
   wire_api_kind text not null,
@@ -73,10 +75,19 @@ create table public.ai_provider_attempt_ledger (
     unique (reservation_id, attempt_no),
   constraint ai_provider_attempt_ledger_attempt_no_check
     check (coalesce(attempt_no between 1 and 2, false)),
+  constraint ai_provider_attempt_ledger_runtime_contract_fkey
+    foreign key (runtime_contract_id, runtime_contract_sha256)
+    references public.ai_service_runtime_contract_versions(
+      runtime_contract_id,
+      runtime_contract_sha256
+    )
+    match full,
   constraint ai_provider_attempt_ledger_snapshot_shape_check check (coalesce((
     route_schema_version = 'route_snapshot_v1'
     and config_generation >= 0
     and length(btrim(legal_bundle_version)) between 1 and 200
+    and runtime_contract_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'
+    and runtime_contract_sha256 ~ '^[0-9a-f]{64}$'
     and gateway_kind in ('direct_deepseek', 'direct_mimo', 'openrouter')
     and wire_api_kind in ('chat_completions_v1', 'responses_v1')
     and length(btrim(model_id)) between 1 and 200
@@ -385,6 +396,16 @@ begin
         using errcode = '23514';
     end if;
 
+    -- Let the table's NOT NULL and scalar shape constraints remain the
+    -- authoritative rejection boundary for absent or malformed identities.
+    -- Only a well-shaped pair reaches the parent-snapshot equality guard.
+    if new.runtime_contract_id is null
+       or new.runtime_contract_sha256 is null
+       or new.runtime_contract_id !~ '^[a-z0-9][a-z0-9._-]{0,199}$'
+       or new.runtime_contract_sha256 !~ '^[0-9a-f]{64}$' then
+      return new;
+    end if;
+
     select * into v_request
     from public.ai_request_ledger
     where reservation_id = new.reservation_id
@@ -404,6 +425,8 @@ begin
       new.profile_version_id,
       new.price_version_id,
       new.legal_bundle_version,
+      new.runtime_contract_id,
+      new.runtime_contract_sha256,
       new.gateway_kind,
       new.model_id,
       new.wire_api_kind,
@@ -415,6 +438,8 @@ begin
       v_request.profile_version_id,
       v_request.price_version_id,
       v_request.legal_bundle_version,
+      v_request.runtime_contract_id,
+      v_request.runtime_contract_sha256,
       v_request.gateway_kind,
       v_request.model_id,
       v_request.wire_api_kind,
@@ -555,6 +580,8 @@ begin
       new.profile_version_id,
       new.price_version_id,
       new.legal_bundle_version,
+      new.runtime_contract_id,
+      new.runtime_contract_sha256,
       new.gateway_kind,
       new.model_id,
       new.wire_api_kind,
@@ -578,6 +605,8 @@ begin
       old.profile_version_id,
       old.price_version_id,
       old.legal_bundle_version,
+      old.runtime_contract_id,
+      old.runtime_contract_sha256,
       old.gateway_kind,
       old.model_id,
       old.wire_api_kind,
