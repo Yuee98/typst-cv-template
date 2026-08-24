@@ -223,8 +223,8 @@ type CostReconciliationStatus =
 
 - 本地 estimated cost 只能使用 reservation 冻结的 `priceVersionId` 和代码 registry 中对应 calculator；calculator 不读取时钟或 lane 名。
 - 原生币种逐 attempt 保存。CNY 与 USD 不允许在 DB/runtime 指标中直接求和；换汇只能是单独、带汇率版本的报表层。
-- `providerReportedCost` 与 `estimatedCost` 分列；provider 没有报告时是 `null/not_available`。
-- 任一必需 usage 桶未知、price component 缺失或 calculator 不认识时，estimated cost 为 `null/incomplete_usage`，不能给出低估值。
+- `providerReportedCost` 与 `estimatedCost` 分列；逐 attempt 在 local estimate完整但 provider没有报告时是 `null/not_available`。Request 的 partial coverage 可为 `pending`，local-incomplete precedence可为 `incomplete_usage`，以 §5.6 为准。
+- 逐 attempt 任一必需 usage 桶未知、price component 缺失或 calculator 不认识时，estimated cost 为 `null/incomplete_usage`，不能给出低估值。全部 attempts explicit-false 的 request-level complete-null例外按 §5.6 为 `not_available` 且没有 `estimated_cost` marker。
 - complete RPC 从 canonical estimated/reported amounts 推导 attempt reconciliation：estimate NULL 为 `incomplete_usage`；estimate non-NULL 且 reported NULL 为 `not_available`；两者都有时才按相等/不等得到 `matched|mismatch`。初版不接受 caller 用 `pending` 自由改变事实；request-level `pending` 只由“多个 applicable attempts 部分有 reported amount”机械产生。
 - `provider_billable=false` 的 attempt 不属于 provider-cost-applicable；reported amount 只允许 NULL 或同 frozen currency 的精确 0。0 仅保留在 attempt row，不进入 request sum；非零/异币种是 invariant failure。
 - request local cost 可以合法为 complete-null：全部 attempts 明确不计费且没有 estimated amount 时，`knownEstimatedCost=null`、`estimatedCost=null`，且不包含 `estimated_cost` marker；这与“成本未知”不同。
@@ -478,6 +478,8 @@ complete_ai_polish_provider_attempt(
 - 任一 child attempt 存在时，legacy selector拒绝；`attempt_v2` 零 child也拒绝，不能制造零 usage。
 - `route_snapshot_v1` 零 child只允许 pre-start release：parent仍 `reserved`、`attempt_count=0`、`provider_started_at=NULL`，caller status=`released`、quota charged=false、provider billable=false、legacy selector且 `p_usage` 为 SQL NULL/JSON null。V1 mark污染、成功状态或任意 legacy usage均 fail closed。
 - V2 source 对 `p_usage` 的 absent 定义精确为 SQL NULL 或 JSON `null`；`{}`/array/scalar不算 absent。strict metadata/selector shape只施加于 unfinished V2/child路径，不顺带改变真正 V1 compatibility。
+- 对 unfinished `route_snapshot_v1`、任一 child path 或显式 `attempt_v2`，`p_metadata` 只允许 SQL/JSON null 或 object，array/scalar拒绝；selector missing/JSON null等于 legacy，存在时必须是 exact string `legacy_v1|attempt_v2`。
+- `attempt_v2` 与 `route_snapshot_v1` zero-child release 不把 `p_metadata.attempt_count` 当事实源，也不能用它覆盖 parent；只有真正 route-schema-NULL V1 保留既有 metadata write。request 与 ordered attempts均锁定后，V2 必须验证 parent `attempt_count = child row count`，且 attempt_no exact set只能是 `{1}` 或 `{1,2}`；任何 drift 在 mutation前以 `SERVICE_UNAVAILABLE` fail closed。
 - `attempt_v2` 的 caller `p_provider_billable` 只是 assertion，必须 `IS NOT DISTINCT FROM` locked attempts 的 derived aggregate；request只能保存 derived value。
 - fresh `attempt_v2` 固定保存 `usage_schema_version='request_usage_aggregate_v2'`、`cost_basis='frozen_price_version_v1'` 以及 locked attempts 唯一且与 parent price一致的 native currency。
 
@@ -549,7 +551,7 @@ Provider-reported request aggregate 只对 `provider_billable IS DISTINCT FROM f
 
 - cache-write/reasoning 使用 exact-or-NULL sticky sum；existing或本 request任一 NULL 则保持 NULL；
 - local known cost以 `coalesce(request known,0)` 累加；`cost_incomplete_count` 只在 request有 `estimated_cost` marker时加一。完整 identity 是 `(known=0, estimated=0, count=0)`；count=0 时 daily estimated必须 `IS NOT DISTINCT FROM` known，count>0 时必须 NULL；
-- provider-reported daily amount在尚无完整 request amount时保持 NULL，之后只累加完整 request amounts；存在 applicable但 request amount不完整时 `provider_report_incomplete_count` 加一，no-applicable不加；
+- provider-reported daily amount在尚无完整 request amount时保持 NULL；首个完整 request amount以 `coalesce(existing,0)+amount` 持久化，精确 0 也保存为 numeric 0而不是 NULL，之后只累加完整 request amounts。仅 `applicable_count>0` 且 request没有完整 provider amount时 `provider_report_incomplete_count` 加一；no-applicable不加；local estimate incomplete但 provider amount完整时仍贡献 amount且不增加该 counter；
 - 每个 token/cost/counter arithmetic 都 checked；任一 overflow 回滚 request、quota 与所有 daily mutations，不能留下 partial settlement。
 
 ## 6. HTTP availability 与 route expectation
