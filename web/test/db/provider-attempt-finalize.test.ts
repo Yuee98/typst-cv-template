@@ -127,21 +127,30 @@ function jsonbSql(value: unknown): string {
   return `'${JSON.stringify(value).replaceAll("'", "''")}'::jsonb`;
 }
 
+function isIdentifierContinuationBefore(sql: string, index: number): boolean {
+  if (index <= 0) {
+    return false;
+  }
+  const trailingCodeUnit = sql.charCodeAt(index - 1);
+  const previousStart =
+    trailingCodeUnit >= 0xdc00 &&
+    trailingCodeUnit <= 0xdfff &&
+    index > 1 &&
+    sql.charCodeAt(index - 2) >= 0xd800 &&
+    sql.charCodeAt(index - 2) <= 0xdbff
+      ? index - 2
+      : index - 1;
+  const previousCharacter = sql.slice(previousStart, index);
+  const codePoint = previousCharacter.codePointAt(0);
+  return (
+    codePoint !== undefined &&
+    (codePoint >= 0x80 || /[A-Za-z0-9_$]/u.test(previousCharacter))
+  );
+}
+
 function dollarQuoteTagAt(sql: string, index: number): string | null {
-  if (index > 0) {
-    const trailingCodeUnit = sql.charCodeAt(index - 1);
-    const previousStart =
-      trailingCodeUnit >= 0xdc00 &&
-      trailingCodeUnit <= 0xdfff &&
-      index > 1 &&
-      sql.charCodeAt(index - 2) >= 0xd800 &&
-      sql.charCodeAt(index - 2) <= 0xdbff
-        ? index - 2
-        : index - 1;
-    const previousCharacter = sql.slice(previousStart, index);
-    if (/[$\p{L}\p{M}\p{N}\p{Pc}]/u.test(previousCharacter)) {
-      return null;
-    }
+  if (isIdentifierContinuationBefore(sql, index)) {
+    return null;
   }
   return /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/u.exec(sql.slice(index))?.[0] ?? null;
 }
@@ -151,7 +160,7 @@ function isEscapeStringQuote(sql: string, quoteIndex: number): boolean {
   return (
     prefixIndex >= 0 &&
     (sql[prefixIndex] === "e" || sql[prefixIndex] === "E") &&
-    (prefixIndex === 0 || !/[A-Za-z0-9_$]/u.test(sql[prefixIndex - 1]))
+    !isIdentifierContinuationBefore(sql, prefixIndex)
   );
 }
 
@@ -328,8 +337,7 @@ function tokenizeSqlStatement(statement: string): SqlToken[] {
       continue;
     }
 
-    const atWordBoundary =
-      index === 0 || !/[A-Za-z0-9_$]/u.test(statement[index - 1]);
+    const atWordBoundary = !isIdentifierContinuationBefore(statement, index);
     if (
       atWordBoundary &&
       (character === "e" || character === "E") &&
@@ -734,7 +742,7 @@ describe("settlement migration SQL parser", () => {
     ]);
   });
 
-  it("does not start dollar quotes inside ASCII or Unicode identifiers", () => {
+  it("does not start dollar quotes or quote prefixes inside PG identifier continuations", () => {
     const appended = `${canonicalPrefix}
       SELECT foo$tag$bar;
       LOCK TABLE public.ai_profile_usage_daily IN ACCESS SHARE MODE;
@@ -751,7 +759,7 @@ describe("settlement migration SQL parser", () => {
       "word:baz$tag$qux",
     ]);
     expect(() => validateProfileUsageExpansionPrefix(appended)).toThrow(
-      /expected one profile usage lock/u,
+      /expected one profile usage lock, found 2/u,
     );
 
     expect(
@@ -760,6 +768,42 @@ describe("settlement migration SQL parser", () => {
           "a\u203f$tag$b, 𐐀$tag$x;",
       ),
     ).toHaveLength(1);
+
+    const zwnjTail =
+      "SELECT 1 AS a\u200c$tag$b; " +
+      "LOCK TABLE public.ai_profile_usage_daily IN ACCESS SHARE MODE; " +
+      "SELECT $tag$payload$tag$;";
+    expect(splitExecutableSqlStatements(zwnjTail)).toHaveLength(3);
+    expect(() =>
+      validateProfileUsageExpansionPrefix(`${canonicalPrefix}\n${zwnjTail}`),
+    ).toThrow(/expected one profile usage lock, found 2/u);
+
+    expect(
+      splitExecutableSqlStatements(
+        "SELECT 😀$tag$x, \u0080$tag$y, é$tag$z; " +
+          "SELECT ($tag$payload;still_payload$tag$);",
+      ),
+    ).toHaveLength(2);
+
+    const identifierInternalEscape =
+      "SELECT éE'backslash" + "\\'" + "; SELECT 1;";
+    expect(splitExecutableSqlStatements(identifierInternalEscape)).toHaveLength(2);
+    expect(
+      tokenSignatures(
+        tokenizeSqlStatement("SELECT éU&'value', øU&\"identifier\""),
+      ),
+    ).toEqual([
+      "word:select",
+      "symbol:é",
+      "word:u",
+      "symbol:&",
+      "string:value",
+      "symbol:,",
+      "symbol:ø",
+      "word:u",
+      "symbol:&",
+      "identifier:identifier",
+    ]);
   });
 
   it("rejects extra prefix SQL, DO-body mutation, and every second profile lock variant", () => {
