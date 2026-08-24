@@ -1,6 +1,6 @@
 # AI provider attempt settlement contract
 
-> 状态：revision 1；语义来源 CTRL-009 revision 5（独立 review CLOSED）；等待本 tracked relocation 的 exact-head material-equivalence review
+> 状态：revision 2；revision 1 relocation dual CLOSED；owner/reconciler handoff等待 exact-head review
 > 日期：2026-08-24
 > 适用基线：DB-008A 及后续 attempt lifecycle；DB-010/DB-011/RT-009 必须遵循本文
 > Governance：本文是内部技术契约，不属于 legal bundle `2026-08-23-multi-provider-v1` 的 evidence graph
@@ -66,6 +66,7 @@ request FOR UPDATE
 10. fresh `attempt_v2` finalize 固定持久化 `usage_schema_version='request_usage_aggregate_v2'`、`cost_basis='frozen_price_version_v1'` 和 locked attempts 的唯一 native `billing_currency`；selector literal `attempt_v2` 不得写入 request schema column；
 11. `p_provider_billable` 在 `attempt_v2` 只作为 assertion：必须 `IS NOT DISTINCT FROM` §3 从 locked attempts 推导的 request billability，mismatch 在任何 mutation 前拒绝；request 只能持久化 derived value。V1沿用现有行为，zero-child release继续强制 caller false；
 12. 已 finalized request 继续沿用现有 idempotent readback，不能因 caller 随后换 source selector而二次结算；首次 finalize 的持久化 tuple永久证明实际 source。
+13. unfinished request 的 `p_status='abandoned'` 是 DB-011 reconciler-only internal path：service_role直接调用必须仍返回 `INVALID_STATUS` 且零写入；只有 effective `current_user` 的 exact role OID 等于六参 `finalize_ai_polish_request` 的 `pg_proc.proowner`，并且 source为 `attempt_v2`、child_count>0、全部 child terminal、`p_quota_charged=false`、usage absent、billability assertion与derived aggregate一致时才允许。该分支不要求存在 `unknown` child，因为 handler可能在所有 attempts 已 terminal 后、finalize 前退出。真正 V1、V2 zero-child、任一 started child或不匹配 assertion均拒绝。owner判断必须比较 catalog OID，不得使用 role-name allowlist、`session_user`、role membership、caller metadata/GUC/JWT；不得新增可由 service_role 直接执行的 settlement helper。finalized readback仍先于此校验，hostile replay不得改变历史结果。
 
 锁序保持：`request FOR UPDATE -> attempts ORDER BY attempt_no FOR UPDATE -> daily/request aggregates -> global/config rows`。source/zero/in-progress 检查都发生在任何 request/daily aggregate mutation 前。
 
@@ -197,9 +198,21 @@ DB-010 可以在其新 migration 内 replace `finalize_ai_polish_request(...)` �
 
 DB-010 不从 caller 接收 attempt aggregate；在 `attempt_v2` 与 V2 zero-child release路径不信任 `p_metadata.attempt_count` 覆盖 DB count；不读取 latest price/profile/policy，不重算 routing snapshot，不更新 attempt facts。真正 V1 metadata compatibility按 item 7保留。
 
+### 6.1 DB-010/DB-011 internal reconciliation handoff
+
+DB-010 只在现有 public 六参 finalize 内实现 §2 item 13 的 dormant owner-OID branch；函数仍精确保持 `SECURITY INVOKER`、empty search path、defaults、ACL、response 与单一 overload，不创建 internal settlement helper，不 replace reconciler，也不收紧 attempt DML grants。
+
+DB-011 必须原位 replace 现有 `reconcile_stale_ai_polish_reservations(interval default interval '10 minutes') returns jsonb` 为 `SECURITY DEFINER`、empty search path，并保持原有 `releasedCount`/`abandonedCount` keys。其 `proowner` 必须与六参 finalize 完全相同，且 owner不能是 `service_role|anon|authenticated|authenticator`，service_role不得 `SET ROLE` 到 owner。reconciler只向 service_role开放 EXECUTE，所有对象/函数全限定且无动态 SQL。
+
+V2 reconciliation 的单 reservation 锁序固定为 request `FOR UPDATE` -> attempts `ORDER BY attempt_no FOR UPDATE` -> stale started attempts terminalize为 canonical `unknown` -> 以 owner effective role嵌套调用 exact public finalize（`abandoned,false,derived billability,SQL NULL,attempt_v2 selector`）-> DB-010 settlement/daily。只有该 reservation 的每一个 started child 都已 stale 且 latency可精确表示时，才在同一事务内把它们全部 terminalize并立即 finalize；任一 started child仍 fresh或latency越界则该 reservation全部 child/parent/quota/daily零 mutation。finalize返回 `ok:false` 时整笔回滚，不能留下 terminal child或 partial aggregate。DB-011 不 copy DB-010 aggregation，不 post-finalize改 status，不扩展 direct service-role abandoned权限。V2 clean zero-child stale release继续调用 public `released` path；真正 V1保留旧 reconciler compatibility。
+
+DB-011 对 stale started attempt 捕获一次 DB clock，计算 `floor(extract(epoch from (reconcile_at-started_at))*1000)`。只有 `0..2147483647` 才能写 exact integer `latency_ms` 与 `terminal_at=reconcile_at`；负值或 `INT_MAX+1` 以上不得 clamp、写0/NULL或伪造 terminal time，必须保持该 reservation全部 attempts、parent、quota/daily不变，记录 content-free database warning，并在 additive `latencyOverflowCount` 返回键中按 skipped attempt计数。同批其他合法 reservations继续处理；重试不得篡改该 row。只要任一 started child保留（包括 latency overflow），parent不得 finalize。
+
+进入本轮前已 all-terminal 但 parent unfinished 的 V2 request，以 `max(attempt.terminal_at)` 为唯一 stale watermark；只有它严格早于 `reconcile_at-p_stale_after` 才允许 abandoned settlement，等于 cutoff仍 fresh。若 reconciler在本轮锁定事务内亲自把最后一个 stale started attempt转为 `unknown`，则无需再等待一个 interval，可立即 settlement。候选扫描不构成事实源，所有 state/count/set/staleness必须在 request/attempt locks内重验。
+
 ## 7. 必需测试矩阵
 
-DB-010 exact-head 至少覆盖：
+DB-010 与 DB-011 必须按各自 ownership 在 exact-head tests中合计覆盖：
 
 1. one reported-write attempt + one unavailable-write attempt：request total保留全部 total，write NULL，conservation `>=`；
 2. all reported、all not-applicable、all unavailable 三个守恒分支；
@@ -219,6 +232,9 @@ DB-010 exact-head 至少覆盖：
 16. mixed reported/unavailable request对legacy columns投影为 cached=read、uncached=total-read，request/user/global totals相等且write不双计；
 17. profile-daily cache-write/reasoning exact-or-NULL sticky；daily local cost transition覆盖 complete-null→known、known→complete-null、incomplete→known及duplicate；direct CHECK cases拒绝 count0+estimatedNULL、接受 count0+estimated=known、接受 count>0+estimatedNULL、拒绝 count>0+estimated non-NULL；provider-report lower-bound sum/counter覆盖 complete、partial、not-available-applicable、explicit-false/no-applicable；
 18. exact穷尽的内部→public reason map；request/daily bigint与counter overflow整笔回滚；existing legacy request fixtures、六参/default/SECURITY INVOKER/search_path/no-overload、historical CNY migration与 V1 finalize metadata regression全绿。
+19. service_role fresh `abandoned` 零写入拒绝；同 owner SECURITY DEFINER probe对 child-backed all-terminal `attempt_v2`成功 abandoned settlement；owner对真正 V1、V2 zero-child、任一 started child与billability mismatch仍拒绝；finalized hostile abandoned replay继续 exact readback；catalog证明 effective-owner OID、ACL与 service_role不可set-role。
+20. DB-011 exact watermark：pre-existing all-terminal使用最新 `terminal_at` 的 strict cutoff，等于cutoff不动；本轮新 terminalize最后一个 stale started child可立即结算；fresh started保留时不结算；complete-first/reconcile-first与双reconciler使用独立DB sessions证明只结算一次且无 late fact。
+21. DB-011 exact latency boundary：`INT_MAX`成功写入，`INT_MAX+1`与负 elapsed保持 started且 request/quota/daily byte-identical、`latencyOverflowCount`逐 attempt增加；同批合法 reservation仍完成，warning不含内容，重复运行不伪造事实。
 
 ## 8. Review gate
 
@@ -232,6 +248,7 @@ DB-010 exact-head 至少覆盖：
 - provider cost precedence无 partial sum；
 - zero-attempt不制造 usage；
 - existing finalize idempotence/lock order不倒退；
+- owner-OID abandoned seam没有扩大 service-role/public surface，DB-011 watermark/latency规则不制造事实或丢失 settlement；
 - `docs/ai-provider-contract.md` 已恢复 frozen bytes，本文未进入 current legal evidence graph。
 
 Exact-head material-equivalence CLOSED 后才允许：
