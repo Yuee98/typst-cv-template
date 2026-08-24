@@ -25,6 +25,8 @@ declare
   v_today date;
   v_global_count integer;
   v_route_snapshot jsonb;
+  v_attempt_nos smallint[];
+  v_child_count integer;
 begin
   -- attempt_no is caller-owned idempotency identity.  Reject invalid internal
   -- arguments rather than manufacturing a public availability reason.
@@ -56,9 +58,37 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'SERVICE_UNAVAILABLE');
   end if;
 
-  -- Replay precedes every mutable admission check.  A response-loss retry
-  -- returns the exact child identity and frozen route even if the operational
-  -- kill switch, profile lifecycle, or capacity changed after the first start.
+  -- Lock and validate the complete child set before treating any row as an
+  -- admitted replay.  Every child mutation takes this same parent lock in the
+  -- table guard, so the ordered set is stable for the rest of the transaction.
+  select
+    coalesce(
+      array_agg(locked_attempt.attempt_no order by locked_attempt.attempt_no),
+      array[]::smallint[]
+    ),
+    count(*)::integer
+  into v_attempt_nos, v_child_count
+  from (
+    select attempt_no
+    from public.ai_provider_attempt_ledger
+    where reservation_id = p_reservation_id
+    order by attempt_no
+    for share
+  ) as locked_attempt;
+
+  if v_request.attempt_count is distinct from v_child_count
+     or v_attempt_nos not in (
+       array[]::smallint[],
+       array[1]::smallint[],
+       array[1, 2]::smallint[]
+     )
+     or (v_attempt_nos = array[]::smallint[] and p_attempt_no <> 1) then
+    return jsonb_build_object('ok', false, 'reason', 'SERVICE_UNAVAILABLE');
+  end if;
+
+  -- Exact replay follows the ledger invariant but precedes every mutable
+  -- operational gate.  A response-loss retry returns the exact child identity
+  -- and frozen route even if the kill switch, profile, or capacity changed.
   select * into v_attempt
   from public.ai_provider_attempt_ledger
   where reservation_id = p_reservation_id
@@ -236,7 +266,7 @@ begin
   returning * into v_attempt;
 
   update public.ai_request_ledger
-  set attempt_count = attempt_count + 1
+  set attempt_count = v_child_count + 1
   where reservation_id = p_reservation_id;
 
   update public.ai_global_usage_daily
