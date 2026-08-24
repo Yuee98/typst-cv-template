@@ -601,6 +601,71 @@ function finalizeAttemptSql(
   `;
 }
 
+function startAttemptSql(
+  reservationId: string,
+  attemptNo: 1 | 2,
+  options: { markerBefore?: string; markerAfter?: string; commit?: boolean } = {},
+): string {
+  return String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin;
+    set local statement_timeout = '10s';
+    set local role service_role;
+    ${options.markerBefore ? `\\echo ${options.markerBefore}` : ""}
+    select public.start_ai_polish_provider_attempt(
+      '${reservationId}'::uuid,
+      ${attemptNo}
+    );
+    reset role;
+    ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
+    ${options.commit === false ? "" : "commit;"}
+  `;
+}
+
+function parentLockSql(reservationId: string, marker: string): string {
+  return String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin;
+    set local statement_timeout = '10s';
+    set local role service_role;
+    select 1
+    from public.ai_request_ledger
+    where reservation_id = '${reservationId}'::uuid
+    for update;
+    \echo ${marker}
+  `;
+}
+
+function finalizeAttemptActionSql(reservationId: string): string {
+  return String.raw`
+    select public.finalize_ai_polish_request(
+      '${reservationId}'::uuid,
+      'succeeded',
+      true,
+      true,
+      null,
+      '{"usage_schema_version":"attempt_v2"}'::jsonb
+    );
+    reset role;
+    commit;
+  `;
+}
+
+function startAttemptActionSql(reservationId: string, attemptNo: 1 | 2): string {
+  return String.raw`
+    select public.start_ai_polish_provider_attempt(
+      '${reservationId}'::uuid,
+      ${attemptNo}
+    );
+    reset role;
+    commit;
+  `;
+}
+
 function invokeRawFinalize(
   reservationId: string,
   usageSql: string,
@@ -638,8 +703,13 @@ async function runObservedBlockedRace(
   holderMarker: string,
   contenderSql: string,
   contenderMarker: string,
+  holderReleaseSql = "commit;\n",
 ): Promise<{ holder: OwnerSqlResult; contender: OwnerSqlResult }> {
-  const holder = startOwnerSqlWithBarrier(holderSql, holderMarker, "commit;\n");
+  const holder = startOwnerSqlWithBarrier(
+    holderSql,
+    holderMarker,
+    holderReleaseSql,
+  );
   let released = false;
   try {
     await holder.ready;
@@ -651,7 +721,12 @@ async function runObservedBlockedRace(
     });
     await contender.ready;
     await sleep(LOCK_OBSERVATION_MS);
-    expect(contenderSettled).toBe(false);
+    if (contenderSettled) {
+      const settled = await contenderResult;
+      throw new Error(
+        `contender settled before holder release: ${settled.stderr || settled.stdout}`,
+      );
+    }
 
     holder.release();
     released = true;
@@ -1005,6 +1080,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       do $assertions$
       declare
         v_finalize pg_catalog.pg_proc%rowtype;
+        v_definition text;
       begin
         if (
           select count(*)
@@ -1018,6 +1094,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         select * into v_finalize
         from pg_catalog.pg_proc
         where oid = 'public.finalize_ai_polish_request(uuid,text,boolean,boolean,jsonb,jsonb)'::pg_catalog.regprocedure;
+        v_definition := pg_catalog.lower(
+          pg_catalog.pg_get_functiondef(v_finalize.oid)
+        );
 
         if v_finalize.prosecdef
            or v_finalize.proconfig is distinct from array['search_path=""']::text[]
@@ -1042,8 +1121,156 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
            ) then
           raise exception 'finalize RPC ACL drifted';
         end if;
+
+        if v_definition !~
+             'from public[.]ai_request_ledger[[:space:]]+where reservation_id = p_reservation_id[[:space:]]+for update'
+           or v_definition ~
+             'from public[.]ai_provider_attempt_ledger[[:space:]]+where reservation_id = p_reservation_id[[:space:]]+order by attempt_no[[:space:]]+for update' then
+          raise exception 'finalize parent-only serialization boundary drifted';
+        end if;
       end
       $assertions$;
+    `);
+  });
+
+  it("finalizes V1 and completed V2 as SELECT-only attempt-ledger service_role", async () => {
+    const v1User = await harness.makeUser("finalize-select-only-v1");
+    const v1Reserve = await tryReserve(service, v1User.id);
+    expect(v1Reserve.ok).toBe(true);
+    const v1ReservationId = (v1Reserve as { reservationId: string }).reservationId;
+
+    await harness.activateFreshRouteFixture();
+    const v2 = await started("finalize-select-only-v2");
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      revoke insert, update, delete, truncate on public.ai_provider_attempt_ledger
+        from service_role;
+      set local role service_role;
+
+      do $assertions$
+      declare
+        v_result jsonb;
+      begin
+        if not pg_catalog.has_table_privilege(
+             current_user, 'public.ai_provider_attempt_ledger', 'SELECT'
+           )
+           or pg_catalog.has_table_privilege(
+             current_user, 'public.ai_provider_attempt_ledger', 'INSERT'
+           )
+           or pg_catalog.has_table_privilege(
+             current_user, 'public.ai_provider_attempt_ledger', 'UPDATE'
+           )
+           or pg_catalog.has_table_privilege(
+             current_user, 'public.ai_provider_attempt_ledger', 'DELETE'
+           )
+           or pg_catalog.has_table_privilege(
+             current_user, 'public.ai_provider_attempt_ledger', 'TRUNCATE'
+           )
+           or exists (
+             select 1
+             from pg_catalog.pg_attribute
+             where attrelid = 'public.ai_provider_attempt_ledger'::pg_catalog.regclass
+               and attnum > 0
+               and not attisdropped
+               and pg_catalog.has_column_privilege(
+                 current_user,
+                 'public.ai_provider_attempt_ledger',
+                 attname,
+                 'UPDATE'
+               )
+           ) then
+          raise exception 'attempt ledger is not SELECT-only for service_role';
+        end if;
+
+        begin
+          perform 1
+          from public.ai_provider_attempt_ledger
+          where attempt_id = '${v2.attempt.attemptId}'::uuid
+          for update;
+          raise exception 'service_role unexpectedly acquired an attempt row lock';
+        exception
+          when insufficient_privilege then null;
+        end;
+
+        begin
+          update public.ai_provider_attempt_ledger
+          set attempt_id = attempt_id
+          where attempt_id = '${v2.attempt.attemptId}'::uuid;
+          raise exception 'service_role unexpectedly updated an attempt directly';
+        exception
+          when insufficient_privilege then null;
+        end;
+
+        begin
+          delete from public.ai_provider_attempt_ledger
+          where attempt_id = '${v2.attempt.attemptId}'::uuid;
+          raise exception 'service_role unexpectedly deleted an attempt directly';
+        exception
+          when insufficient_privilege then null;
+        end;
+
+        begin
+          insert into public.ai_provider_attempt_ledger
+          select attempt.*
+          from public.ai_provider_attempt_ledger as attempt
+          where false;
+          raise exception 'service_role unexpectedly inserted an attempt directly';
+        exception
+          when insufficient_privilege then null;
+        end;
+
+        begin
+          truncate table public.ai_provider_attempt_ledger;
+          raise exception 'service_role unexpectedly truncated attempts directly';
+        exception
+          when insufficient_privilege then null;
+        end;
+
+        select public.finalize_ai_polish_request(
+          '${v1ReservationId}'::uuid,
+          'failed_upstream',
+          false,
+          true,
+          '{"input_cached_tokens":1,"input_uncached_tokens":2,"output_tokens":3,"usage_complete":true}'::jsonb,
+          '{}'::jsonb
+        ) into v_result;
+        if not coalesce((v_result ->> 'ok')::boolean, false)
+           or coalesce((v_result ->> 'alreadyFinalized')::boolean, true) then
+          raise exception 'SELECT-only V1 finalize failed: %', v_result;
+        end if;
+
+        select public.complete_ai_polish_provider_attempt(
+          '${v2.attempt.attemptId}'::uuid,
+          'succeeded',
+          true,
+          ${jsonbSql(observedUsage())},
+          ${jsonbSql(routeObservation())},
+          ${jsonbSql(costObservation())},
+          ${jsonbSql(attemptMetadata())}
+        ) into v_result;
+        if not coalesce((v_result ->> 'ok')::boolean, false)
+           or coalesce((v_result ->> 'alreadyCompleted')::boolean, true) then
+          raise exception 'SELECT-only V2 completion failed: %', v_result;
+        end if;
+
+        select public.finalize_ai_polish_request(
+          '${v2.reservation.reservationId}'::uuid,
+          'succeeded',
+          true,
+          true,
+          null,
+          '{"usage_schema_version":"attempt_v2"}'::jsonb
+        ) into v_result;
+        if not coalesce((v_result ->> 'ok')::boolean, false)
+           or coalesce((v_result ->> 'alreadyFinalized')::boolean, true) then
+          raise exception 'SELECT-only V2 finalize failed: %', v_result;
+        end if;
+      end
+      $assertions$;
+
+      reset role;
+      rollback;
     `);
   });
 
@@ -3550,6 +3777,73 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       },
     );
     expect(await getProfileDaily()).toMatchObject({ request_count: 1 });
+  });
+
+  it("serializes start versus finalize without admitting a phantom attempt", async () => {
+    await harness.activateFreshRouteFixture();
+    const finalizeFirst = await completed("race-finalize-before-late-start");
+    const finalizerWins = await runObservedBlockedRace(
+      parentLockSql(
+        finalizeFirst.reservation.reservationId,
+        "DB010_FINALIZE_BEFORE_START_READY",
+      ),
+      "DB010_FINALIZE_BEFORE_START_READY",
+      startAttemptSql(finalizeFirst.reservation.reservationId, 2, {
+        markerBefore: "DB010_LATE_START_READY",
+      }),
+      "DB010_LATE_START_READY",
+      finalizeAttemptActionSql(finalizeFirst.reservation.reservationId),
+    );
+    expect(finalizerWins.holder.status, finalizerWins.holder.stderr).toBe(0);
+    expect(finalizerWins.holder.stdout).toContain('"alreadyFinalized": false');
+    expect(finalizerWins.contender.status, finalizerWins.contender.stderr).toBe(0);
+    expect(finalizerWins.contender.stdout).toContain('"reason": "ALREADY_FINALIZED"');
+    const finalizedAttempts = await service
+      .from("ai_provider_attempt_ledger")
+      .select("attempt_no,status")
+      .eq("reservation_id", finalizeFirst.reservation.reservationId)
+      .order("attempt_no");
+    expect(finalizedAttempts.error).toBeNull();
+    expect(finalizedAttempts.data).toEqual([
+      { attempt_no: 1, status: "succeeded" },
+    ]);
+
+    await harness.activateFreshRouteFixture();
+    const startFirst = await completed("race-start-before-finalize");
+    const starterWins = await runObservedBlockedRace(
+      parentLockSql(
+        startFirst.reservation.reservationId,
+        "DB010_START_BEFORE_FINALIZE_READY",
+      ),
+      "DB010_START_BEFORE_FINALIZE_READY",
+      finalizeAttemptSql(startFirst.reservation.reservationId, {
+        markerBefore: "DB010_FINALIZE_AFTER_START_READY",
+      }),
+      "DB010_FINALIZE_AFTER_START_READY",
+      startAttemptActionSql(startFirst.reservation.reservationId, 2),
+    );
+    expect(starterWins.holder.status, starterWins.holder.stderr).toBe(0);
+    expect(starterWins.holder.stdout).toContain('"alreadyStarted": false');
+    expect(starterWins.contender.status, starterWins.contender.stderr).toBe(0);
+    expect(starterWins.contender.stdout).toContain(
+      '"reason": "ATTEMPT_IN_PROGRESS"',
+    );
+    expect(await getLedgerRow(service, startFirst.reservation.reservationId)).toMatchObject(
+      {
+        state: "reserved",
+        attempt_count: 2,
+      },
+    );
+    const admittedAttempts = await service
+      .from("ai_provider_attempt_ledger")
+      .select("attempt_no,status")
+      .eq("reservation_id", startFirst.reservation.reservationId)
+      .order("attempt_no");
+    expect(admittedAttempts.error).toBeNull();
+    expect(admittedAttempts.data).toEqual([
+      { attempt_no: 1, status: "succeeded" },
+      { attempt_no: 2, status: "started" },
+    ]);
   });
 
   it("rolls back the whole settlement when request cost aggregation exceeds bigint", async () => {

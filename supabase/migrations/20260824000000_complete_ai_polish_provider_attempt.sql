@@ -857,11 +857,13 @@ begin
       return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INVALID_STATUS');
     end if;
 
+    -- The parent request lock above serializes every admitted child mutation.
+    -- Keep this compatibility check SELECT-only so finalization does not
+    -- require the direct UPDATE privilege that DB-011 removes from runtime.
     perform 1
     from public.ai_provider_attempt_ledger
     where reservation_id = p_reservation_id
-    order by attempt_no
-    for update;
+    order by attempt_no;
     if found then
       return pg_catalog.jsonb_build_object(
         'ok', false,
@@ -1015,12 +1017,14 @@ begin
     );
   end if;
 
+  -- start and complete both lock the parent request before changing an
+  -- attempt.  The parent lock held above therefore freezes this ordered set;
+  -- child tuple locks would only widen the invoker ACL without adding safety.
   for v_attempt in
     select *
     from public.ai_provider_attempt_ledger
     where reservation_id = p_reservation_id
     order by attempt_no
-    for update
   loop
     v_child_count := v_child_count + 1;
     v_attempt_nos := pg_catalog.array_append(v_attempt_nos, v_attempt.attempt_no);
