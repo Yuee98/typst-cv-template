@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -7,6 +9,7 @@ import {
   getLedgerRow,
   getUsageRow,
   RUN_DB_TESTS,
+  sleep,
   tryReserve,
 } from "./helpers";
 import {
@@ -14,9 +17,197 @@ import {
   completePayload,
   costObservation,
   observedUsage,
+  routeObservation,
   SettlementHarness,
 } from "./provider-attempt-settlement-fixtures";
-import { runOwnerSql } from "./runtime-contract-fixtures";
+import {
+  runOwnerSql,
+  type OwnerSqlResult,
+} from "./runtime-contract-fixtures";
+
+const DB_CONTAINER = "supabase_db_typst-cv-template";
+const LOCK_OBSERVATION_MS = 150;
+
+interface BarrierSqlProcess {
+  ready: Promise<void>;
+  result: Promise<OwnerSqlResult>;
+  release: () => void;
+}
+
+function startOwnerSqlWithBarrier(
+  sql: string,
+  marker: string,
+  releaseSql?: string,
+): BarrierSqlProcess {
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  let released = releaseSql === undefined;
+  let release = () => undefined;
+  const result = new Promise<OwnerSqlResult>((resolve, reject) => {
+    const child = spawn(
+      "docker",
+      [
+        "exec",
+        "-i",
+        DB_CONTAINER,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "--set",
+        "ON_ERROR_STOP=1",
+        "--no-psqlrc",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    const observe = () => {
+      if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) {
+        readySettled = true;
+        resolveReady();
+      }
+    };
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      observe();
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      observe();
+    });
+    child.on("error", (error) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(error);
+      }
+      reject(error);
+    });
+    child.on("close", (status) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(
+          new Error(
+            `owner SQL exited before barrier ${marker}: ${stderr || stdout}`,
+          ),
+        );
+      }
+      resolve({ status: status ?? -1, stdout, stderr });
+    });
+    release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      child.stdin.end(releaseSql);
+    };
+    if (releaseSql === undefined) {
+      child.stdin.end(sql);
+    } else {
+      child.stdin.write(sql);
+    }
+  });
+
+  return { ready, result, release };
+}
+
+function jsonbSql(value: unknown): string {
+  return `'${JSON.stringify(value).replaceAll("'", "''")}'::jsonb`;
+}
+
+function completeAttemptSql(
+  attemptId: string,
+  options: { markerBefore?: string; markerAfter?: string; commit?: boolean } = {},
+): string {
+  return String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin;
+    set local statement_timeout = '10s';
+    set local role service_role;
+    ${options.markerBefore ? `\\echo ${options.markerBefore}` : ""}
+    select public.complete_ai_polish_provider_attempt(
+      '${attemptId}'::uuid,
+      'succeeded',
+      true,
+      ${jsonbSql(observedUsage())},
+      ${jsonbSql(routeObservation())},
+      ${jsonbSql(costObservation())},
+      ${jsonbSql(attemptMetadata())}
+    );
+    reset role;
+    ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
+    ${options.commit === false ? "" : "commit;"}
+  `;
+}
+
+function finalizeAttemptSql(
+  reservationId: string,
+  options: { markerBefore?: string; markerAfter?: string; commit?: boolean } = {},
+): string {
+  return String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin;
+    set local statement_timeout = '10s';
+    set local role service_role;
+    ${options.markerBefore ? `\\echo ${options.markerBefore}` : ""}
+    select public.finalize_ai_polish_request(
+      '${reservationId}'::uuid,
+      'succeeded',
+      true,
+      true,
+      null,
+      '{"usage_schema_version":"attempt_v2"}'::jsonb
+    );
+    reset role;
+    ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
+    ${options.commit === false ? "" : "commit;"}
+  `;
+}
+
+async function runObservedBlockedRace(
+  holderSql: string,
+  holderMarker: string,
+  contenderSql: string,
+  contenderMarker: string,
+): Promise<{ holder: OwnerSqlResult; contender: OwnerSqlResult }> {
+  const holder = startOwnerSqlWithBarrier(holderSql, holderMarker, "commit;\n");
+  let released = false;
+  try {
+    await holder.ready;
+    const contender = startOwnerSqlWithBarrier(contenderSql, contenderMarker);
+    let contenderSettled = false;
+    const contenderResult = contender.result.then((result) => {
+      contenderSettled = true;
+      return result;
+    });
+    await contender.ready;
+    await sleep(LOCK_OBSERVATION_MS);
+    expect(contenderSettled).toBe(false);
+
+    holder.release();
+    released = true;
+    const holderResult = await holder.result;
+    const completedContender = await contenderResult;
+    return { holder: holderResult, contender: completedContender };
+  } finally {
+    if (!released) {
+      holder.release();
+    }
+  }
+}
 
 describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", () => {
   let service: SupabaseClient;
@@ -66,6 +257,32 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       .single();
     expect(result.error).toBeNull();
     return result.data!;
+  }
+
+  async function getProfileDailyRows(
+    profileVersionId = harness.fixture.profileVersionId,
+  ) {
+    const result = await service
+      .from("ai_profile_usage_daily")
+      .select("*")
+      .eq("profile_version_id", profileVersionId)
+      .eq("billing_currency", "CNY")
+      .order("day");
+    expect(result.error).toBeNull();
+    return result.data!;
+  }
+
+  async function settlementSnapshot(
+    userId: string,
+    reservationId: string,
+    profileVersionId = harness.fixture.profileVersionId,
+  ) {
+    return {
+      request: await getLedgerRow(service, reservationId),
+      user: await getUsageRow(service, userId),
+      global: await getGlobalUsageRow(service),
+      profile: await getProfileDailyRows(profileVersionId),
+    };
   }
 
   it("keeps the exact public finalize definition, defaults, invoker boundary, and ACL", () => {
@@ -1320,5 +1537,401 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       end
       $assertions$;
     `);
+  });
+
+  it("serializes concurrent duplicate completion in independent database sessions", async () => {
+    await harness.activateFreshRouteFixture();
+    const value = await started("concurrent-complete-replay");
+    const race = await runObservedBlockedRace(
+      completeAttemptSql(value.attempt.attemptId, {
+        markerAfter: "DB010_COMPLETE_HOLDER_READY",
+        commit: false,
+      }),
+      "DB010_COMPLETE_HOLDER_READY",
+      completeAttemptSql(value.attempt.attemptId, {
+        markerBefore: "DB010_COMPLETE_CONTENDER_READY",
+      }),
+      "DB010_COMPLETE_CONTENDER_READY",
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.holder.stdout).toContain('"alreadyCompleted": false');
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain('"alreadyCompleted": true');
+    const attempts = await service
+      .from("ai_provider_attempt_ledger")
+      .select("*")
+      .eq("reservation_id", value.reservation.reservationId);
+    expect(attempts.error).toBeNull();
+    expect(attempts.data).toHaveLength(1);
+    expect(attempts.data![0]).toMatchObject({
+      status: "succeeded",
+      usage_observation_kind: "observed",
+      estimated_cost_nanos: 1234,
+    });
+    expect(await getLedgerRow(service, value.reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      attempt_count: 1,
+      usage_schema_version: null,
+    });
+  });
+
+  it("serializes concurrent duplicate finalization into one settlement and one replay", async () => {
+    await harness.activateFreshRouteFixture();
+    const value = await completed("concurrent-finalize-replay");
+    const race = await runObservedBlockedRace(
+      finalizeAttemptSql(value.reservation.reservationId, {
+        markerAfter: "DB010_FINALIZE_HOLDER_READY",
+        commit: false,
+      }),
+      "DB010_FINALIZE_HOLDER_READY",
+      finalizeAttemptSql(value.reservation.reservationId, {
+        markerBefore: "DB010_FINALIZE_CONTENDER_READY",
+      }),
+      "DB010_FINALIZE_CONTENDER_READY",
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.holder.stdout).toContain('"alreadyFinalized": false');
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain('"alreadyFinalized": true');
+    expect(await getLedgerRow(service, value.reservation.reservationId)).toMatchObject({
+      state: "finalized",
+      input_cached_tokens: 60,
+      input_uncached_tokens: 40,
+      output_tokens: 20,
+    });
+    expect(await getUsageRow(service, value.user.id)).toMatchObject({
+      request_count: 1,
+      input_cached_tokens: 60,
+      input_uncached_tokens: 40,
+      output_tokens: 20,
+    });
+    expect(await getProfileDaily()).toMatchObject({
+      request_count: 1,
+      input_total_tokens: 100,
+      known_estimated_cost_nanos: 1234,
+    });
+  });
+
+  it("linearizes complete versus finalize in both request-lock orders without losing a fact", async () => {
+    await harness.activateFreshRouteFixture();
+    const completeFirst = await started("race-complete-first");
+    const completionWins = await runObservedBlockedRace(
+      completeAttemptSql(completeFirst.attempt.attemptId, {
+        markerAfter: "DB010_COMPLETE_FIRST_READY",
+        commit: false,
+      }),
+      "DB010_COMPLETE_FIRST_READY",
+      finalizeAttemptSql(completeFirst.reservation.reservationId, {
+        markerBefore: "DB010_COMPLETE_FIRST_FINALIZER_READY",
+      }),
+      "DB010_COMPLETE_FIRST_FINALIZER_READY",
+    );
+    expect(completionWins.holder.status, completionWins.holder.stderr).toBe(0);
+    expect(completionWins.holder.stdout).toContain('"alreadyCompleted": false');
+    expect(
+      completionWins.contender.status,
+      completionWins.contender.stderr,
+    ).toBe(0);
+    expect(completionWins.contender.stdout).toContain('"alreadyFinalized": false');
+    expect(
+      await getLedgerRow(service, completeFirst.reservation.reservationId),
+    ).toMatchObject({
+      state: "finalized",
+      usage_schema_version: "request_usage_aggregate_v2",
+      input_total_tokens: 100,
+    });
+    expect(await getProfileDaily()).toMatchObject({ request_count: 1 });
+
+    await harness.activateFreshRouteFixture();
+    const finalizeFirst = await started("race-finalize-first");
+    const finalizerWins = await runObservedBlockedRace(
+      finalizeAttemptSql(finalizeFirst.reservation.reservationId, {
+        markerAfter: "DB010_FINALIZE_FIRST_READY",
+        commit: false,
+      }),
+      "DB010_FINALIZE_FIRST_READY",
+      completeAttemptSql(finalizeFirst.attempt.attemptId, {
+        markerBefore: "DB010_FINALIZE_FIRST_COMPLETER_READY",
+      }),
+      "DB010_FINALIZE_FIRST_COMPLETER_READY",
+    );
+    expect(finalizerWins.holder.status, finalizerWins.holder.stderr).toBe(0);
+    expect(finalizerWins.holder.stdout).toContain('"ok": false');
+    expect(finalizerWins.contender.status, finalizerWins.contender.stderr).toBe(0);
+    expect(finalizerWins.contender.stdout).toContain('"alreadyCompleted": false');
+    expect(await getLedgerRow(service, finalizeFirst.reservation.reservationId)).toMatchObject(
+      {
+        state: "reserved",
+        attempt_count: 1,
+      },
+    );
+
+    expect(
+      await harness.finalize(finalizeFirst.reservation.reservationId),
+    ).toMatchObject({ ok: true, alreadyFinalized: false });
+    expect(await getLedgerRow(service, finalizeFirst.reservation.reservationId)).toMatchObject(
+      {
+        state: "finalized",
+        input_total_tokens: 100,
+      },
+    );
+    expect(await getProfileDaily()).toMatchObject({ request_count: 1 });
+  });
+
+  it("rolls back the whole settlement when request cost aggregation exceeds bigint", async () => {
+    await harness.activateFreshRouteFixture();
+    const user = await harness.makeUser("overflow-request-cost");
+    const reservation = await harness.reserveV2(user);
+    for (const attemptNo of [1, 2] as const) {
+      const attempt = await harness.startAttempt(
+        reservation.reservationId,
+        attemptNo,
+      );
+      expect(
+        await harness.complete(
+          completePayload(attempt.attemptId, {
+            p_cost: costObservation({
+              estimated_cost_nanos: "9223372036854775807",
+            }),
+          }),
+        ),
+      ).toMatchObject({ ok: true, alreadyCompleted: false });
+    }
+
+    const before = await settlementSnapshot(user.id, reservation.reservationId);
+    expect(await harness.finalize(reservation.reservationId)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect(await settlementSnapshot(user.id, reservation.reservationId)).toEqual(
+      before,
+    );
+  });
+
+  it("rolls back request, inserted profile row, and every daily write on user overflow", async () => {
+    await harness.activateFreshRouteFixture();
+    const value = await completed("overflow-user-daily");
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      update public.ai_usage_daily
+      set input_cached_tokens = 9223372036854775807
+      where user_id = '${value.user.id}'::uuid
+        and day = current_date;
+    `);
+
+    const before = await settlementSnapshot(
+      value.user.id,
+      value.reservation.reservationId,
+    );
+    expect(before.profile).toEqual([]);
+    expect(await harness.finalize(value.reservation.reservationId)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect(
+      await settlementSnapshot(value.user.id, value.reservation.reservationId),
+    ).toEqual(before);
+  });
+
+  it("rolls back request, user, and inserted profile row on global overflow", async () => {
+    await harness.activateFreshRouteFixture();
+    const value = await completed("overflow-global-daily");
+    const originalGlobal = await getGlobalUsageRow(service);
+    expect(originalGlobal).not.toBeNull();
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      update public.ai_global_usage_daily
+      set input_cached_tokens = 9223372036854775807
+      where day = current_date;
+    `);
+
+    try {
+      const before = await settlementSnapshot(
+        value.user.id,
+        value.reservation.reservationId,
+      );
+      expect(before.profile).toEqual([]);
+      expect(await harness.finalize(value.reservation.reservationId)).toEqual({
+        ok: false,
+        reason: "SERVICE_UNAVAILABLE",
+      });
+      expect(
+        await settlementSnapshot(value.user.id, value.reservation.reservationId),
+      ).toEqual(before);
+    } finally {
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        update public.ai_global_usage_daily
+        set input_cached_tokens = ${originalGlobal!.input_cached_tokens}
+        where day = current_date;
+      `);
+    }
+  });
+
+  it("rolls back every mutation for profile bigint, integer, and completeness-counter overflow", async () => {
+    type CompletionOverrides = NonNullable<
+      Parameters<typeof completePayload>[1]
+    >;
+    type FinalizeOptions = Parameters<SettlementHarness["finalize"]>[1];
+    const maxInteger = "2147483647";
+    const maxBigint = "9223372036854775807";
+    const scenarios: Array<{
+      label: string;
+      seed: {
+        requestCount?: string;
+        usageIncompleteCount?: string;
+        costIncompleteCount?: string;
+        providerIncompleteCount?: string;
+        inputTotal?: string;
+        knownEstimated?: string;
+        estimated?: string;
+        providerReported?: string;
+      };
+      completion?: CompletionOverrides;
+      finalize?: FinalizeOptions;
+    }> = [
+      {
+        label: "request-count",
+        seed: { requestCount: maxInteger },
+      },
+      {
+        label: "usage-incomplete-count",
+        seed: { usageIncompleteCount: maxInteger },
+        completion: {
+          p_status: "canceled",
+          p_provider_billable: false,
+          p_usage: null,
+          p_cost: costObservation({
+            estimated_currency: null,
+            estimated_cost_nanos: null,
+            reconciliation_status: "incomplete_usage",
+          }),
+          p_metadata: attemptMetadata({ finish_reason: null }),
+        },
+        finalize: {
+          status: "canceled",
+          quotaCharged: false,
+          providerBillable: false,
+        },
+      },
+      {
+        label: "cost-incomplete-count",
+        seed: {
+          costIncompleteCount: maxInteger,
+          estimated: "null",
+        },
+        completion: {
+          p_cost: costObservation({
+            estimated_currency: null,
+            estimated_cost_nanos: null,
+            reconciliation_status: "incomplete_usage",
+          }),
+        },
+      },
+      {
+        label: "provider-incomplete-count",
+        seed: { providerIncompleteCount: maxInteger },
+      },
+      {
+        label: "input-total",
+        seed: { inputTotal: maxBigint },
+      },
+      {
+        label: "known-estimated",
+        seed: { knownEstimated: maxBigint, estimated: maxBigint },
+      },
+      {
+        label: "provider-reported",
+        seed: { providerReported: maxBigint },
+        completion: {
+          p_cost: costObservation({
+            estimated_cost_nanos: "1",
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "1",
+            reconciliation_status: "matched",
+          }),
+        },
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      await harness.activateFreshRouteFixture();
+      const value = await completed(
+        `overflow-profile-${scenario.label}`,
+        scenario.completion,
+      );
+      const seed = {
+        requestCount: "0",
+        usageIncompleteCount: "0",
+        costIncompleteCount: "0",
+        providerIncompleteCount: "0",
+        inputTotal: "0",
+        knownEstimated: "0",
+        estimated: "0",
+        providerReported: "null",
+        ...scenario.seed,
+      };
+      runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        insert into public.ai_profile_usage_daily (
+          day,
+          profile_version_id,
+          billing_currency,
+          request_count,
+          usage_incomplete_count,
+          cost_incomplete_count,
+          provider_report_incomplete_count,
+          input_total_tokens,
+          input_cache_write_tokens,
+          reasoning_tokens,
+          known_estimated_cost_nanos,
+          estimated_cost_nanos,
+          provider_reported_cost_nanos
+        ) values (
+          current_date,
+          '${harness.fixture.profileVersionId}'::uuid,
+          'CNY',
+          ${seed.requestCount},
+          ${seed.usageIncompleteCount},
+          ${seed.costIncompleteCount},
+          ${seed.providerIncompleteCount},
+          ${seed.inputTotal},
+          0,
+          0,
+          ${seed.knownEstimated},
+          ${seed.estimated},
+          ${seed.providerReported}
+        );
+      `);
+
+      try {
+        const before = await settlementSnapshot(
+          value.user.id,
+          value.reservation.reservationId,
+        );
+        expect(before.profile).toHaveLength(1);
+        expect(
+          await harness.finalize(
+            value.reservation.reservationId,
+            scenario.finalize,
+          ),
+        ).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
+        expect(
+          await settlementSnapshot(
+            value.user.id,
+            value.reservation.reservationId,
+          ),
+        ).toEqual(before);
+      } finally {
+        const cleanup = await service
+          .from("ai_profile_usage_daily")
+          .delete()
+          .eq("profile_version_id", harness.fixture.profileVersionId)
+          .eq("billing_currency", "CNY");
+        expect(cleanup.error).toBeNull();
+      }
+    }
   });
 });
