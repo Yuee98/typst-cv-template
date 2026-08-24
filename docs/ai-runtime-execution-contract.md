@@ -46,8 +46,8 @@ cookie
 eyj
 ghp_
 github_pat_
-password
 passwd
+password
 refresh-token
 refresh_token
 secret
@@ -104,18 +104,15 @@ The result union is exact:
 { "kind": "tagged", "value": "hmac-sha256:<lowerhex64>" }
 ```
 
-Implementations MUST reproduce every byte/key/tag vector in `web/test/fixtures/ai-runtime-execution-contract-v1.json`. Those vectors independently distinguish gateway from provider domains, NFC from NFD key bytes, and U+180E from the explicit trim set.
+Implementations MUST reproduce every byte/key/tag vector in `web/test/fixtures/ai-runtime-execution-contract-v1.json`. Those vectors independently distinguish gateway from provider domains, NFC from NFD key bytes, raw leading/trailing whitespace and compatibility characters from valid IDs, every scalar in the exact edge-trim set, preserved interior whitespace, valid supplementary-plane scalars, and U+180E at both edges and in the interior.
 
 ## 2. Execution snapshot JSON
 
 `get_ai_polish_execution_snapshot_v1(reservation_id, user_id)` returns the request-frozen execution facts needed before an attempt can start. It MUST be service-role-only, `SECURITY DEFINER` with an empty search path, and perform no persistent mutation.
 
-The DB implementation locks and reads in this order:
+The DB implementation MUST first resolve `(reservation_id, verified_user_id)` and lock only the matching request ledger row `FOR SHARE`. After that lock is held, it MUST use later plain `SELECT` statements to read the request-frozen profile parent/version and exact sealed price parent/components. It MUST NOT lock profile, profile-version, price, or price-component rows. Those later plain reads are safe only while schema constraints and guards prove the referenced history immutable and the price sealed; absent or drifted proof returns `SERVICE_UNAVAILABLE`.
 
-1. the request ledger row;
-2. the request-bound profile parent;
-3. the request-bound profile version;
-4. the exact request-bound price parent and sealed components.
+DB-011A concurrency proof MUST show that only the request row is locked, profile/price reads do not wait on unrelated row locks, snapshot versus finalize/cleanup serializes safely at the request, and attempt start independently rechecks mutable operational eligibility.
 
 It MUST NOT read the current routing pointer, run the routing selector again, choose a latest price, substitute a default profile, or expose an endpoint URL or credential value. Missing and wrong-user requests are intentionally indistinguishable.
 
@@ -211,7 +208,14 @@ components
 parameters
 ```
 
-`components` may contain only `input_standard`, `input_cache_read`, `input_cache_write`, and `output`. Every present value is the exact `nanos_per_million` encoded as a canonical non-negative decimal JSON string within PostgreSQL `bigint`. Missing optional components MUST be omitted, not emitted as `null` and not silently filled with zero. A real free component is represented by the explicit string `"0"`. `parameters` is validated by the code-owned calculator's exact schema.
+`components` may contain only `input_standard`, `input_cache_read`, `input_cache_write`, and `output`. Every present value is the exact `nanos_per_million` encoded as a canonical non-negative decimal JSON string within PostgreSQL `bigint`. Missing optional components MUST be omitted, not emitted as `null` and not silently filled with zero. A real free component is represented by the explicit string `"0"`.
+
+Revision 1 accepts the complete current `price_snapshot_v1` calculator union:
+
+- `linear_token_v1` requires `input_standard`, `input_cache_read`, and `output`; `input_cache_write` is optional; `parameters` is exactly `{}`.
+- `openai_gpt56_v1` requires all four components; `parameters` has exactly the key `longContext`, whose value is either `null` or an object with exactly `thresholdInputTokens`, `inputMultiplierBps`, and `outputMultiplierBps`. Each of those three values is a positive JavaScript-safe integer, matching the existing code-owned price contract.
+
+Unknown calculators, component sets, or parameter shapes fail closed.
 
 ### 2.5 Cross-object invariants
 
@@ -224,7 +228,9 @@ Before attempt start or network transmission, all of the following MUST hold:
 - profile and price `calculatorKind` are equal;
 - the profile version belongs to its locked profile parent and the price belongs to that same profile;
 - the legal manifest belongs to the route's exact sealed legal bundle;
-- the route runtime ID/hash pair exists in the code-owned RT-009A registry;
+- the route runtime ID/hash pair resolves to one exact code-owned RT-009A runtime contract with no substitution, latest lookup, or fallback;
+- that resolved runtime contract is bound to the route's exact legal bundle and contains a target for the selected `profileExecutionConfig.profileKey`;
+- that target's legal-manifest identity exactly equals `profileExecutionConfig.legalManifestId`, and its route descriptor exactly equals the code-owned descriptor derived from the complete validated profile execution config;
 - the profile execution config and price snapshot each pass their code-owned exact validators.
 
 Any failure is fail-closed and causes no provider transmission. Start-attempt separately rechecks mutable availability after the immutable execution snapshot is accepted.
@@ -233,8 +239,8 @@ Any failure is fail-closed and causes no provider transmission. Start-attempt se
 
 `web/test/fixtures/ai-runtime-execution-contract-v1.json` is the portable revision-1 vector set. Its test is intentionally an independent reference implementation: it must not import a future route-observation helper or execution-snapshot parser. Production implementations later consume the same vectors.
 
-The current success vectors cover DeepSeek off-peak pricing with an omitted cache-write component and MiMo peak pricing with an explicit free cache-write component. They are contract examples, not activation, current-price authority, legal evidence, or permission to call either provider.
+The current execution-snapshot success vectors cover DeepSeek off-peak pricing with an omitted cache-write component, MiMo peak pricing with an explicit free cache-write component, and the exact PostgreSQL `bigint` maximum for `configGeneration`. An independent price registry freezes every sample price field, and separate price-shape vectors cover the complete current calculator union and that same maximum for component nanos. They are contract examples, not activation, current-price authority, legal evidence, or permission to call any provider.
 
-The runtime IDs and hashes in those portable examples are synthetic shape values. The independent revision-1 reference validates their encoding and the snapshot's intra-object bindings; it does not and cannot attest membership in the future RT-009A runtime registry. Production acceptance MUST layer the code-owned exact runtime-pair lookup on top, and passing this fixture alone can never authorize attempt start or network transmission.
+The runtime IDs and hashes in those portable examples are synthetic shape values. The independent revision-1 reference validates their encoding and the snapshot's intra-object bindings; it does not and cannot attest membership in the future RT-009A runtime registry. Production acceptance MUST layer exact target-scoped resolution on top: known pair plus correct target is accepted, while a known DeepSeek-only pair with a MiMo target, right runtime ID with wrong hash, wrong bundle/manifest/route descriptor, and an unknown pair all fail before attempt start or network transmission without fallback. Passing this fixture alone can never authorize either action.
 
-A change that only adds a new profile example may append a vector if all revision-1 grammars and shapes remain unchanged. Any widening or reinterpretation of fields, whitespace, bytes, denylist behavior, result vocabulary, or JSON shape requires a new domain/schema version and a separately reviewed migration path.
+A change that only adds a new profile example may append a vector when it uses an already-supported revision-1 profile and price shape. Adding a calculator or changing a calculator's component/parameter shape, or any widening or reinterpretation of fields, whitespace, bytes, denylist behavior, result vocabulary, or JSON shape, requires a new domain/schema version and a separately reviewed migration path.

@@ -21,8 +21,8 @@ const SENSITIVE_PREFIXES = [
   "eyj",
   "ghp_",
   "github_pat_",
-  "password",
   "passwd",
+  "password",
   "refresh-token",
   "refresh_token",
   "secret",
@@ -94,6 +94,25 @@ const PRICE_COMPONENTS = [
   "output",
 ] as const;
 const ERROR_REASONS = ["NOT_FOUND", "ALREADY_FINALIZED", "SERVICE_UNAVAILABLE"] as const;
+const SECRET_ERROR_CODES = [
+  "secret_not_string",
+  "secret_invalid_unicode",
+  "secret_empty_after_trim",
+] as const;
+
+const REFERENCE_CALCULATORS = {
+  linear_token_v1: {
+    requiredComponents: ["input_standard", "input_cache_read", "output"],
+  },
+  openai_gpt56_v1: {
+    requiredComponents: [
+      "input_standard",
+      "input_cache_read",
+      "input_cache_write",
+      "output",
+    ],
+  },
+} as const;
 
 const REFERENCE_PROFILES = {
   "deepseek.official.deepseek-v4-flash.chat.v1": {
@@ -147,12 +166,42 @@ const REFERENCE_PROFILES = {
   { profileVersionId: string; execution: Record<string, unknown> }
 >;
 
-const PRICE_PROFILE_BINDINGS: Record<string, string> = {
-  "11111111-1111-4111-8111-111111111112":
-    "11111111-1111-4111-8111-111111111111",
-  "22222222-2222-4222-8222-222222222222":
-    "22222222-2222-4222-8222-222222222221",
-};
+const REFERENCE_PRICES = {
+  "11111111-1111-4111-8111-111111111112": {
+    profileVersionId: "11111111-1111-4111-8111-111111111111",
+    snapshot: {
+      schemaVersion: "price_snapshot_v1",
+      priceVersionId: "11111111-1111-4111-8111-111111111112",
+      currency: "CNY",
+      calculatorKind: "linear_token_v1",
+      components: {
+        input_standard: "1500000000",
+        input_cache_read: "50000000",
+        output: "4500000000",
+      },
+      parameters: {},
+    },
+  },
+  "22222222-2222-4222-8222-222222222222": {
+    profileVersionId: "22222222-2222-4222-8222-222222222221",
+    snapshot: {
+      schemaVersion: "price_snapshot_v1",
+      priceVersionId: "22222222-2222-4222-8222-222222222222",
+      currency: "CNY",
+      calculatorKind: "linear_token_v1",
+      components: {
+        input_standard: "3000000000",
+        input_cache_read: "25000000",
+        input_cache_write: "0",
+        output: "6000000000",
+      },
+      parameters: {},
+    },
+  },
+} satisfies Record<
+  string,
+  { profileVersionId: string; snapshot: Record<string, unknown> }
+>;
 
 const LEGAL_BUNDLE_MANIFESTS: Record<string, ReadonlySet<string>> = {
   "2026-08-23-multi-provider-v1": new Set([
@@ -353,7 +402,42 @@ function validateProfileExecution(value: unknown): ReferenceRecord {
   return profile;
 }
 
-function validatePriceSnapshot(value: unknown): ReferenceRecord {
+function requirePositiveSafeInteger(value: unknown, label: string): number {
+  assertCondition(
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0,
+    label,
+  );
+  return value;
+}
+
+function validateCalculatorParameters(calculatorKind: string, value: unknown): void {
+  const parameters = requireRecord(value, "price_parameters");
+  if (calculatorKind === "linear_token_v1") {
+    assertExactKeys(parameters, [], "linear_parameters");
+    return;
+  }
+
+  assertCondition(calculatorKind === "openai_gpt56_v1", "price_calculator");
+  assertExactKeys(parameters, ["longContext"], "openai_parameters");
+  if (parameters.longContext === null) {
+    return;
+  }
+  const longContext = requireRecord(parameters.longContext, "openai_long_context");
+  assertExactKeys(
+    longContext,
+    ["thresholdInputTokens", "inputMultiplierBps", "outputMultiplierBps"],
+    "openai_long_context",
+  );
+  for (const key of [
+    "thresholdInputTokens",
+    "inputMultiplierBps",
+    "outputMultiplierBps",
+  ] as const) {
+    requirePositiveSafeInteger(longContext[key], `openai_long_context_${key}`);
+  }
+}
+
+function validatePriceSnapshotShape(value: unknown): ReferenceRecord {
   const price = requireRecord(value, "price_object");
   assertExactKeys(price, PRICE_KEYS, "price");
   assertCondition(price.schemaVersion === "price_snapshot_v1", "price_schema");
@@ -361,7 +445,10 @@ function validatePriceSnapshot(value: unknown): ReferenceRecord {
   const currency = requireString(price.currency, "price_currency");
   assertCondition(/^[A-Z]{3}$/.test(currency), "price_currency");
   const calculatorKind = requireString(price.calculatorKind, "price_calculator");
-  assertCondition(calculatorKind === "linear_token_v1", "price_calculator");
+  const calculator = REFERENCE_CALCULATORS[
+    calculatorKind as keyof typeof REFERENCE_CALCULATORS
+  ];
+  assertCondition(calculator !== undefined, "price_calculator");
 
   const components = requireRecord(price.components, "price_components");
   const componentKeys = Object.keys(components);
@@ -369,15 +456,23 @@ function validatePriceSnapshot(value: unknown): ReferenceRecord {
     componentKeys.every((key) => PRICE_COMPONENTS.includes(key as (typeof PRICE_COMPONENTS)[number])),
     "price_component_keys",
   );
-  for (const required of ["input_standard", "input_cache_read", "output"] as const) {
+  for (const required of calculator.requiredComponents) {
     assertCondition(Object.hasOwn(components, required), "price_required_component");
   }
   for (const [component, nanos] of Object.entries(components)) {
     requirePostgresBigintDecimal(nanos, `price_component_${component}`);
   }
 
-  const parameters = requireRecord(price.parameters, "price_parameters");
-  assertExactKeys(parameters, [], "linear_parameters");
+  validateCalculatorParameters(calculatorKind, price.parameters);
+  return price;
+}
+
+function validateRegisteredPriceSnapshot(value: unknown): ReferenceRecord {
+  const price = validatePriceSnapshotShape(value);
+  const priceVersionId = requireString(price.priceVersionId, "price_id");
+  const registration = REFERENCE_PRICES[priceVersionId as keyof typeof REFERENCE_PRICES];
+  assertCondition(registration !== undefined, "price_registry_unknown");
+  assertCondition(isDeepStrictEqual(price, registration.snapshot), "price_registry_mismatch");
   return price;
 }
 
@@ -403,7 +498,7 @@ function validateExecutionSnapshot(value: unknown): void {
   requireCanonicalUuid(result.reservationId, "execution_reservation_id");
   const route = validateRouteSnapshot(result.routeSnapshot);
   const profile = validateProfileExecution(result.profileExecutionConfig);
-  const price = validatePriceSnapshot(result.priceSnapshot);
+  const price = validateRegisteredPriceSnapshot(result.priceSnapshot);
 
   const profileKey = requireString(profile.profileKey, "profile_key");
   const registration = REFERENCE_PROFILES[profileKey as keyof typeof REFERENCE_PROFILES];
@@ -411,8 +506,9 @@ function validateExecutionSnapshot(value: unknown): void {
   assertCondition(route.profileVersionId === registration.profileVersionId, "profile_version_binding");
   assertCondition(route.priceVersionId === price.priceVersionId, "route_price_binding");
   assertCondition(
-    PRICE_PROFILE_BINDINGS[requireString(price.priceVersionId, "price_id")] ===
-      route.profileVersionId,
+    REFERENCE_PRICES[
+      requireString(price.priceVersionId, "price_id") as keyof typeof REFERENCE_PRICES
+    ].profileVersionId === route.profileVersionId,
     "price_profile_binding",
   );
   for (const key of [
@@ -462,6 +558,16 @@ function materializeSecretErrorInput(vector: {
   return String.fromCharCode(...codeUnits);
 }
 
+function materializeScalarCodePoint(value: string): string {
+  assertCondition(/^[0-9a-f]{4,6}$/.test(value), "fixture_scalar_code_point");
+  const codePoint = Number.parseInt(value, 16);
+  assertCondition(
+    codePoint <= 0x10ffff && !(codePoint >= 0xd800 && codePoint <= 0xdfff),
+    "fixture_scalar_code_point",
+  );
+  return String.fromCodePoint(codePoint);
+}
+
 function deepseekSuccess(): ReferenceRecord {
   return structuredClone(
     fixture.executionSnapshot.successes[0].value,
@@ -471,7 +577,11 @@ function deepseekSuccess(): ReferenceRecord {
 describe("CTRL-010 route-observation contract vectors", () => {
   it("freezes the exact field kinds, ASCII grammar, and prefix denylist", () => {
     const root = requireRecord(fixture, "fixture_root");
-    assertExactKeys(root, ["schemaVersion", "routeObservation", "executionSnapshot"], "fixture");
+    assertExactKeys(
+      root,
+      ["schemaVersion", "routeObservation", "priceSnapshotValidation", "executionSnapshot"],
+      "fixture",
+    );
     assertExactKeys(
       requireRecord(fixture.routeObservation, "fixture_route_observation"),
       [
@@ -479,10 +589,16 @@ describe("CTRL-010 route-observation contract vectors", () => {
         "rawIdPattern",
         "sensitivePrefixes",
         "derivationVectors",
+        "edgeTrimVectors",
         "dropVectors",
         "secretErrorVectors",
       ],
       "fixture_route_observation",
+    );
+    assertExactKeys(
+      requireRecord(fixture.priceSnapshotValidation, "fixture_price_snapshot_validation"),
+      ["successes"],
+      "fixture_price_snapshot_validation",
     );
     assertExactKeys(
       requireRecord(fixture.executionSnapshot, "fixture_execution_snapshot"),
@@ -493,6 +609,7 @@ describe("CTRL-010 route-observation contract vectors", () => {
     expect(fixture.routeObservation.fieldKinds).toEqual(FIELD_KINDS);
     expect(fixture.routeObservation.rawIdPattern).toBe(RAW_ID_PATTERN_SOURCE);
     expect(fixture.routeObservation.sensitivePrefixes).toEqual(SENSITIVE_PREFIXES);
+    expect([...fixture.routeObservation.sensitivePrefixes].sort()).toEqual(SENSITIVE_PREFIXES);
   });
 
   it.each(fixture.routeObservation.derivationVectors)(
@@ -510,6 +627,26 @@ describe("CTRL-010 route-observation contract vectors", () => {
       expect(vector.expectedTag).toMatch(TAG_PATTERN);
       expect(message.at(-1)).not.toBe(0x0a);
       expect(message.at(-1)).not.toBe(0x00);
+    },
+  );
+
+  it.each(fixture.routeObservation.edgeTrimVectors.cases)(
+    "trims the complete edge set without changing bytes for $name",
+    (vector) => {
+      const matrix = fixture.routeObservation.edgeTrimVectors;
+      const scalar = materializeScalarCodePoint(vector.scalarCodePointHex);
+      const secret = `${scalar}${matrix.secretCore}${scalar}`;
+      const key = referenceSecretBytes(secret);
+      const fieldKind = requireFieldKind(matrix.fieldKind);
+      const message = referenceMessage(fieldKind, matrix.rawId);
+
+      expect(key.toString("hex")).toBe(matrix.expectedTrimmedSecretUtf8Hex);
+      expect(message.toString("hex")).toBe(matrix.expectedMessageUtf8Hex);
+      expect(observeRouteId(matrix.rawId, matrix.fieldKind, secret)).toEqual({
+        kind: "tagged",
+        value: matrix.expectedTag,
+      });
+      expect(matrix.expectedTag).toMatch(TAG_PATTERN);
     },
   );
 
@@ -562,9 +699,41 @@ describe("CTRL-010 route-observation contract vectors", () => {
       "unknown_field_kind",
     );
   });
+
+  it("keeps portable vector names and fixed vocabularies complete and unique", () => {
+    const nameGroups = [
+      fixture.routeObservation.derivationVectors.map((vector) => vector.name),
+      fixture.routeObservation.edgeTrimVectors.cases.map((vector) => vector.name),
+      fixture.routeObservation.dropVectors.map((vector) => vector.name),
+      fixture.routeObservation.secretErrorVectors.map((vector) => vector.name),
+    ];
+    for (const names of nameGroups) {
+      expect(new Set(names).size).toBe(names.length);
+    }
+    expect(
+      new Set(
+        fixture.routeObservation.dropVectors.flatMap((vector) =>
+          "expectedReason" in vector ? [vector.expectedReason] : [],
+        ),
+      ),
+    ).toEqual(new Set<DropReason>(["not_string", "invalid_ascii_grammar", "sensitive_prefix"]));
+    expect(new Set(fixture.routeObservation.secretErrorVectors.map((vector) => vector.expectedCode))).toEqual(
+      new Set(SECRET_ERROR_CODES),
+    );
+    expect(new Set(fixture.executionSnapshot.errors.map((value) => value.reason))).toEqual(
+      new Set(ERROR_REASONS),
+    );
+  });
 });
 
 describe("CTRL-010 execution-snapshot contract vectors", () => {
+  it.each(fixture.priceSnapshotValidation.successes)(
+    "accepts the complete current price shape $name",
+    ({ value }) => {
+      expect(() => validatePriceSnapshotShape(value)).not.toThrow();
+    },
+  );
+
   it.each(fixture.executionSnapshot.successes)(
     "accepts the strict request-frozen success vector $name",
     ({ value }) => {
@@ -582,6 +751,100 @@ describe("CTRL-010 execution-snapshot contract vectors", () => {
 
     expect(Object.hasOwn(deepseekComponents, "input_cache_write")).toBe(false);
     expect(mimoComponents.input_cache_write).toBe("0");
+  });
+
+  it("freezes every field of each registered sample price independently", () => {
+    const amountDrift = deepseekSuccess();
+    requireRecord(
+      requireRecord(amountDrift.priceSnapshot, "price").components,
+      "components",
+    ).output = "4500000001";
+    expect(caughtCode(() => validateExecutionSnapshot(amountDrift))).toBe(
+      "price_registry_mismatch",
+    );
+
+    const currencyDrift = deepseekSuccess();
+    requireRecord(currencyDrift.priceSnapshot, "price").currency = "USD";
+    expect(caughtCode(() => validateExecutionSnapshot(currencyDrift))).toBe(
+      "price_registry_mismatch",
+    );
+
+    const inventedFreeWrite = deepseekSuccess();
+    requireRecord(
+      requireRecord(inventedFreeWrite.priceSnapshot, "price").components,
+      "components",
+    ).input_cache_write = "0";
+    expect(caughtCode(() => validateExecutionSnapshot(inventedFreeWrite))).toBe(
+      "price_registry_mismatch",
+    );
+
+    const omittedFreeWrite = structuredClone(
+      fixture.executionSnapshot.successes[1].value,
+    ) as unknown as ReferenceRecord;
+    delete requireRecord(
+      requireRecord(omittedFreeWrite.priceSnapshot, "price").components,
+      "components",
+    ).input_cache_write;
+    expect(caughtCode(() => validateExecutionSnapshot(omittedFreeWrite))).toBe(
+      "price_registry_mismatch",
+    );
+  });
+
+  it("accepts bigint maximum and rejects every neighboring noncanonical nanos form", () => {
+    expect(fixture.executionSnapshot.successes[0].value.routeSnapshot.configGeneration).toBe(
+      MAX_POSTGRES_BIGINT.toString(),
+    );
+    const maximum = structuredClone(
+      fixture.priceSnapshotValidation.successes[0].value,
+    ) as unknown as ReferenceRecord;
+    expect(maximum.components).toMatchObject({
+      input_standard: MAX_POSTGRES_BIGINT.toString(),
+    });
+    expect(() => validatePriceSnapshotShape(maximum)).not.toThrow();
+
+    const invalidValues: unknown[] = [
+      "9223372036854775808",
+      -1,
+      "-1",
+      "+1",
+      "1.0",
+      "01",
+    ];
+    for (const value of invalidValues) {
+      const invalid = structuredClone(maximum);
+      requireRecord(invalid.components, "components").input_standard = value;
+      expect(caughtCode(() => validatePriceSnapshotShape(invalid))).toBe(
+        "price_component_input_standard",
+      );
+    }
+  });
+
+  it("validates openai_gpt56_v1 parameters independently and exactly", () => {
+    const valid = structuredClone(
+      fixture.priceSnapshotValidation.successes[1].value,
+    ) as unknown as ReferenceRecord;
+    expect(() => validatePriceSnapshotShape(valid)).not.toThrow();
+
+    const missingCacheWrite = structuredClone(valid);
+    delete requireRecord(missingCacheWrite.components, "components").input_cache_write;
+    expect(caughtCode(() => validatePriceSnapshotShape(missingCacheWrite))).toBe(
+      "price_required_component",
+    );
+
+    const wrongParameter = structuredClone(valid);
+    requireRecord(
+      requireRecord(requireRecord(wrongParameter.parameters, "parameters").longContext, "longContext"),
+      "longContext",
+    ).thresholdInputTokens = 0;
+    expect(caughtCode(() => validatePriceSnapshotShape(wrongParameter))).toBe(
+      "openai_long_context_thresholdInputTokens",
+    );
+
+    const extraParameter = structuredClone(valid);
+    requireRecord(extraParameter.parameters, "parameters").mode = "latest";
+    expect(caughtCode(() => validatePriceSnapshotShape(extraParameter))).toBe(
+      "openai_parameters_keys",
+    );
   });
 
   it("rejects missing and extra keys in every result branch", () => {
@@ -681,9 +944,12 @@ describe("CTRL-010 execution-snapshot contract vectors", () => {
     );
 
     const calculatorDrift = deepseekSuccess();
-    requireRecord(calculatorDrift.priceSnapshot, "price").calculatorKind = "openai_gpt56_v1";
+    const calculatorPrice = requireRecord(calculatorDrift.priceSnapshot, "price");
+    calculatorPrice.calculatorKind = "openai_gpt56_v1";
+    requireRecord(calculatorPrice.components, "components").input_cache_write = "0";
+    calculatorPrice.parameters = { longContext: null };
     expect(caughtCode(() => validateExecutionSnapshot(calculatorDrift))).toBe(
-      "price_calculator",
+      "price_registry_mismatch",
     );
 
     const legalDrift = deepseekSuccess();
