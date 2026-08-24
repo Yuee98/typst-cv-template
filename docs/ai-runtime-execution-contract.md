@@ -235,4 +235,6 @@ Any failure is fail-closed and causes no provider transmission. Start-attempt se
 
 The current success vectors cover DeepSeek off-peak pricing with an omitted cache-write component and MiMo peak pricing with an explicit free cache-write component. They are contract examples, not activation, current-price authority, legal evidence, or permission to call either provider.
 
+The runtime IDs and hashes in those portable examples are synthetic shape values. The independent revision-1 reference validates their encoding and the snapshot's intra-object bindings; it does not and cannot attest membership in the future RT-009A runtime registry. Production acceptance MUST layer the code-owned exact runtime-pair lookup on top, and passing this fixture alone can never authorize attempt start or network transmission.
+
 A change that only adds a new profile example may append a vector if all revision-1 grammars and shapes remain unchanged. Any widening or reinterpretation of fields, whitespace, bytes, denylist behavior, result vocabulary, or JSON shape requires a new domain/schema version and a separately reviewed migration path.
