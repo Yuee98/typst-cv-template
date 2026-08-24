@@ -18,12 +18,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { markPolishProviderStarted } from "@/server/polish/quota";
 
 import {
+  completePayload,
+  SettlementHarness,
+} from "./provider-attempt-settlement-fixtures";
+import { runOwnerSql } from "./runtime-contract-fixtures";
+import {
   configureFeature,
   createServiceClient,
   createTestUser,
   currentMinuteBucket,
   deleteTestUser,
-  FEATURE_CONFIG_DEFAULTS,
   getGlobalStartedCount,
   getLedgerRow,
   getUsageRow,
@@ -35,16 +39,63 @@ import {
   type TestUser,
 } from "./helpers";
 
+const PROTECTED_HISTORY_TABLES = [
+  "user_terms_acceptances",
+  "ai_provider_profiles",
+  "ai_provider_profile_versions",
+  "ai_price_versions",
+  "ai_price_components",
+  "ai_routing_policy_versions",
+  "ai_service_runtime_contract_versions",
+  "ai_service_runtime_target_versions",
+  "ai_service_runtime_contract_targets",
+  "ai_legal_manifest_versions",
+  "ai_legal_bundle_versions",
+  "ai_legal_bundle_manifests",
+] as const;
+
 function daysAgoIso(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString();
 }
 
+function snapshotProtectedHistory(): string {
+  const catalogPairs = PROTECTED_HISTORY_TABLES.map(
+    (table) => String.raw`
+      '${table}', (
+        select coalesce(
+          pg_catalog.jsonb_agg(
+            pg_catalog.to_jsonb(history_row)
+            order by pg_catalog.to_jsonb(history_row)::text
+          ),
+          '[]'::jsonb
+        )
+        from public.${table} as history_row
+      )`,
+  ).join(",");
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    select pg_catalog.jsonb_build_object(${catalogPairs})::text;
+  `);
+  const snapshot = result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .findLast((line) => line.startsWith("{"));
+  if (!snapshot) {
+    throw new Error("protected history snapshot returned no JSON");
+  }
+  return snapshot;
+}
+
 describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () => {
   let service: SupabaseClient;
+  let harness: SettlementHarness;
   const users: TestUser[] = [];
 
   beforeAll(async () => {
     service = createServiceClient();
+    harness = new SettlementHarness(service);
   });
 
   async function makeUser(label: string): Promise<TestUser> {
@@ -79,7 +130,11 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
     if (error) {
       throw new Error(`reconcile failed: ${error.message}`);
     }
-    return data as { releasedCount: number; abandonedCount: number };
+    return data as {
+      releasedCount: number;
+      abandonedCount: number;
+      latencyOverflowCount: number;
+    };
   }
 
   beforeEach(async () => {
@@ -91,10 +146,81 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
   });
 
   afterAll(async () => {
-    await configureFeature(service, { ...FEATURE_CONFIG_DEFAULTS });
+    await harness.cleanup();
     for (const user of users) {
       await deleteTestUser(service, user.id);
     }
+  });
+
+  it("freezes the zero-argument invoker cleanup contract and its exact delete scope", () => {
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      do $assertions$
+      declare
+        v_cleanup pg_catalog.pg_proc%rowtype;
+        v_delete_targets text[];
+      begin
+        if (
+          select pg_catalog.count(*)
+          from pg_catalog.pg_proc
+          where pronamespace = 'public'::pg_catalog.regnamespace
+            and proname = 'cleanup_ai_polish_metadata'
+        ) <> 1 then
+          raise exception 'cleanup must have exactly one overload';
+        end if;
+
+        select * into strict v_cleanup
+        from pg_catalog.pg_proc
+        where oid = 'public.cleanup_ai_polish_metadata()'::regprocedure;
+
+        if v_cleanup.prosecdef
+           or v_cleanup.provolatile <> 'v'
+           or v_cleanup.proconfig is distinct from array['search_path=""']::text[]
+           or v_cleanup.prorettype <> 'jsonb'::regtype
+           or v_cleanup.pronargs <> 0
+           or v_cleanup.pronargdefaults <> 0 then
+          raise exception 'cleanup catalog contract drifted';
+        end if;
+        if not pg_catalog.has_function_privilege(
+          'service_role', v_cleanup.oid, 'EXECUTE'
+        ) then
+          raise exception 'service_role lacks cleanup execute';
+        end if;
+        if pg_catalog.has_function_privilege('anon', v_cleanup.oid, 'EXECUTE')
+           or pg_catalog.has_function_privilege(
+             'authenticated', v_cleanup.oid, 'EXECUTE'
+           )
+           or exists (
+             select 1
+             from pg_catalog.aclexplode(v_cleanup.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'end-user role can execute cleanup';
+        end if;
+
+        select pg_catalog.array_agg(
+          (matched.delete_target)[1]
+          order by (matched.delete_target)[1]
+        )
+        into v_delete_targets
+        from pg_catalog.regexp_matches(
+          v_cleanup.prosrc,
+          'delete[[:space:]]+from[[:space:]]+public\.([a-z0-9_]+)',
+          'gi'
+        ) as matched(delete_target);
+
+        if v_delete_targets is distinct from array[
+          'ai_global_usage_daily',
+          'ai_profile_usage_daily',
+          'ai_rate_minutes',
+          'ai_request_ledger',
+          'ai_usage_daily'
+        ]::text[] then
+          raise exception 'cleanup delete scope drifted: %', v_delete_targets;
+        end if;
+      end;
+      $assertions$;
+    `);
   });
 
   it("releases stale 'reserved' rows and refunds their quota", async () => {
@@ -105,7 +231,11 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
 
     await backdate(reservationId, { reserved_at: minutesAgoIso(2) });
     const result = await reconcile();
-    expect(result).toEqual({ releasedCount: 1, abandonedCount: 0 });
+    expect(result).toEqual({
+      releasedCount: 1,
+      abandonedCount: 0,
+      latencyOverflowCount: 0,
+    });
 
     const row = await getLedgerRow(service, reservationId);
     expect(row).toMatchObject({
@@ -120,7 +250,11 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
     expect((await getUsageRow(service, user.id))?.request_count).toBe(3);
 
     // Idempotent: nothing left to reconcile.
-    expect(await reconcile()).toEqual({ releasedCount: 0, abandonedCount: 0 });
+    expect(await reconcile()).toEqual({
+      releasedCount: 0,
+      abandonedCount: 0,
+      latencyOverflowCount: 0,
+    });
   });
 
   it("abandons stale 'provider_started' rows, refunds quota, keeps the global count", async () => {
@@ -135,7 +269,11 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
       provider_started_at: minutesAgoIso(2),
     });
     const result = await reconcile();
-    expect(result).toEqual({ releasedCount: 0, abandonedCount: 1 });
+    expect(result).toEqual({
+      releasedCount: 0,
+      abandonedCount: 1,
+      latencyOverflowCount: 0,
+    });
 
     const row = await getLedgerRow(service, reservationId);
     expect(row).toMatchObject({
@@ -157,12 +295,42 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
     const reservationId = await reserveFresh(user);
 
     const result = await reconcile();
-    expect(result).toEqual({ releasedCount: 0, abandonedCount: 0 });
+    expect(result).toEqual({
+      releasedCount: 0,
+      abandonedCount: 0,
+      latencyOverflowCount: 0,
+    });
     expect((await getLedgerRow(service, reservationId))?.state).toBe("reserved");
   });
 
   it("cleanup deletes rows past retention and keeps everything recent", async () => {
     const user = await makeUser("cleanup");
+    await harness.setup();
+
+    const cascadeUser = await harness.makeUser("cleanup-cascade");
+    const cascadeReservation = await harness.reserveV2(cascadeUser);
+    const cascadeAttempt = await harness.startAttempt(
+      cascadeReservation.reservationId,
+      1,
+    );
+    await harness.complete(completePayload(cascadeAttempt.attemptId));
+    await harness.finalize(cascadeReservation.reservationId);
+    await backdate(cascadeReservation.reservationId, {
+      reserved_at: daysAgoIso(91),
+      finalized_at: daysAgoIso(91),
+    });
+
+    const { data: currentAiTerms, error: currentAiTermsError } =
+      await service.rpc("current_ai_terms_version");
+    expect(currentAiTermsError).toBeNull();
+    const { error: acceptanceError } = await service
+      .from("user_terms_acceptances")
+      .insert({
+        user_id: cascadeUser.id,
+        document_key: "ai_terms",
+        version: currentAiTerms as string,
+      });
+    expect(acceptanceError).toBeNull();
 
     // --- seed old + recent rows directly (service_role) ---
     // rate_minutes: 2-day retention.
@@ -233,14 +401,47 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
     });
     expect(oldGlobalError).toBeNull();
 
+    const { error: oldProfileError } = await service
+      .from("ai_profile_usage_daily")
+      .insert({
+        day: utcDaysAgo(91),
+        profile_version_id: harness.fixture.profileVersionId,
+        billing_currency: "CNY",
+        request_count: 7,
+        cost_incomplete_count: 1,
+      });
+    expect(oldProfileError).toBeNull();
+    const { error: boundaryProfileError } = await service
+      .from("ai_profile_usage_daily")
+      .insert({
+        day: utcDaysAgo(90),
+        profile_version_id: harness.fixture.profileVersionId,
+        billing_currency: "CNY",
+        request_count: 8,
+        cost_incomplete_count: 1,
+      });
+    expect(boundaryProfileError).toBeNull();
+
+    const { data: attemptBeforeCleanup, error: attemptBeforeCleanupError } =
+      await service
+        .from("ai_provider_attempt_ledger")
+        .select("attempt_id")
+        .eq("attempt_id", cascadeAttempt.attemptId)
+        .single();
+    expect(attemptBeforeCleanupError).toBeNull();
+    expect(attemptBeforeCleanup?.attempt_id).toBe(cascadeAttempt.attemptId);
+
+    const historyBeforeCleanup = snapshotProtectedHistory();
+
     // --- run the cleanup ---
     const { data, error } = await service.rpc("cleanup_ai_polish_metadata");
     expect(error).toBeNull();
-    expect(data).toMatchObject({
+    expect(data).toEqual({
       rateMinutesDeleted: 1,
-      ledgerDeleted: 1,
+      ledgerDeleted: 2,
       usageDailyDeleted: 1,
       globalUsageDailyDeleted: 1,
+      profileUsageDailyDeleted: 1,
     });
 
     // --- old rows gone ---
@@ -262,6 +463,24 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
       .select("*")
       .eq("day", utcDaysAgo(91));
     expect(oldGlobal).toEqual([]);
+    const { data: oldProfile } = await service
+      .from("ai_profile_usage_daily")
+      .select("*")
+      .eq("day", utcDaysAgo(91))
+      .eq("profile_version_id", harness.fixture.profileVersionId);
+    expect(oldProfile).toEqual([]);
+
+    expect(
+      await getLedgerRow(service, cascadeReservation.reservationId),
+    ).toBeNull();
+    const { data: attemptAfterCleanup, error: attemptAfterCleanupError } =
+      await service
+        .from("ai_provider_attempt_ledger")
+        .select("attempt_id")
+        .eq("attempt_id", cascadeAttempt.attemptId)
+        .maybeSingle();
+    expect(attemptAfterCleanupError).toBeNull();
+    expect(attemptAfterCleanup).toBeNull();
 
     // --- recent rows kept ---
     expect(await getLedgerRow(service, recentFinalizedId)).not.toBeNull();
@@ -275,5 +494,28 @@ describe.skipIf(!RUN_DB_TESTS)("stale reconciliation & cleanup (real DB)", () =>
       .eq("user_id", user.id)
       .eq("minute_bucket", currentMinuteBucket());
     expect(freshBuckets).toHaveLength(1);
+
+    const { data: boundaryProfile, error: boundaryProfileReadError } =
+      await service
+        .from("ai_profile_usage_daily")
+        .select("request_count")
+        .eq("day", utcDaysAgo(90))
+        .eq("profile_version_id", harness.fixture.profileVersionId)
+        .eq("billing_currency", "CNY")
+        .single();
+    expect(boundaryProfileReadError).toBeNull();
+    expect(boundaryProfile?.request_count).toBe(8);
+
+    const { data: acceptanceAfterCleanup, error: acceptanceReadError } =
+      await service
+        .from("user_terms_acceptances")
+        .select("version")
+        .eq("user_id", cascadeUser.id)
+        .eq("document_key", "ai_terms")
+        .single();
+    expect(acceptanceReadError).toBeNull();
+    expect(acceptanceAfterCleanup?.version).toBe(currentAiTerms);
+
+    expect(snapshotProtectedHistory()).toBe(historyBeforeCleanup);
   });
 });
