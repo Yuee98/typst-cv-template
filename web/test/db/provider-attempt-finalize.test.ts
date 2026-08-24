@@ -927,11 +927,110 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     expect(child.data?.status).toBe("succeeded");
   });
 
+  it("classifies nullable quota and unsafe V2 metadata casts as caller faults before daily mutation", async () => {
+    const cases: Array<{
+      label: string;
+      quotaCharged: boolean | null;
+      metadata: Record<string, unknown>;
+    }> = [
+      {
+        label: "quota-null",
+        quotaCharged: null,
+        metadata: { usage_schema_version: "attempt_v2" },
+      },
+      {
+        label: "item-string",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", item_count: "1" },
+      },
+      {
+        label: "item-negative",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", item_count: -1 },
+      },
+      {
+        label: "item-fraction",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", item_count: 1.5 },
+      },
+      {
+        label: "item-overflow",
+        quotaCharged: true,
+        metadata: {
+          usage_schema_version: "attempt_v2",
+          item_count: 2_147_483_648,
+        },
+      },
+      {
+        label: "context-string",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", context_level: "1" },
+      },
+      {
+        label: "context-negative",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", context_level: -1 },
+      },
+      {
+        label: "context-high",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", context_level: 3 },
+      },
+      {
+        label: "context-object",
+        quotaCharged: true,
+        metadata: { usage_schema_version: "attempt_v2", context_level: {} },
+      },
+    ];
+
+    await harness.activateFreshRouteFixture();
+    for (const entry of cases) {
+      const value = await completed(`v2-caller-${entry.label}`);
+      const before = await settlementSnapshot(
+        value.user.id,
+        value.reservation.reservationId,
+      );
+      expect(before.profile).toEqual([]);
+      const result = await service.rpc("finalize_ai_polish_request", {
+        p_reservation_id: value.reservation.reservationId,
+        p_status: "succeeded",
+        p_quota_charged: entry.quotaCharged as boolean,
+        p_provider_billable: true,
+        p_usage: null,
+        p_metadata: entry.metadata,
+      });
+      expect(result.error).toBeNull();
+      expect(result.data).toEqual({ ok: false, reason: "INTERNAL_ERROR" });
+      expect(
+        await settlementSnapshot(
+          value.user.id,
+          value.reservation.reservationId,
+        ),
+      ).toEqual(before);
+    }
+
+    const valid = await completed("v2-caller-metadata-boundaries");
+    expect(
+      await harness.finalize(valid.reservation.reservationId, {
+        metadata: {
+          usage_schema_version: "attempt_v2",
+          item_count: 2_147_483_647,
+          context_level: 2,
+        },
+      }),
+    ).toMatchObject({ ok: true, alreadyFinalized: false });
+    expect(await getLedgerRow(service, valid.reservation.reservationId)).toMatchObject({
+      item_count: 2_147_483_647,
+      context_level: 2,
+    });
+    await harness.activateFreshRouteFixture();
+  });
+
   it("rejects an in-progress attempt and parent count drift before settlement", async () => {
     const inProgress = await started("finalize-in-progress");
     expect(
       await harness.finalize(inProgress.reservation.reservationId),
-    ).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
+    ).toEqual({ ok: false, reason: "ATTEMPT_IN_PROGRESS" });
     expect(await getLedgerRow(service, inProgress.reservation.reservationId)).toMatchObject({
       state: "reserved",
       attempt_count: 1,

@@ -1005,7 +1005,7 @@ begin
     if v_attempt.status = 'started' then
       return pg_catalog.jsonb_build_object(
         'ok', false,
-        'reason', 'SERVICE_UNAVAILABLE'
+        'reason', 'ATTEMPT_IN_PROGRESS'
       );
     end if;
 
@@ -1277,6 +1277,32 @@ begin
       'ok', false,
       'reason', 'AMBIGUOUS_USAGE_SOURCE'
     );
+  end if;
+
+  -- These values are caller input on attempt_v2. Validate every cast
+  -- mechanically before aggregation can enter the daily settlement block.
+  if p_quota_charged is null
+     or (
+       v_metadata_object ? 'item_count'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'item_count') <> 'null'
+       and case
+         when pg_catalog.jsonb_typeof(v_metadata_object -> 'item_count')
+           is distinct from 'number' then true
+         when (v_metadata_object ->> 'item_count')
+           !~ '^(0|[1-9][0-9]*)$' then true
+         else (v_metadata_object ->> 'item_count')::numeric > c_max_integer
+       end
+     )
+     or (
+       v_metadata_object ? 'context_level'
+       and pg_catalog.jsonb_typeof(v_metadata_object -> 'context_level') <> 'null'
+       and (
+         pg_catalog.jsonb_typeof(v_metadata_object -> 'context_level')
+           is distinct from 'number'
+         or v_metadata_object ->> 'context_level' not in ('0', '1', '2')
+       )
+     ) then
+    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INTERNAL_ERROR');
   end if;
   if v_row.attempt_count is distinct from v_child_count
      or v_attempt_nos not in (
