@@ -1,8 +1,8 @@
 # AI provider attempt settlement contract
 
-> 状态：revision 1；语义来源 CTRL-009 revision 5（独立 review CLOSED）；等待本 tracked relocation 的 exact-head material-equivalence review  
-> 日期：2026-08-24  
-> 适用基线：DB-008A 及后续 attempt lifecycle；DB-010/DB-011/RT-009 必须遵循本文  
+> 状态：revision 1；语义来源 CTRL-009 revision 5（独立 review CLOSED）；等待本 tracked relocation 的 exact-head material-equivalence review
+> 日期：2026-08-24
+> 适用基线：DB-008A 及后续 attempt lifecycle；DB-010/DB-011/RT-009 必须遵循本文
 > Governance：本文是内部技术契约，不属于 legal bundle `2026-08-23-multi-provider-v1` 的 evidence graph
 
 ## 0. 与 frozen provider contract 的关系
@@ -11,7 +11,7 @@
 
 本文是其 §4、§5.5、§5.6 的 attempt/request settlement 技术补充。若两者在 attempt source selection、聚合、成本 reconciliation、daily ledger、checked arithmetic 或锁序细节上存在差异，后续 DB-010、DB-011 与 RT-009 以本文为准；provider、recipient、submitted data、subject、region/transfer、cache/retention/training、terms acceptance、route disclosure 与用户显示等 legal/user-facing facts 仍只由 frozen provider contract、legal descriptors 与 terms authority 管理。
 
-本文不得加入当前 legal evidence graph。只有 material legal/user-facing fact 变化才允许在独立 governance gate 中创建新 manifest IDs、bundle version/root、terms acceptance version 与 runtime pair；不能通过改写旧 hash 或旧 immutable ID 更新历史 bundle。
+本文不得加入当前 legal evidence graph。本文的纯内部 settlement 规则本身不轮换 legal descriptors、manifest、bundle 或 terms；但任何 descriptor/subdescriptor/referent、fact/evidence graph 或 bundle composition/hash 变化，都必须在独立 governance gate 中按 frozen provider contract §8.1 创建新的 immutable ID/hash；bundle graph/composition/hash 变化必须创建新的 `legal_bundle_version`/root 与 exact-equal `ai_terms_version`，旧 acceptance 不授权，任何 material change 必须重新接受。runtime pair 遵循 frozen runtime-attestation contract：会改变 attested runtime contract 的 code-only implementation change，即使 legal bundle 不变，也必须按其规则创建新 runtime contract/pair。事实未变化的复核只记 audit；不得改写旧 hash 或旧 immutable ID。
 
 ## 1. 目的与边界
 
