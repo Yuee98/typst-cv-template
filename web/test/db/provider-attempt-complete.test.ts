@@ -39,6 +39,56 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
     return { user, reservation, attempt };
   }
 
+  async function completionSnapshot(
+    userId: string,
+    reservationId: string,
+    attemptId: string,
+  ) {
+    const [attempt, parent, userDaily, globalDaily, profileDaily, rateMinutes] =
+      await Promise.all([
+        service
+          .from("ai_provider_attempt_ledger")
+          .select("*")
+          .eq("attempt_id", attemptId)
+          .single(),
+        service
+          .from("ai_request_ledger")
+          .select("*")
+          .eq("reservation_id", reservationId)
+          .single(),
+        service.from("ai_usage_daily").select("*").eq("user_id", userId).order("day"),
+        service.from("ai_global_usage_daily").select("*").order("day"),
+        service
+          .from("ai_profile_usage_daily")
+          .select("*")
+          .eq("profile_version_id", harness.fixture.profileVersionId)
+          .order("day"),
+        service
+          .from("ai_rate_minutes")
+          .select("*")
+          .eq("user_id", userId)
+          .order("minute_bucket"),
+      ]);
+    for (const result of [
+      attempt,
+      parent,
+      userDaily,
+      globalDaily,
+      profileDaily,
+      rateMinutes,
+    ]) {
+      expect(result.error).toBeNull();
+    }
+    return {
+      attempt: attempt.data,
+      parent: parent.data,
+      userDaily: userDaily.data,
+      globalDaily: globalDaily.data,
+      profileDaily: profileDaily.data,
+      rateMinutes: rateMinutes.data,
+    };
+  }
+
   it("freezes the exact definer signature and service-role-only ACL", async () => {
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
@@ -259,6 +309,64 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
       failure_stage: "canceled",
       latency_ms: 0,
     });
+  });
+
+  it("validates observed endpoints against the locked attempt registry before mutation", async () => {
+    const expectedEndpoint = "https://api.deepseek.com/chat/completions";
+    for (const [label, endpoint] of [
+      ["null", null],
+      ["valid", expectedEndpoint],
+    ] as const) {
+      const { attempt } = await startedAttempt(`attempt-endpoint-${label}`);
+      expect(
+        await harness.complete(
+          completePayload(attempt.attemptId, {
+            p_route: routeObservation({ actual_upstream_endpoint: endpoint }),
+          }),
+        ),
+      ).toMatchObject({ ok: true, alreadyCompleted: false });
+      const row = await service
+        .from("ai_provider_attempt_ledger")
+        .select("status,actual_upstream_endpoint")
+        .eq("attempt_id", attempt.attemptId)
+        .single();
+      expect(row.error).toBeNull();
+      expect(row.data).toEqual({
+        status: "succeeded",
+        actual_upstream_endpoint: endpoint,
+      });
+    }
+
+    for (const [label, endpoint] of [
+      ["wrong-safe-url", "https://example.com/chat/completions"],
+      ["secret", "sk-deepseek-secret"],
+      ["query", `${expectedEndpoint}?api_key=secret`],
+      ["userinfo", "https://user:pass@api.deepseek.com/chat/completions"],
+      ["path", `${expectedEndpoint}/extra`],
+    ] as const) {
+      const { user, reservation, attempt } = await startedAttempt(
+        `attempt-endpoint-${label}`,
+      );
+      const before = await completionSnapshot(
+        user.id,
+        reservation.reservationId,
+        attempt.attemptId,
+      );
+      expect(
+        await harness.complete(
+          completePayload(attempt.attemptId, {
+            p_route: routeObservation({ actual_upstream_endpoint: endpoint }),
+          }),
+        ),
+      ).toEqual({ ok: false, reason: "INTERNAL_ERROR" });
+      expect(
+        await completionSnapshot(
+          user.id,
+          reservation.reservationId,
+          attempt.attemptId,
+        ),
+      ).toEqual(before);
+    }
   });
 
   it("derives cost reconciliation and treats caller status only as an assertion", async () => {

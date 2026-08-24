@@ -203,6 +203,7 @@ declare
   v_gateway_request_id text;
   v_provider_request_id text;
   v_actual_upstream_endpoint text;
+  v_expected_upstream_endpoint text;
   v_actual_model_id text;
   v_router_attempt_count smallint;
   v_estimated_currency text;
@@ -403,8 +404,29 @@ begin
   v_actual_upstream_endpoint := p_route ->> 'actual_upstream_endpoint';
   v_actual_model_id := p_route ->> 'actual_model_id';
 
+  -- Exact mirror of the DB-008 rejection-only registry, derived from the
+  -- locked attempt snapshot rather than the mutable current profile row.
+  v_expected_upstream_endpoint := case
+    when v_attempt.endpoint_alias = 'deepseek_official'
+     and v_attempt.gateway_kind = 'direct_deepseek'
+     and v_attempt.wire_api_kind = 'chat_completions_v1'
+      then 'https://api.deepseek.com/chat/completions'
+    when v_attempt.endpoint_alias = 'mimo_cn_official'
+     and v_attempt.gateway_kind = 'direct_mimo'
+     and v_attempt.wire_api_kind = 'responses_v1'
+      then 'https://api.xiaomimimo.com/v1/responses'
+    else null
+  end;
+
   if (v_gateway_request_id is not null and v_gateway_request_id !~ '^hmac-sha256:[0-9a-f]{64}$')
      or (v_provider_request_id is not null and v_provider_request_id !~ '^hmac-sha256:[0-9a-f]{64}$')
+     or (
+       v_actual_upstream_endpoint is not null
+       and (
+         v_expected_upstream_endpoint is null
+         or v_actual_upstream_endpoint is distinct from v_expected_upstream_endpoint
+       )
+     )
      or (v_actual_model_id is not null and v_actual_model_id is distinct from v_request.model_id)
      or (
        pg_catalog.jsonb_typeof(p_route -> 'router_attempt_count') = 'number'
