@@ -58,9 +58,10 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'SERVICE_UNAVAILABLE');
   end if;
 
-  -- Lock and validate the complete child set before treating any row as an
-  -- admitted replay.  Every child mutation takes this same parent lock in the
-  -- table guard, so the ordered set is stable for the rest of the transaction.
+  -- Validate the complete child set before treating any row as an admitted
+  -- replay.  Every child mutation takes this same parent lock in the table
+  -- guard, so the ordered set is stable without taking child tuple locks in
+  -- the opposite order from a direct child update.
   select
     coalesce(
       array_agg(locked_attempt.attempt_no order by locked_attempt.attempt_no),
@@ -73,7 +74,6 @@ begin
     from public.ai_provider_attempt_ledger
     where reservation_id = p_reservation_id
     order by attempt_no
-    for share
   ) as locked_attempt;
 
   if v_request.attempt_count is distinct from v_child_count
