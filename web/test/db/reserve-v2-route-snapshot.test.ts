@@ -431,6 +431,12 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     });
   }
 
+  async function availabilityV1(userId: string) {
+    return service.rpc("get_ai_polish_availability_v1", {
+      p_user_id: userId,
+    });
+  }
+
   async function expectNoAdmissionRows(userId: string) {
     expect(await getUsageRow(service, userId)).toBeNull();
     expect(await getRateBuckets(service, userId)).toEqual([]);
@@ -509,6 +515,46 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       end;
       $$;
     `);
+  });
+
+  it("returns one coherent selected candidate and changes only exact-bundle acceptance", async () => {
+    const user = await createTestUser(service, "availability-route");
+    try {
+      const fixture = await createActiveFixture({ label: "availability-route" });
+      const expected = await expectedRoute(fixture);
+
+      const beforeAcceptance = await availabilityV1(user.id);
+      expect(beforeAcceptance.error).toBeNull();
+      expect(beforeAcceptance.data).toEqual({
+        enabled: true,
+        configGeneration: expected.config_generation,
+        routingPolicyVersionId: fixture.policyVersionId,
+        profileVersionId: fixture.selectedNode.profileVersionId,
+        legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
+        runtimeContractId: fixture.runtime.runtimeContractId,
+        runtimeContractSha256: fixture.runtime.runtimeContractSha256,
+        displayDisclosureKey: fixture.selectedNode.displayDisclosureKey,
+        termsAccepted: false,
+      });
+      await expectNoAdmissionRows(user.id);
+
+      const acceptance = await service.from("user_terms_acceptances").insert({
+        user_id: user.id,
+        document_key: "ai_terms",
+        version: INITIAL_LEGAL_BUNDLE_VERSION,
+      });
+      expect(acceptance.error).toBeNull();
+
+      const afterAcceptance = await availabilityV1(user.id);
+      expect(afterAcceptance.error).toBeNull();
+      expect(afterAcceptance.data).toEqual({
+        ...beforeAcceptance.data,
+        termsAccepted: true,
+      });
+      await expectNoAdmissionRows(user.id);
+    } finally {
+      await deleteTestUser(service, user.id);
+    }
   });
 
   it("denies anon/authenticated callers and direct service-role catalog reads", async () => {

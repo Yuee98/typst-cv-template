@@ -537,6 +537,230 @@ begin
 end;
 $$;
 
+-- Read-only, DB-authoritative availability for authenticated UI discovery.
+-- The function intentionally duplicates the reserve selector under the same
+-- lock order; reserve still recomputes and compares the route before mutation.
+create function public.get_ai_polish_availability_v1(
+  p_user_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_disabled jsonb;
+  v_config public.ai_feature_config%rowtype;
+  v_policy public.ai_routing_policy_versions%rowtype;
+  v_runtime public.ai_service_runtime_contract_versions%rowtype;
+  v_selected_profile record;
+  v_route_at timestamptz;
+  v_local_route_at timestamp without time zone;
+  v_local_weekday integer;
+  v_local_minute integer;
+  v_window jsonb;
+  v_selected_route jsonb;
+  v_selected_profile_version_id uuid;
+  v_terms_accepted boolean;
+begin
+  v_disabled := jsonb_build_object(
+    'enabled', false,
+    'configGeneration', null,
+    'routingPolicyVersionId', null,
+    'profileVersionId', null,
+    'legalBundleVersion', null,
+    'runtimeContractId', null,
+    'runtimeContractSha256', null,
+    'displayDisclosureKey', null,
+    'termsAccepted', false
+  );
+
+  if p_user_id is null then
+    return v_disabled;
+  end if;
+
+  perform 1
+  from auth.users
+  where id = p_user_id;
+
+  if not found then
+    return v_disabled;
+  end if;
+
+  begin
+    select * into v_config
+    from public.ai_feature_config
+    where id = true
+    for share;
+
+    if not found
+       or not v_config.ai_polish_enabled
+       or (
+         cardinality(v_config.enabled_user_allowlist) > 0
+         and not (p_user_id = any(v_config.enabled_user_allowlist))
+       )
+       or v_config.active_routing_policy_version_id is null then
+      return v_disabled;
+    end if;
+
+    select * into v_policy
+    from public.ai_routing_policy_versions
+    where id = v_config.active_routing_policy_version_id
+    for share;
+
+    if not found then
+      return v_disabled;
+    end if;
+
+    -- The sole route clock for selector, eligibility, and disclosure identity.
+    v_route_at := clock_timestamp();
+
+    perform public.validate_ai_routing_policy_row_v1(
+      v_policy,
+      'reserve',
+      v_route_at,
+      true
+    );
+
+    v_local_route_at := v_route_at at time zone 'Asia/Shanghai';
+    v_local_weekday := extract(isodow from v_local_route_at)::integer;
+    v_local_minute :=
+      extract(hour from v_local_route_at)::integer * 60
+      + extract(minute from v_local_route_at)::integer;
+    v_selected_route := v_policy.rules->'defaultRoute';
+
+    for v_window in
+      select value
+      from jsonb_array_elements(v_policy.rules->'windows')
+    loop
+      if v_local_minute >= (v_window->>'startMinute')::integer
+         and v_local_minute < (v_window->>'endMinute')::integer
+         and exists (
+           select 1
+           from jsonb_array_elements(v_window->'weekdays') as weekday(value)
+           where (weekday.value #>> '{}')::integer = v_local_weekday
+         ) then
+        v_selected_route := v_window->'route';
+        exit;
+      end if;
+    end loop;
+
+    v_selected_profile_version_id :=
+      (v_selected_route->>'profileVersionId')::uuid;
+
+    select * into v_runtime
+    from public.ai_service_runtime_contract_versions
+    where runtime_contract_id = v_policy.runtime_contract_id
+      and runtime_contract_sha256 = v_policy.runtime_contract_sha256
+    for share;
+
+    if not found or v_runtime.sealed_at is null then
+      return v_disabled;
+    end if;
+
+    perform 1
+    from public.ai_service_runtime_contract_targets as membership
+    join public.ai_service_runtime_target_versions as target
+      on target.runtime_target_id = membership.runtime_target_id
+     and target.runtime_target_sha256 = membership.runtime_target_sha256
+     and target.profile_key = membership.profile_key
+     and target.legal_manifest_id = membership.legal_manifest_id
+     and target.manifest_sha256 = membership.manifest_sha256
+     and target.route_descriptor_id = membership.route_descriptor_id
+     and target.route_descriptor_sha256 = membership.route_descriptor_sha256
+    where membership.runtime_contract_id = v_runtime.runtime_contract_id
+      and membership.runtime_contract_sha256 = v_runtime.runtime_contract_sha256;
+
+    if not found then
+      return v_disabled;
+    end if;
+
+    perform 1
+    from public.ai_provider_profiles as profile
+    join public.ai_provider_profile_versions as version
+      on version.profile_id = profile.id
+    where version.id in (
+      select distinct target.profile_version_id
+      from (
+        select (v_policy.rules->'defaultRoute'->>'profileVersionId')::uuid
+          as profile_version_id
+        union all
+        select (window_entry.value->'route'->>'profileVersionId')::uuid
+        from jsonb_array_elements(v_policy.rules->'windows') as window_entry(value)
+      ) as target
+    )
+    order by profile.id
+    for share of profile;
+
+    perform 1
+    from public.ai_provider_profile_versions as version
+    where version.id in (
+      select distinct target.profile_version_id
+      from (
+        select (v_policy.rules->'defaultRoute'->>'profileVersionId')::uuid
+          as profile_version_id
+        union all
+        select (window_entry.value->'route'->>'profileVersionId')::uuid
+        from jsonb_array_elements(v_policy.rules->'windows') as window_entry(value)
+      ) as target
+    )
+    order by version.id
+    for share;
+
+    perform 1
+    from public.ai_price_versions as price
+    where price.id in (
+      select distinct target.price_version_id
+      from (
+        select (v_policy.rules->'defaultRoute'->>'priceVersionId')::uuid
+          as price_version_id
+        union all
+        select (window_entry.value->'route'->>'priceVersionId')::uuid
+        from jsonb_array_elements(v_policy.rules->'windows') as window_entry(value)
+      ) as target
+    )
+    order by price.id
+    for share;
+
+    perform public.validate_ai_routing_policy_row_v1(
+      v_policy,
+      'reserve',
+      v_route_at,
+      false
+    );
+
+    select version.display_disclosure_key
+    into v_selected_profile
+    from public.ai_provider_profile_versions as version
+    where version.id = v_selected_profile_version_id;
+
+    if not found or v_selected_profile.display_disclosure_key is null then
+      return v_disabled;
+    end if;
+
+    v_terms_accepted := public.has_accepted_ai_legal_bundle(
+      p_user_id,
+      v_policy.legal_bundle_version
+    );
+
+    return jsonb_build_object(
+      'enabled', true,
+      'configGeneration', v_config.config_generation::text,
+      'routingPolicyVersionId', v_policy.id,
+      'profileVersionId', v_selected_profile_version_id,
+      'legalBundleVersion', v_policy.legal_bundle_version,
+      'runtimeContractId', v_runtime.runtime_contract_id,
+      'runtimeContractSha256', v_runtime.runtime_contract_sha256,
+      'displayDisclosureKey', v_selected_profile.display_disclosure_key,
+      'termsAccepted', v_terms_accepted
+    );
+  exception
+    when others then
+      return v_disabled;
+  end;
+end;
+$$;
+
 revoke all on function public.reserve_ai_polish_request_v2(
   uuid,
   uuid,
@@ -550,5 +774,11 @@ grant execute on function public.reserve_ai_polish_request_v2(
   uuid,
   jsonb
 ) to service_role;
+
+revoke all on function public.get_ai_polish_availability_v1(uuid)
+  from public, anon, authenticated, service_role;
+
+grant execute on function public.get_ai_polish_availability_v1(uuid)
+  to service_role;
 
 commit;
