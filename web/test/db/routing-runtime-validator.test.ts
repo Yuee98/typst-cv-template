@@ -5,54 +5,67 @@ import routingRulesFixture from "../fixtures/routing-rules-v1.json";
 import { createServiceClient, RUN_DB_TESTS } from "./helpers";
 import {
   authorSyntheticRuntimeContract,
+  authorSyntheticRuntimeContractSet,
   DEEPSEEK_LEGAL_MANIFEST_ID,
+  DEEPSEEK_LEGAL_MANIFEST_SHA256,
   INITIAL_LEGAL_BUNDLE_VERSION,
+  MIMO_LEGAL_MANIFEST_ID,
+  MIMO_LEGAL_MANIFEST_SHA256,
   runOwnerSql,
   sealPriceAsDatabaseOwner,
   transitionPolicyAsDatabaseOwner,
-  type SyntheticRuntimeContract,
+  type SyntheticRuntimeContractSet,
 } from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
 const PERMISSION_DENIED = "42501";
+
+interface RuntimeContractPair {
+  runtimeContractId: string;
+  runtimeContractSha256: string;
+}
 
 interface RouteFixture {
   profileId: string;
   profileKey: string;
   profileVersionId: string;
   priceVersionId: string;
-  runtime: SyntheticRuntimeContract;
+  runtime: RuntimeContractPair;
 }
 
-const FIXTURE_PROFILE_VERSION_IDS = new Set(
-  Object.values(routingRulesFixture.routes).map(({ profileVersionId }) =>
-    profileVersionId,
-  ),
-);
-const FIXTURE_PRICE_VERSION_IDS = new Set(
-  Object.values(routingRulesFixture.routes).map(({ priceVersionId }) =>
-    priceVersionId,
-  ),
-);
+interface SharedRoutingFixtureGraph {
+  deepseek: {
+    profileId: string;
+    profileKey: string;
+    profileVersionId: string;
+    offpeakPriceVersionId: string;
+    peakPriceVersionId: string;
+  };
+  mimo: {
+    profileId: string;
+    profileKey: string;
+    profileVersionId: string;
+    defaultPriceVersionId: string;
+  };
+  runtime: SyntheticRuntimeContractSet;
+  exactIdMap: ReadonlyMap<string, string>;
+}
 
-function mapFixtureRouteIds(value: unknown, route: RouteFixture): unknown {
+function mapFixtureRouteIds(
+  value: unknown,
+  exactIdMap: ReadonlyMap<string, string>,
+): unknown {
   if (typeof value === "string") {
-    if (FIXTURE_PROFILE_VERSION_IDS.has(value)) {
-      return route.profileVersionId;
-    }
-    if (FIXTURE_PRICE_VERSION_IDS.has(value)) {
-      return route.priceVersionId;
-    }
-    return value;
+    return exactIdMap.get(value) ?? value;
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => mapFixtureRouteIds(entry, route));
+    return value.map((entry) => mapFixtureRouteIds(entry, exactIdMap));
   }
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => [
         key,
-        mapFixtureRouteIds(entry, route),
+        mapFixtureRouteIds(entry, exactIdMap),
       ]),
     );
   }
@@ -179,6 +192,199 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     };
   }
 
+  async function createSharedProfileVersion(input: {
+    profileKey: string;
+    displayName: string;
+    gatewayKind: "direct_deepseek" | "direct_mimo";
+    modelVendor: string;
+    adapterKind: string;
+    wireApiKind: "chat_completions_v1" | "responses_v1";
+    credentialAlias: string;
+    endpointAlias: string;
+    modelId: string;
+    legalManifestId: string;
+    displayDisclosureKey: string;
+    configHashCharacter: string;
+  }) {
+    const { data: profile, error: profileError } = await service
+      .from("ai_provider_profiles")
+      .insert({
+        profile_key: input.profileKey,
+        display_name: input.displayName,
+        gateway_kind: input.gatewayKind,
+        model_vendor: input.modelVendor,
+      })
+      .select("id")
+      .single();
+    expect(profileError).toBeNull();
+
+    const { data: version, error: versionError } = await service
+      .from("ai_provider_profile_versions")
+      .insert({
+        profile_id: profile!.id,
+        version: 1,
+        adapter_kind: input.adapterKind,
+        wire_api_kind: input.wireApiKind,
+        credential_alias: input.credentialAlias,
+        endpoint_alias: input.endpointAlias,
+        model_id: input.modelId,
+        upstream_route: {},
+        capability_contract_id: "polish_v2",
+        cache_policy_id: "automatic_cache_v1",
+        legal_manifest_id: input.legalManifestId,
+        display_disclosure_key: input.displayDisclosureKey,
+        config: {},
+        config_sha256: input.configHashCharacter.repeat(64),
+      })
+      .select("id")
+      .single();
+    expect(versionError).toBeNull();
+
+    const validated = await service
+      .from("ai_provider_profile_versions")
+      .update({ status: "validated" })
+      .eq("id", version!.id);
+    expect(validated.error).toBeNull();
+
+    return {
+      profileId: profile!.id as string,
+      profileKey: input.profileKey,
+      profileVersionId: version!.id as string,
+    };
+  }
+
+  async function createSharedPriceVersion(input: {
+    profileVersionId: string;
+    pricingLane: "offpeak" | "peak" | "default";
+    snapshotHashCharacter: string;
+  }): Promise<string> {
+    const { data: price, error: priceError } = await service
+      .from("ai_price_versions")
+      .insert({
+        profile_version_id: input.profileVersionId,
+        pricing_lane: input.pricingLane,
+        version: 1,
+        currency: "CNY",
+        calculator_kind: "linear_token_v1",
+        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
+        source_url: `https://example.com/shared-${input.pricingLane}-price`,
+        source_checked_at: new Date().toISOString(),
+        source_snapshot_sha256: input.snapshotHashCharacter.repeat(64),
+        parameters: {},
+      })
+      .select("id")
+      .single();
+    expect(priceError).toBeNull();
+
+    const componentInsert = await service.from("ai_price_components").insert(
+      ["input_standard", "input_cache_read", "output"].map((component) => ({
+        price_version_id: price!.id,
+        component,
+        nanos_per_million: 1,
+      })),
+    );
+    expect(componentInsert.error).toBeNull();
+    sealPriceAsDatabaseOwner(price!.id);
+    return price!.id as string;
+  }
+
+  async function createSharedRoutingFixtureGraph(): Promise<SharedRoutingFixtureGraph> {
+    const suffix = crypto.randomUUID();
+    const deepseek = await createSharedProfileVersion({
+      profileKey: `test.validator.shared.deepseek.${suffix}`,
+      displayName: "Shared DeepSeek route",
+      gatewayKind: "direct_deepseek",
+      modelVendor: "deepseek",
+      adapterKind: "deepseek_chat_v1",
+      wireApiKind: "chat_completions_v1",
+      credentialAlias: "deepseek_api_key",
+      endpointAlias: "deepseek_official",
+      modelId: "deepseek-v4-flash",
+      legalManifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
+      displayDisclosureKey: "deepseek.official",
+      configHashCharacter: "4",
+    });
+    const mimo = await createSharedProfileVersion({
+      profileKey: `test.validator.shared.mimo.${suffix}`,
+      displayName: "Shared MiMo route",
+      gatewayKind: "direct_mimo",
+      modelVendor: "mimo",
+      adapterKind: "mimo_responses_v1",
+      wireApiKind: "responses_v1",
+      credentialAlias: "mimo_api_key",
+      endpointAlias: "mimo_cn_official",
+      modelId: "mimo-v2.5-pro",
+      legalManifestId: MIMO_LEGAL_MANIFEST_ID,
+      displayDisclosureKey: "mimo.official",
+      configHashCharacter: "5",
+    });
+
+    const offpeakPriceVersionId = await createSharedPriceVersion({
+      profileVersionId: deepseek.profileVersionId,
+      pricingLane: "offpeak",
+      snapshotHashCharacter: "6",
+    });
+    const peakPriceVersionId = await createSharedPriceVersion({
+      profileVersionId: deepseek.profileVersionId,
+      pricingLane: "peak",
+      snapshotHashCharacter: "7",
+    });
+    const defaultPriceVersionId = await createSharedPriceVersion({
+      profileVersionId: mimo.profileVersionId,
+      pricingLane: "default",
+      snapshotHashCharacter: "8",
+    });
+
+    const runtime = authorSyntheticRuntimeContractSet([
+      {
+        profileKey: deepseek.profileKey,
+        legalManifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
+        manifestSha256: DEEPSEEK_LEGAL_MANIFEST_SHA256,
+      },
+      {
+        profileKey: mimo.profileKey,
+        legalManifestId: MIMO_LEGAL_MANIFEST_ID,
+        manifestSha256: MIMO_LEGAL_MANIFEST_SHA256,
+      },
+    ]);
+    const exactIdMap = new Map<string, string>([
+      [
+        routingRulesFixture.routes.deepseekOffpeak.profileVersionId,
+        deepseek.profileVersionId,
+      ],
+      [
+        routingRulesFixture.routes.deepseekOffpeak.priceVersionId,
+        offpeakPriceVersionId,
+      ],
+      [
+        routingRulesFixture.routes.deepseekPeak.priceVersionId,
+        peakPriceVersionId,
+      ],
+      [
+        routingRulesFixture.routes.mimoDefault.profileVersionId,
+        mimo.profileVersionId,
+      ],
+      [
+        routingRulesFixture.routes.mimoDefault.priceVersionId,
+        defaultPriceVersionId,
+      ],
+    ]);
+
+    return {
+      deepseek: {
+        ...deepseek,
+        offpeakPriceVersionId,
+        peakPriceVersionId,
+      },
+      mimo: {
+        ...mimo,
+        defaultPriceVersionId,
+      },
+      runtime,
+      exactIdMap,
+    };
+  }
+
   function validRules(route: RouteFixture): Record<string, unknown> {
     return {
       schemaVersion: "routing_rules_v1",
@@ -193,7 +399,25 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
   async function createPolicy(
     route: RouteFixture,
     rules: Record<string, unknown> = validRules(route),
+    options: {
+      runtime?: RuntimeContractPair;
+      missingDefaultProfileVersionId?: string;
+    } = {},
   ) {
+    const defaultRoute = rules.defaultRoute;
+    const mappedDefaultProfileVersionId =
+      typeof defaultRoute === "object" &&
+      defaultRoute !== null &&
+      "profileVersionId" in defaultRoute &&
+      typeof defaultRoute.profileVersionId === "string"
+        ? defaultRoute.profileVersionId
+        : options.missingDefaultProfileVersionId;
+    if (mappedDefaultProfileVersionId === undefined) {
+      throw new Error(
+        "policy fixture requires a mapped defaultRoute profile or explicit malformed-case fallback",
+      );
+    }
+    const runtime = options.runtime ?? route.runtime;
     const { data, error } = await service
       .from("ai_routing_policy_versions")
       .insert({
@@ -201,10 +425,10 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
         version: 1,
         timezone: "Asia/Shanghai",
         rules,
-        default_profile_version_id: route.profileVersionId,
+        default_profile_version_id: mappedDefaultProfileVersionId,
         legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-        runtime_contract_id: route.runtime.runtimeContractId,
-        runtime_contract_sha256: route.runtime.runtimeContractSha256,
+        runtime_contract_id: runtime.runtimeContractId,
+        runtime_contract_sha256: runtime.runtimeContractSha256,
         config_sha256: "3".repeat(64),
       })
       .select("id,status")
@@ -296,9 +520,93 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
   });
 
   it("matches every shared routing-rules shape and window-count case", async () => {
-    const route = await createRouteFixture({ label: "shared-rules-parity" });
-    sealPriceAsDatabaseOwner(route.priceVersionId);
-    await validateProfile(route);
+    const graph = await createSharedRoutingFixtureGraph();
+    const route: RouteFixture = {
+      profileId: graph.deepseek.profileId,
+      profileKey: graph.deepseek.profileKey,
+      profileVersionId: graph.deepseek.profileVersionId,
+      priceVersionId: graph.deepseek.offpeakPriceVersionId,
+      runtime: graph.runtime,
+    };
+    const priceIds = [
+      graph.deepseek.offpeakPriceVersionId,
+      graph.deepseek.peakPriceVersionId,
+      graph.mimo.defaultPriceVersionId,
+    ];
+    expect(graph.deepseek.profileVersionId).not.toBe(
+      graph.mimo.profileVersionId,
+    );
+    expect(new Set(priceIds).size).toBe(3);
+    expect(graph.runtime.targets).toHaveLength(2);
+    expect(graph.runtime.targets.map(({ profileKey }) => profileKey).sort()).toEqual(
+      [graph.deepseek.profileKey, graph.mimo.profileKey].sort(),
+    );
+    expect(
+      graph.runtime.targets
+        .map(({ profileKey, legalManifestId, manifestSha256 }) => ({
+          profileKey,
+          legalManifestId,
+          manifestSha256,
+        }))
+        .sort((left, right) => left.profileKey.localeCompare(right.profileKey)),
+    ).toEqual(
+      [
+        {
+          profileKey: graph.deepseek.profileKey,
+          legalManifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
+          manifestSha256: DEEPSEEK_LEGAL_MANIFEST_SHA256,
+        },
+        {
+          profileKey: graph.mimo.profileKey,
+          legalManifestId: MIMO_LEGAL_MANIFEST_ID,
+          manifestSha256: MIMO_LEGAL_MANIFEST_SHA256,
+        },
+      ].sort((left, right) => left.profileKey.localeCompare(right.profileKey)),
+    );
+
+    const exactPlaceholderIds = new Set([
+      routingRulesFixture.routes.deepseekOffpeak.profileVersionId,
+      routingRulesFixture.routes.deepseekOffpeak.priceVersionId,
+      routingRulesFixture.routes.deepseekPeak.profileVersionId,
+      routingRulesFixture.routes.deepseekPeak.priceVersionId,
+      routingRulesFixture.routes.mimoDefault.profileVersionId,
+      routingRulesFixture.routes.mimoDefault.priceVersionId,
+    ]);
+    expect(graph.exactIdMap.size).toBe(5);
+    expect([...graph.exactIdMap.keys()].sort()).toEqual(
+      [...exactPlaceholderIds].sort(),
+    );
+    const unknownUuid = crypto.randomUUID();
+    expect(mapFixtureRouteIds(unknownUuid, graph.exactIdMap)).toBe(unknownUuid);
+    expect(
+      mapFixtureRouteIds(
+        "11111111-1111-4111-8111-11111111111A",
+        graph.exactIdMap,
+      ),
+    ).toBe("11111111-1111-4111-8111-11111111111A");
+
+    const { data: prices, error: pricesError } = await service
+      .from("ai_price_versions")
+      .select("id,profile_version_id,pricing_lane,components_sealed_at")
+      .in("id", priceIds);
+    expect(pricesError).toBeNull();
+    expect(prices).toHaveLength(3);
+    const priceById = new Map(prices!.map((price) => [price.id, price]));
+    expect(priceById.get(graph.deepseek.offpeakPriceVersionId)).toMatchObject({
+      profile_version_id: graph.deepseek.profileVersionId,
+      pricing_lane: "offpeak",
+    });
+    expect(priceById.get(graph.deepseek.peakPriceVersionId)).toMatchObject({
+      profile_version_id: graph.deepseek.profileVersionId,
+      pricing_lane: "peak",
+    });
+    expect(priceById.get(graph.mimo.defaultPriceVersionId)).toMatchObject({
+      profile_version_id: graph.mimo.profileVersionId,
+      pricing_lane: "default",
+    });
+    for (const price of prices!) {
+      expect(price.components_sealed_at).toBeTruthy();
+    }
 
     const sharedValidCases = [
       ...Object.entries(routingRulesFixture.validRules).map(([name, value]) => ({
@@ -310,7 +618,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     for (const sharedCase of sharedValidCases) {
       const rules = mapFixtureRouteIds(
         sharedCase.value,
-        route,
+        graph.exactIdMap,
       ) as Record<string, unknown>;
       const policy = await createPolicy(route, rules);
       expect(() =>
@@ -321,9 +629,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     for (const sharedCase of routingRulesFixture.invalidCases) {
       const rules = mapFixtureRouteIds(
         sharedCase.value,
-        route,
+        graph.exactIdMap,
       ) as Record<string, unknown>;
-      const policy = await createPolicy(route, rules);
+      const policy = await createPolicy(route, rules, {
+        missingDefaultProfileVersionId: graph.deepseek.profileVersionId,
+      });
       const transition = transitionPolicyAsDatabaseOwner(
         policy.id,
         "validated",
@@ -343,8 +653,8 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
           startMinute: index,
           endMinute: index + 1,
           route: {
-            profileVersionId: route.profileVersionId,
-            priceVersionId: route.priceVersionId,
+            profileVersionId: graph.deepseek.profileVersionId,
+            priceVersionId: graph.deepseek.offpeakPriceVersionId,
           },
         })),
       };
@@ -362,6 +672,42 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
         expect(transition.stderr).toMatch(/top-level shape is invalid/i);
       }
     }
+
+    const wrongOwnershipRules = mapFixtureRouteIds(
+      routingRulesFixture.validRules.g4InitialProvider,
+      graph.exactIdMap,
+    ) as Record<string, unknown>;
+    const wrongOwnershipWindows = wrongOwnershipRules.windows as Array<{
+      route: { profileVersionId: string; priceVersionId: string };
+    }>;
+    wrongOwnershipWindows[0].route.priceVersionId =
+      graph.deepseek.peakPriceVersionId;
+    const wrongOwnershipPolicy = await createPolicy(route, wrongOwnershipRules);
+    const wrongOwnershipTransition = transitionPolicyAsDatabaseOwner(
+      wrongOwnershipPolicy.id,
+      "validated",
+      { expectFailure: true },
+    );
+    expect(wrongOwnershipTransition.stderr).toMatch(/price is unavailable/i);
+
+    const deepseekOnlyRuntime = authorSyntheticRuntimeContract({
+      profileKey: graph.deepseek.profileKey,
+      legalManifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
+      manifestSha256: DEEPSEEK_LEGAL_MANIFEST_SHA256,
+    });
+    const missingMimoRules = mapFixtureRouteIds(
+      routingRulesFixture.validRules.g4InitialProvider,
+      graph.exactIdMap,
+    ) as Record<string, unknown>;
+    const missingMimoPolicy = await createPolicy(route, missingMimoRules, {
+      runtime: deepseekOnlyRuntime,
+    });
+    const missingMimoTransition = transitionPolicyAsDatabaseOwner(
+      missingMimoPolicy.id,
+      "validated",
+      { expectFailure: true },
+    );
+    expect(missingMimoTransition.stderr).toMatch(/legal\/runtime coverage/i);
   });
 
   it("requires exact runtime profile/manifest coverage and disclosure", async () => {

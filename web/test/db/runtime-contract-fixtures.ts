@@ -278,3 +278,170 @@ export function authorSyntheticRuntimeContract(options: {
     routeDescriptorSha256,
   };
 }
+
+export interface SyntheticRuntimeTargetInput {
+  profileKey: string;
+  legalManifestId: string;
+  manifestSha256: string;
+}
+
+export interface SyntheticRuntimeContractSet {
+  runtimeContractId: string;
+  runtimeContractSha256: string;
+  targets: ReadonlyArray<
+    Omit<SyntheticRuntimeContract, "runtimeContractId" | "runtimeContractSha256">
+  >;
+}
+
+export function authorSyntheticRuntimeContractSet(
+  inputs: ReadonlyArray<SyntheticRuntimeTargetInput>,
+): SyntheticRuntimeContractSet {
+  if (inputs.length === 0) {
+    throw new Error("synthetic runtime contract set requires at least one target");
+  }
+  if (new Set(inputs.map(({ profileKey }) => profileKey)).size !== inputs.length) {
+    throw new Error("synthetic runtime contract profile keys must be unique");
+  }
+
+  const suffix = crypto.randomUUID();
+  const runtimeContractId = `test-runtime-contract-set.${suffix}`;
+  const runtimeContractSha256 = sha256(runtimeContractId);
+  const targets = inputs.map((input, index) => {
+    const runtimeTargetId = `test-runtime-target-set.${index}.${suffix}`;
+    const routeDescriptorId = `test-route-descriptor-set.${index}.${suffix}`;
+    return {
+      runtimeTargetId,
+      runtimeTargetSha256: sha256(runtimeTargetId),
+      profileKey: input.profileKey,
+      legalManifestId: input.legalManifestId,
+      manifestSha256: input.manifestSha256,
+      routeDescriptorId,
+      routeDescriptorSha256: sha256(routeDescriptorId),
+    };
+  });
+  const runtimeTargetSetSha256 = sha256(
+    [...targets]
+      .sort((left, right) =>
+        Buffer.from(left.runtimeTargetId).compare(Buffer.from(right.runtimeTargetId)),
+      )
+      .map(
+        ({ runtimeTargetId, runtimeTargetSha256 }) =>
+          `${Buffer.byteLength(runtimeTargetId, "utf8")}:${runtimeTargetId}:${runtimeTargetSha256}`,
+      )
+      .join("\n"),
+  );
+
+  for (const value of [
+    runtimeContractId,
+    ...targets.flatMap(
+      ({ profileKey, legalManifestId, runtimeTargetId, routeDescriptorId }) => [
+        profileKey,
+        legalManifestId,
+        runtimeTargetId,
+        routeDescriptorId,
+      ],
+    ),
+  ]) {
+    if (!CODE_ID.test(value)) {
+      throw new Error(`synthetic runtime code id is invalid: ${value}`);
+    }
+  }
+  for (const value of [
+    runtimeContractSha256,
+    runtimeTargetSetSha256,
+    ...targets.flatMap(
+      ({ manifestSha256, runtimeTargetSha256, routeDescriptorSha256 }) => [
+        manifestSha256,
+        runtimeTargetSha256,
+        routeDescriptorSha256,
+      ],
+    ),
+  ]) {
+    if (!LOWER_HEX_64.test(value)) {
+      throw new Error("synthetic runtime hash is invalid");
+    }
+  }
+
+  const targetValues = targets
+    .map(
+      (target) => String.raw`(
+        ${sqlLiteral(target.runtimeTargetId)},
+        ${sqlLiteral(target.runtimeTargetSha256)},
+        ${sqlLiteral(target.profileKey)},
+        ${sqlLiteral(target.legalManifestId)},
+        ${sqlLiteral(target.manifestSha256)},
+        ${sqlLiteral(target.routeDescriptorId)},
+        ${sqlLiteral(target.routeDescriptorSha256)}
+      )`,
+    )
+    .join(",\n");
+  const membershipValues = targets
+    .map(
+      (target) => String.raw`(
+        ${sqlLiteral(runtimeContractId)},
+        ${sqlLiteral(runtimeContractSha256)},
+        ${sqlLiteral(target.runtimeTargetId)},
+        ${sqlLiteral(target.runtimeTargetSha256)},
+        ${sqlLiteral(target.profileKey)},
+        ${sqlLiteral(target.legalManifestId)},
+        ${sqlLiteral(target.manifestSha256)},
+        ${sqlLiteral(target.routeDescriptorId)},
+        ${sqlLiteral(target.routeDescriptorSha256)}
+      )`,
+    )
+    .join(",\n");
+
+  runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    begin;
+    insert into public.ai_service_runtime_target_versions (
+      runtime_target_id,
+      runtime_target_sha256,
+      profile_key,
+      legal_manifest_id,
+      manifest_sha256,
+      route_descriptor_id,
+      route_descriptor_sha256
+    ) values ${targetValues};
+
+    insert into public.ai_service_runtime_contract_versions (
+      runtime_contract_id,
+      runtime_contract_sha256,
+      reviewed_source_commit_oid,
+      legal_bundle_version,
+      bundle_contract_sha256,
+      runtime_target_set_sha256
+    ) values (
+      ${sqlLiteral(runtimeContractId)},
+      ${sqlLiteral(runtimeContractSha256)},
+      'sha1:0123456789abcdef0123456789abcdef01234567',
+      ${sqlLiteral(INITIAL_LEGAL_BUNDLE_VERSION)},
+      ${sqlLiteral(INITIAL_LEGAL_BUNDLE_SHA256)},
+      ${sqlLiteral(runtimeTargetSetSha256)}
+    );
+
+    insert into public.ai_service_runtime_contract_targets (
+      runtime_contract_id,
+      runtime_contract_sha256,
+      runtime_target_id,
+      runtime_target_sha256,
+      profile_key,
+      legal_manifest_id,
+      manifest_sha256,
+      route_descriptor_id,
+      route_descriptor_sha256
+    ) values ${membershipValues};
+
+    update public.ai_service_runtime_contract_versions
+    set sealed_at = greatest(clock_timestamp(), created_at)
+    where runtime_contract_id = ${sqlLiteral(runtimeContractId)}
+      and runtime_contract_sha256 = ${sqlLiteral(runtimeContractSha256)};
+    commit;
+  `);
+
+  return {
+    runtimeContractId,
+    runtimeContractSha256,
+    targets,
+  };
+}
