@@ -225,6 +225,9 @@ type CostReconciliationStatus =
 - 原生币种逐 attempt 保存。CNY 与 USD 不允许在 DB/runtime 指标中直接求和；换汇只能是单独、带汇率版本的报表层。
 - `providerReportedCost` 与 `estimatedCost` 分列；provider 没有报告时是 `null/not_available`。
 - 任一必需 usage 桶未知、price component 缺失或 calculator 不认识时，estimated cost 为 `null/incomplete_usage`，不能给出低估值。
+- complete RPC 从 canonical estimated/reported amounts 推导 attempt reconciliation：estimate NULL 为 `incomplete_usage`；estimate non-NULL 且 reported NULL 为 `not_available`；两者都有时才按相等/不等得到 `matched|mismatch`。初版不接受 caller 用 `pending` 自由改变事实；request-level `pending` 只由“多个 applicable attempts 部分有 reported amount”机械产生。
+- `provider_billable=false` 的 attempt 不属于 provider-cost-applicable；reported amount 只允许 NULL 或同 frozen currency 的精确 0。0 仅保留在 attempt row，不进入 request sum；非零/异币种是 invariant failure。
+- request local cost 可以合法为 complete-null：全部 attempts 明确不计费且没有 estimated amount 时，`knownEstimatedCost=null`、`estimatedCost=null`，且不包含 `estimated_cost` marker；这与“成本未知”不同。
 - 金额以 `1 currency unit = 1_000_000_000 nanos` 存储，跨 JSON 使用十进制字符串。
 - DeepSeek 历史迁移只使用用户确认的旧 CNY 版本：hit ¥0.02/M、miss ¥1/M、output ¥2/M；不补造历史 attempt。
 
@@ -465,11 +468,18 @@ complete_ai_polish_provider_attempt(
 
 ### 5.5 Finalize request（保持现有签名）
 
-现有 `finalize_ai_polish_request(...)` 签名和返回字段保持。迁移期间用 `p_metadata.usage_schema_version` 区分唯一事实源：
+现有 `finalize_ai_polish_request(uuid,text,boolean,boolean,jsonb,jsonb)` 六参数类型/顺序/default、`returns jsonb`、`SECURITY INVOKER`、`set search_path=''`、返回字段保持，且不创建 overload。函数先 `request FOR UPDATE -> NOT_FOUND -> finalized exact readback`；只有 unfinished request 才解析新 V2 参数。finalized 后即使 caller 换 selector、提交非空 usage/scalar metadata或冲突 billability，仍返回同一 `alreadyFinalized:true` 且不触碰 daily。
 
-- 缺失或 `legacy_v1`：沿用现有 `p_usage` request aggregate 路径。
+迁移期间用 `p_metadata.usage_schema_version` 作为 caller source selector；它不直接写入同名 request 列：
+
+- 真正 V1 request（`route_schema_version IS NULL`）缺失或 `legacy_v1`：沿用现有 `p_usage`/metadata request aggregate 路径，包括既有 `p_metadata.attempt_count` 行为。
 - `attempt_v2`：`p_usage` 必须为 `null`，RPC 在事务中从 completed attempts 聚合并结算一次。
 - `attempt_v2` 同时提交非空 `p_usage` 必须拒绝为 `AMBIGUOUS_USAGE_SOURCE`，防止双计。
+- 任一 child attempt 存在时，legacy selector拒绝；`attempt_v2` 零 child也拒绝，不能制造零 usage。
+- `route_snapshot_v1` 零 child只允许 pre-start release：parent仍 `reserved`、`attempt_count=0`、`provider_started_at=NULL`，caller status=`released`、quota charged=false、provider billable=false、legacy selector且 `p_usage` 为 SQL NULL/JSON null。V1 mark污染、成功状态或任意 legacy usage均 fail closed。
+- V2 source 对 `p_usage` 的 absent 定义精确为 SQL NULL 或 JSON `null`；`{}`/array/scalar不算 absent。strict metadata/selector shape只施加于 unfinished V2/child路径，不顺带改变真正 V1 compatibility。
+- `attempt_v2` 的 caller `p_provider_billable` 只是 assertion，必须 `IS NOT DISTINCT FROM` locked attempts 的 derived aggregate；request只能保存 derived value。
+- fresh `attempt_v2` 固定保存 `usage_schema_version='request_usage_aggregate_v2'`、`cost_basis='frozen_price_version_v1'` 以及 locked attempts 唯一且与 parent price一致的 native currency。
 
 V2 DB 生命周期统一使用锁顺序：
 
@@ -481,6 +491,7 @@ request row -> attempts by attempt_no -> daily/request aggregates -> global aggr
 - `attempt_v2` finalize 先锁 request，再按 attempt number 锁全部 attempts；存在任何 `started` attempt 时返回 `ATTEMPT_IN_PROGRESS`，不得提前结算。
 - reconciler 也先锁 request/attempt，把 stale `started` attempt 原子改为 terminal `unknown`，然后才能 finalize incomplete request。
 - 因上述拒绝与锁序，complete 不允许在已 finalized request 后产生一笔未进入 aggregate 的 late fact；late provider outcome 只能形成不含正文的 reconciliation alert，不能静默改历史账本。
+- caller/input contract faults（NOT_FOUND、invalid status、malformed/unknown/ambiguous/wrong source、no attempts、clean zero-child tuple或billability assertion不匹配）映射到现有 public `INTERNAL_ERROR`；locked-ledger/lifecycle/invariant faults（attempt in progress、row-set/count/snapshot/price/currency漂移、V1-mark污染、impossible reported cost、mixed currency或checked overflow）映射 `SERVICE_UNAVAILABLE`；细分 reason只用于无内容日志/测试。
 
 Finalize 不创建 attempt，不修改任何 frozen snapshot，也不覆盖已完成 attempt 的 usage/cost。重复 finalize 保持现有幂等语义。
 
@@ -515,10 +526,31 @@ interface RequestUsageAggregateV2 {
 
 - `knownUsage` 对所有 `usage !== null` attempts 的 core buckets 求和。若 attempt 1 已知 100 tokens、attempt 2 usage unavailable，则保留已知下界 100，同时 `usageComplete=false` 且包含 `attempt_usage`；不能把已知值清零，也不能把它声称为完整总量。
 - `inputCacheWriteTokens` 只有在所有相关 attempts 都报告数值时求和；任一 attempt 为 `null/unavailable` 则 aggregate 为 `null` 并包含 `input_cache_write`。`reasoningTokens` 同理，但它始终只是 output 明细。
-- `usageComplete=true` 仅当所有 admitted attempts 都 terminal、均有 observation，且每个 `NormalizedUsageV2.usageComplete=true`。可选 cache-write/reasoning 明细是否影响本字段由 profile calculator capability 决定，并仍通过 `incompleteFields` 公开。
+- `usageComplete=true` 仅当所有 admitted attempts 都 terminal、均为 observed，且每个 `NormalizedUsageV2.usageComplete=true`；observed-but-incomplete 同样加入 `attempt_usage`。可选 cache-write/reasoning 明细是否影响本字段由 profile calculator capability 决定，并仍通过 `incompleteFields` 公开。
 - `providerBillable`：任一 attempt 为 true 则 request 为 true；全部 terminal attempts 明确 false 才为 false；否则为 null。
 - `knownEstimatedCost` 累加所有已知、同一 frozen currency 的 attempt estimated cost。若任何 `providerBillable !== false` 的 attempt 成本未知，则 `estimatedCost=null`、包含 `estimated_cost`；否则 `estimatedCost=knownEstimatedCost`。不同币种是 invariant violation，不求和。
-- request row 保存上述 aggregate；attempt rows 始终保留逐次事实。daily aggregate 同时保存 known cost 与 incomplete count，不能用 SQL `sum(nullable)` 的结果冒充完整成本。
+- marker present 强制 request estimated cost NULL；marker absent 强制 `estimated_cost_nanos IS NOT DISTINCT FROM known_estimated_cost_nanos`，因此两者同时 NULL 的明确不计费状态合法。attempt_v2 request 即使所有金额 NULL，也必须保存 frozen native currency。
+
+Request cache conservation 仍不放宽任何 per-attempt CHECK：all-not-applicable 使用 `total=standard`；所有 write 都 numeric 且至少一个 reported 时使用 `total=read+write+standard`；任一 write missing/unavailable 的 request aggregate 使用 `write=NULL` 且 `total >= read+standard`。不等号差值是其他 attempts 已进入 total 但 request 不能完整公开的 cache-write lower bound。
+
+同一次 V2 settlement 还必须一次投影旧 token columns，保持兼容报表总量守恒：
+
+```text
+legacy input_cached_tokens   = input_cache_read_tokens
+legacy input_uncached_tokens = input_total_tokens - input_cache_read_tokens
+legacy output_tokens         = output_tokens
+```
+
+request row、`ai_usage_daily`、`ai_global_usage_daily` 使用同一 checked values各写一次；不能用 `input_standard_tokens` 漏掉 cache-write，也不能再额外加 write。
+
+Provider-reported request aggregate 只对 `provider_billable IS DISTINCT FROM false` attempts计算。全部 applicable amounts齐全时才求和；partial/none 不保存 partial sum。local estimate incomplete优先为 `incomplete_usage`（但 all-reported 时可保留完整 provider sum）；无 applicable为 `not_available`；local complete且 all-reported为 `matched|mismatch`；partial为 `pending`；none为 `not_available`。
+
+`ai_profile_usage_daily` 按 immutable profile/native currency结算一次：
+
+- cache-write/reasoning 使用 exact-or-NULL sticky sum；existing或本 request任一 NULL 则保持 NULL；
+- local known cost以 `coalesce(request known,0)` 累加；`cost_incomplete_count` 只在 request有 `estimated_cost` marker时加一。完整 identity 是 `(known=0, estimated=0, count=0)`；count=0 时 daily estimated必须 `IS NOT DISTINCT FROM` known，count>0 时必须 NULL；
+- provider-reported daily amount在尚无完整 request amount时保持 NULL，之后只累加完整 request amounts；存在 applicable但 request amount不完整时 `provider_report_incomplete_count` 加一，no-applicable不加；
+- 每个 token/cost/counter arithmetic 都 checked；任一 overflow 回滚 request、quota 与所有 daily mutations，不能留下 partial settlement。
 
 ## 6. HTTP availability 与 route expectation
 
