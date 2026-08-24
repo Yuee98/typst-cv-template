@@ -28,6 +28,106 @@ function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+interface OwnerMutationResult {
+  data: Record<string, unknown> | null;
+  error: { code: string; message: string } | null;
+}
+
+function ownerMutationResult(
+  sql: string,
+  expectFailure: boolean,
+): OwnerMutationResult {
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    \set VERBOSITY verbose
+    \pset format unaligned
+    \pset tuples_only on
+    ${sql}
+  `, { expectFailure });
+  if (expectFailure) {
+    const match = result.stderr.match(/ERROR:\s+([0-9A-Z]{5}):\s+([^\r\n]+)/u);
+    return {
+      data: null,
+      error: {
+        code: match?.[1] ?? "XXXXX",
+        message: match?.[2] ?? result.stderr,
+      },
+    };
+  }
+  const jsonLine = result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .findLast((line) => line.startsWith("{"));
+  return {
+    data: jsonLine ? JSON.parse(jsonLine) as Record<string, unknown> : null,
+    error: null,
+  };
+}
+
+function ownerInsertAttempt(
+  value: Record<string, unknown>,
+  expectFailure = false,
+): OwnerMutationResult {
+  const completeValue = {
+    attempt_id: crypto.randomUUID(),
+    status: "started",
+    started_at: new Date().toISOString(),
+    ...value,
+  };
+  return ownerMutationResult(String.raw`
+    with inserted as (
+      insert into public.ai_provider_attempt_ledger
+      select (pg_catalog.jsonb_populate_record(
+        null::public.ai_provider_attempt_ledger,
+        ${sqlLiteral(JSON.stringify(completeValue))}::jsonb
+      )).*
+      returning *
+    )
+    select pg_catalog.row_to_json(inserted)::text from inserted;
+  `, expectFailure);
+}
+
+function ownerUpdateAttempt(
+  attemptId: string,
+  value: Record<string, unknown>,
+  expectFailure = false,
+): OwnerMutationResult {
+  const keys = Object.keys(value);
+  if (keys.some((key) => !/^[a-z][a-z0-9_]*$/u.test(key))) {
+    throw new Error("unsafe owner attempt fixture column");
+  }
+  const assignments = keys.map((key) => `${key} = patch.${key}`).join(",\n");
+  return ownerMutationResult(String.raw`
+    with patch as (
+      select (pg_catalog.jsonb_populate_record(
+        null::public.ai_provider_attempt_ledger,
+        ${sqlLiteral(JSON.stringify(value))}::jsonb
+      )).*
+    ), updated as (
+      update public.ai_provider_attempt_ledger as attempt
+      set ${assignments}
+      from patch
+      where attempt.attempt_id = ${sqlLiteral(attemptId)}::uuid
+      returning attempt.*
+    )
+    select pg_catalog.row_to_json(updated)::text from updated;
+  `, expectFailure);
+}
+
+function ownerDeleteAttempt(
+  attemptId: string,
+  expectFailure = false,
+): OwnerMutationResult {
+  return ownerMutationResult(String.raw`
+    with deleted as (
+      delete from public.ai_provider_attempt_ledger
+      where attempt_id = ${sqlLiteral(attemptId)}::uuid
+      returning *
+    )
+    select pg_catalog.row_to_json(deleted)::text from deleted;
+  `, expectFailure);
+}
+
 interface FrozenFixture {
   reservationId: string;
   snapshot: Record<string, unknown>;
@@ -391,11 +491,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   }
 
   async function insertStarted(fixture: FrozenFixture, attemptNo = 1) {
-    return service
-      .from("ai_provider_attempt_ledger")
-      .insert(startedAttempt(fixture, attemptNo))
-      .select("attempt_id,status")
-      .single();
+    return ownerInsertAttempt(startedAttempt(fixture, attemptNo));
   }
 
   async function finalizeReservation(reservationId: string) {
@@ -423,6 +519,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       declare
         role_name text;
         privilege_name text;
+        column_name text;
       begin
         if (
           select count(*)
@@ -472,18 +569,98 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
           end loop;
         end loop;
 
+        if not has_table_privilege(
+          'service_role',
+          'public.ai_provider_attempt_ledger',
+          'SELECT'
+        ) then
+          raise exception 'service_role lacks attempt ledger SELECT';
+        end if;
         foreach privilege_name in array array[
-          'SELECT', 'INSERT', 'UPDATE', 'DELETE'
+          'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
         ] loop
-          if not has_table_privilege(
+          if has_table_privilege(
             'service_role',
             'public.ai_provider_attempt_ledger',
             privilege_name
           ) then
-            raise exception 'service_role lacks temporary DB-008 % grant',
+            raise exception 'service_role retains forbidden attempt ledger %',
               privilege_name;
           end if;
         end loop;
+
+        foreach privilege_name in array array['INSERT', 'UPDATE'] loop
+          if pg_catalog.has_any_column_privilege(
+            'service_role',
+            'public.ai_provider_attempt_ledger',
+            privilege_name
+          ) then
+            raise exception 'service_role retains % on an attempt column',
+              privilege_name;
+          end if;
+          for column_name in
+            select attribute.attname
+            from pg_catalog.pg_attribute as attribute
+            where attribute.attrelid =
+              'public.ai_provider_attempt_ledger'::pg_catalog.regclass
+              and attribute.attnum > 0
+              and not attribute.attisdropped
+            order by attribute.attnum
+          loop
+            if pg_catalog.has_column_privilege(
+              'service_role',
+              'public.ai_provider_attempt_ledger',
+              column_name,
+              privilege_name
+            ) then
+              raise exception 'service_role retains % on attempt column %',
+                privilege_name, column_name;
+            end if;
+          end loop;
+        end loop;
+
+        if (
+          select pg_catalog.count(*)
+          from pg_catalog.pg_constraint as constraint_row
+          where constraint_row.contype = 'f'
+            and constraint_row.confdeltype = 'c'
+            and (
+              constraint_row.conrelid =
+                'public.ai_provider_attempt_ledger'::pg_catalog.regclass
+              or constraint_row.confrelid =
+                'public.ai_provider_attempt_ledger'::pg_catalog.regclass
+            )
+        ) <> 1
+           or not exists (
+             select 1
+             from pg_catalog.pg_constraint as constraint_row
+             where constraint_row.contype = 'f'
+               and constraint_row.confdeltype = 'c'
+               and constraint_row.conrelid =
+                 'public.ai_provider_attempt_ledger'::pg_catalog.regclass
+               and constraint_row.confrelid =
+                 'public.ai_request_ledger'::pg_catalog.regclass
+               and constraint_row.conkey = array[
+                 (
+                   select attribute.attnum
+                   from pg_catalog.pg_attribute as attribute
+                   where attribute.attrelid = constraint_row.conrelid
+                     and attribute.attname = 'reservation_id'
+                     and not attribute.attisdropped
+                 )
+               ]::smallint[]
+               and constraint_row.confkey = array[
+                 (
+                   select attribute.attnum
+                   from pg_catalog.pg_attribute as attribute
+                   where attribute.attrelid = constraint_row.confrelid
+                     and attribute.attname = 'reservation_id'
+                     and not attribute.attisdropped
+                 )
+               ]::smallint[]
+           ) then
+          raise exception 'attempt cleanup cascade topology drifted';
+        end if;
 
         if has_function_privilege(
           'service_role',
@@ -497,13 +674,67 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     `);
   });
 
+  it("allows service-role reads but denies direct DML and every attempt row lock", async () => {
+    const fixture = await createReservation();
+    const inserted = await insertStarted(fixture);
+    expect(inserted.error).toBeNull();
+    const attemptId = inserted.data!.attempt_id as string;
+
+    const selected = runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      \pset format unaligned
+      \pset tuples_only on
+      begin;
+      set local role service_role;
+      select attempt_id
+      from public.ai_provider_attempt_ledger
+      where attempt_id = ${sqlLiteral(attemptId)}::uuid;
+      rollback;
+    `);
+    expect(selected.stdout).toContain(attemptId);
+
+    for (const statement of [
+      String.raw`insert into public.ai_provider_attempt_ledger (attempt_id)
+        values (${sqlLiteral(crypto.randomUUID())}::uuid)`,
+      String.raw`update public.ai_provider_attempt_ledger
+        set status = status
+        where attempt_id = ${sqlLiteral(attemptId)}::uuid`,
+      String.raw`delete from public.ai_provider_attempt_ledger
+        where attempt_id = ${sqlLiteral(attemptId)}::uuid`,
+      "truncate table public.ai_provider_attempt_ledger",
+    ]) {
+      const denied = runOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        \set VERBOSITY verbose
+        begin;
+        set local role service_role;
+        ${statement};
+        rollback;
+      `, { expectFailure: true });
+      expect(denied.stderr, statement).toMatch(/ERROR:\s+42501:/u);
+    }
+
+    const locked = runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      \set VERBOSITY verbose
+      begin;
+      set local role service_role;
+      select attempt_id
+      from public.ai_provider_attempt_ledger
+      where attempt_id = ${sqlLiteral(attemptId)}::uuid
+      for update;
+      rollback;
+    `, { expectFailure: true });
+    expect(locked.stderr).toMatch(/ERROR:\s+42501:/u);
+  });
+
   it("stores a frozen started attempt and rejects duplicate caller identity", async () => {
     const fixture = await createReservation();
-    const first = await service
-      .from("ai_provider_attempt_ledger")
-      .insert(startedAttempt(fixture))
-      .select("attempt_id,status,runtime_contract_id,runtime_contract_sha256")
-      .single();
+    const identity = crypto.randomUUID();
+    const first = ownerInsertAttempt({
+      ...startedAttempt(fixture),
+      attempt_id: identity,
+    });
     expect(first.error).toBeNull();
     expect(first.data).toMatchObject({
       status: "started",
@@ -511,9 +742,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       runtime_contract_sha256: runtimeContractSha256,
     });
 
-    const duplicate = await service
-      .from("ai_provider_attempt_ledger")
-      .insert(startedAttempt(fixture));
+    const duplicate = ownerInsertAttempt(startedAttempt(fixture), true);
     expect(duplicate.error?.code).toBe(UNIQUE_VIOLATION);
   });
 
@@ -542,9 +771,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     ] as const;
 
     for (const [label, attempt] of notNullCases) {
-      const result = await service
-        .from("ai_provider_attempt_ledger")
-        .insert(attempt);
+      const result = ownerInsertAttempt(attempt, true);
       expect(result.error?.code, label).toBe("23502");
     }
 
@@ -559,9 +786,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     ] as const;
 
     for (const [label, drift] of malformedCases) {
-      const result = await service
-        .from("ai_provider_attempt_ledger")
-        .insert({ ...exact, ...drift });
+      const result = ownerInsertAttempt({ ...exact, ...drift }, true);
       expect(result.error?.code, label).toBe(CHECK_VIOLATION);
       expect(result.error?.message, label).toContain(
         "ai_provider_attempt_ledger_snapshot_shape_check",
@@ -573,7 +798,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
     expect(started.error).toBeNull();
-    const attemptId = started.data!.attempt_id;
+    const attemptId = started.data!.attempt_id as string;
     const unknownRuntimeId = `unknown-runtime.${crypto.randomUUID()}`;
     const unknownRuntimeHash = "0".repeat(64);
     const wrongHash = secondRuntimeContractSha256;
@@ -623,13 +848,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
   it("rejects a different known sealed runtime pair at the parent equality guard", async () => {
     const fixture = await createReservation();
-    const knownPairDrift = await service
-      .from("ai_provider_attempt_ledger")
-      .insert({
-        ...startedAttempt(fixture),
-        runtime_contract_id: secondRuntimeContractId,
-        runtime_contract_sha256: secondRuntimeContractSha256,
-      });
+    const knownPairDrift = ownerInsertAttempt({
+      ...startedAttempt(fixture),
+      runtime_contract_id: secondRuntimeContractId,
+      runtime_contract_sha256: secondRuntimeContractSha256,
+    }, true);
     expect(knownPairDrift.error?.code).toBe(CHECK_VIOLATION);
     expect(knownPairDrift.error?.message).toContain(
       "provider attempt route snapshot differs from its reservation",
@@ -650,17 +873,18 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       }],
       ["drift started hash", { runtime_contract_sha256: "f".repeat(64) }],
     ] as const) {
-      const update = await service
-        .from("ai_provider_attempt_ledger")
-        .update(drift)
-        .eq("attempt_id", started.data!.attempt_id);
+      const update = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        drift,
+        true,
+      );
       expect(update.error?.code, label).toBe(CHECK_VIOLATION);
     }
 
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update(observedCompletion())
-      .eq("attempt_id", started.data!.attempt_id);
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      observedCompletion(),
+    );
     expect(completed.error).toBeNull();
 
     for (const [label, drift] of [
@@ -673,10 +897,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       ["drift terminal hash", { runtime_contract_sha256: "f".repeat(64) }],
       ["mutate terminal observation", { latency_ms: 9999 }],
     ] as const) {
-      const update = await service
-        .from("ai_provider_attempt_ledger")
-        .update(drift)
-        .eq("attempt_id", started.data!.attempt_id);
+      const update = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        drift,
+        true,
+      );
       expect(update.error?.code, label).toBe(CHECK_VIOLATION);
     }
 
@@ -695,30 +920,30 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
   it("admits only started attempts and only a started-to-terminal update", async () => {
     const terminalFixture = await createReservation();
-    const terminalInsert = await service
-      .from("ai_provider_attempt_ledger")
-      .insert({
-        ...startedAttempt(terminalFixture),
-        ...unavailableCompletion(),
-      });
+    const terminalInsert = ownerInsertAttempt({
+      ...startedAttempt(terminalFixture),
+      ...unavailableCompletion(),
+    }, true);
     expect(terminalInsert.error?.code).toBe(CHECK_VIOLATION);
 
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
     expect(started.error).toBeNull();
-    const startedUpdate = await service
-      .from("ai_provider_attempt_ledger")
-      .update({ status: "started" })
-      .eq("attempt_id", started.data!.attempt_id);
+    const startedUpdate = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      { status: "started" },
+      true,
+    );
     expect(startedUpdate.error?.code).toBe(CHECK_VIOLATION);
   });
 
   it("rejects insert, late completion, and direct child deletion after parent finalization", async () => {
     const finalizedBeforeStart = await createReservation();
     await finalizeReservation(finalizedBeforeStart.reservationId);
-    const insertAfterFinalize = await service
-      .from("ai_provider_attempt_ledger")
-      .insert(startedAttempt(finalizedBeforeStart));
+    const insertAfterFinalize = ownerInsertAttempt(
+      startedAttempt(finalizedBeforeStart),
+      true,
+    );
     expect(insertAfterFinalize.error?.code).toBe(CHECK_VIOLATION);
 
     const fixture = await createReservation();
@@ -726,16 +951,17 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(started.error).toBeNull();
     await finalizeReservation(fixture.reservationId);
 
-    const lateCompletion = await service
-      .from("ai_provider_attempt_ledger")
-      .update(unavailableCompletion())
-      .eq("attempt_id", started.data!.attempt_id);
+    const lateCompletion = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      unavailableCompletion(),
+      true,
+    );
     expect(lateCompletion.error?.code).toBe(CHECK_VIOLATION);
 
-    const directDelete = await service
-      .from("ai_provider_attempt_ledger")
-      .delete()
-      .eq("attempt_id", started.data!.attempt_id);
+    const directDelete = ownerDeleteAttempt(
+      started.data!.attempt_id as string,
+      true,
+    );
     expect(directDelete.error?.code).toBe(CHECK_VIOLATION);
 
     const unchanged = await service
@@ -750,12 +976,10 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   it("preserves observed automatic-cache usage as NULL + unavailable", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update(observedCompletion())
-      .eq("attempt_id", started.data!.attempt_id)
-      .select("*")
-      .single();
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      observedCompletion(),
+    );
     expect(completed.error).toBeNull();
     expect(completed.data).toMatchObject({
       runtime_contract_id: runtimeContractId,
@@ -769,10 +993,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       cost_reconciliation_status: "not_available",
     });
 
-    const overwrite = await service
-      .from("ai_provider_attempt_ledger")
-      .update({ input_cache_write_tokens: 0 })
-      .eq("attempt_id", started.data!.attempt_id);
+    const overwrite = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      { input_cache_write_tokens: 0 },
+      true,
+    );
     expect(overwrite.error?.code).toBe(CHECK_VIOLATION);
   });
 
@@ -830,17 +1055,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
     for (const { fixture, modelId, endpoint } of cases) {
       const started = await insertStarted(fixture);
-      const completed = await service
-        .from("ai_provider_attempt_ledger")
-        .update(observedCompletion({
+      const completed = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        observedCompletion({
           actual_model_id: modelId,
           actual_upstream_endpoint: endpoint,
-        }))
-        .eq("attempt_id", started.data!.attempt_id)
-        .select("gateway_request_id,provider_request_id,actual_model_id,actual_upstream_endpoint")
-        .single();
+        }),
+      );
       expect(completed.error).toBeNull();
-      expect(completed.data).toEqual({
+      expect(completed.data).toMatchObject({
         gateway_request_id: GATEWAY_CORRELATION_TAG,
         provider_request_id: PROVIDER_CORRELATION_TAG,
         actual_model_id: modelId,
@@ -852,15 +1075,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   it("accepts explicit NULL when no safe route observation is available", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update(observedCompletion({
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      observedCompletion({
         gateway_request_id: null,
         provider_request_id: null,
         actual_model_id: null,
         actual_upstream_endpoint: null,
-      }))
-      .eq("attempt_id", started.data!.attempt_id);
+      }),
+    );
     expect(completed.error).toBeNull();
   });
 
@@ -884,10 +1107,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       for (const value of unsafeRequestIds) {
         const fixture = await createReservation();
         const started = await insertStarted(fixture);
-        const completed = await service
-          .from("ai_provider_attempt_ledger")
-          .update(observedCompletion({ [field]: value }))
-          .eq("attempt_id", started.data!.attempt_id);
+        const completed = ownerUpdateAttempt(
+          started.data!.attempt_id as string,
+          observedCompletion({ [field]: value }),
+          true,
+        );
         expect(completed.error?.code, `${field}=${JSON.stringify(value)}`).toBe(CHECK_VIOLATION);
       }
     }
@@ -903,10 +1127,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     ]) {
       const fixture = await createReservation();
       const started = await insertStarted(fixture);
-      const completed = await service
-        .from("ai_provider_attempt_ledger")
-        .update(observedCompletion({ actual_model_id: modelId }))
-        .eq("attempt_id", started.data!.attempt_id);
+      const completed = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        observedCompletion({ actual_model_id: modelId }),
+        true,
+      );
       expect(completed.error?.code, JSON.stringify(modelId)).toBe(CHECK_VIOLATION);
     }
   });
@@ -946,10 +1171,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     for (const endpoint of unsafeEndpoints) {
       const fixture = await createReservation();
       const started = await insertStarted(fixture);
-      const completed = await service
-        .from("ai_provider_attempt_ledger")
-        .update(observedCompletion({ actual_upstream_endpoint: endpoint }))
-        .eq("attempt_id", started.data!.attempt_id);
+      const completed = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        observedCompletion({ actual_upstream_endpoint: endpoint }),
+        true,
+      );
       expect(completed.error?.code, endpoint).toBe(CHECK_VIOLATION);
     }
   });
@@ -983,22 +1209,23 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     for (const { input, endpoint } of cases) {
       const fixture = await createCustomReservation(input);
       const started = await insertStarted(fixture);
-      const nonNullEndpoint = await service
-        .from("ai_provider_attempt_ledger")
-        .update(observedCompletion({
+      const nonNullEndpoint = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        observedCompletion({
           actual_model_id: input.modelId,
           actual_upstream_endpoint: endpoint,
-        }))
-        .eq("attempt_id", started.data!.attempt_id);
+        }),
+        true,
+      );
       expect(nonNullEndpoint.error?.code, input.key).toBe(CHECK_VIOLATION);
 
-      const nullEndpoint = await service
-        .from("ai_provider_attempt_ledger")
-        .update(observedCompletion({
+      const nullEndpoint = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        observedCompletion({
           actual_model_id: input.modelId,
           actual_upstream_endpoint: null,
-        }))
-        .eq("attempt_id", started.data!.attempt_id);
+        }),
+      );
       expect(nullEndpoint.error, input.key).toBeNull();
     }
   });
@@ -1006,14 +1233,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   it("stores wholly unavailable usage without manufacturing zero tokens or cost", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update(unavailableCompletion())
-      .eq("attempt_id", started.data!.attempt_id)
-      .select("usage_observation_kind,input_total_tokens,input_cache_write_tokens,usage_complete,provider_billable,estimated_cost_nanos,cost_reconciliation_status")
-      .single();
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      unavailableCompletion(),
+    );
     expect(completed.error).toBeNull();
-    expect(completed.data).toEqual({
+    expect(completed.data).toMatchObject({
       usage_observation_kind: "unavailable",
       input_total_tokens: null,
       input_cache_write_tokens: null,
@@ -1027,15 +1252,13 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   it("keeps false distinct from unknown provider billability", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update({
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      {
         ...unavailableCompletion("canceled"),
         provider_billable: false,
-      })
-      .eq("attempt_id", started.data!.attempt_id)
-      .select("provider_billable")
-      .single();
+      },
+    );
     expect(completed.error).toBeNull();
     expect(completed.data?.provider_billable).toBe(false);
   });
@@ -1050,16 +1273,17 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   ])("accepts terminal lifecycle status %s exactly once", async (status) => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update(unavailableCompletion(status))
-      .eq("attempt_id", started.data!.attempt_id);
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      unavailableCompletion(status),
+    );
     expect(completed.error).toBeNull();
 
-    const secondCompletion = await service
-      .from("ai_provider_attempt_ledger")
-      .update({ latency_ms: 9999 })
-      .eq("attempt_id", started.data!.attempt_id);
+    const secondCompletion = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      { latency_ms: 9999 },
+      true,
+    );
     expect(secondCompletion.error?.code).toBe(CHECK_VIOLATION);
   });
 
@@ -1112,10 +1336,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     for (const { label, completion } of invalidUnknownCompletions) {
       const fixture = await createReservation();
       const started = await insertStarted(fixture);
-      const completed = await service
-        .from("ai_provider_attempt_ledger")
-        .update(completion)
-        .eq("attempt_id", started.data!.attempt_id);
+      const completed = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        completion,
+        true,
+      );
       expect(completed.error?.code, label).toBe(CHECK_VIOLATION);
     }
   });
@@ -1126,16 +1351,16 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   ] as const)("accepts conserved %s cache usage", async (reporting, read, write, standard, total) => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update(observedCompletion({
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      observedCompletion({
         cache_usage_reporting: reporting,
         input_cache_read_tokens: read,
         input_cache_write_tokens: write,
         input_standard_tokens: standard,
         input_total_tokens: total,
-      }))
-      .eq("attempt_id", started.data!.attempt_id);
+      }),
+    );
     expect(completed.error).toBeNull();
   });
 
@@ -1147,13 +1372,13 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   ] as const)("accepts canonical %s cost reconciliation", async (reconciliation, cost) => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
-    const completed = await service
-      .from("ai_provider_attempt_ledger")
-      .update(observedCompletion({
+    const completed = ownerUpdateAttempt(
+      started.data!.attempt_id as string,
+      observedCompletion({
         cost_reconciliation_status: reconciliation,
         ...cost,
-      }))
-      .eq("attempt_id", started.data!.attempt_id);
+      }),
+    );
     expect(completed.error).toBeNull();
   });
 
@@ -1188,10 +1413,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     for (const invalid of cases) {
       const fixture = await createReservation();
       const started = await insertStarted(fixture);
-      const completed = await service
-        .from("ai_provider_attempt_ledger")
-        .update(observedCompletion(invalid))
-        .eq("attempt_id", started.data!.attempt_id);
+      const completed = ownerUpdateAttempt(
+        started.data!.attempt_id as string,
+        observedCompletion(invalid),
+        true,
+      );
       expect(completed.error?.code, JSON.stringify(invalid)).toBe(CHECK_VIOLATION);
     }
   });
@@ -1205,9 +1431,10 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       { calculator_kind: "other_calculator_v1" },
       { billing_currency: "USD" },
     ]) {
-      const result = await service
-        .from("ai_provider_attempt_ledger")
-        .insert({ ...startedAttempt(fixture), ...drift });
+      const result = ownerInsertAttempt(
+        { ...startedAttempt(fixture), ...drift },
+        true,
+      );
       expect(result.error?.code, JSON.stringify(drift)).toBe(CHECK_VIOLATION);
     }
 
@@ -1229,12 +1456,10 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(historicalAttempts.error).toBeNull();
     expect(historicalAttempts.count).toBe(0);
 
-    const forged = await service
-      .from("ai_provider_attempt_ledger")
-      .insert({
-        ...startedAttempt(fixture),
-        reservation_id: legacy.data!.reservation_id,
-      });
+    const forged = ownerInsertAttempt({
+      ...startedAttempt(fixture),
+      reservation_id: legacy.data!.reservation_id,
+    }, true);
     expect(forged.error?.code).toBe(CHECK_VIOLATION);
   });
 
