@@ -9,6 +9,9 @@ export const DEEPSEEK_LEGAL_MANIFEST_ID =
   "deepseek-official-2026-08-23-v1";
 export const DEEPSEEK_LEGAL_MANIFEST_SHA256 =
   "0fa6702d0785a8ce959b0bd4cc31984578143ef269bf7b4df4d1672e6d1fa09b";
+export const MIMO_LEGAL_MANIFEST_ID = "mimo-cn-2026-08-23-v1";
+export const MIMO_LEGAL_MANIFEST_SHA256 =
+  "f075f1e39e74a96ef2b536df8ba1e19c0840ce6d3be47d6deccd9c95da861c3f";
 
 const DB_CONTAINER = "supabase_db_typst-cv-template";
 const CANONICAL_UUID =

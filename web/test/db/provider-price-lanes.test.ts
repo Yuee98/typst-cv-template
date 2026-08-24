@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { createServiceClient, RUN_DB_TESTS } from "./helpers";
+import { authorSyntheticRuntimeContract } from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
 const EXCLUSION_VIOLATION = "23P01";
@@ -159,6 +160,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider price lanes and provenance (real DB)", 
   });
 
   it("allows component authoring on drafts but rejects unsealed request snapshots", async () => {
+    const runtime = authorSyntheticRuntimeContract();
     const profileVersionId = await createProfileVersion("unsealed");
     const { data: price, error: priceError } = await service
       .from("ai_price_versions")
@@ -185,6 +187,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider price lanes and provenance (real DB)", 
       profile_version_id: profileVersionId,
       price_version_id: price!.id,
       legal_bundle_version: "fixture-v1",
+      runtime_contract_id: runtime.runtimeContractId,
+      runtime_contract_sha256: runtime.runtimeContractSha256,
       gateway_kind: "direct_deepseek",
       model_id: "fixture-model",
       wire_api_kind: "chat_completions_v1",

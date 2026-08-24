@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -13,6 +11,10 @@ import {
   RUN_DB_TESTS,
   type TestUser,
 } from "./helpers";
+import {
+  authorSyntheticRuntimeContract,
+  sealPriceAsDatabaseOwner,
+} from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
 const UNIQUE_VIOLATION = "23505";
@@ -20,61 +22,6 @@ const PERMISSION_DENIED = "42501";
 const SAFE_INTEGER_MAX = "9007199254740991";
 const GATEWAY_CORRELATION_TAG = `hmac-sha256:${"a".repeat(64)}`;
 const PROVIDER_CORRELATION_TAG = `hmac-sha256:${"b".repeat(64)}`;
-
-function sealPriceAsDatabaseOwner(priceId: string): void {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(priceId)) {
-    throw new Error("test price id is not a canonical UUID");
-  }
-
-  const sql = String.raw`
-    \set ON_ERROR_STOP on
-    begin;
-    create temporary table attempt_price_seal_fixture (
-      price_version_id uuid not null
-    ) on commit drop;
-    create function pg_temp.attempt_seal_price_fixture()
-    returns trigger
-    language plpgsql
-    set search_path = ''
-    as $function$
-    begin
-      update public.ai_price_versions
-      set components_sealed_at = greatest(clock_timestamp(), created_at)
-      where id = new.price_version_id;
-      return new;
-    end;
-    $function$;
-    create trigger attempt_seal_price_fixture
-    after insert on attempt_price_seal_fixture
-    for each row execute function pg_temp.attempt_seal_price_fixture();
-    insert into attempt_price_seal_fixture (price_version_id)
-    values (:'price_id'::uuid);
-    commit;
-  `;
-  const result = spawnSync(
-    "docker",
-    [
-      "exec",
-      "-i",
-      "supabase_db_typst-cv-template",
-      "psql",
-      "-U",
-      "postgres",
-      "-d",
-      "postgres",
-      "--set",
-      "ON_ERROR_STOP=1",
-      "--set",
-      `price_id=${priceId}`,
-    ],
-    { input: sql, encoding: "utf8" },
-  );
-  if (result.status !== 0) {
-    throw new Error(
-      `database-owner attempt price seal failed: ${result.stderr || result.stdout}`,
-    );
-  }
-}
 
 interface FrozenFixture {
   reservationId: string;
@@ -90,6 +37,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   let priceVersionId: string;
   let policyVersionId: string;
   let legalBundleVersion: string;
+  let runtimeContractId: string;
+  let runtimeContractSha256: string;
 
   beforeAll(async () => {
     service = createServiceClient();
@@ -100,10 +49,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(currentLegal.error).toBeNull();
     legalBundleVersion = currentLegal.data as string;
 
+    const profileKey = `test.attempt.${crypto.randomUUID()}`;
     const profile = await service
       .from("ai_provider_profiles")
       .insert({
-        profile_key: `test.attempt.${crypto.randomUUID()}`,
+        profile_key: profileKey,
         display_name: "Attempt schema fixture",
         gateway_kind: "direct_deepseek",
         model_vendor: "fixture",
@@ -126,6 +76,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         capability_contract_id: "deepseek_chat_capabilities_v1",
         cache_policy_id: "automatic_cache_v1",
         legal_manifest_id: "deepseek-official-2026-08-23-v1",
+        display_disclosure_key: "deepseek.official",
         config: {},
         config_sha256: "a".repeat(64),
       })
@@ -161,6 +112,10 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(components.error).toBeNull();
     sealPriceAsDatabaseOwner(priceVersionId);
 
+    const runtime = authorSyntheticRuntimeContract({ profileKey });
+    runtimeContractId = runtime.runtimeContractId;
+    runtimeContractSha256 = runtime.runtimeContractSha256;
+
     const policy = await service
       .from("ai_routing_policy_versions")
       .insert({
@@ -170,6 +125,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         rules: { kind: "fixture_default_only_v1" },
         default_profile_version_id: profileVersionId,
         legal_bundle_version: legalBundleVersion,
+        runtime_contract_id: runtimeContractId,
+        runtime_contract_sha256: runtimeContractSha256,
         config_sha256: "c".repeat(64),
       })
       .select("id")
@@ -190,6 +147,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       profile_version_id: profileVersionId,
       price_version_id: priceVersionId,
       legal_bundle_version: legalBundleVersion,
+      runtime_contract_id: runtimeContractId,
+      runtime_contract_sha256: runtimeContractSha256,
       gateway_kind: "direct_deepseek",
       model_id: "deepseek-v4-flash",
       wire_api_kind: "chat_completions_v1",
@@ -217,10 +176,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     endpointAlias: string;
     modelId: string;
   }): Promise<FrozenFixture> {
+    const profileKey = `test.attempt.${input.key}.${crypto.randomUUID()}`;
     const profile = await service
       .from("ai_provider_profiles")
       .insert({
-        profile_key: `test.attempt.${input.key}.${crypto.randomUUID()}`,
+        profile_key: profileKey,
         display_name: `${input.key} attempt schema fixture`,
         gateway_kind: input.gatewayKind,
         model_vendor: "fixture",
@@ -280,6 +240,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(components.error).toBeNull();
     sealPriceAsDatabaseOwner(price.data!.id);
 
+    const runtime = authorSyntheticRuntimeContract();
+
     const policy = await service
       .from("ai_routing_policy_versions")
       .insert({
@@ -289,6 +251,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         rules: { kind: "fixture_default_only_v1" },
         default_profile_version_id: version.data!.id,
         legal_bundle_version: legalBundleVersion,
+        runtime_contract_id: runtime.runtimeContractId,
+        runtime_contract_sha256: runtime.runtimeContractSha256,
         config_sha256: "f".repeat(64),
       })
       .select("id")
@@ -302,6 +266,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       profile_version_id: version.data!.id,
       price_version_id: price.data!.id,
       legal_bundle_version: legalBundleVersion,
+      runtime_contract_id: runtime.runtimeContractId,
+      runtime_contract_sha256: runtime.runtimeContractSha256,
       gateway_kind: input.gatewayKind,
       model_id: input.modelId,
       wire_api_kind: input.wireApiKind,
@@ -336,10 +302,13 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   }
 
   function startedAttempt(fixture: FrozenFixture, attemptNo = 1) {
+    const db008Snapshot = { ...fixture.snapshot };
+    delete db008Snapshot.runtime_contract_id;
+    delete db008Snapshot.runtime_contract_sha256;
     return {
       reservation_id: fixture.reservationId,
       attempt_no: attemptNo,
-      ...fixture.snapshot,
+      ...db008Snapshot,
       ...(fixture.attemptAliases ?? {
         adapter_kind: "deepseek_chat_v1",
         credential_alias: "deepseek_api_key_v1",

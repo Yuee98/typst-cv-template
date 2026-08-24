@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -12,71 +10,24 @@ import {
   signInAsUser,
   type TestUser,
 } from "./helpers";
+import {
+  authorSyntheticRuntimeContract,
+  MIMO_LEGAL_MANIFEST_ID,
+  MIMO_LEGAL_MANIFEST_SHA256,
+  sealPriceAsDatabaseOwner,
+} from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
 const FOREIGN_KEY_VIOLATION = "23503";
 const PERMISSION_DENIED = "42501";
 const LEGAL_BUNDLE_VERSION = "2026-08-23-multi-provider-v1";
 
-function sealPriceAsDatabaseOwner(priceId: string): void {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(priceId)) {
-    throw new Error("test price id is not a canonical UUID");
-  }
-
-  const sql = String.raw`
-    \set ON_ERROR_STOP on
-    begin;
-    create temporary table ledger_price_seal_fixture (
-      price_version_id uuid not null
-    ) on commit drop;
-    create function pg_temp.ledger_seal_price_fixture()
-    returns trigger
-    language plpgsql
-    set search_path = ''
-    as $function$
-    begin
-      update public.ai_price_versions
-      set components_sealed_at = greatest(clock_timestamp(), created_at)
-      where id = new.price_version_id;
-      return new;
-    end;
-    $function$;
-    create trigger ledger_seal_price_fixture
-    after insert on ledger_price_seal_fixture
-    for each row execute function pg_temp.ledger_seal_price_fixture();
-    insert into ledger_price_seal_fixture (price_version_id)
-    values (:'price_id'::uuid);
-    commit;
-  `;
-  const result = spawnSync(
-    "docker",
-    [
-      "exec",
-      "-i",
-      "supabase_db_typst-cv-template",
-      "psql",
-      "-U",
-      "postgres",
-      "-d",
-      "postgres",
-      "--set",
-      "ON_ERROR_STOP=1",
-      "--set",
-      `price_id=${priceId}`,
-    ],
-    { input: sql, encoding: "utf8" },
-  );
-  if (result.status !== 0) {
-    throw new Error(
-      `database-owner ledger price seal failed: ${result.stderr || result.stdout}`,
-    );
-  }
-}
-
 interface RouteFixture {
   profileVersionId: string;
   priceVersionId: string;
   policyVersionId: string;
+  runtimeContractId: string;
+  runtimeContractSha256: string;
 }
 
 describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () => {
@@ -98,10 +49,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
     label: string,
     sealPrice = true,
   ): Promise<RouteFixture> {
+    const profileKey = `test.ledger.${label}.${crypto.randomUUID()}`;
     const { data: profile, error: profileError } = await service
       .from("ai_provider_profiles")
       .insert({
-        profile_key: `test.ledger.${label}.${crypto.randomUUID()}`,
+        profile_key: profileKey,
         display_name: `Ledger ${label}`,
         gateway_kind: "direct_mimo",
         model_vendor: "fixture",
@@ -124,7 +76,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
         upstream_route: {},
         capability_contract_id: "fixture_capability_v1",
         cache_policy_id: "fixture_cache_v1",
-        legal_manifest_id: "fixture_legal_v1",
+        legal_manifest_id: MIMO_LEGAL_MANIFEST_ID,
+        display_disclosure_key: "mimo.official",
         config: {},
         config_sha256: "f".repeat(64),
       })
@@ -156,8 +109,22 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       .single();
     expect(priceError).toBeNull();
     if (sealPrice) {
+      const componentInsert = await service.from("ai_price_components").insert(
+        ["input_standard", "input_cache_read", "output"].map((component) => ({
+          price_version_id: price!.id,
+          component,
+          nanos_per_million: 1,
+        })),
+      );
+      expect(componentInsert.error).toBeNull();
       sealPriceAsDatabaseOwner(price!.id);
     }
+
+    const runtime = authorSyntheticRuntimeContract({
+      profileKey,
+      legalManifestId: MIMO_LEGAL_MANIFEST_ID,
+      manifestSha256: MIMO_LEGAL_MANIFEST_SHA256,
+    });
 
     const { data: policy, error: policyError } = await service
       .from("ai_routing_policy_versions")
@@ -166,24 +133,37 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
         version: 1,
         status: "draft",
         timezone: "Asia/Shanghai",
-        rules: { kind: "fixture_default_only_v1" },
+        rules: {
+          schemaVersion: "routing_rules_v1",
+          defaultRoute: {
+            profileVersionId: profileVersion!.id,
+            priceVersionId: price!.id,
+          },
+          windows: [],
+        },
         default_profile_version_id: profileVersion!.id,
         legal_bundle_version: LEGAL_BUNDLE_VERSION,
+        runtime_contract_id: runtime.runtimeContractId,
+        runtime_contract_sha256: runtime.runtimeContractSha256,
         config_sha256: "2".repeat(64),
       })
       .select("id")
       .single();
     expect(policyError).toBeNull();
-    const { error: validatePolicyError } = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", policy!.id);
-    expect(validatePolicyError).toBeNull();
+    if (sealPrice) {
+      const { error: validatePolicyError } = await service
+        .from("ai_routing_policy_versions")
+        .update({ status: "validated" })
+        .eq("id", policy!.id);
+      expect(validatePolicyError).toBeNull();
+    }
 
     return {
       profileVersionId: profileVersion!.id,
       priceVersionId: price!.id,
       policyVersionId: policy!.id,
+      runtimeContractId: runtime.runtimeContractId,
+      runtimeContractSha256: runtime.runtimeContractSha256,
     };
   }
 
@@ -203,6 +183,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       profile_version_id: fixture.profileVersionId,
       price_version_id: fixture.priceVersionId,
       legal_bundle_version: LEGAL_BUNDLE_VERSION,
+      runtime_contract_id: fixture.runtimeContractId,
+      runtime_contract_sha256: fixture.runtimeContractSha256,
       gateway_kind: "direct_mimo",
       model_id: "fixture-model",
       wire_api_kind: "responses_v1",
@@ -366,6 +348,19 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       nanos_per_million: 100,
     });
     expect(beforeReference.error).toBeNull();
+    const remainingComponents = await service.from("ai_price_components").insert([
+      {
+        price_version_id: componentRoute.priceVersionId,
+        component: "input_cache_read",
+        nanos_per_million: 50,
+      },
+      {
+        price_version_id: componentRoute.priceVersionId,
+        component: "output",
+        nanos_per_million: 200,
+      },
+    ]);
+    expect(remainingComponents.error).toBeNull();
     sealPriceAsDatabaseOwner(componentRoute.priceVersionId);
 
     const reference = await service
@@ -394,7 +389,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
 
     const afterCleanup = await service.from("ai_price_components").insert({
       price_version_id: componentRoute.priceVersionId,
-      component: "output",
+      component: "input_cache_write",
       nanos_per_million: 200,
     });
     expect(afterCleanup.error?.code).toBe(CHECK_VIOLATION);

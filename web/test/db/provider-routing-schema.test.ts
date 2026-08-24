@@ -2,8 +2,21 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createServiceClient, RUN_DB_TESTS } from "./helpers";
+import {
+  authorSyntheticRuntimeContract,
+  MIMO_LEGAL_MANIFEST_ID,
+  MIMO_LEGAL_MANIFEST_SHA256,
+  sealPriceAsDatabaseOwner,
+  type SyntheticRuntimeContract,
+} from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
+
+interface RoutingTargetFixture {
+  id: string;
+  priceVersionId: string;
+  runtime: SyntheticRuntimeContract;
+}
 
 describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
   let service: SupabaseClient;
@@ -28,17 +41,21 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         .update({
           active_routing_policy_version_id: null,
           routing_updated_by: "provider-routing-test-cleanup",
-          routing_change_reason: "restore inactive routing pointer",
+          routing_change_reason: `restore inactive routing pointer ${crypto.randomUUID()}`,
         })
         .eq("id", true);
     }
   });
 
-  async function createProfileVersion(label: string, status: "draft" | "validated") {
+  async function createProfileVersion(
+    label: string,
+    status: "draft" | "validated" | "canary" | "active",
+  ): Promise<RoutingTargetFixture> {
+    const profileKey = `test.routing.${label}.${crypto.randomUUID()}`;
     const { data: profile, error: profileError } = await service
       .from("ai_provider_profiles")
       .insert({
-        profile_key: `test.routing.${label}.${crypto.randomUUID()}`,
+        profile_key: profileKey,
         display_name: `Routing ${label}`,
         gateway_kind: "direct_mimo",
         model_vendor: "fixture",
@@ -61,30 +78,79 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         upstream_route: {},
         capability_contract_id: "fixture_capability_v1",
         cache_policy_id: "fixture_cache_v1",
-        legal_manifest_id: "fixture_legal_v1",
+        legal_manifest_id: MIMO_LEGAL_MANIFEST_ID,
+        display_disclosure_key: "mimo.official",
         config: {},
         config_sha256: "d".repeat(64),
       })
-      .select("id,status,validated_at")
+      .select("id")
       .single();
     expect(versionError).toBeNull();
-    if (status === "draft") {
-      return version!;
-    }
-    const { data: validated, error: validationError } = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version!.id)
-      .select("id,status,validated_at")
+
+    const { data: price, error: priceError } = await service
+      .from("ai_price_versions")
+      .insert({
+        profile_version_id: version!.id,
+        pricing_lane: "default",
+        version: 1,
+        currency: "CNY",
+        calculator_kind: "linear_token_v1",
+        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
+        source_url: "https://example.com/provider-routing-price",
+        source_checked_at: new Date().toISOString(),
+        source_snapshot_sha256: "a".repeat(64),
+        parameters: {},
+      })
+      .select("id")
       .single();
-    expect(validationError).toBeNull();
-    return validated!;
+    expect(priceError).toBeNull();
+    const components = await service.from("ai_price_components").insert(
+      ["input_standard", "input_cache_read", "output"].map((component) => ({
+        price_version_id: price!.id,
+        component,
+        nanos_per_million: 1,
+      })),
+    );
+    expect(components.error).toBeNull();
+    sealPriceAsDatabaseOwner(price!.id);
+
+    const runtime = authorSyntheticRuntimeContract({
+      profileKey,
+      legalManifestId: MIMO_LEGAL_MANIFEST_ID,
+      manifestSha256: MIMO_LEGAL_MANIFEST_SHA256,
+    });
+
+    if (status !== "draft") {
+      for (const nextStatus of ["validated", "canary", "active"] as const) {
+        const transition = await service
+          .from("ai_provider_profile_versions")
+          .update({ status: nextStatus })
+          .eq("id", version!.id);
+        expect(transition.error).toBeNull();
+        if (nextStatus === status) {
+          break;
+        }
+      }
+    }
+
+    return { id: version!.id, priceVersionId: price!.id, runtime };
+  }
+
+  function strictRules(target: RoutingTargetFixture) {
+    return {
+      schemaVersion: "routing_rules_v1",
+      defaultRoute: {
+        profileVersionId: target.id,
+        priceVersionId: target.priceVersionId,
+      },
+      windows: [],
+    };
   }
 
   async function createPolicy(
-    profileVersionId: string,
+    target: RoutingTargetFixture,
     label: string,
-    status: "draft" | "validated",
+    status: "draft" | "validated" | "canary" | "active",
     legalVersion = legalBundleVersion,
   ) {
     const { data, error } = await service
@@ -94,9 +160,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         version: 1,
         status: "draft",
         timezone: "Asia/Shanghai",
-        rules: { kind: "fixture_default_only_v1" },
-        default_profile_version_id: profileVersionId,
+        rules: strictRules(target),
+        default_profile_version_id: target.id,
         legal_bundle_version: legalVersion,
+        runtime_contract_id: target.runtime.runtimeContractId,
+        runtime_contract_sha256: target.runtime.runtimeContractSha256,
         config_sha256: "e".repeat(64),
       })
       .select("*")
@@ -105,14 +173,22 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
     if (status === "draft") {
       return data!;
     }
-    const { data: validated, error: validationError } = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "validated" })
-      .eq("id", data!.id)
-      .select("*")
-      .single();
-    expect(validationError).toBeNull();
-    return validated!;
+
+    let current = data!;
+    for (const nextStatus of ["validated", "canary", "active"] as const) {
+      const transition = await service
+        .from("ai_routing_policy_versions")
+        .update({ status: nextStatus })
+        .eq("id", current.id)
+        .select("*")
+        .single();
+      expect(transition.error).toBeNull();
+      current = transition.data!;
+      if (nextStatus === status) {
+        break;
+      }
+    }
+    return current;
   }
 
   it("keeps draft/off as the default and validates timezone/rules", async () => {
@@ -132,9 +208,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         policy_key: `test.invalid-timezone.${crypto.randomUUID()}`,
         version: 1,
         timezone: "UTC",
-        rules: {},
+        rules: strictRules(profile),
         default_profile_version_id: profile.id,
         legal_bundle_version: legalBundleVersion,
+        runtime_contract_id: profile.runtime.runtimeContractId,
+        runtime_contract_sha256: profile.runtime.runtimeContractSha256,
         config_sha256: "e".repeat(64),
       });
     expect(invalidTimezone.error?.code).toBe(CHECK_VIOLATION);
@@ -148,6 +226,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         rules: [],
         default_profile_version_id: profile.id,
         legal_bundle_version: legalBundleVersion,
+        runtime_contract_id: profile.runtime.runtimeContractId,
+        runtime_contract_sha256: profile.runtime.runtimeContractSha256,
         config_sha256: "e".repeat(64),
       });
     expect(invalidRules.error?.code).toBe(CHECK_VIOLATION);
@@ -165,35 +245,36 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
           version: 1,
           status,
           timezone: "Asia/Shanghai",
-          rules: {},
+          rules: strictRules(profile),
           default_profile_version_id: profile.id,
           legal_bundle_version: legalBundleVersion,
+          runtime_contract_id: profile.runtime.runtimeContractId,
+          runtime_contract_sha256: profile.runtime.runtimeContractSha256,
           config_sha256: "e".repeat(64),
         });
       expect(nonDraftInsert.error?.code).toBe(CHECK_VIOLATION);
     }
   });
 
-  it("fails closed for draft profiles, draft policies, or stale legal bundles", async () => {
+  it("fails closed before activation for draft profiles, draft policies, or stale legal", async () => {
     const draftProfile = await createProfileVersion("draft-profile", "draft");
-    const validatedPolicy = await createPolicy(
-      draftProfile.id,
+    const draftProfilePolicy = await createPolicy(
+      draftProfile,
       "draft-profile",
+      "draft",
+    );
+    const invalidTransition = await service
+      .from("ai_routing_policy_versions")
+      .update({ status: "validated" })
+      .eq("id", draftProfilePolicy.id);
+    expect(invalidTransition.error?.code).toBe(CHECK_VIOLATION);
+
+    const validatedProfile = await createProfileVersion(
+      "draft-policy",
       "validated",
     );
-    const draftProfileActivation = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: validatedPolicy.id,
-        routing_updated_by: "provider-routing-test",
-        routing_change_reason: "prove draft profile rejection",
-      })
-      .eq("id", true);
-    expect(draftProfileActivation.error?.code).toBe(CHECK_VIOLATION);
-
-    const validatedProfile = await createProfileVersion("draft-policy", "validated");
     const draftPolicy = await createPolicy(
-      validatedProfile.id,
+      validatedProfile,
       "draft-policy",
       "draft",
     );
@@ -202,31 +283,27 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .update({
         active_routing_policy_version_id: draftPolicy.id,
         routing_updated_by: "provider-routing-test",
-        routing_change_reason: "prove draft policy rejection",
+        routing_change_reason: `prove draft policy rejection ${crypto.randomUUID()}`,
       })
       .eq("id", true);
     expect(draftPolicyActivation.error?.code).toBe(CHECK_VIOLATION);
 
     const staleLegalPolicy = await createPolicy(
-      validatedProfile.id,
+      validatedProfile,
       "stale-legal",
-      "validated",
+      "draft",
       "2026-08-04",
     );
-    const staleLegalActivation = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: staleLegalPolicy.id,
-        routing_updated_by: "provider-routing-test",
-        routing_change_reason: "prove exact legal bundle rejection",
-      })
-      .eq("id", true);
-    expect(staleLegalActivation.error?.code).toBe(CHECK_VIOLATION);
+    const staleTransition = await service
+      .from("ai_routing_policy_versions")
+      .update({ status: "validated" })
+      .eq("id", staleLegalPolicy.id);
+    expect(staleTransition.error?.code).toBe(CHECK_VIOLATION);
   });
 
-  it("increments generation and requires audit fields for pointer changes", async () => {
-    const profile = await createProfileVersion("activate", "validated");
-    const policy = await createPolicy(profile.id, "activate", "validated");
+  it("increments generation and requires audit fields for canary pointer changes", async () => {
+    const profile = await createProfileVersion("activate", "canary");
+    const policy = await createPolicy(profile, "activate", "canary");
     const { data: before } = await service
       .from("ai_feature_config")
       .select("config_generation")
@@ -244,7 +321,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .update({
         active_routing_policy_version_id: policy.id,
         routing_updated_by: "provider-routing-test",
-        routing_change_reason: "activate validated fixture",
+        routing_change_reason: `activate canary fixture ${crypto.randomUUID()}`,
       })
       .eq("id", true)
       .select("active_routing_policy_version_id,config_generation,routing_updated_at")
@@ -277,7 +354,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .update({
         active_routing_policy_version_id: null,
         routing_updated_by: "provider-routing-test",
-        routing_change_reason: "restore inactive fixture",
+        routing_change_reason: `restore inactive fixture ${crypto.randomUUID()}`,
       })
       .eq("id", true)
       .select("active_routing_policy_version_id,config_generation")
@@ -291,7 +368,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
 
   it("makes policy execution fields immutable", async () => {
     const profile = await createProfileVersion("immutable-policy", "validated");
-    const policy = await createPolicy(profile.id, "immutable-policy", "validated");
+    const policy = await createPolicy(profile, "immutable-policy", "validated");
 
     const mutate = await service
       .from("ai_routing_policy_versions")
@@ -316,9 +393,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         version: 1,
         status: "draft",
         timezone: "Asia/Shanghai",
-        rules: { kind: "fixture_default_only_v1" },
+        rules: strictRules(profile),
         default_profile_version_id: profile.id,
         legal_bundle_version: legalBundleVersion,
+        runtime_contract_id: profile.runtime.runtimeContractId,
+        runtime_contract_sha256: profile.runtime.runtimeContractSha256,
         config_sha256: "f".repeat(64),
         created_at: futureCreatedAt,
       })
@@ -337,6 +416,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       Date.parse(validated.data!.created_at),
     );
 
+    const profileActive = await service
+      .from("ai_provider_profile_versions")
+      .update({ status: "active" })
+      .eq("id", profile.id);
+    expect(profileActive.error).toBeNull();
     const active = await service
       .from("ai_routing_policy_versions")
       .update({ status: "active" })
