@@ -240,6 +240,34 @@ export class SettlementHarness {
     return result.data;
   }
 
+  async finalize(
+    reservationId: string,
+    options: {
+      status?: string;
+      quotaCharged?: boolean;
+      providerBillable?: boolean | null;
+      usage?: unknown;
+      metadata?: unknown;
+    } = {},
+  ) {
+    const result = await this.service.rpc("finalize_ai_polish_request", {
+      p_reservation_id: reservationId,
+      p_status: options.status ?? "succeeded",
+      p_quota_charged: options.quotaCharged ?? true,
+      p_provider_billable:
+        options.providerBillable === undefined
+          ? true
+          : options.providerBillable,
+      p_usage: options.usage === undefined ? null : options.usage,
+      p_metadata:
+        options.metadata === undefined
+          ? { usage_schema_version: "attempt_v2" }
+          : options.metadata,
+    });
+    expect(result.error).toBeNull();
+    return result.data;
+  }
+
   private async createActiveRouteFixture(): Promise<SettlementRouteFixture> {
     const suffix = crypto.randomUUID();
     const profileKey = `test.attempt-settlement.${suffix}`;
