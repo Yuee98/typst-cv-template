@@ -57,6 +57,17 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     return value;
   }
 
+  async function getProfileDaily(profileVersionId = harness.fixture.profileVersionId) {
+    const result = await service
+      .from("ai_profile_usage_daily")
+      .select("*")
+      .eq("profile_version_id", profileVersionId)
+      .eq("billing_currency", "CNY")
+      .single();
+    expect(result.error).toBeNull();
+    return result.data!;
+  }
+
   it("keeps the exact public finalize definition, defaults, invoker boundary, and ACL", () => {
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
@@ -717,5 +728,597 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         .select("*")
         .eq("profile_version_id", harness.fixture.profileVersionId),
     }).toEqual(before);
+  });
+
+  it("settles reported, not-applicable, and unavailable cache conservation branches", async () => {
+    const cases = [
+      {
+        label: "reported",
+        usage: observedUsage(),
+        expected: {
+          cache_usage_reporting: "reported",
+          input_total_tokens: 100,
+          input_cache_read_tokens: 60,
+          input_cache_write_tokens: 10,
+          input_standard_tokens: 30,
+          input_cached_tokens: 60,
+          input_uncached_tokens: 40,
+          incomplete_fields: [],
+        },
+      },
+      {
+        label: "not-applicable",
+        usage: observedUsage({
+          input_total_tokens: 70,
+          input_cache_read_tokens: 0,
+          input_cache_write_tokens: 0,
+          input_standard_tokens: 70,
+          cache_usage_reporting: "not_applicable",
+        }),
+        expected: {
+          cache_usage_reporting: "not_applicable",
+          input_total_tokens: 70,
+          input_cache_read_tokens: 0,
+          input_cache_write_tokens: 0,
+          input_standard_tokens: 70,
+          input_cached_tokens: 0,
+          input_uncached_tokens: 70,
+          incomplete_fields: [],
+        },
+      },
+      {
+        label: "unavailable",
+        usage: observedUsage({
+          input_total_tokens: 70,
+          input_cache_read_tokens: 20,
+          input_cache_write_tokens: null,
+          input_standard_tokens: 50,
+          reasoning_tokens: null,
+          cache_usage_reporting: "unavailable",
+        }),
+        expected: {
+          cache_usage_reporting: "unavailable",
+          input_total_tokens: 70,
+          input_cache_read_tokens: 20,
+          input_cache_write_tokens: null,
+          input_standard_tokens: 50,
+          input_cached_tokens: 20,
+          input_uncached_tokens: 50,
+          incomplete_fields: ["input_cache_write", "reasoning"],
+        },
+      },
+    ];
+
+    for (const value of cases) {
+      const completedValue = await completed(`finalize-cache-${value.label}`, {
+        p_usage: value.usage,
+      });
+      expect(
+        await harness.finalize(completedValue.reservation.reservationId),
+      ).toMatchObject({ ok: true, alreadyFinalized: false });
+      expect(
+        await getLedgerRow(service, completedValue.reservation.reservationId),
+      ).toMatchObject({
+        ...value.expected,
+        usage_complete: true,
+      });
+    }
+  });
+
+  it("aggregates provider reports as all, partial, none, incomplete-local, or false-excluded", async () => {
+    type CompletionOverrides = NonNullable<
+      Parameters<typeof completePayload>[1]
+    >;
+
+    async function settleCase(
+      label: string,
+      attempts: CompletionOverrides[],
+      expectedRequest: Record<string, unknown>,
+      expectedDaily: Record<string, unknown>,
+    ) {
+      await harness.activateFreshRouteFixture();
+      const user = await harness.makeUser(`finalize-provider-${label}`);
+      const reservation = await harness.reserveV2(user);
+      for (const [index, overrides] of attempts.entries()) {
+        const attempt = await harness.startAttempt(
+          reservation.reservationId,
+          (index + 1) as 1 | 2,
+        );
+        expect(
+          await harness.complete(completePayload(attempt.attemptId, overrides)),
+        ).toMatchObject({ ok: true, alreadyCompleted: false });
+      }
+      expect(await harness.finalize(reservation.reservationId)).toMatchObject({
+        ok: true,
+        alreadyFinalized: false,
+      });
+      expect(await getLedgerRow(service, reservation.reservationId)).toMatchObject(
+        expectedRequest,
+      );
+      expect(await getProfileDaily()).toMatchObject(expectedDaily);
+    }
+
+    await settleCase(
+      "matched",
+      [
+        {
+          p_cost: costObservation({
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "1234",
+            reconciliation_status: "matched",
+          }),
+        },
+      ],
+      {
+        known_estimated_cost_nanos: 1234,
+        estimated_cost_nanos: 1234,
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 1234,
+        cost_reconciliation_status: "matched",
+      },
+      {
+        known_estimated_cost_nanos: 1234,
+        estimated_cost_nanos: 1234,
+        provider_reported_cost_nanos: 1234,
+        cost_incomplete_count: 0,
+        provider_report_incomplete_count: 0,
+      },
+    );
+
+    await settleCase(
+      "mismatch",
+      [
+        {
+          p_cost: costObservation({
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "1235",
+            reconciliation_status: "mismatch",
+          }),
+        },
+      ],
+      {
+        estimated_cost_nanos: 1234,
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 1235,
+        cost_reconciliation_status: "mismatch",
+      },
+      {
+        provider_reported_cost_nanos: 1235,
+        cost_incomplete_count: 0,
+        provider_report_incomplete_count: 0,
+      },
+    );
+
+    await settleCase(
+      "zero",
+      [
+        {
+          p_cost: costObservation({
+            estimated_cost_nanos: "0",
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "0",
+            reconciliation_status: "matched",
+          }),
+        },
+      ],
+      {
+        known_estimated_cost_nanos: 0,
+        estimated_cost_nanos: 0,
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 0,
+        cost_reconciliation_status: "matched",
+      },
+      {
+        known_estimated_cost_nanos: 0,
+        estimated_cost_nanos: 0,
+        provider_reported_cost_nanos: 0,
+        cost_incomplete_count: 0,
+        provider_report_incomplete_count: 0,
+      },
+    );
+
+    await settleCase(
+      "partial",
+      [
+        {
+          p_cost: costObservation({
+            estimated_cost_nanos: "100",
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "90",
+            reconciliation_status: "mismatch",
+          }),
+        },
+        {
+          p_cost: costObservation({
+            estimated_cost_nanos: "200",
+          }),
+        },
+      ],
+      {
+        known_estimated_cost_nanos: 300,
+        estimated_cost_nanos: 300,
+        provider_reported_currency: null,
+        provider_reported_cost_nanos: null,
+        cost_reconciliation_status: "pending",
+      },
+      {
+        known_estimated_cost_nanos: 300,
+        estimated_cost_nanos: 300,
+        provider_reported_cost_nanos: null,
+        cost_incomplete_count: 0,
+        provider_report_incomplete_count: 1,
+      },
+    );
+
+    await settleCase(
+      "none",
+      [{}],
+      {
+        estimated_cost_nanos: 1234,
+        provider_reported_currency: null,
+        provider_reported_cost_nanos: null,
+        cost_reconciliation_status: "not_available",
+      },
+      {
+        provider_reported_cost_nanos: null,
+        cost_incomplete_count: 0,
+        provider_report_incomplete_count: 1,
+      },
+    );
+
+    await settleCase(
+      "local-incomplete-all-reported",
+      [
+        {
+          p_cost: costObservation({
+            estimated_currency: null,
+            estimated_cost_nanos: null,
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "7",
+            reconciliation_status: "incomplete_usage",
+          }),
+        },
+      ],
+      {
+        known_estimated_cost_nanos: null,
+        estimated_cost_nanos: null,
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 7,
+        cost_reconciliation_status: "incomplete_usage",
+        incomplete_fields: ["estimated_cost"],
+      },
+      {
+        known_estimated_cost_nanos: 0,
+        estimated_cost_nanos: null,
+        provider_reported_cost_nanos: 7,
+        cost_incomplete_count: 1,
+        provider_report_incomplete_count: 0,
+      },
+    );
+
+    await settleCase(
+      "false-excluded",
+      [
+        {
+          p_cost: costObservation({
+            estimated_cost_nanos: "10",
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "10",
+            reconciliation_status: "matched",
+          }),
+        },
+        {
+          p_status: "canceled",
+          p_provider_billable: false,
+          p_usage: null,
+          p_cost: costObservation({
+            estimated_currency: null,
+            estimated_cost_nanos: null,
+            provider_reported_currency: "CNY",
+            provider_reported_cost_nanos: "0",
+            reconciliation_status: "incomplete_usage",
+          }),
+          p_metadata: attemptMetadata({ finish_reason: null }),
+        },
+      ],
+      {
+        provider_billable: true,
+        known_estimated_cost_nanos: 10,
+        estimated_cost_nanos: 10,
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: 10,
+        cost_reconciliation_status: "matched",
+      },
+      {
+        provider_reported_cost_nanos: 10,
+        cost_incomplete_count: 0,
+        provider_report_incomplete_count: 0,
+      },
+    );
+  });
+
+  it("keeps daily local-cost completeness sticky across complete-null, known, and incomplete requests", async () => {
+    await harness.activateFreshRouteFixture();
+
+    const completeNull = await completed("daily-cost-complete-null", {
+      p_status: "canceled",
+      p_provider_billable: false,
+      p_usage: null,
+      p_cost: costObservation({
+        estimated_currency: null,
+        estimated_cost_nanos: null,
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: "0",
+        reconciliation_status: "incomplete_usage",
+      }),
+      p_metadata: attemptMetadata({ finish_reason: null }),
+    });
+    const completeNullResult = await harness.finalize(
+      completeNull.reservation.reservationId,
+      {
+        status: "canceled",
+        quotaCharged: false,
+        providerBillable: false,
+      },
+    );
+    expect(completeNullResult).toMatchObject({ ok: true, alreadyFinalized: false });
+    expect(await getLedgerRow(service, completeNull.reservation.reservationId)).toMatchObject(
+      {
+        known_estimated_cost_nanos: null,
+        estimated_cost_nanos: null,
+        cost_reconciliation_status: "not_available",
+      },
+    );
+    expect(await getProfileDaily()).toMatchObject({
+      known_estimated_cost_nanos: 0,
+      estimated_cost_nanos: 0,
+      provider_reported_cost_nanos: null,
+      cost_incomplete_count: 0,
+      provider_report_incomplete_count: 0,
+    });
+
+    const beforeReplay = await getProfileDaily();
+    expect(
+      await harness.finalize(completeNull.reservation.reservationId, {
+        status: "succeeded",
+        providerBillable: true,
+      }),
+    ).toEqual({ ...completeNullResult, alreadyFinalized: true });
+    expect(await getProfileDaily()).toEqual(beforeReplay);
+
+    const known = await completed("daily-cost-known");
+    await harness.finalize(known.reservation.reservationId);
+    expect(await getProfileDaily()).toMatchObject({
+      known_estimated_cost_nanos: 1234,
+      estimated_cost_nanos: 1234,
+      cost_incomplete_count: 0,
+    });
+
+    const secondCompleteNull = await completed("daily-cost-known-then-null", {
+      p_status: "canceled",
+      p_provider_billable: false,
+      p_usage: null,
+      p_cost: costObservation({
+        estimated_currency: null,
+        estimated_cost_nanos: null,
+        reconciliation_status: "incomplete_usage",
+      }),
+      p_metadata: attemptMetadata({ finish_reason: null }),
+    });
+    await harness.finalize(secondCompleteNull.reservation.reservationId, {
+      status: "canceled",
+      quotaCharged: false,
+      providerBillable: false,
+    });
+    expect(await getProfileDaily()).toMatchObject({
+      known_estimated_cost_nanos: 1234,
+      estimated_cost_nanos: 1234,
+      cost_incomplete_count: 0,
+    });
+
+    await harness.activateFreshRouteFixture();
+    const incomplete = await completed("daily-cost-incomplete", {
+      p_cost: costObservation({
+        estimated_currency: null,
+        estimated_cost_nanos: null,
+        reconciliation_status: "incomplete_usage",
+      }),
+    });
+    await harness.finalize(incomplete.reservation.reservationId);
+    expect(await getProfileDaily()).toMatchObject({
+      known_estimated_cost_nanos: 0,
+      estimated_cost_nanos: null,
+      cost_incomplete_count: 1,
+    });
+
+    const knownAfterIncomplete = await completed("daily-cost-incomplete-then-known");
+    const knownAfterIncompleteResult = await harness.finalize(
+      knownAfterIncomplete.reservation.reservationId,
+    );
+    expect(await getProfileDaily()).toMatchObject({
+      known_estimated_cost_nanos: 1234,
+      estimated_cost_nanos: null,
+      cost_incomplete_count: 1,
+    });
+    const afterKnown = await getProfileDaily();
+    expect(
+      await harness.finalize(knownAfterIncomplete.reservation.reservationId),
+    ).toEqual({ ...knownAfterIncompleteResult, alreadyFinalized: true });
+    expect(await getProfileDaily()).toEqual(afterKnown);
+  });
+
+  it("keeps profile cache-write and reasoning nullable totals sticky in both request orders", async () => {
+    const unavailableUsage = observedUsage({
+      input_total_tokens: 60,
+      input_cache_read_tokens: 20,
+      input_cache_write_tokens: null,
+      input_standard_tokens: 40,
+      output_tokens: 10,
+      reasoning_tokens: null,
+      cache_usage_reporting: "unavailable",
+    });
+
+    async function settleUsage(label: string, usage: Record<string, unknown>) {
+      const value = await completed(label, { p_usage: usage });
+      await harness.finalize(value.reservation.reservationId);
+      return getLedgerRow(service, value.reservation.reservationId);
+    }
+
+    await harness.activateFreshRouteFixture();
+    await settleUsage("daily-sticky-known-first", observedUsage());
+    expect(await getProfileDaily()).toMatchObject({
+      input_cache_write_tokens: 10,
+      reasoning_tokens: 5,
+    });
+    expect(
+      await settleUsage("daily-sticky-unknown-second", unavailableUsage),
+    ).toMatchObject({
+      input_cache_write_tokens: null,
+      reasoning_tokens: null,
+    });
+    expect(await getProfileDaily()).toMatchObject({
+      input_cache_write_tokens: null,
+      reasoning_tokens: null,
+    });
+
+    await harness.activateFreshRouteFixture();
+    await settleUsage("daily-sticky-unknown-first", unavailableUsage);
+    expect(await getProfileDaily()).toMatchObject({
+      input_cache_write_tokens: null,
+      reasoning_tokens: null,
+    });
+    await settleUsage("daily-sticky-known-second", observedUsage());
+    expect(await getProfileDaily()).toMatchObject({
+      input_cache_write_tokens: null,
+      reasoning_tokens: null,
+    });
+  });
+
+  it("enforces request and profile cost truth tables without SQL NULL bypass", async () => {
+    await harness.activateFreshRouteFixture();
+    const matched = await completed("direct-cost-check-probe", {
+      p_cost: costObservation({
+        provider_reported_currency: "CNY",
+        provider_reported_cost_nanos: "1234",
+        reconciliation_status: "matched",
+      }),
+    });
+    await harness.finalize(matched.reservation.reservationId);
+
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      create temporary table request_check_probe
+        (like public.ai_request_ledger including all);
+      insert into request_check_probe
+      select * from public.ai_request_ledger
+      where reservation_id = '${matched.reservation.reservationId}'::uuid;
+
+      create temporary table profile_check_probe
+        (like public.ai_profile_usage_daily including all);
+      insert into profile_check_probe
+      select * from public.ai_profile_usage_daily
+      where profile_version_id = '${harness.fixture.profileVersionId}'::uuid
+        and billing_currency = 'CNY';
+
+      do $assertions$
+      begin
+        update request_check_probe
+        set cache_usage_reporting = 'unavailable',
+            input_total_tokens = 100,
+            input_cache_read_tokens = 60,
+            input_cache_write_tokens = null,
+            input_standard_tokens = 30,
+            incomplete_fields = array['input_cache_write']::text[];
+
+        begin
+          update request_check_probe set input_total_tokens = 89;
+          raise exception 'request unavailable lower-bound CHECK accepted underflow';
+        exception when check_violation then
+          null;
+        end;
+
+        update request_check_probe
+        set cache_usage_reporting = 'reported',
+            input_total_tokens = 100,
+            input_cache_read_tokens = 60,
+            input_cache_write_tokens = 10,
+            input_standard_tokens = 30,
+            incomplete_fields = array['estimated_cost']::text[],
+            known_estimated_cost_nanos = 1234,
+            estimated_cost_nanos = null,
+            provider_reported_currency = 'CNY',
+            provider_reported_cost_nanos = 1234,
+            cost_reconciliation_status = 'incomplete_usage';
+
+        begin
+          update request_check_probe set incomplete_fields = array[]::text[];
+          raise exception 'request incomplete_usage CHECK accepted missing marker';
+        exception when check_violation then
+          null;
+        end;
+
+        begin
+          update request_check_probe
+          set incomplete_fields = array[]::text[],
+              estimated_cost_nanos = 1234,
+              cost_reconciliation_status = 'pending';
+          raise exception 'request pending CHECK accepted a partial amount';
+        exception when check_violation then
+          null;
+        end;
+
+        update request_check_probe
+        set incomplete_fields = array[]::text[],
+            estimated_cost_nanos = 1234,
+            cost_reconciliation_status = 'matched';
+
+        begin
+          update request_check_probe set provider_reported_currency = null;
+          raise exception 'request provider pair CHECK allowed SQL NULL bypass';
+        exception when check_violation then
+          null;
+        end;
+
+        update request_check_probe
+        set provider_billable = false,
+            known_estimated_cost_nanos = null,
+            estimated_cost_nanos = null,
+            provider_reported_currency = null,
+            provider_reported_cost_nanos = null,
+            cost_reconciliation_status = 'not_available',
+            incomplete_fields = array[]::text[];
+
+        begin
+          update request_check_probe set provider_billable = true;
+          raise exception 'request complete-null CHECK accepted billable true';
+        exception when check_violation then
+          null;
+        end;
+
+        update profile_check_probe
+        set cost_incomplete_count = 0,
+            known_estimated_cost_nanos = 7,
+            estimated_cost_nanos = 7;
+
+        begin
+          update profile_check_probe set estimated_cost_nanos = null;
+          raise exception 'profile count-zero CHECK accepted estimated NULL';
+        exception when check_violation then
+          null;
+        end;
+
+        update profile_check_probe
+        set cost_incomplete_count = 1,
+            estimated_cost_nanos = null;
+
+        begin
+          update profile_check_probe set estimated_cost_nanos = 7;
+          raise exception 'profile incomplete CHECK accepted estimated value';
+        exception when check_violation then
+          null;
+        end;
+      end
+      $assertions$;
+    `);
   });
 });

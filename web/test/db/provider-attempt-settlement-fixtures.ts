@@ -144,12 +144,17 @@ export class SettlementHarness {
   constructor(readonly service: SupabaseClient) {}
 
   async setup(): Promise<void> {
-    this.fixture = await this.createActiveRouteFixture();
+    await this.activateFreshRouteFixture();
     await configureFeature(this.service, {
       enabled: true,
       globalDailyLimit: LARGE_GLOBAL_LIMIT,
       allowlist: [],
     });
+  }
+
+  async activateFreshRouteFixture(): Promise<SettlementRouteFixture> {
+    this.fixture = await this.createActiveRouteFixture();
+    return this.fixture;
   }
 
   async resetFeature(): Promise<void> {
