@@ -180,6 +180,38 @@ function finalizeAttemptSql(
   `;
 }
 
+function invokeRawFinalize(
+  reservationId: string,
+  usageSql: string,
+  metadataSql = `'${JSON.stringify({ usage_schema_version: "attempt_v2" })}'::jsonb`,
+): Record<string, unknown> {
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin;
+    set local role service_role;
+    select public.finalize_ai_polish_request(
+      '${reservationId}'::uuid,
+      'succeeded',
+      true,
+      true,
+      ${usageSql},
+      ${metadataSql}
+    );
+    reset role;
+    commit;
+  `);
+  const payload = result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("{"));
+  if (!payload) {
+    throw new Error(`raw finalize returned no JSON payload: ${result.stdout}`);
+  }
+  return JSON.parse(payload) as Record<string, unknown>;
+}
+
 async function runObservedBlockedRace(
   holderSql: string,
   holderMarker: string,
@@ -288,6 +320,78 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     };
   }
 
+  async function fullSettlementSnapshot(
+    userId: string,
+    reservationId: string,
+    profileVersionId = harness.fixture.profileVersionId,
+  ) {
+    const [attempts, rate, currentProfile] = await Promise.all([
+      service
+        .from("ai_provider_attempt_ledger")
+        .select("*")
+        .eq("reservation_id", reservationId)
+        .order("attempt_no"),
+      service
+        .from("ai_rate_minutes")
+        .select("*")
+        .eq("user_id", userId)
+        .order("minute_bucket"),
+      service
+        .from("ai_provider_profile_versions")
+        .select("*")
+        .eq("id", profileVersionId)
+        .single(),
+    ]);
+    for (const result of [attempts, rate, currentProfile]) {
+      expect(result.error).toBeNull();
+    }
+    return {
+      settlement: await settlementSnapshot(userId, reservationId, profileVersionId),
+      attempts: attempts.data,
+      rate: rate.data,
+      currentProfile: currentProfile.data,
+    };
+  }
+
+  async function mutableSettlementTablesSnapshot() {
+    const [attempts, requests, userDaily, globalDaily, profileDaily, rateMinutes] =
+      await Promise.all([
+        service.from("ai_provider_attempt_ledger").select("*").order("attempt_id"),
+        service.from("ai_request_ledger").select("*").order("reservation_id"),
+        service.from("ai_usage_daily").select("*").order("day").order("user_id"),
+        service.from("ai_global_usage_daily").select("*").order("day"),
+        service
+          .from("ai_profile_usage_daily")
+          .select("*")
+          .order("day")
+          .order("profile_version_id")
+          .order("billing_currency"),
+        service
+          .from("ai_rate_minutes")
+          .select("*")
+          .order("minute_bucket")
+          .order("user_id"),
+      ]);
+    for (const result of [
+      attempts,
+      requests,
+      userDaily,
+      globalDaily,
+      profileDaily,
+      rateMinutes,
+    ]) {
+      expect(result.error).toBeNull();
+    }
+    return {
+      attempts: attempts.data,
+      requests: requests.data,
+      userDaily: userDaily.data,
+      globalDaily: globalDaily.data,
+      profileDaily: profileDaily.data,
+      rateMinutes: rateMinutes.data,
+    };
+  }
+
   it("keeps the exact public finalize definition, defaults, invoker boundary, and ACL", () => {
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
@@ -334,6 +438,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       end
       $assertions$;
     `);
+  });
+
+  it("returns exact NOT_FOUND for a random reservation UUID without touching any settlement table", async () => {
+    const before = await mutableSettlementTablesSnapshot();
+    expect(await harness.finalize(randomUUID())).toEqual({
+      ok: false,
+      reason: "NOT_FOUND",
+    });
+    expect(await mutableSettlementTablesSnapshot()).toEqual(before);
   });
 
   it("serializes the profile-daily empty preflight against concurrent writers", async () => {
@@ -1049,6 +1162,39 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     expect(profileDaily.data).toEqual([]);
   });
 
+  it("fails closed when the public V1 start marker pollutes a zero-child V2 reservation", async () => {
+    const user = await harness.makeUser("finalize-zero-v1-marker-pollution");
+    const reservation = await harness.reserveV2(user);
+    const marked = await service.rpc("mark_ai_polish_provider_started", {
+      p_reservation_id: reservation.reservationId,
+      p_provider_request_id: null,
+    });
+    expect(marked.error).toBeNull();
+    expect(marked.data).toEqual({ ok: true, attemptCount: 1 });
+    expect(await getLedgerRow(service, reservation.reservationId)).toMatchObject({
+      route_schema_version: "route_snapshot_v1",
+      state: "provider_started",
+      attempt_count: 1,
+    });
+
+    const before = await fullSettlementSnapshot(
+      user.id,
+      reservation.reservationId,
+    );
+    expect(
+      await harness.finalize(reservation.reservationId, {
+        status: "released",
+        quotaCharged: false,
+        providerBillable: false,
+        usage: null,
+        metadata: null,
+      }),
+    ).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
+    expect(
+      await fullSettlementSnapshot(user.id, reservation.reservationId),
+    ).toEqual(before);
+  });
+
   it("rejects zero-attempt attempt_v2 and every non-clean legacy tuple without mutation", async () => {
     const cases = [
       {
@@ -1160,6 +1306,59 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       .eq("attempt_id", attempt.attemptId)
       .single();
     expect(child.data?.status).toBe("succeeded");
+  });
+
+  it("distinguishes V2 SQL NULL, JSON null, object, array, and scalar usage through raw psql", async () => {
+    const cases = [
+      { label: "sql-null", usageSql: "null", accepted: true },
+      { label: "json-null", usageSql: "'null'::jsonb", accepted: true },
+      { label: "empty-object", usageSql: "'{}'::jsonb", accepted: false },
+      { label: "array", usageSql: "'[]'::jsonb", accepted: false },
+      {
+        label: "scalar",
+        usageSql: `'"scalar"'::jsonb`,
+        accepted: false,
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const value = await completed(`finalize-v2-raw-${entry.label}`);
+      const before = await fullSettlementSnapshot(
+        value.user.id,
+        value.reservation.reservationId,
+      );
+      const result = invokeRawFinalize(
+        value.reservation.reservationId,
+        entry.usageSql,
+      );
+      if (entry.accepted) {
+        expect(result).toMatchObject({
+          ok: true,
+          alreadyFinalized: false,
+          status: "succeeded",
+          quotaCharged: true,
+        });
+        expect(
+          await getLedgerRow(service, value.reservation.reservationId),
+        ).toMatchObject({
+          state: "finalized",
+          status: "succeeded",
+          usage_schema_version: "request_usage_aggregate_v2",
+          attempt_count: 1,
+        });
+      } else {
+        expect(result).toEqual({
+          ok: false,
+          reason: "AMBIGUOUS_USAGE_SOURCE",
+        });
+        expect(
+          await fullSettlementSnapshot(
+            value.user.id,
+            value.reservation.reservationId,
+          ),
+        ).toEqual(before);
+      }
+    }
   });
 
   it("classifies nullable quota and unsafe V2 metadata casts as caller faults before daily mutation", async () => {
@@ -1347,6 +1546,35 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       state: "reserved",
       attempt_count: 2,
     });
+  });
+
+  it("rejects an owner-corrupted terminal child set containing only attempt two", async () => {
+    const value = await completed("finalize-invalid-child-set-two");
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      set session_replication_role = replica;
+      update public.ai_provider_attempt_ledger
+      set attempt_no = 2
+      where attempt_id = '${value.attempt.attemptId}'::uuid;
+      set session_replication_role = origin;
+    `);
+    const before = await fullSettlementSnapshot(
+      value.user.id,
+      value.reservation.reservationId,
+    );
+    expect(before.attempts).toHaveLength(1);
+    expect(before.attempts?.[0]).toMatchObject({ attempt_no: 2 });
+
+    expect(await harness.finalize(value.reservation.reservationId)).toEqual({
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect(
+      await fullSettlementSnapshot(
+        value.user.id,
+        value.reservation.reservationId,
+      ),
+    ).toEqual(before);
   });
 
   it("rejects owner-corrupted parent and attempt disclosure snapshots before settlement", async () => {

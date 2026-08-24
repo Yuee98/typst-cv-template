@@ -89,6 +89,45 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
     };
   }
 
+  async function mutableSettlementTablesSnapshot() {
+    const [attempts, requests, userDaily, globalDaily, profileDaily, rateMinutes] =
+      await Promise.all([
+        service.from("ai_provider_attempt_ledger").select("*").order("attempt_id"),
+        service.from("ai_request_ledger").select("*").order("reservation_id"),
+        service.from("ai_usage_daily").select("*").order("day").order("user_id"),
+        service.from("ai_global_usage_daily").select("*").order("day"),
+        service
+          .from("ai_profile_usage_daily")
+          .select("*")
+          .order("day")
+          .order("profile_version_id")
+          .order("billing_currency"),
+        service
+          .from("ai_rate_minutes")
+          .select("*")
+          .order("minute_bucket")
+          .order("user_id"),
+      ]);
+    for (const result of [
+      attempts,
+      requests,
+      userDaily,
+      globalDaily,
+      profileDaily,
+      rateMinutes,
+    ]) {
+      expect(result.error).toBeNull();
+    }
+    return {
+      attempts: attempts.data,
+      requests: requests.data,
+      userDaily: userDaily.data,
+      globalDaily: globalDaily.data,
+      profileDaily: profileDaily.data,
+      rateMinutes: rateMinutes.data,
+    };
+  }
+
   it("freezes the exact definer signature and service-role-only ACL", async () => {
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
@@ -151,6 +190,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
     });
     expect(denied.data).toBeNull();
     expect(denied.error?.code).toBe("42501");
+  });
+
+  it("returns exact NOT_FOUND for a random attempt UUID without touching any settlement table", async () => {
+    const before = await mutableSettlementTablesSnapshot();
+    expect(
+      await harness.complete(completePayload(crypto.randomUUID())),
+    ).toEqual({ ok: false, reason: "NOT_FOUND" });
+    expect(await mutableSettlementTablesSnapshot()).toEqual(before);
   });
 
   it("persists every public terminal status while leaving parent and aggregates untouched", async () => {
@@ -369,6 +416,116 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
     }
   });
 
+  it("fails closed for unknown frozen endpoint identities and accepts only the exact MiMo route", async () => {
+    const unknownNull = await startedAttempt("attempt-endpoint-unknown-null");
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      set session_replication_role = replica;
+      update public.ai_provider_attempt_ledger
+      set endpoint_alias = 'test_unregistered_endpoint'
+      where attempt_id = '${unknownNull.attempt.attemptId}'::uuid;
+      set session_replication_role = origin;
+    `);
+    expect(
+      await harness.complete(
+        completePayload(unknownNull.attempt.attemptId, {
+          p_route: routeObservation({ actual_upstream_endpoint: null }),
+        }),
+      ),
+    ).toMatchObject({ ok: true, alreadyCompleted: false });
+    const unknownNullRow = await service
+      .from("ai_provider_attempt_ledger")
+      .select("status,endpoint_alias,actual_upstream_endpoint")
+      .eq("attempt_id", unknownNull.attempt.attemptId)
+      .single();
+    expect(unknownNullRow.error).toBeNull();
+    expect(unknownNullRow.data).toEqual({
+      status: "succeeded",
+      endpoint_alias: "test_unregistered_endpoint",
+      actual_upstream_endpoint: null,
+    });
+
+    const unknownReported = await startedAttempt(
+      "attempt-endpoint-unknown-reported",
+    );
+    runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      set session_replication_role = replica;
+      update public.ai_provider_attempt_ledger
+      set endpoint_alias = 'test_unregistered_endpoint'
+      where attempt_id = '${unknownReported.attempt.attemptId}'::uuid;
+      set session_replication_role = origin;
+    `);
+    const unknownBefore = await completionSnapshot(
+      unknownReported.user.id,
+      unknownReported.reservation.reservationId,
+      unknownReported.attempt.attemptId,
+    );
+    expect(
+      await harness.complete(
+        completePayload(unknownReported.attempt.attemptId, {
+          p_route: routeObservation({
+            actual_upstream_endpoint:
+              "https://api.deepseek.com/chat/completions",
+          }),
+        }),
+      ),
+    ).toEqual({ ok: false, reason: "INTERNAL_ERROR" });
+    expect(
+      await completionSnapshot(
+        unknownReported.user.id,
+        unknownReported.reservation.reservationId,
+        unknownReported.attempt.attemptId,
+      ),
+    ).toEqual(unknownBefore);
+
+    await harness.activateFreshRouteFixture("mimo");
+    try {
+      const exact = await startedAttempt("attempt-endpoint-mimo-exact");
+      expect(exact.reservation.routeSnapshot).toMatchObject({
+        gatewayKind: "direct_mimo",
+        wireApiKind: "responses_v1",
+        modelId: "mimo-v2.5-pro",
+      });
+      expect(
+        await harness.complete(
+          completePayload(exact.attempt.attemptId, {
+            p_route: routeObservation({
+              actual_upstream_endpoint:
+                "https://api.xiaomimimo.com/v1/responses",
+            }),
+          }),
+        ),
+      ).toMatchObject({ ok: true, alreadyCompleted: false });
+
+      const neighbor = await startedAttempt("attempt-endpoint-mimo-neighbor");
+      const neighborBefore = await completionSnapshot(
+        neighbor.user.id,
+        neighbor.reservation.reservationId,
+        neighbor.attempt.attemptId,
+      );
+      expect(
+        await harness.complete(
+          completePayload(neighbor.attempt.attemptId, {
+            p_route: routeObservation({
+              actual_upstream_endpoint:
+                "https://api.xiaomimimo.com/v1/responses/neighbor",
+            }),
+          }),
+        ),
+      ).toEqual({ ok: false, reason: "INTERNAL_ERROR" });
+      expect(
+        await completionSnapshot(
+          neighbor.user.id,
+          neighbor.reservation.reservationId,
+          neighbor.attempt.attemptId,
+        ),
+      ).toEqual(neighborBefore);
+    } finally {
+      await harness.activateFreshRouteFixture();
+    }
+  });
+
   it("derives cost reconciliation and treats caller status only as an assertion", async () => {
     const cases = [
       {
@@ -496,6 +653,66 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
         .eq("attempt_id", attempt.attemptId)
         .single();
       expect(row.data?.status).toBe("started");
+    }
+  });
+
+  it("rejects every cost currency/amount half-pair and applicable foreign currency without mutation", async () => {
+    const cases = [
+      {
+        label: "estimated-currency-only",
+        patch: { estimated_currency: "CNY", estimated_cost_nanos: null },
+      },
+      {
+        label: "estimated-amount-only",
+        patch: { estimated_currency: null, estimated_cost_nanos: "1234" },
+      },
+      {
+        label: "provider-currency-only",
+        patch: {
+          provider_reported_currency: "CNY",
+          provider_reported_cost_nanos: null,
+        },
+      },
+      {
+        label: "provider-amount-only",
+        patch: {
+          provider_reported_currency: null,
+          provider_reported_cost_nanos: "1234",
+        },
+      },
+      {
+        label: "provider-applicable-foreign",
+        patch: {
+          provider_reported_currency: "USD",
+          provider_reported_cost_nanos: "1234",
+          reconciliation_status: "matched",
+        },
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const { user, reservation, attempt } = await startedAttempt(
+        `attempt-cost-${entry.label}`,
+      );
+      const before = await completionSnapshot(
+        user.id,
+        reservation.reservationId,
+        attempt.attemptId,
+      );
+      expect(
+        await harness.complete(
+          completePayload(attempt.attemptId, {
+            p_cost: costObservation(entry.patch),
+          }),
+        ),
+      ).toEqual({ ok: false, reason: "INTERNAL_ERROR" });
+      expect(
+        await completionSnapshot(
+          user.id,
+          reservation.reservationId,
+          attempt.attemptId,
+        ),
+      ).toEqual(before);
     }
   });
 

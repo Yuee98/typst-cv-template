@@ -12,6 +12,8 @@ import {
   authorSyntheticRuntimeContract,
   DEEPSEEK_LEGAL_MANIFEST_ID,
   INITIAL_LEGAL_BUNDLE_VERSION,
+  MIMO_LEGAL_MANIFEST_ID,
+  MIMO_LEGAL_MANIFEST_SHA256,
   sealPriceAsDatabaseOwner,
   transitionPolicyAsDatabaseOwner,
 } from "./runtime-contract-fixtures";
@@ -27,11 +29,13 @@ export interface SettlementRouteSnapshot {
   legalBundleVersion: string;
   runtimeContractId: string;
   runtimeContractSha256: string;
-  gatewayKind: "direct_deepseek";
+  gatewayKind: "direct_deepseek" | "direct_mimo";
   modelId: string;
-  wireApiKind: "chat_completions_v1";
+  wireApiKind: "chat_completions_v1" | "responses_v1";
   displayDisclosureKey: string;
 }
+
+export type SettlementProviderKind = "deepseek" | "mimo";
 
 export interface SettlementRouteFixture {
   profileId: string;
@@ -152,8 +156,10 @@ export class SettlementHarness {
     });
   }
 
-  async activateFreshRouteFixture(): Promise<SettlementRouteFixture> {
-    this.fixture = await this.createActiveRouteFixture();
+  async activateFreshRouteFixture(
+    provider: SettlementProviderKind = "deepseek",
+  ): Promise<SettlementRouteFixture> {
+    this.fixture = await this.createActiveRouteFixture(provider);
     return this.fixture;
   }
 
@@ -273,19 +279,24 @@ export class SettlementHarness {
     return result.data;
   }
 
-  private async createActiveRouteFixture(): Promise<SettlementRouteFixture> {
+  private async createActiveRouteFixture(
+    provider: SettlementProviderKind,
+  ): Promise<SettlementRouteFixture> {
     const suffix = crypto.randomUUID();
-    const profileKey = `test.attempt-settlement.${suffix}`;
-    const modelId = "deepseek-v4-flash";
-    const displayDisclosureKey = "deepseek.official";
+    const profileKey = `test.attempt-settlement.${provider}.${suffix}`;
+    const isMimo = provider === "mimo";
+    const modelId = isMimo ? "mimo-v2.5-pro" : "deepseek-v4-flash";
+    const displayDisclosureKey = isMimo
+      ? "mimo.official"
+      : "deepseek.official";
 
     const profile = await this.service
       .from("ai_provider_profiles")
       .insert({
         profile_key: profileKey,
         display_name: "Provider attempt settlement fixture",
-        gateway_kind: "direct_deepseek",
-        model_vendor: "deepseek",
+        gateway_kind: isMimo ? "direct_mimo" : "direct_deepseek",
+        model_vendor: provider,
       })
       .select("id")
       .single();
@@ -296,15 +307,17 @@ export class SettlementHarness {
       .insert({
         profile_id: profile.data!.id,
         version: 1,
-        adapter_kind: "deepseek_chat_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "deepseek_api_key",
-        endpoint_alias: "deepseek_official",
+        adapter_kind: isMimo ? "mimo_responses_v1" : "deepseek_chat_v1",
+        wire_api_kind: isMimo ? "responses_v1" : "chat_completions_v1",
+        credential_alias: isMimo ? "mimo_api_key" : "deepseek_api_key",
+        endpoint_alias: isMimo ? "mimo_cn_official" : "deepseek_official",
         model_id: modelId,
         upstream_route: {},
         capability_contract_id: "polish_v2",
         cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: DEEPSEEK_LEGAL_MANIFEST_ID,
+        legal_manifest_id: isMimo
+          ? MIMO_LEGAL_MANIFEST_ID
+          : DEEPSEEK_LEGAL_MANIFEST_ID,
         display_disclosure_key: displayDisclosureKey,
         config: {},
         config_sha256: "4".repeat(64),
@@ -347,7 +360,15 @@ export class SettlementHarness {
       .eq("id", version.data!.id);
     expect(validated.error).toBeNull();
 
-    const runtime = authorSyntheticRuntimeContract({ profileKey });
+    const runtime = authorSyntheticRuntimeContract({
+      profileKey,
+      ...(isMimo
+        ? {
+            legalManifestId: MIMO_LEGAL_MANIFEST_ID,
+            manifestSha256: MIMO_LEGAL_MANIFEST_SHA256,
+          }
+        : {}),
+    });
     const policy = await this.service
       .from("ai_routing_policy_versions")
       .insert({
