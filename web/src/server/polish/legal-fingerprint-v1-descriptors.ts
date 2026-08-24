@@ -228,9 +228,12 @@ export function resolveLegalFingerprintV1ReviewedExcerptSha256(reviewedExcerpt: 
   if (typeof reviewedExcerpt !== "string") {
     throw new Error("legal evidence excerpt must be an exact reviewed string");
   }
-  const sha256 = EXCERPT_SHA256[reviewedExcerpt as keyof typeof EXCERPT_SHA256];
-  if (sha256 === undefined) {
+  if (!Object.hasOwn(EXCERPT_SHA256, reviewedExcerpt)) {
     throw new Error("unreviewed legal evidence excerpt");
+  }
+  const sha256 = EXCERPT_SHA256[reviewedExcerpt as keyof typeof EXCERPT_SHA256];
+  if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) {
+    throw new Error("reviewed legal evidence excerpt has an invalid digest");
   }
   return sha256;
 }
@@ -292,6 +295,9 @@ const REGISTRY_EVIDENCE_SOURCE_MAPPING = Object.freeze({
   "evidence.mimo.registry.adapter.v1": Object.freeze({ sourceLocator: ADAPTER_REGISTRY_PATH, factIds: mimoAdapterRegistry }),
   "evidence.mimo.registry.profile.v1": Object.freeze({ sourceLocator: PROFILE_REGISTRY_PATH, factIds: mimoProfileRegistry }),
 });
+const TRUSTED_REGISTRY_EVIDENCE_SOURCE_MAPPINGS = Object.freeze(
+  Object.values(REGISTRY_EVIDENCE_SOURCE_MAPPING),
+);
 
 const manifestEvidence = Object.freeze([
   evidence("evidence.deepseek.api.v1", "provider-official", "https://api-docs.deepseek.com/api/create-chat-completion/", EXCERPTS.deepseekApi, dsExternalApi),
@@ -534,11 +540,14 @@ export function validateLegalFingerprintV1RegistryEvidenceMapping(evidence: unkn
   if (typeof record.evidence_id !== "string") {
     throw new LegalFingerprintDescriptorV1Error("registry evidence must have an evidence_id");
   }
+  if (!Object.hasOwn(REGISTRY_EVIDENCE_SOURCE_MAPPING, record.evidence_id)) {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence_id is not source-authorized");
+  }
   const mapping = REGISTRY_EVIDENCE_SOURCE_MAPPING[
     record.evidence_id as keyof typeof REGISTRY_EVIDENCE_SOURCE_MAPPING
   ];
-  if (mapping === undefined) {
-    throw new LegalFingerprintDescriptorV1Error("registry evidence_id is not source-authorized");
+  if (!TRUSTED_REGISTRY_EVIDENCE_SOURCE_MAPPINGS.some((trusted) => trusted === mapping)) {
+    throw new LegalFingerprintDescriptorV1Error("registry evidence mapping is not trusted");
   }
   if (
     record.authority_kind !== "service-registry" ||

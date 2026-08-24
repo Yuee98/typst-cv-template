@@ -394,6 +394,14 @@ describe("initial legal fingerprint v1 descriptors", () => {
       .toThrow(/exact reviewed string/u);
   });
 
+  it.each(["toString", "constructor", "__proto__"])(
+    "rejects inherited excerpt key %s",
+    (inheritedKey) => {
+      expect(() => resolveLegalFingerprintV1ReviewedExcerptSha256(inheritedKey))
+        .toThrow(/unreviewed legal evidence excerpt/u);
+    },
+  );
+
   it("maps every evidence ID to its exact source-local supported fact set", () => {
     expect(graph.evidence.map((item) => item.evidence_id).sort()).toEqual(
       Object.keys(EXPECTED_EVIDENCE_FACT_IDS).sort(),
@@ -437,6 +445,64 @@ describe("initial legal fingerprint v1 descriptors", () => {
       ...item,
       supported_fact_ids: [...item.supported_fact_ids, overclaim],
     })).toThrow(/fact authority mismatch/u);
+  });
+
+  it.each(["toString", "constructor", "__proto__"])(
+    "rejects inherited registry evidence ID %s claiming provider-external facts",
+    (inheritedId) => {
+      expect(() => validateLegalFingerprintV1RegistryEvidenceMapping({
+        evidence_id: inheritedId,
+        authority_kind: "service-registry",
+        source_locator_kind: "repo-path",
+        source_locator: "web/src/server/polish/adapter-registry.ts",
+        supported_fact_ids: ["fact.deepseek.operator.external.v1"],
+      })).toThrow(/not source-authorized/u);
+    },
+  );
+
+  it("rejects isolated prototype pollution for excerpt and registry authority lookups", () => {
+    const excerptKey = "polluted legal excerpt";
+    const prototype = Object.prototype as Record<string, unknown>;
+    const previousExcerpt = Object.getOwnPropertyDescriptor(prototype, excerptKey);
+    const previousSourceLocator = Object.getOwnPropertyDescriptor(prototype, "sourceLocator");
+    const previousFactIds = Object.getOwnPropertyDescriptor(prototype, "factIds");
+    try {
+      Object.defineProperty(prototype, excerptKey, {
+        configurable: true,
+        enumerable: false,
+        value: "a".repeat(64),
+        writable: true,
+      });
+      Object.defineProperty(prototype, "sourceLocator", {
+        configurable: true,
+        enumerable: false,
+        value: "web/src/server/polish/adapter-registry.ts",
+        writable: true,
+      });
+      Object.defineProperty(prototype, "factIds", {
+        configurable: true,
+        enumerable: false,
+        value: Object.freeze(["fact.deepseek.operator.external.v1"]),
+        writable: true,
+      });
+
+      expect(() => resolveLegalFingerprintV1ReviewedExcerptSha256(excerptKey))
+        .toThrow(/unreviewed legal evidence excerpt/u);
+      expect(() => validateLegalFingerprintV1RegistryEvidenceMapping({
+        evidence_id: "__proto__",
+        authority_kind: "service-registry",
+        source_locator_kind: "repo-path",
+        source_locator: "web/src/server/polish/adapter-registry.ts",
+        supported_fact_ids: ["fact.deepseek.operator.external.v1"],
+      })).toThrow(/not source-authorized/u);
+    } finally {
+      if (previousExcerpt === undefined) delete prototype[excerptKey];
+      else Object.defineProperty(prototype, excerptKey, previousExcerpt);
+      if (previousSourceLocator === undefined) delete prototype.sourceLocator;
+      else Object.defineProperty(prototype, "sourceLocator", previousSourceLocator);
+      if (previousFactIds === undefined) delete prototype.factIds;
+      else Object.defineProperty(prototype, "factIds", previousFactIds);
+    }
   });
 
   it("freezes the exact provider known/unavailable source-revision matrix", () => {
