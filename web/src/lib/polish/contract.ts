@@ -1,5 +1,5 @@
 /**
- * Shared API contract for POST /api/polish.
+ * Shared API contract for the /api/polish route family.
  *
  * Source of truth: tmp/ai-polish-roadmap.md —「架构决策：API 契约」and
  * 「架构决策：润色粒度与能力矩阵」. Imported by BOTH the client (scope
@@ -311,6 +311,63 @@ export const polishRequestSchema = z
 // Response schemas
 // ---------------------------------------------------------------------------
 
+/** Canonical non-negative PostgreSQL bigint text used by route generations. */
+export const polishConfigGenerationSchema = z
+  .string()
+  .regex(/^(0|[1-9][0-9]{0,18})$/)
+  .refine((value) => value.length < 19 || value <= "9223372036854775807", {
+    message: "config generation exceeds PostgreSQL bigint",
+  });
+
+/** Bounded ASCII identifier shared by legal/runtime/disclosure registries. */
+export const polishRouteIdentifierSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
+
+export const polishRuntimeContractSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+
+const polishAvailabilityDisplayDisclosureSchema = z.strictObject({
+  key: polishRouteIdentifierSchema,
+  providerName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
+  modelName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
+});
+
+const polishAvailabilityEnabledSchema = z.strictObject({
+  enabled: z.literal(true),
+  configGeneration: polishConfigGenerationSchema,
+  routingPolicyVersionId: z.uuid(),
+  profileVersionId: z.uuid(),
+  legalBundleVersion: polishRouteIdentifierSchema,
+  runtimeContractId: polishRouteIdentifierSchema,
+  runtimeContractSha256: polishRuntimeContractSha256Schema,
+  displayDisclosure: polishAvailabilityDisplayDisclosureSchema,
+  termsAccepted: z.boolean(),
+});
+
+const polishAvailabilityDisabledSchema = z.strictObject({
+  enabled: z.literal(false),
+  configGeneration: z.null(),
+  routingPolicyVersionId: z.null(),
+  profileVersionId: z.null(),
+  legalBundleVersion: z.null(),
+  runtimeContractId: z.null(),
+  runtimeContractSha256: z.null(),
+  displayDisclosure: z.null(),
+  termsAccepted: z.literal(false),
+});
+
+/** Frozen public candidate snapshot returned by GET /api/polish/availability. */
+export const polishAvailabilitySchema = z.discriminatedUnion("enabled", [
+  polishAvailabilityEnabledSchema,
+  polishAvailabilityDisabledSchema,
+]);
+
+export const polishAvailabilityResponseSchema = z.strictObject({
+  /** Server-generated; also echoed in the X-Request-Id header. */
+  requestId: z.string().min(1),
+  availability: polishAvailabilitySchema,
+});
+
 export const polishQuotaSchema = z
   .strictObject({
     limit: z.number().int().nonnegative(),
@@ -443,6 +500,8 @@ export type PolishReference = z.infer<typeof polishReferenceSchema>;
 export type PolishContextLevel = z.infer<typeof polishContextSchema>["level"];
 export type PolishLanguage = z.infer<typeof polishRequestSchema>["language"];
 export type PolishRequest = z.infer<typeof polishRequestSchema>;
+export type PolishAvailability = z.infer<typeof polishAvailabilitySchema>;
+export type PolishAvailabilityResponse = z.infer<typeof polishAvailabilityResponseSchema>;
 export type PolishQuota = z.infer<typeof polishQuotaSchema>;
 export type PolishSuccessResponse = z.infer<typeof polishSuccessResponseSchema>;
 export type PolishQuotaResponse = z.infer<typeof polishQuotaResponseSchema>;

@@ -8,6 +8,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { polishAvailabilityResponseSchema } from "@/lib/polish/contract";
 
 const ENV_KEYS = [
   "POLISH_FAKE_LLM",
@@ -125,9 +126,10 @@ describe("handler.ts — refuse-to-start on misconfiguration", () => {
 
 describe("handler.ts — valid configurations boot", () => {
   it("fake smoke mode (CI marker) boots and serves the full lifecycle", async () => {
-    const { POST, GET } = await importHandler(FAKE_SMOKE_ENV);
+    const { POST, GET, AVAILABILITY_GET } = await importHandler(FAKE_SMOKE_ENV);
     expect(typeof POST).toBe("function");
     expect(typeof GET).toBe("function");
+    expect(typeof AVAILABILITY_GET).toBe("function");
 
     // Full chain through the fake backend: auth → reserve → fake LLM →
     // finalize → 200 with the frozen response shape.
@@ -170,10 +172,30 @@ describe("handler.ts — valid configurations boot", () => {
       }),
     );
     expect(quota.status).toBe(200);
+
+    const availability = await AVAILABILITY_GET(
+      new Request("https://test.local/api/polish/availability", {
+        headers: { authorization: "Bearer ci-smoke-token" },
+      }),
+    );
+    expect(availability.status).toBe(200);
+    const availabilityBody = await availability.json();
+    expect(polishAvailabilityResponseSchema.safeParse(availabilityBody).success).toBe(true);
+    expect(availabilityBody).toMatchObject({
+      availability: {
+        enabled: true,
+        displayDisclosure: {
+          key: "deepseek-official-v1",
+          providerName: "DeepSeek",
+          modelName: "DeepSeek V4 Flash",
+        },
+        termsAccepted: true,
+      },
+    });
   });
 
   it("real provider + real backend boots with complete env", async () => {
-    const { POST, GET } = await importHandler({
+    const { POST, GET, AVAILABILITY_GET } = await importHandler({
       NODE_ENV: "production",
       DEEPSEEK_API_KEY: "key",
       AI_POLISH_ENABLED: "true",
@@ -182,10 +204,11 @@ describe("handler.ts — valid configurations boot", () => {
     });
     expect(typeof POST).toBe("function");
     expect(typeof GET).toBe("function");
+    expect(typeof AVAILABILITY_GET).toBe("function");
   });
 
   it("local dev mode (fake LLM + real backend) boots without DEEPSEEK_API_KEY", async () => {
-    const { POST } = await importHandler({
+    const { POST, AVAILABILITY_GET } = await importHandler({
       NODE_ENV: "development",
       POLISH_FAKE_LLM: "true",
       AI_POLISH_ENABLED: "true",
@@ -193,5 +216,28 @@ describe("handler.ts — valid configurations boot", () => {
       ...SUPABASE_ENV,
     });
     expect(typeof POST).toBe("function");
+    expect(typeof AVAILABILITY_GET).toBe("function");
+  });
+
+  it("fake backend returns the stable disabled candidate when its UI switch is off", async () => {
+    const { AVAILABILITY_GET } = await importHandler({
+      ...FAKE_SMOKE_ENV,
+      AI_POLISH_ENABLED: "false",
+    });
+    const response = await AVAILABILITY_GET(
+      new Request("https://test.local/api/polish/availability", {
+        headers: { authorization: "Bearer ci-smoke-token" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      availability: {
+        enabled: false,
+        runtimeContractId: null,
+        runtimeContractSha256: null,
+        displayDisclosure: null,
+        termsAccepted: false,
+      },
+    });
   });
 });
