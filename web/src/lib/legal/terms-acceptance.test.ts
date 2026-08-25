@@ -22,6 +22,8 @@ interface QueryResult {
 function createTermsClient(options: {
   readonly queryResult?: QueryResult;
   readonly upsertError?: unknown;
+  readonly sessionUserId?: string | null;
+  readonly sessionError?: unknown;
 } = {}) {
   const maybeSingle = vi.fn(async () =>
     options.queryResult ?? { data: null, error: null },
@@ -38,13 +40,23 @@ function createTermsClient(options: {
     upsert,
   };
   const from = vi.fn(() => table);
+  const getSession = vi.fn(async () => ({
+    data: {
+      session:
+        options.sessionUserId === null
+          ? null
+          : { user: { id: options.sessionUserId ?? "user-a" } },
+    },
+    error: options.sessionError ?? null,
+  }));
 
   return {
-    client: { from } as unknown as SupabaseClient,
+    client: { auth: { getSession }, from } as unknown as SupabaseClient,
     from,
     table,
     selectChain,
     upsert,
+    getSession,
   };
 }
 
@@ -128,11 +140,12 @@ describe("AI legal bundle acceptance", () => {
     const harness = createTermsClient();
 
     await expect(
-      acceptAiLegalBundle(harness.client, AI_LEGAL_BUNDLE_VERSION),
+      acceptAiLegalBundle(harness.client, AI_LEGAL_BUNDLE_VERSION, "user-a"),
     ).resolves.toBeUndefined();
     expect(harness.from).toHaveBeenCalledWith("user_terms_acceptances");
     expect(harness.upsert).toHaveBeenCalledWith(
       {
+        user_id: "user-a",
         document_key: "ai_terms",
         version: AI_LEGAL_BUNDLE_VERSION,
       },
@@ -143,9 +156,10 @@ describe("AI legal bundle acceptance", () => {
     );
 
     const current = createTermsClient();
-    await expect(acceptCurrentAiTerms(current.client)).resolves.toBeUndefined();
+    await expect(acceptCurrentAiTerms(current.client, "user-a")).resolves.toBeUndefined();
     expect(current.upsert).toHaveBeenCalledWith(
       {
+        user_id: "user-a",
         document_key: "ai_terms",
         version: AI_TERMS_VERSION,
       },
@@ -159,14 +173,23 @@ describe("AI legal bundle acceptance", () => {
   it("rejects unknown versions before writes and propagates write failures", async () => {
     const unknown = createTermsClient();
     await expect(
-      acceptAiLegalBundle(unknown.client, "2026-08-04"),
+      acceptAiLegalBundle(unknown.client, "2026-08-04", "user-a"),
     ).rejects.toThrow("Unknown AI legal bundle version.");
     expect(unknown.from).not.toHaveBeenCalled();
 
     const failure = new Error("write failed");
     const rejected = createTermsClient({ upsertError: failure });
     await expect(
-      acceptAiLegalBundle(rejected.client, AI_LEGAL_BUNDLE_VERSION),
+      acceptAiLegalBundle(rejected.client, AI_LEGAL_BUNDLE_VERSION, "user-a"),
     ).rejects.toBe(failure);
+  });
+
+  it("fails closed before writing when the authenticated principal drifted", async () => {
+    const drifted = createTermsClient({ sessionUserId: "user-b" });
+
+    await expect(
+      acceptAiLegalBundle(drifted.client, AI_LEGAL_BUNDLE_VERSION, "user-a"),
+    ).rejects.toThrow("Authenticated user changed");
+    expect(drifted.from).not.toHaveBeenCalled();
   });
 });

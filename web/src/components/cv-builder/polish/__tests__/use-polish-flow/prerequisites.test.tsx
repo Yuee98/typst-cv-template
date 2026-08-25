@@ -31,6 +31,11 @@ describe("terms-acceptance window", () => {
     await act(async () => {
       h.acceptCalls[0].resolve();
     });
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.hasAcceptedCalls).toHaveLength(2);
+    await act(async () => {
+      h.hasAcceptedCalls[1].resolve(true);
+    });
     expect(h.polishCalls).toHaveLength(1);
     const sent = h.polishCalls[0].request;
     // Content is frozen; only the id changes and the reviewed route assertion
@@ -155,6 +160,8 @@ describe("account keying", () => {
     expect(h.hasAcceptedCalls).toHaveLength(2);
     expect(h.flow().terms.status).toBe("checking");
     expect(h.flow().canConfirm).toBe(false);
+    expect(h.availabilityCalls[1].expectedUserId).toBe("user-b");
+    expect(h.quotaOwners).toEqual(["user-a", "user-b"]);
     await act(async () => {
       h.quotaCalls[1].resolve({ requestId: "q-2", quota: makeQuota(7) });
       h.hasAcceptedCalls[1].resolve(false);

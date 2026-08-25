@@ -228,6 +228,33 @@ describe("round 2: commit-synchronous invalidation", () => {
     expect(h.flow().isOpen).toBe(false);
   });
 
+  it("language switch committed while acceptance pending: the in-layout resolve sends no request", async () => {
+    const h = renderRaceParent();
+    act(() => {
+      h.flow().open(SCOPE);
+    });
+    await act(async () => {
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+      h.hasAcceptedCalls[0].resolve(false);
+    });
+    act(() => h.flow().terms.setChecked(true));
+    act(() => h.flow().confirm());
+    expect(h.acceptCalls).toHaveLength(1);
+
+    h.onCommitRef.current = () => h.acceptCalls[0].resolve();
+    const actWarning = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.handleRef.current!.switchLanguage("en");
+      await flushRealScheduling();
+    } finally {
+      actWarning.mockRestore();
+    }
+
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.flow().terms.status).toBe("unknown");
+    expect(h.flow().isOpen).toBe(false);
+  });
+
   it("document switch committed while request in flight: the in-layout response applies nothing", async () => {
     const h = renderRaceParent();
     act(() => {

@@ -56,7 +56,7 @@ describe("write-back identity barriers", () => {
     expect(h.flow().referencesStale).toBe(true);
   });
 
-  it("language change with identical text blocks confirm and write-back", async () => {
+  it("language change with identical text closes and invalidates the reviewed config", async () => {
     const h = renderHarness();
     await openAccepted(h);
     // Same document, every string identical, only typstLang flipped (cloud reset).
@@ -66,10 +66,11 @@ describe("write-back identity barriers", () => {
     act(() => {
       h.flow().confirm();
     });
-    // No silent send in the new language: disclosure rebuilt for re-review.
+    // No old-language disclosure remains actionable after the commit.
     expect(h.polishCalls).toHaveLength(0);
-    expect(h.flow().configChangedHint).toBe(true);
-    expect(h.flow().state.snapshot?.apiRequest.language).toBe("en");
+    expect(h.flow().isOpen).toBe(false);
+    expect(h.flow().canConfirm).toBe(false);
+    expect(h.flow().state.snapshot).toBeNull();
   });
 
   it("language change during preview blocks Accept", async () => {
@@ -84,8 +85,24 @@ describe("write-back identity barriers", () => {
       h.flow().acceptItem(item.id);
     });
     expect(h.form().getValues(item.path as never)).toBe(before);
-    expect(h.flow().state.items[0].state).toBe("pending");
-    expect(h.flow().staleItemIds.has(item.id)).toBe(true);
+    expect(h.flow().isOpen).toBe(false);
+    expect(h.flow().state.items).toHaveLength(0);
+  });
+
+  it("rapid zh → en → zh keeps an old ready closure non-actionable", async () => {
+    const h = renderHarness();
+    await openAccepted(h);
+    const oldReadyFlow = h.flow();
+    expect(oldReadyFlow.canConfirm).toBe(true);
+
+    act(() => h.rerender({ language: "en" }));
+    expect(h.flow().isOpen).toBe(false);
+    act(() => h.rerender({ language: "zh" }));
+    act(() => oldReadyFlow.confirm());
+
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.flow().isOpen).toBe(false);
+    expect(h.flow().canConfirm).toBe(false);
   });
 
   it("document switch during loading aborts and resets", async () => {

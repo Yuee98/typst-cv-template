@@ -14,6 +14,8 @@ import {
 } from "../../polish-client";
 import { makeRequest } from "./fixtures";
 
+const AUTH = { expectedUserId: "user-a" } as const;
+
 function makeMockRequest(overrides: Partial<PolishPostRequest> = {}): PolishPostRequest {
   const expectedRoute = polishExpectedRouteFromAvailability(
     MOCK_POLISH_AVAILABILITY_RESPONSE.availability,
@@ -34,7 +36,7 @@ describe("mockPolishText", () => {
 
 describe("createMockPolishClient", () => {
   it("returns deterministic enabled and dark availability authority", async () => {
-    const enabled = await createMockPolishClient({ delayMs: 1 }).getAvailability();
+    const enabled = await createMockPolishClient({ delayMs: 1 }).getAvailability(AUTH);
     expect(polishAvailabilityResponseSchema.safeParse(enabled).success).toBe(true);
     expect(enabled.availability).toMatchObject({
       enabled: true,
@@ -49,13 +51,13 @@ describe("createMockPolishClient", () => {
     const unaccepted = await createMockPolishClient({
       delayMs: 1,
       termsAccepted: false,
-    }).getAvailability();
+    }).getAvailability(AUTH);
     expect(unaccepted.availability).toMatchObject({ enabled: true, termsAccepted: false });
 
     const disabled = await createMockPolishClient({
       delayMs: 1,
       availabilityEnabled: false,
-    }).getAvailability();
+    }).getAvailability(AUTH);
     expect(disabled.availability).toEqual({
       enabled: false,
       configGeneration: null,
@@ -71,28 +73,32 @@ describe("createMockPolishClient", () => {
 
   it("returns a contract-valid deterministic success", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
-    const result = await client.polish(makeMockRequest());
+    const result = await client.polish(makeMockRequest(), AUTH);
     expect(polishSuccessResponseSchema.safeParse(result).success).toBe(true);
     expect(result.items[0].polished).toBe("[mock] 五年后端开发经验，专注高并发分布式系统。");
     expect(result.quota.remaining).toBe(19);
 
     const again = await client.polish(
       makeMockRequest({ clientRequestId: "123e4567-e89b-42d3-a456-426614174001" }),
+      AUTH,
     );
     expect(again.items[0].polished).toBe(result.items[0].polished);
   });
 
   it("decrements the in-memory quota and exhausts it", async () => {
     const client = createMockPolishClient({ delayMs: 1, quotaLimit: 1 });
-    const quotaBefore = await client.getQuota();
+    const quotaBefore = await client.getQuota(AUTH);
     expect(quotaBefore.quota).toMatchObject({ limit: 1, remaining: 1 });
 
-    await client.polish(makeMockRequest());
-    const quotaAfter = await client.getQuota();
+    await client.polish(makeMockRequest(), AUTH);
+    const quotaAfter = await client.getQuota(AUTH);
     expect(quotaAfter.quota.remaining).toBe(0);
 
     const error = (await client
-      .polish(makeMockRequest({ clientRequestId: "123e4567-e89b-42d3-a456-426614174002" }))
+      .polish(
+        makeMockRequest({ clientRequestId: "123e4567-e89b-42d3-a456-426614174002" }),
+        AUTH,
+      )
       .catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe("QUOTA_EXCEEDED");
     expect(error.resetAt).toBeDefined();
@@ -100,9 +106,9 @@ describe("createMockPolishClient", () => {
 
   it("rejects a reused clientRequestId as DUPLICATE_REQUEST", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
-    await client.polish(makeMockRequest());
+    await client.polish(makeMockRequest(), AUTH);
     const error = (await client
-      .polish(makeMockRequest())
+      .polish(makeMockRequest(), AUTH)
       .catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe("DUPLICATE_REQUEST");
     expect(error.status).toBe(409);
@@ -111,12 +117,12 @@ describe("createMockPolishClient", () => {
   it("honors the FAIL_UPSTREAM and FAIL_JSON codewords", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
     const upstream = (await client
-      .polish(makeMockRequest({ styleInstruction: "FAIL_UPSTREAM" }))
+      .polish(makeMockRequest({ styleInstruction: "FAIL_UPSTREAM" }), AUTH)
       .catch((e: unknown) => e)) as PolishApiError;
     expect(upstream.code).toBe("UPSTREAM_ERROR");
 
     const json = (await client
-      .polish(makeMockRequest({ styleInstruction: "FAIL_JSON" }))
+      .polish(makeMockRequest({ styleInstruction: "FAIL_JSON" }), AUTH)
       .catch((e: unknown) => e)) as PolishApiError;
     expect(json.code).toBe("INVALID_MODEL_OUTPUT");
   });
@@ -124,7 +130,7 @@ describe("createMockPolishClient", () => {
   it("rejects a malformed request as INVALID_REQUEST", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
     const bad = { ...makeMockRequest(), granularity: "section" } as PolishPostRequest;
-    const error = (await client.polish(bad).catch((e: unknown) => e)) as PolishApiError;
+    const error = (await client.polish(bad, AUTH).catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe("INVALID_REQUEST");
   });
 
@@ -133,7 +139,10 @@ describe("createMockPolishClient", () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
     const error = (await client
-      .polish(makeMockRequest({ styleInstruction: "SLOW" }), { signal: controller.signal })
+      .polish(makeMockRequest({ styleInstruction: "SLOW" }), {
+        ...AUTH,
+        signal: controller.signal,
+      })
       .catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe(POLISH_TRANSPORT_ERROR_CODES.requestAborted);
   });
@@ -145,7 +154,7 @@ describe("createMockPolishClient", () => {
       .polish({
         ...request,
         expectedRoute: { ...request.expectedRoute, configGeneration: "1" },
-      })
+      }, AUTH)
       .catch((caught: unknown) => caught)) as PolishApiError;
 
     expect(error.code).toBe("AI_ROUTE_CHANGED");
@@ -155,7 +164,7 @@ describe("createMockPolishClient", () => {
   it("keeps the dark availability authority dark at the POST boundary", async () => {
     const client = createMockPolishClient({ delayMs: 1, availabilityEnabled: false });
     const error = (await client
-      .polish(makeMockRequest())
+      .polish(makeMockRequest(), AUTH)
       .catch((caught: unknown) => caught)) as PolishApiError;
 
     expect(error.code).toBe("AI_DISABLED");

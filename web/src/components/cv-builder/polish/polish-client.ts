@@ -26,15 +26,26 @@ import type {
 export interface PolishApiClient {
   polish(
     request: PolishPostRequest,
-    options?: { signal?: AbortSignal },
+    options: PolishAuthenticatedRequestOptions,
   ): Promise<PolishSuccessResponse>;
-  getAvailability(options?: { signal?: AbortSignal }): Promise<PolishAvailabilityResponse>;
-  getQuota(options?: { signal?: AbortSignal }): Promise<PolishQuotaResponse>;
+  getAvailability(
+    options: PolishAuthenticatedRequestOptions,
+  ): Promise<PolishAvailabilityResponse>;
+  getQuota(options: PolishAuthenticatedRequestOptions): Promise<PolishQuotaResponse>;
+}
+
+/** Every authenticated request is bound to the operation's committed owner. */
+export interface PolishAuthenticatedRequestOptions {
+  expectedUserId: string;
+  signal?: AbortSignal;
 }
 export { PolishApiError };
 
 export { createPolishHttpClient, DEFAULT_POLISH_CLIENT_TIMEOUT_MS };
-export type { CreatePolishHttpClientOptions } from "./polish-http-client";
+export type {
+  CreatePolishHttpClientOptions,
+  PolishAuthSnapshot,
+} from "./polish-http-client";
 export {
   createMockPolishClient,
   MOCK_CLIENT_CODEWORDS,

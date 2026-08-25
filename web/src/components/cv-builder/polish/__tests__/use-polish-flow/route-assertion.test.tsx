@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   polishExpectedRouteFromAvailability,
@@ -9,10 +9,14 @@ import {
   type PolishAvailabilityResponse,
 } from "@/lib/polish/contract";
 
-import { ENABLED_AVAILABILITY_BODY } from "../client/fixtures";
+import {
+  DISABLED_AVAILABILITY_BODY,
+  ENABLED_AVAILABILITY_BODY,
+} from "../client/fixtures";
 import { PolishApiError } from "../../polish-client";
 import {
   makeQuota,
+  makeSession,
   openAccepted,
   openRequiredAndConfirm,
   renderHarness,
@@ -38,6 +42,55 @@ const MIMO_AVAILABILITY_BODY: PolishAvailabilityResponse = {
   },
 };
 
+const UNACCEPTED_DEEPSEEK_BODY: PolishAvailabilityResponse = {
+  ...ENABLED_AVAILABILITY_BODY,
+  availability: {
+    ...ENABLED_AVAILABILITY_BODY.availability,
+    termsAccepted: false,
+  },
+};
+
+function withAcceptedTerms(
+  response: PolishAvailabilityResponse,
+): PolishAvailabilityResponse {
+  if (!response.availability.enabled) {
+    throw new Error("accepted-terms fixture requires enabled availability");
+  }
+  return {
+    ...response,
+    availability: { ...response.availability, termsAccepted: true },
+  };
+}
+
+async function beginDeferredAcceptance() {
+  const h = renderHarness(undefined, { deferAvailability: true });
+  act(() => h.flow().open(SCOPE));
+  await act(async () => {
+    h.availabilityCalls[0].deferred.resolve(UNACCEPTED_DEEPSEEK_BODY);
+    h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+  });
+  act(() => h.flow().terms.setChecked(true));
+  act(() => h.flow().confirm());
+  expect(h.acceptCalls).toHaveLength(1);
+  return h;
+}
+
+type DeferredAcceptanceHarness = Awaited<
+  ReturnType<typeof beginDeferredAcceptance>
+>;
+
+const SECOND_AWAIT_INVALIDATIONS: ReadonlyArray<
+  readonly [string, (harness: DeferredAcceptanceHarness) => void]
+> = [
+  ["close", (harness) => harness.flow().close()],
+  [
+    "account switch",
+    (harness) => harness.rerender({ session: makeSession("user-b") }),
+  ],
+  ["document switch", (harness) => harness.rerender({ documentId: "doc-2" })],
+  ["manual availability refresh", (harness) => harness.flow().availabilityRetry()],
+];
+
 afterEach(() => {
   cleanup();
 });
@@ -46,9 +99,12 @@ describe("usePolishFlow exact route assertion", () => {
   it("POSTs frozen content plus only a fresh id and the exact six-key assertion", async () => {
     const h = renderHarness();
     await openAccepted(h);
+    expect(h.availabilityCalls[0].expectedUserId).toBe("user-a");
+    expect(h.quotaOwners).toEqual(["user-a"]);
 
     act(() => h.flow().confirm());
     expect(h.polishCalls).toHaveLength(1);
+    expect(h.polishCalls[0].expectedUserId).toBe("user-a");
     const request = h.polishCalls[0].request;
     expect(polishPostRequestSchema.safeParse(request).success).toBe(true);
     expect(request.clientRequestId).toMatch(
@@ -86,7 +142,12 @@ describe("usePolishFlow exact route assertion", () => {
     expect(h.acceptCalls[0].legalBundleVersion).toBe(
       ENABLED_AVAILABILITY_BODY.availability.legalBundleVersion,
     );
+    expect(h.acceptCalls[0].userId).toBe("user-a");
     await act(async () => h.acceptCalls[0].resolve());
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.hasAcceptedCalls).toHaveLength(2);
+    expect(h.availabilityCalls[1].expectedUserId).toBe("user-a");
+    await act(async () => h.hasAcceptedCalls[1].resolve(true));
     expect(h.polishCalls).toHaveLength(1);
     expect(h.polishCalls[0].request.expectedRoute.legalBundleVersion).toBe(
       h.acceptCalls[0].legalBundleVersion,
@@ -183,6 +244,13 @@ describe("usePolishFlow exact route assertion", () => {
       MIMO_AVAILABILITY_BODY.availability.legalBundleVersion,
     );
     await act(async () => h.acceptCalls[0].resolve());
+    expect(h.polishCalls).toHaveLength(1);
+    expect(h.availabilityCalls).toHaveLength(3);
+    await act(async () => {
+      h.availabilityCalls[2].deferred.resolve(
+        withAcceptedTerms(MIMO_AVAILABILITY_BODY),
+      );
+    });
 
     expect(h.polishCalls).toHaveLength(2);
     expect(h.polishCalls[1].request.clientRequestId).not.toBe(firstClientRequestId);
@@ -190,6 +258,167 @@ describe("usePolishFlow exact route assertion", () => {
       polishExpectedRouteFromAvailability(MIMO_AVAILABILITY_BODY.availability),
     );
   });
+
+  it("requires explicit reconfirmation when the post-acceptance authority changed", async () => {
+    const randomUuid = vi.spyOn(crypto, "randomUUID");
+    try {
+      const h = await beginDeferredAcceptance();
+      await act(async () => h.acceptCalls[0].resolve());
+      const uuidCountBeforeFreshProof = randomUuid.mock.calls.length;
+      expect(h.polishCalls).toHaveLength(0);
+      expect(h.availabilityCalls).toHaveLength(2);
+
+      await act(async () => {
+        h.availabilityCalls[1].deferred.resolve(
+          withAcceptedTerms(MIMO_AVAILABILITY_BODY),
+        );
+      });
+
+      expect(randomUuid.mock.calls).toHaveLength(uuidCountBeforeFreshProof);
+      expect(h.polishCalls).toHaveLength(0);
+      expect(h.flow().routeChangedHint).toBe(true);
+      expect(h.flow().availabilityCandidate?.displayDisclosure.key).toBe(
+        "mimo-cn-v1",
+      );
+      expect(h.flow().canConfirm).toBe(true);
+
+      act(() => h.flow().confirm());
+      expect(h.polishCalls).toHaveLength(1);
+      expect(h.polishCalls[0].request.expectedRoute).toEqual(
+        polishExpectedRouteFromAvailability(MIMO_AVAILABILITY_BODY.availability),
+      );
+    } finally {
+      randomUuid.mockRestore();
+    }
+  });
+
+  it("does not send when the fresh authority still reports terms unaccepted", async () => {
+    const h = await beginDeferredAcceptance();
+    await act(async () => h.acceptCalls[0].resolve());
+    await act(async () => {
+      h.availabilityCalls[1].deferred.resolve(UNACCEPTED_DEEPSEEK_BODY);
+    });
+
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.flow().availabilityStatus).toBe("ready");
+    expect(h.flow().terms).toMatchObject({ status: "required", checked: false });
+    expect(h.flow().canConfirm).toBe(false);
+  });
+
+  it("does not send when post-acceptance availability is disabled or fails", async () => {
+    const disabled = await beginDeferredAcceptance();
+    await act(async () => disabled.acceptCalls[0].resolve());
+    await act(async () => {
+      disabled.availabilityCalls[1].deferred.resolve(DISABLED_AVAILABILITY_BODY);
+    });
+    expect(disabled.polishCalls).toHaveLength(0);
+    expect(disabled.flow().availabilityStatus).toBe("disabled");
+
+    cleanup();
+    const failed = await beginDeferredAcceptance();
+    await act(async () => failed.acceptCalls[0].resolve());
+    await act(async () => {
+      failed.availabilityCalls[1].deferred.reject(new TypeError("network"));
+    });
+    expect(failed.polishCalls).toHaveLength(0);
+    expect(failed.flow().availabilityStatus).toBe("error");
+  });
+
+  it("fails closed on unknown fresh legal/disclosure authority and language drift during the second await", async () => {
+    const unknown = await beginDeferredAcceptance();
+    await act(async () => unknown.acceptCalls[0].resolve());
+    await act(async () => {
+      unknown.availabilityCalls[1].deferred.resolve({
+        ...ENABLED_AVAILABILITY_BODY,
+        availability: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          displayDisclosure: {
+            ...ENABLED_AVAILABILITY_BODY.availability.displayDisclosure,
+            key: "unknown-provider-v1",
+          },
+          termsAccepted: true,
+        },
+      });
+    });
+    expect(unknown.polishCalls).toHaveLength(0);
+    expect(unknown.flow().availabilityStatus).toBe("error");
+
+    cleanup();
+    const unknownBundle = await beginDeferredAcceptance();
+    await act(async () => unknownBundle.acceptCalls[0].resolve());
+    await act(async () => {
+      unknownBundle.availabilityCalls[1].deferred.resolve({
+        ...ENABLED_AVAILABILITY_BODY,
+        availability: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          legalBundleVersion: "future-legal-bundle-v2",
+          termsAccepted: true,
+        },
+      });
+    });
+    expect(unknownBundle.polishCalls).toHaveLength(0);
+    expect(unknownBundle.flow().availabilityStatus).toBe("error");
+
+    cleanup();
+    const drifted = await beginDeferredAcceptance();
+    await act(async () => drifted.acceptCalls[0].resolve());
+    expect(drifted.availabilityCalls).toHaveLength(2);
+    act(() => drifted.rerender({ language: "en" }));
+    expect(drifted.availabilityCalls[1].signal?.aborted).toBe(true);
+    await act(async () => {
+      drifted.availabilityCalls[1].deferred.resolve({
+        ...ENABLED_AVAILABILITY_BODY,
+        availability: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          termsAccepted: true,
+        },
+      });
+    });
+    expect(drifted.polishCalls).toHaveLength(0);
+    expect(drifted.flow().isOpen).toBe(false);
+  });
+
+  it("rebuilds instead of sending when form content drifts during the second await", async () => {
+    const h = await beginDeferredAcceptance();
+    await act(async () => h.acceptCalls[0].resolve());
+    act(() => {
+      h.form().setValue("skills.0.body", "第二次 authority await 期间变化" as never);
+    });
+    await act(async () => {
+      h.availabilityCalls[1].deferred.resolve({
+        ...ENABLED_AVAILABILITY_BODY,
+        availability: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          termsAccepted: true,
+        },
+      });
+    });
+
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.flow().configChangedHint).toBe(true);
+    expect(h.flow().state.snapshot?.apiRequest.items[0].text).toBe(
+      "第二次 authority await 期间变化",
+    );
+  });
+
+  it.each(SECOND_AWAIT_INVALIDATIONS)(
+    "%s invalidates the post-acceptance authority continuation",
+    async (_label, invalidate) => {
+      const h = await beginDeferredAcceptance();
+      await act(async () => h.acceptCalls[0].resolve());
+      expect(h.availabilityCalls).toHaveLength(2);
+
+      act(() => invalidate(h));
+      expect(h.availabilityCalls[1].signal?.aborted).toBe(true);
+      await act(async () => {
+        h.availabilityCalls[1].deferred.resolve(
+          withAcceptedTerms(ENABLED_AVAILABILITY_BODY),
+        );
+      });
+
+      expect(h.polishCalls).toHaveLength(0);
+    },
+  );
 
   it("fails closed when the server selects a legal bundle this build cannot display", async () => {
     const h = renderHarness(undefined, { deferAvailability: true });

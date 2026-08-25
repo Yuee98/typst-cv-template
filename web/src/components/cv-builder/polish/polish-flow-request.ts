@@ -62,6 +62,7 @@ export async function runPolishRequest(
 
   try {
     const response = await client.polish(postRequest, {
+      expectedUserId: operation.userId,
       signal: controller.signal,
     });
     if (!context.isMounted()) return;

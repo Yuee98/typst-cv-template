@@ -83,7 +83,7 @@ describe.skipIf(!RUN_DB_TESTS)("terms & ai_terms RLS (real DB)", () => {
     expect(versionError).toBeNull();
     expect(version).toBe(AI_TERMS_VERSION);
 
-    await acceptCurrentAiTerms(clientA);
+    await acceptCurrentAiTerms(clientA, userA.id);
     expect(await hasAcceptedCurrentAiTerms(clientA)).toBe(true);
 
     const { data, error } = await clientA.rpc("has_accepted_current_ai_terms");
@@ -92,6 +92,13 @@ describe.skipIf(!RUN_DB_TESTS)("terms & ai_terms RLS (real DB)", () => {
 
     // terms acceptance is untouched by the ai_terms flow.
     expect(await hasAcceptedCurrentTerms(clientA)).toBe(true);
+  });
+
+  it("refuses an AI acceptance whose expected owner differs from the session", async () => {
+    await expect(
+      acceptCurrentAiTerms(clientB, userA.id),
+    ).rejects.toThrow("Authenticated user changed");
+    expect(await hasAcceptedCurrentAiTerms(clientB)).toBe(false);
   });
 
   it("lets users read only their own acceptance rows", async () => {

@@ -88,8 +88,11 @@ export function hasAcceptedCurrentAiTerms(supabase: SupabaseClient) {
   return hasAcceptedAiLegalBundle(supabase, AI_TERMS_VERSION);
 }
 
-export function acceptCurrentAiTerms(supabase: SupabaseClient) {
-  return acceptAiLegalBundle(supabase, AI_TERMS_VERSION);
+export function acceptCurrentAiTerms(
+  supabase: SupabaseClient,
+  expectedUserId: string,
+) {
+  return acceptAiLegalBundle(supabase, AI_TERMS_VERSION, expectedUserId);
 }
 
 export async function hasAcceptedAiLegalBundle(
@@ -106,10 +109,32 @@ export async function hasAcceptedAiLegalBundle(
 export async function acceptAiLegalBundle(
   supabase: SupabaseClient,
   legalBundleVersion: unknown,
+  expectedUserId: string,
 ) {
-  await acceptLegalDocument(
-    supabase,
-    "ai_terms",
-    parseKnownAiLegalBundleVersion(legalBundleVersion),
-  );
+  const version = parseKnownAiLegalBundleVersion(legalBundleVersion);
+  if (expectedUserId.length === 0) {
+    throw new Error("AI terms acceptance requires an expected user ID.");
+  }
+
+  // Capture and verify the authenticated principal immediately before the
+  // write. The explicit user_id plus RLS closes a later account-switch race:
+  // B cannot write A's row, and A's operation never writes B's row.
+  const { data, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  if (data.session?.user.id !== expectedUserId) {
+    throw new Error("Authenticated user changed before AI terms acceptance.");
+  }
+
+  const { error } = await supabase
+    .from("user_terms_acceptances")
+    .upsert(
+      {
+        user_id: expectedUserId,
+        document_key: "ai_terms",
+        version,
+      },
+      { ignoreDuplicates: true, onConflict: "user_id,document_key,version" },
+    );
+
+  if (error) throw error;
 }
