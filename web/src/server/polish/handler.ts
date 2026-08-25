@@ -15,6 +15,7 @@
  *   / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY / SUPABASE_SERVICE_ROLE_KEY /
  *   AI_USER_ID_HMAC_SECRET → throw
  * - POLISH_FAKE_BACKEND=true without POLISH_FAKE_LLM=true → throw
+ * - POLISH_FAKE_LLM=true without POLISH_FAKE_BACKEND=true → throw for V2
  *
  * Provider credentials are profile-scoped and resolved only after DB reserve,
  * immutable execution snapshot and runtime-target attestation. A missing
@@ -22,13 +23,13 @@
  * an unselected provider never becomes a startup dependency.
  *
  * Mode matrix:
- * - production: real provider + real Supabase backend.
- * - local dev: POLISH_FAKE_LLM=true fakes ONLY the LLM; auth/terms/quota
- *   still run against the local Supabase (the manual full-chain verification
- *   path).
- * - CI smoke: POLISH_FAKE_LLM=true + POLISH_FAKE_BACKEND=true (+CI=true
- *   marker, set automatically by GitHub Actions) fakes the LLM and the
- *   backend so `next start` serves the full lifecycle without Supabase.
+ * - real backend: real provider + Supabase accounting. The legacy single
+ *   POLISH_FAKE_LLM flag is rejected because synthetic inference cannot be
+ *   represented under a real DB-frozen provider route.
+ * - deterministic local/CI smoke: POLISH_FAKE_LLM=true plus
+ *   POLISH_FAKE_BACKEND=true (+CI=true in a production process, set
+ *   automatically by GitHub Actions) fakes the LLM and backend so `next
+ *   start` serves the full lifecycle without Supabase.
  *
  * The raw Supabase user id never reaches the provider. V2 derives the
  * domain-separated provider subject only after the immutable execution
@@ -54,12 +55,11 @@ import {
   type PolishPostV2Deps,
   type PolishPostV2HttpLogEvent,
 } from "./lifecycle-post-v2";
-import {
-  createCodeOwnedPolishAdapterResolverV2,
-  type PolishLifecycleV2LogEvent,
-  type PolishRouteDepsV2,
+import type {
+  PolishLifecycleV2LogEvent,
+  PolishRouteDepsV2,
 } from "./lifecycle-v2";
-import { EMPTY_RUNTIME_TARGET_RESOLVER_V1 } from "./lifecycle-v2-contract";
+import { createRealPolishRuntimeAuthorityV2 } from "./handler-runtime-authority";
 import { handleQuotaGet } from "./lifecycle-quota";
 import { createPolishAuthDeps } from "./auth";
 import { DEEPSEEK_POLISH_MODEL } from "./deepseek";
@@ -188,39 +188,22 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
     };
   }
 
-  // Real backend: auth/accounting against Supabase. Both factories throw on
-  // missing env (refuse-to-start).
+  // Real backend: auth/accounting against Supabase. The authority factory
+  // rejects the unsupported single fake-LLM flag and structurally pins this
+  // branch to empty runtime attestation plus code-owned adapters.
+  const runtimeAuthority = createRealPolishRuntimeAuthorityV2(env);
   const authDeps = createPolishAuthDeps();
   const adminClient = createServerAdminClient();
-  // Required even with the fake LLM: all provider subjects/route tags are
-  // server-keyed so raw identity/correlation values cannot cross boundaries.
+  // All provider subjects/route tags are server-keyed so raw identity or
+  // correlation values cannot cross boundaries.
   const hmacSecret = requireServerEnv("AI_USER_ID_HMAC_SECRET");
-  const fakeLlm = env.POLISH_FAKE_LLM === "true";
-  const fakeProviderV2 = fakeLlm
-    ? createFakePolishInferenceProvider({
-        route: {
-          actualUpstreamEndpoint: resolveEndpoint("deepseek_official").url,
-          actualModelId: DEEPSEEK_POLISH_MODEL,
-        },
-      })
-    : undefined;
   const routesV2: PolishRouteDepsV2 = {
     reserve: (params) => reservePolishRequestV2(adminClient, params),
     getExecutionSnapshot: (params) => getPolishExecutionSnapshotV1(adminClient, params),
     startAttempt: (params) => startPolishProviderAttemptV2(adminClient, params),
     completeAttempt: (params) => completePolishProviderAttemptV2(adminClient, params),
     finalize: (params) => finalizePolishRequestV2(adminClient, params),
-    // RT-009A replaces the production-empty resolver with the exact reviewed
-    // runtime evidence registry. Until then a mistakenly activated DB route
-    // releases before attempt admission/network. The fake-only seam may
-    // accept its synthetic runtime because both provider paths are inert.
-    runtimeTargetResolver: fakeLlm
-      ? () => true
-      : EMPTY_RUNTIME_TARGET_RESOLVER_V1,
-    resolveProvider:
-      fakeProviderV2 === undefined
-        ? createCodeOwnedPolishAdapterResolverV2({ env })
-        : () => fakeProviderV2,
+    ...runtimeAuthority,
     providerSubjectSecret: hmacSecret,
     routeObservationSecret: hmacSecret,
     logger: logPolishLifecycleV2Event,

@@ -8,10 +8,10 @@
  * Every auth/quota dependency is replaced by an in-memory stub whose answers
  * are always permissive, so no database or GoTrue service is needed.
  *
- * Local development uses a DIFFERENT configuration: POLISH_FAKE_LLM=true
- * WITHOUT this flag keeps the REAL auth/terms/quota path against the local
- * Supabase (only the LLM is faked), which is how the full chain is manually
- * verified end-to-end.
+ * The public V2 handler deliberately does not support fake inference against
+ * real Supabase accounting. Local deterministic verification therefore uses
+ * this complete two-flag backend; real-backend verification uses the real
+ * selected adapter only after reviewed runtime attestation exists.
  *
  * Safety: both fake factories require POLISH_FAKE_LLM=true and the V2 factory
  * additionally requires POLISH_FAKE_BACKEND=true; production is allowed only

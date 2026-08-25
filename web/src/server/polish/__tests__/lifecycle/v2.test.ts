@@ -12,6 +12,7 @@ import {
 } from "../../lifecycle-v2";
 import { createFakePolishV2RouteDeps } from "../../backend-fake";
 import {
+  EMPTY_RUNTIME_TARGET_RESOLVER_V1,
   parseExecutionSnapshotV1,
   parseRouteSnapshotV1,
   type ExpectedRouteV1,
@@ -472,8 +473,10 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
     });
   });
 
-  it("fails unavailable runtime authority before provider resolution or attempt start", async () => {
-    const harness = createHarness({ runtimeTargetResolver: () => false });
+  it("zero-child releases an active route under the production-empty runtime authority", async () => {
+    const harness = createHarness({
+      runtimeTargetResolver: EMPTY_RUNTIME_TARGET_RESOLVER_V1,
+    });
 
     const result = await executePolishLifecycleV2(input(harness.controller), harness.deps);
 
@@ -481,10 +484,17 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
       ok: false,
       code: "SERVICE_UNAVAILABLE",
       stage: "execution_snapshot",
+      attemptCount: 0,
       settlement: "confirmed",
     });
     expect(harness.state.calls).toEqual(["reserve", "snapshot", "finalize"]);
     expect(harness.state.providerCalls).toHaveLength(0);
+    expect(harness.state.completionPayloads).toHaveLength(0);
+    expect(harness.state.finalizeRequests).toEqual([
+      expect.objectContaining({
+        settlementKind: "zero_child_release",
+      }),
+    ]);
   });
 
   it("releases before start when adapter or subject resolution is unavailable", async () => {

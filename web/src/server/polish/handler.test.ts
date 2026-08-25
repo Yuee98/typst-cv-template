@@ -257,17 +257,26 @@ describe("handler.ts — valid configurations boot", () => {
     expect(postWithoutToken.status).toBe(401);
   });
 
-  it("local dev mode (fake LLM + real backend) boots without DEEPSEEK_API_KEY", async () => {
-    const { POST, AVAILABILITY_GET } = await importHandler({
-      NODE_ENV: "development",
-      POLISH_FAKE_LLM: "true",
-      AI_POLISH_ENABLED: "true",
-      AI_USER_ID_HMAC_SECRET: "secret",
-      ...SUPABASE_ENV,
-    });
-    expect(typeof POST).toBe("function");
-    expect(typeof AVAILABILITY_GET).toBe("function");
-  });
+  it.each([
+    ["development", undefined],
+    ["production", "true"],
+  ] as const)(
+    "rejects fake inference with a real backend in %s/CI=%s",
+    async (nodeEnv, ci) => {
+      await expect(
+        importHandler({
+          NODE_ENV: nodeEnv,
+          CI: ci,
+          POLISH_FAKE_LLM: "true",
+          POLISH_FAKE_BACKEND: undefined,
+          AI_POLISH_ENABLED: "true",
+          AI_USER_ID_HMAC_SECRET: "secret",
+          DEEPSEEK_API_KEY: undefined,
+          ...SUPABASE_ENV,
+        }),
+      ).rejects.toThrow(/requires POLISH_FAKE_BACKEND=true/);
+    },
+  );
 
   it("fake backend returns the stable disabled candidate when its UI switch is off", async () => {
     const { AVAILABILITY_GET, POST } = await importHandler({
