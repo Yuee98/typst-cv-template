@@ -4,10 +4,11 @@
  *   pnpm --filter web metrics:ai              (repo root: pnpm metrics:ai)
  *   node scripts/ai-metrics.mjs --hours=48 --no-alert
  *
- * Reads ai_request_ledger (last --hours=N hours, default 24) via the service
- * role and prints: request volume by status, p50/p95 latency of succeeded
- * rows, retry rates, invalid-output rate, DeepSeek context-cache hit rate and
- * token usage. Then compares TODAY's ai_global_usage_daily against
+ * Reads the persisted request and provider-attempt ledgers (last
+ * --hours=N hours, default 24) via the service role and prints disjoint
+ * request-level and attempt-level sections grouped by safe route dimensions,
+ * usage and cost reconciliation. It also retains the legacy request summary,
+ * then compares TODAY's ai_global_usage_daily against
  * ai_feature_config.global_daily_limit and exits non-zero on threshold:
  *
  *   usage >=  80% of the global daily limit → prints ALERT,    exit 1
@@ -20,8 +21,9 @@
  * Environment (web/.env.local; process.env takes precedence):
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *
- * Output is metadata only (counts, latencies, token totals) — no request
- * content, user ids, or keys are ever printed.
+ * Output is metadata only (counts, route dimensions, latencies, token/cost
+ * totals) — no request content, user ids, raw provider IDs, credentials or
+ * endpoint URLs are ever printed.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -30,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { createClient } from "@supabase/supabase-js";
 import {
+  buildMetrics,
   classifyGlobalUsage,
   collectAllPages,
   summarizeTokenUsage,
@@ -135,13 +138,19 @@ function utcToday() {
  * attempts/day, so a busy day ALWAYS exceeds one page). Paginate
  * deterministically on (reserved_at, reservation_id) until a short page.
  */
-async function fetchLedgerRows(cutoffIso) {
+async function fetchRequestRows(cutoffIso) {
   return collectAllPages(async (offset, end) => {
     const { data, error } = await service
       .from("ai_request_ledger")
       .select(
         "reservation_id,reserved_at,status,state,attempt_count,latency_ms," +
-          "usage_complete,input_cached_tokens,input_uncached_tokens,output_tokens",
+          "usage_complete,input_cached_tokens,input_uncached_tokens,output_tokens," +
+          "input_cache_read_tokens,input_cache_write_tokens,input_standard_tokens,reasoning_tokens," +
+          "known_estimated_cost_nanos,estimated_cost_nanos,provider_reported_currency," +
+          "provider_reported_cost_nanos,cost_reconciliation_status," +
+          "route_schema_version,config_generation,routing_policy_version_id,profile_version_id," +
+          "price_version_id,legal_bundle_version,runtime_contract_id,runtime_contract_sha256," +
+          "gateway_kind,model_id,wire_api_kind,display_disclosure_key,billing_currency",
       )
       .gte("reserved_at", cutoffIso)
       .order("reserved_at", { ascending: true })
@@ -154,7 +163,33 @@ async function fetchLedgerRows(cutoffIso) {
   });
 }
 
-function printMetrics(rows, hours) {
+async function fetchAttemptRows(cutoffIso) {
+  return collectAllPages(async (offset, end) => {
+    const { data, error } = await service
+      .from("ai_provider_attempt_ledger")
+      .select(
+        "reservation_id,attempt_no,status,usage_observation_kind,usage_complete," +
+          "input_cache_read_tokens,input_cache_write_tokens,input_standard_tokens,output_tokens,reasoning_tokens," +
+          "estimated_cost_nanos,provider_reported_currency,provider_reported_cost_nanos," +
+          "cost_reconciliation_status,route_schema_version,config_generation," +
+          "routing_policy_version_id,profile_version_id,price_version_id,legal_bundle_version," +
+          "runtime_contract_id,runtime_contract_sha256,gateway_kind,model_id,wire_api_kind," +
+          "display_disclosure_key,billing_currency",
+      )
+      .gte("started_at", cutoffIso)
+      .order("started_at", { ascending: true })
+      .order("reservation_id", { ascending: true })
+      .order("attempt_no", { ascending: true })
+      .range(offset, end);
+    if (error) {
+      failUsage(`ai_provider_attempt_ledger read failed: ${error.message}`);
+    }
+    return data;
+  });
+}
+
+function printMetrics({ requests, attempts }, hours) {
+  const rows = requests;
   const finalized = rows.filter((row) => row.state === "finalized");
   const byStatus = Object.fromEntries(FINALIZED_STATUSES.map((status) => [status, 0]));
   for (const row of finalized) {
@@ -219,6 +254,17 @@ function printMetrics(rows, hours) {
     `cache hit rate (succeeded, complete, n=${usage.succeededCompleteWithInput.count}): ` +
       cacheRate(usage.succeededCompleteWithInput.totals),
   );
+
+  // OBS-001 keeps request aggregates and provider attempts disjoint.  The
+  // service-role read is the provenance boundary; no caller-supplied events
+  // enter this CLI, and only the pure builder's safe projections are printed.
+  const metrics = buildMetrics({ requests, attempts });
+  console.log("\n== Request-level ledger metrics ==");
+  console.log(JSON.stringify(metrics.requestLevel));
+  console.log("\n== Attempt-level ledger metrics ==");
+  console.log(JSON.stringify(metrics.attemptLevel));
+  console.log("\n== Metrics alerts ==");
+  console.log(JSON.stringify(metrics.alerts));
 }
 
 // ---------------------------------------------------------------------------
@@ -289,8 +335,11 @@ const cutoffIso = new Date(Date.now() - hours * 3_600_000).toISOString();
 // process.exitCode, never process.exit(), once network clients exist: exiting
 // mid-drain trips a libuv assertion crash on Windows (UV_HANDLE_CLOSING).
 try {
-  const rows = await fetchLedgerRows(cutoffIso);
-  printMetrics(rows, hours);
+  const [requests, attempts] = await Promise.all([
+    fetchRequestRows(cutoffIso),
+    fetchAttemptRows(cutoffIso),
+  ]);
+  printMetrics({ requests, attempts }, hours);
   process.exitCode = await globalCostAlert();
 } catch (error) {
   if (error instanceof UsageExit) {
