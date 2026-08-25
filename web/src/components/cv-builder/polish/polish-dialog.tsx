@@ -2,6 +2,8 @@
 
 import { Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { useWatch } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
 import { ModalDialog } from "@/components/ui/modal-dialog";
@@ -9,11 +11,18 @@ import type { PolishLanguage } from "@/lib/polish/contract";
 import { cn } from "@/lib/utils";
 
 import { PolishConfigPhase } from "./polish-config-phase";
+import { PolishEntryProvider } from "./polish-entry-context";
 import { PolishErrorPhase } from "./polish-error-phase";
 import { classifyPolishError, isRetryablePolishError } from "./polish-errors";
+import { savePendingPolishIntent, takePendingPolishIntent } from "./polish-intent";
 import { PolishLoadingPhase } from "./polish-loading-phase";
 import { PolishPreviewPhase } from "./polish-preview-phase";
-import type { PolishFlow } from "./use-polish-flow";
+import type { PolishScope } from "./scope-builder";
+import {
+  usePolishFlow,
+  type PolishFlow,
+  type UsePolishFlowOptions,
+} from "./use-polish-flow";
 
 /**
  * The single-dialog, three-phase polish flow (roadmap「PolishDialog：单
@@ -55,10 +64,69 @@ export function PolishDialog({
       footer={<PhaseFooter flow={flow} />}
     >
       {phase === "config" && <PolishConfigPhase flow={flow} />}
-      {phase === "loading" && <PolishLoadingPhase />}
+      {phase === "loading" && (
+        <div role="status" aria-live="polite" aria-atomic="true">
+          <PolishLoadingPhase />
+        </div>
+      )}
       {phase === "preview" && <PolishPreviewPhase flow={flow} language={language} />}
-      {phase === "error" && <PolishErrorPhase flow={flow} />}
+      {phase === "error" && (
+        <div aria-live="assertive" aria-atomic="true">
+          <PolishErrorPhase flow={flow} />
+        </div>
+      )}
     </ModalDialog>
+  );
+}
+
+/**
+ * The AI-only composition boundary. CvBuilder requires this module only when
+ * the public feature flag is compiled on, so static exports neither call the
+ * flow hook nor ship the client that fetches the polish API.
+ */
+export function PolishFlowProvider({
+  children,
+  onRequestSignIn,
+  ...flowOptions
+}: Omit<UsePolishFlowOptions, "language"> & {
+  children: ReactNode;
+  onRequestSignIn: () => void;
+}) {
+  const language = useWatch({ control: flowOptions.form.control, name: "typstLang" }) ?? "en";
+  const flow = usePolishFlow({ ...flowOptions, language });
+  const { open: openPolishFlow } = flow;
+
+  const requestPolish = useCallback(
+    (scope: PolishScope) => {
+      if (flowOptions.session) {
+        openPolishFlow(scope);
+        return;
+      }
+      if (flowOptions.documentId) {
+        savePendingPolishIntent({
+          documentId: flowOptions.documentId,
+          scope,
+          createdAt: Date.now(),
+        });
+      }
+      onRequestSignIn();
+    },
+    [flowOptions.session, flowOptions.documentId, onRequestSignIn, openPolishFlow],
+  );
+
+  useEffect(() => {
+    if (!flowOptions.session || !flowOptions.documentId) return;
+    const scope = takePendingPolishIntent(flowOptions.documentId);
+    if (scope) openPolishFlow(scope);
+  }, [flowOptions.session, flowOptions.documentId, openPolishFlow]);
+
+  const entryValue = useMemo(() => ({ requestPolish }), [requestPolish]);
+
+  return (
+    <PolishEntryProvider value={entryValue}>
+      {children}
+      <PolishDialog flow={flow} language={language} />
+    </PolishEntryProvider>
   );
 }
 

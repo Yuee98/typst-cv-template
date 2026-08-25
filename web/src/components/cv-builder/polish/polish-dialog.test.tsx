@@ -203,6 +203,33 @@ describe("PolishDialog E2EE plaintext warning", () => {
 });
 
 describe("PolishDialog provider disclosure", () => {
+  it("announces phase loading and errors without moving focus away from their controls", () => {
+    const loading = renderDialog(
+      makeStubFlow({ state: { ...createInitialState(), phase: "loading" } }),
+    );
+    expect(
+      screen
+        .getByText(messages.PolishDialog.loading.title)
+        .closest('[aria-live="polite"]'),
+    ).not.toBeNull();
+    loading.unmount();
+
+    renderDialog(
+      makeStubFlow({
+        state: {
+          ...createInitialState(),
+          phase: "error",
+          error: { code: "UPSTREAM_ERROR" },
+        },
+      }),
+    );
+    expect(
+      screen
+        .getByText(messages.PolishDialog.errors.upstream)
+        .closest('[aria-live="assertive"]'),
+    ).not.toBeNull();
+  });
+
   it("keeps the refreshed recipient and content visible under the route-changed hint", () => {
     renderDialog(makeStubFlow({ routeChangedHint: true }));
 
@@ -221,11 +248,12 @@ describe("PolishDialog provider disclosure", () => {
           .replace("{model}", "DeepSeek V4 Flash"),
       ),
     ).toBeTruthy();
-    expect(
-      screen
-        .getByRole("link", { name: messages.PolishDialog.availability.annex })
-        .getAttribute("href"),
-    ).toBe("/ai-terms#provider-annex-deepseek-official-v1");
+    const annex = screen.getByRole("link", { name: messages.PolishDialog.availability.annex });
+    expect(annex.getAttribute("href")).toBe("/ai-terms#provider-annex-deepseek-official-v1");
+    expect(annex.tabIndex).toBe(0);
+    annex.focus();
+    expect(document.activeElement).toBe(annex);
+    expect(annex.className).toContain("focus-visible:ring-2");
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 

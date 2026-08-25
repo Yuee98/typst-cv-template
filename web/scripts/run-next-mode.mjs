@@ -100,6 +100,10 @@ function runNext(subcommand, mode, extraArgs) {
     stdio: "inherit",
     env: {
       ...process.env,
+      // Turbopack can eliminate the AI-only composition module only when the
+      // public flag is an explicit compile-time false value. Server and dev
+      // modes inherit the caller's deployment flag unchanged.
+      ...(mode === "static" ? { NEXT_PUBLIC_AI_POLISH_ENABLED: "false" } : {}),
       STATIC_EXPORT: mode === "static" ? "true" : "false",
     },
   });

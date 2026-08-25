@@ -151,7 +151,7 @@ function AvailabilityDisclosure({ flow }: { flow: PolishFlow }) {
         })}
       </p>
       <Link
-        className="font-medium text-accent-soft-foreground hover:text-accent"
+        className="rounded-sm font-medium text-accent-soft-foreground hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         href={annexHref}
         target="_blank"
         rel="noreferrer"
