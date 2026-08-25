@@ -359,6 +359,16 @@
     },
     "privacyReminder": "不会发送简历页眉中的姓名、邮箱和电话。本次选中的正文及上下文若自行包含个人信息，仍会发送至 AI 服务处理。",
     "e2eeWarning": "润色文本将以明文离开你的设备，经我们的服务器转发至第三方 AI 服务处理。端到端加密只保护云端存储。",
+    "availability": {
+      "heading": "本次 AI 服务候选接收方",
+      "selected": "{provider} · {model}。该候选由服务端路由决定，不是可选项。",
+      "annex": "查看该服务商附录",
+      "loading": "正在确认本次处理服务…",
+      "disabled": "AI 润色当前未开放，未选择任何接收方。",
+      "error": "无法确认本次处理服务。",
+      "unsupportedDisclosure": "当前服务缺少已审核的服务商附录，已阻止提交。",
+      "retry": "重新查询"
+    },
     "quota": {
       "remaining": "今日剩余 {remaining}/{limit} 次",
       "loading": "正在查询用量…",

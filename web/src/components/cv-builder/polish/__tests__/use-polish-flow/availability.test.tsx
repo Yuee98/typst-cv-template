@@ -111,6 +111,33 @@ describe("usePolishFlow runtime availability", () => {
     expect(h.flow().canConfirm).toBe(false);
   });
 
+  it("keeps an enabled but legally unknown display key non-confirmable", async () => {
+    const h = renderHarness(undefined, { deferAvailability: true });
+    act(() => h.flow().open(SCOPE));
+
+    await act(async () => {
+      h.availabilityCalls[0].deferred.resolve({
+        ...ENABLED_AVAILABILITY_BODY,
+        availability: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          displayDisclosure: {
+            key: "future-provider-v1",
+            providerName: "Future Provider",
+            modelName: "Future Model",
+          },
+        },
+      });
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+      h.hasAcceptedCalls[0].resolve(true);
+    });
+
+    expect(h.flow().availabilityStatus).toBe("ready");
+    expect(h.flow().availabilityCandidate?.displayDisclosure.key).toBe("future-provider-v1");
+    expect(h.flow().canConfirm).toBe(false);
+    act(() => h.flow().confirm());
+    expect(h.polishCalls).toHaveLength(0);
+  });
+
   it("revokes close and account-switch reads before late results can publish", async () => {
     const closeHarness = renderHarness(undefined, { deferAvailability: true });
     act(() => closeHarness.flow().open(SCOPE));

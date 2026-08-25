@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import type { PolishDisclosure } from "./scope-builder";
+import { resolvePolishProviderAnnexHref } from "./polish-provider-annex";
 import type { PolishFlow } from "./use-polish-flow";
 
 /**
@@ -52,6 +53,8 @@ export function PolishConfigPhase({ flow }: { flow: PolishFlow }) {
         disclosure && <DisclosureSummary disclosure={disclosure} />
       )}
 
+      <AvailabilityDisclosure flow={flow} />
+
       {/* Fixed privacy reminder; the E2EE variant gets warning-level styling
           (roadmap 信息区与提醒文案, Invariant 10). */}
       <div className="rounded-md border border-border bg-surface-hover px-3 py-2 text-xs leading-5 text-foreground-muted">
@@ -68,6 +71,84 @@ export function PolishConfigPhase({ flow }: { flow: PolishFlow }) {
       <LevelSelector flow={flow} />
       <StyleSelector flow={flow} />
       <TermsRow flow={flow} />
+    </div>
+  );
+}
+
+function AvailabilityDisclosure({ flow }: { flow: PolishFlow }) {
+  const t = useTranslations("PolishDialog");
+  if (!flow.signedIn) return null;
+
+  const status = flow.availabilityStatus;
+  if (status === "idle" || status === "loading") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted"
+      >
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+        {t("availability.loading")}
+      </div>
+    );
+  }
+
+  if (status === "disabled") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted"
+      >
+        {t("availability.disabled")}
+      </div>
+    );
+  }
+
+  const candidate = flow.availabilityCandidate;
+  const annexHref = candidate
+    ? resolvePolishProviderAnnexHref(candidate.displayDisclosure.key)
+    : null;
+  if (status === "error" || !candidate || !annexHref) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center justify-between gap-2 rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground"
+      >
+        <span>
+          {status === "error"
+            ? t("availability.error")
+            : t("availability.unsupportedDisclosure")}
+        </span>
+        <Button type="button" variant="ghost" size="sm" onClick={flow.availabilityRetry}>
+          {t("availability.retry")}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="rounded-md border border-accent-border bg-accent-soft px-3 py-2 text-sm leading-5 text-foreground-muted"
+    >
+      <div className="font-medium text-foreground">{t("availability.heading")}</div>
+      <p>
+        {t("availability.selected", {
+          provider: candidate.displayDisclosure.providerName,
+          model: candidate.displayDisclosure.modelName,
+        })}
+      </p>
+      <Link
+        className="font-medium text-accent-soft-foreground hover:text-accent"
+        href={annexHref}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {t("availability.annex")}
+      </Link>
     </div>
   );
 }

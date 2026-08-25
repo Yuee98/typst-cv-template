@@ -106,6 +106,7 @@ import {
   assessPreviewTransition,
   hasIdentityStaleTransition,
 } from "./polish-flow-preview";
+import { resolvePolishProviderAnnexHref } from "./polish-provider-annex";
 import {
   runPolishRequest,
   toPolishError,
@@ -775,6 +776,11 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     if (!scope || !documentId || scopeFailure !== null) return;
     if (!session) return;
     if (availabilityStatus !== "ready" || availabilityCandidate === null) return;
+    if (
+      resolvePolishProviderAnnexHref(availabilityCandidate.displayDisclosure.key) === null
+    ) {
+      return;
+    }
     if (!aiTermsAllowConfirm(termsState, termsChecked)) return;
 
     // Continuation-scope staleness: the identity refs, not this closure's
@@ -1142,6 +1148,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     signedIn &&
     availabilityStatus === "ready" &&
     availabilityCandidate !== null &&
+    resolvePolishProviderAnnexHref(availabilityCandidate.displayDisclosure.key) !== null &&
     // A quota re-read in flight (initial load, or the post-cancel refresh)
     // means the remaining count is unknown/stale: no confirm until it lands.
     quotaStatus !== "loading" &&

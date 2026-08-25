@@ -14,7 +14,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import messages from "../../../../messages/en.json";
 
+import { ENABLED_AVAILABILITY_BODY } from "./__tests__/client/fixtures";
 import { PolishDialog } from "./polish-dialog";
+import { resolvePolishProviderAnnexHref } from "./polish-provider-annex";
 import { createInitialState } from "./polish-reducer";
 import type { PolishFlow } from "./use-polish-flow";
 
@@ -45,6 +47,8 @@ function makeStubFlow(overrides?: Partial<PolishFlow>): PolishFlow {
     getValue: () => undefined,
     quota: { limit: 20, remaining: 5, resetAt: "2026-08-04T00:00:00Z" },
     quotaStatus: "ready",
+    availabilityCandidate: ENABLED_AVAILABILITY_BODY.availability,
+    availabilityStatus: "ready",
     terms: {
       status: "accepting",
       serverRejected: false,
@@ -72,6 +76,7 @@ function makeStubFlow(overrides?: Partial<PolishFlow>): PolishFlow {
     rejectAll: vi.fn(),
     refreshTerms: vi.fn(),
     quotaRetry: vi.fn(),
+    availabilityRetry: vi.fn(),
     ...overrides,
   } as PolishFlow;
 }
@@ -154,6 +159,101 @@ describe("PolishDialog E2EE plaintext warning", () => {
     renderDialog(makeStubFlow({ encrypted: false }));
 
     expect(screen.queryByText(messages.PolishDialog.e2eeWarning)).toBeNull();
+  });
+});
+
+describe("PolishDialog provider disclosure", () => {
+  it("renders the exact DeepSeek recipient, model and code-owned annex without a selector", () => {
+    renderDialog(makeStubFlow());
+
+    expect(
+      screen.getByText(
+        messages.PolishDialog.availability.selected
+          .replace("{provider}", "DeepSeek")
+          .replace("{model}", "DeepSeek V4 Flash"),
+      ),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: messages.PolishDialog.availability.annex })
+        .getAttribute("href"),
+    ).toBe("/ai-terms#provider-annex-deepseek-official-v1");
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("maps the MiMo display key to its exact annex", () => {
+    renderDialog(
+      makeStubFlow({
+        availabilityCandidate: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          displayDisclosure: {
+            key: "mimo-cn-v1",
+            providerName: "MiMo",
+            modelName: "MiMo V2.5 Pro",
+          },
+        },
+      }),
+    );
+
+    expect(screen.getByText(/MiMo · MiMo V2.5 Pro/)).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: messages.PolishDialog.availability.annex })
+        .getAttribute("href"),
+    ).toBe("/ai-terms#provider-annex-mimo-cn-v1");
+  });
+
+  it("renders loading, disabled and error states without hiding plaintext disclosure", () => {
+    const loading = renderDialog(
+      makeStubFlow({ availabilityCandidate: null, availabilityStatus: "loading" }),
+    );
+    expect(screen.getByText(messages.PolishDialog.availability.loading)).toBeTruthy();
+    expect(screen.getByText(messages.PolishDialog.privacyReminder)).toBeTruthy();
+    loading.unmount();
+
+    const disabled = renderDialog(
+      makeStubFlow({ availabilityCandidate: null, availabilityStatus: "disabled" }),
+    );
+    expect(screen.getByText(messages.PolishDialog.availability.disabled)).toBeTruthy();
+    expect(screen.queryByText(/DeepSeek/)).toBeNull();
+    disabled.unmount();
+
+    const availabilityRetry = vi.fn();
+    renderDialog(
+      makeStubFlow({
+        availabilityCandidate: null,
+        availabilityStatus: "error",
+        availabilityRetry,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: messages.PolishDialog.availability.retry }),
+    );
+    expect(availabilityRetry).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/DeepSeek/)).toBeNull();
+  });
+
+  it("fails closed for an unknown display key instead of interpolating an annex URL", () => {
+    const unknownKey = "future-provider-v1";
+    expect(resolvePolishProviderAnnexHref(unknownKey)).toBeNull();
+    renderDialog(
+      makeStubFlow({
+        availabilityCandidate: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          displayDisclosure: {
+            key: unknownKey,
+            providerName: "Future Provider",
+            modelName: "Future Model",
+          },
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(messages.PolishDialog.availability.unsupportedDisclosure),
+    ).toBeTruthy();
+    expect(screen.queryByText("Future Provider")).toBeNull();
+    expect(screen.queryByRole("link", { name: messages.PolishDialog.availability.annex })).toBeNull();
   });
 });
 
