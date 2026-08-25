@@ -64,6 +64,9 @@ jobs:
       - name: Build (static export)
         run: pnpm build:static
 
+      - name: Assert no AI client in static export
+        run: pnpm --filter web assert:static-no-ai
+
       - name: Assert static export artifact
         run: |
           set -euo pipefail

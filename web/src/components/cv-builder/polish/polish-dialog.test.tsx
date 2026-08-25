@@ -203,6 +203,31 @@ describe("PolishDialog E2EE plaintext warning", () => {
 });
 
 describe("PolishDialog provider disclosure", () => {
+  it("uses one polite loading region and one non-nested assertive error alert", () => {
+    const loading = renderDialog(
+      makeStubFlow({ state: { ...createInitialState(), phase: "loading" } }),
+    );
+    const loadingRegion = screen.getByRole("status");
+    expect(loadingRegion.getAttribute("aria-live")).toBe("polite");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+    loading.unmount();
+
+    renderDialog(
+      makeStubFlow({
+        state: {
+          ...createInitialState(),
+          phase: "error",
+          error: { code: "UPSTREAM_ERROR" },
+        },
+      }),
+    );
+    const alert = screen.getByRole("alert");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(alert.closest("[aria-live]")).toBeNull();
+    expect(document.activeElement).not.toBe(alert);
+  });
+
   it("keeps the refreshed recipient and content visible under the route-changed hint", () => {
     renderDialog(makeStubFlow({ routeChangedHint: true }));
 
@@ -221,11 +246,12 @@ describe("PolishDialog provider disclosure", () => {
           .replace("{model}", "DeepSeek V4 Flash"),
       ),
     ).toBeTruthy();
-    expect(
-      screen
-        .getByRole("link", { name: messages.PolishDialog.availability.annex })
-        .getAttribute("href"),
-    ).toBe("/ai-terms#provider-annex-deepseek-official-v1");
+    const annex = screen.getByRole("link", { name: messages.PolishDialog.availability.annex });
+    expect(annex.getAttribute("href")).toBe("/ai-terms#provider-annex-deepseek-official-v1");
+    expect(annex.tabIndex).toBe(0);
+    annex.focus();
+    expect(document.activeElement).toBe(annex);
+    expect(annex.className).toContain("focus-visible:ring-2");
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 
