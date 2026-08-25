@@ -25,7 +25,7 @@ export const DEEPSEEK_PROFILE_KEY =
 export const DEEPSEEK_PROFILE_VERSION_ID =
   "11111111-1111-4111-8111-111111111111" as const;
 export const DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID =
-  "sha1:d78c84de0b39dcc0d80277a428bedb353bd86973" as const;
+  "sha1:96eb76fa8035b6f82a8fcb0e7670f416fcb09ef6" as const;
 
 const DEEPSEEK_ROUTE_DESCRIPTOR_ID = "route.deepseek.official.v1" as const;
 const DEEPSEEK_DISPLAY_DISCLOSURE_KEY = "deepseek-official-v1" as const;
@@ -200,7 +200,7 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   reserveTest: source(
     "web/test/db/reserve-v2-route-snapshot.test.ts",
-    "d451ddb008bc16e3797c386fa542945a14385fb43db10fbdf3f86a220c1ecad1",
+    "dd8b3c394c20e7e04dfdfda760ceeb2b036db060cd64c4205cd2fcfef6662f8c",
   ),
   adapterRegistry: source(
     "web/src/server/polish/adapter-registry.ts",
@@ -252,11 +252,19 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   quota: source(
     "web/src/server/polish/quota.ts",
-    "1f60251d1906c1628120ceaaa4ddb77927067242675eab1dee2e9c2a323e13f2",
+    "7622867a2dda9e2615887174cc1318a1b3ade4263f4b3b99b3e5ec8c95570db0",
   ),
   quotaTest: source(
     "web/src/server/polish/quota-v2.test.ts",
-    "48c3d15ca6ae8834c9c59049acf6bcb8f27a04871fa0ed186226c9ebe2bab6a0",
+    "46225414b83c1bc297fc60bb51c48b325f5214b2be45a91adb5ceae06d515c81",
+  ),
+  handler: source(
+    "web/src/server/polish/handler.ts",
+    "77ca0cd6effe51a1c0510a1c634c5f57e6f4f4262f602691b18bd569bd2b77fc",
+  ),
+  handlerTest: source(
+    "web/src/server/polish/handler.test.ts",
+    "10c5a0923a2fe817a623799e992ee9d647f32af1ab1ef3b813d94e98a37e3fa1",
   ),
   ledgerRequest: source(
     "supabase/migrations/20260823231000_ai_provider_ledger_legal_expand.sql",
@@ -276,11 +284,11 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   lifecycleV2: source(
     "web/src/server/polish/lifecycle-v2.ts",
-    "a1cb4e9ef23e196afd2d260cc34a750a69edc85a7fabbcce9c74921e4e39ccf8",
+    "67834f11f408f87879362eb7f9e7d0cfc7e107a66dabc35a19caee2f1fbbe02a",
   ),
   lifecycleV2Test: source(
     "web/src/server/polish/__tests__/lifecycle/v2.test.ts",
-    "fdd47010a863f49658fcce59a70c265c0dc2ed998371671217e4e8f8e75f4629",
+    "1c10b9dba3d5308f0805c047fa9138a12064de10173c94d9fab37607ae5f1876",
   ),
   attemptComplete: source(
     "supabase/migrations/20260824000000_complete_ai_polish_provider_attempt.sql",
@@ -288,11 +296,15 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   attemptCompleteTest: source(
     "web/test/db/provider-attempt-complete.test.ts",
-    "5996ee3cc9e9fc2b3998a5aadc3e2ef09fb72d0c052ad1eada277eb805c96de0",
+    "405019a43de2c60f4ebb7019a44a2ad1c343728380b41499f113bd5fbbf254a4",
+  ),
+  attemptStartTest: source(
+    "web/test/db/provider-attempt-start.test.ts",
+    "33299870fc394e74ffb00d410d5d701576e9553a650227cc2235b5d0c54bc4ce",
   ),
   attemptFinalizeTest: source(
     "web/test/db/provider-attempt-finalize.test.ts",
-    "7a47599bca77698aea849b14f481bdea58c419e26a4ac19a1fa4c0e805c0fcd2",
+    "ffe4cee61a9f5422b4c89ae9e03602c09404cb2a28ccad50a6cdb2688c8cac84",
   ),
   attemptReconcile: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
@@ -300,7 +312,7 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   attemptReconcileTest: source(
     "web/test/db/provider-attempt-reconcile.test.ts",
-    "4b189dcabdfcedeee274df5d2da830e77336619c96f41f89b5afd7150a55618d",
+    "20bc28790a1edf9fc4ba94e24797dfa7d3b8f756c95f379582eb7728917d56b2",
   ),
   durableTransmission: source(
     "supabase/migrations/20260824001500_durable_attempt_transmission_quota.sql",
@@ -308,7 +320,11 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   durableTransmissionTest: source(
     "web/test/db/provider-attempt-transmission.test.ts",
-    "dc869e9395c36ad7cbbcc6f78a0af8966369e8c8b2ade6aa8c19d8f4b9949b03",
+    "d01e166070927e13d68a352f04a57ebf72e3324d08217323037b22d418e1fb12",
+  ),
+  durableCancellationSequence: source(
+    "supabase/migrations/20260824001600_durable_request_cancellation_sequence.sql",
+    "f6f2fcf7146529b16357b2b92711390581c8c240accd0b758fbceddf2d35008c",
   ),
   retention: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
@@ -320,7 +336,7 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   orchestrator: source(
     "web/src/server/polish/orchestrator.ts",
-    "09d6d5fff3bc8f772744088af386ed1096860ba8c5321b79bd0aee5c91762bfe",
+    "d7d14dc420629ec6234a373c70ac35d79410605fc18926740badc5127901dba4",
   ),
   orchestratorTest: source(
     "web/src/server/polish/orchestrator.test.ts",
@@ -448,11 +464,21 @@ const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
         SOURCE_BLOBS.ledgerRequest,
         SOURCE_BLOBS.attemptLedger,
         SOURCE_BLOBS.durableTransmission,
+        SOURCE_BLOBS.durableCancellationSequence,
+        SOURCE_BLOBS.quota,
+        SOURCE_BLOBS.lifecycleV2,
+        SOURCE_BLOBS.handler,
       ),
       test: sourceSet(
         SOURCE_BLOBS.ledgerRequestTest,
         SOURCE_BLOBS.attemptLedgerTest,
         SOURCE_BLOBS.durableTransmissionTest,
+        SOURCE_BLOBS.quotaTest,
+        SOURCE_BLOBS.lifecycleV2Test,
+        SOURCE_BLOBS.handlerTest,
+        SOURCE_BLOBS.attemptCompleteTest,
+        SOURCE_BLOBS.attemptFinalizeTest,
+        SOURCE_BLOBS.attemptReconcileTest,
       ),
     }),
     Object.freeze({
@@ -469,6 +495,8 @@ const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
         SOURCE_BLOBS.attemptComplete,
         SOURCE_BLOBS.attemptReconcile,
         SOURCE_BLOBS.durableTransmission,
+        SOURCE_BLOBS.durableCancellationSequence,
+        SOURCE_BLOBS.handler,
       ),
       test: sourceSet(
         SOURCE_BLOBS.quotaTest,
@@ -478,6 +506,7 @@ const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
         SOURCE_BLOBS.attemptFinalizeTest,
         SOURCE_BLOBS.attemptReconcileTest,
         SOURCE_BLOBS.durableTransmissionTest,
+        SOURCE_BLOBS.handlerTest,
       ),
     }),
     Object.freeze({
@@ -487,8 +516,20 @@ const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
     }),
     Object.freeze({
       factId: "fact.neutral.retry.v1",
-      implementation: sourceSet(SOURCE_BLOBS.orchestrator, SOURCE_BLOBS.lifecycleV2),
-      test: sourceSet(SOURCE_BLOBS.orchestratorTest, SOURCE_BLOBS.lifecycleV2Test),
+      implementation: sourceSet(
+        SOURCE_BLOBS.orchestrator,
+        SOURCE_BLOBS.lifecycleV2,
+        SOURCE_BLOBS.quota,
+        SOURCE_BLOBS.durableCancellationSequence,
+      ),
+      test: sourceSet(
+        SOURCE_BLOBS.orchestratorTest,
+        SOURCE_BLOBS.lifecycleV2Test,
+        SOURCE_BLOBS.quotaTest,
+        SOURCE_BLOBS.attemptStartTest,
+        SOURCE_BLOBS.attemptCompleteTest,
+        SOURCE_BLOBS.durableTransmissionTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.neutral.scope.v1",
@@ -644,7 +685,7 @@ const CONTRACT_DESCRIPTOR = deepFreeze<ServiceRuntimeContractDescriptorV1>({
 });
 const CONTRACT_SHA256 = fingerprintLegalDescriptorV1(CONTRACT_DESCRIPTOR).sha256;
 const EXPECTED_CONTRACT_SHA256 =
-  "346371bd3dcc9f7bfb79392bcb76ef389cfe76f0ea509303656c60369b1ba874";
+  "90f9d25e413cbd98b4dd8d083c37e2a8bcbc98a34c6831c26ca074bd859706c7";
 if (CONTRACT_SHA256 !== EXPECTED_CONTRACT_SHA256) {
   throw new Error("reviewed DeepSeek runtime contract hash drift");
 }
