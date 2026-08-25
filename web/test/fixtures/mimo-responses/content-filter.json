@@ -1,0 +1,23 @@
+{
+  "id": "resp_mimo_filter_001",
+  "object": "response",
+  "created_at": 1787659202,
+  "status": "incomplete",
+  "error": null,
+  "incomplete_details": {
+    "reason": "content_filter"
+  },
+  "model": "mimo-v2.5-pro",
+  "output": [],
+  "usage": {
+    "input_tokens": 9,
+    "input_tokens_details": {
+      "cached_tokens": 2
+    },
+    "output_tokens": 0,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 9
+  }
+}
