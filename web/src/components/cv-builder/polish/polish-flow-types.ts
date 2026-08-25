@@ -1,4 +1,4 @@
-import type { PolishLanguage } from "@/lib/polish/contract";
+import type { PolishAvailability, PolishLanguage } from "@/lib/polish/contract";
 
 import type { SnapshotPathValues } from "./stale-guard";
 
@@ -24,6 +24,19 @@ export interface ActivePolishOperation {
    */
   refreshQuotaOnSettle: boolean;
 }
+
+/** One authenticated availability read and its exact async owner. */
+export interface ActiveAvailabilityRead {
+  /** Immutable account key captured before the request starts. */
+  userId: string;
+  /** Monotonic read generation; older same-account reads cannot publish. */
+  generation: number;
+  /** Closing, switching identity or refreshing aborts this exact read. */
+  controller: AbortController;
+}
+
+export type PolishAvailabilityCandidate = Extract<PolishAvailability, { enabled: true }>;
+export type PolishAvailabilityStatus = "idle" | "loading" | "ready" | "disabled" | "error";
 
 /**
  * Everything a snapshot's validity depends on beyond its path values: the

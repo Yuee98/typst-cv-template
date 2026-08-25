@@ -1,4 +1,5 @@
 import {
+  polishAvailabilityResponseSchema,
   polishErrorResponseSchema,
   polishQuotaResponseSchema,
   polishSuccessResponseSchema,
@@ -163,6 +164,18 @@ export function createPolishHttpClient(options: CreatePolishHttpClientOptions): 
         { method: "POST", body: polishRequest, signal: polishOptions?.signal },
         (body, status) => {
           const parsed = polishSuccessResponseSchema.safeParse(body);
+          if (!parsed.success) {
+            throw invalidBodyError(parsed.error.issues[0]?.path.join(".") ?? "body", status);
+          }
+          return parsed.data;
+        },
+      ),
+    getAvailability: (availabilityOptions) =>
+      request(
+        "/api/polish/availability",
+        { method: "GET", signal: availabilityOptions?.signal },
+        (body, status) => {
+          const parsed = polishAvailabilityResponseSchema.safeParse(body);
           if (!parsed.success) {
             throw invalidBodyError(parsed.error.issues[0]?.path.join(".") ?? "body", status);
           }

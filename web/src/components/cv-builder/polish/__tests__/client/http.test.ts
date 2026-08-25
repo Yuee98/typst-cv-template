@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
 import { createPolishHttpClient, PolishApiError } from "../../polish-client";
-import { CLIENT_REQUEST_ID, SUCCESS_BODY, fetchReturning, jsonResponse, makeRequest } from "./fixtures";
+import {
+  CLIENT_REQUEST_ID,
+  DISABLED_AVAILABILITY_BODY,
+  ENABLED_AVAILABILITY_BODY,
+  SUCCESS_BODY,
+  fetchReturning,
+  jsonResponse,
+  makeRequest,
+} from "./fixtures";
 
 function httpClient(fetchImpl: typeof fetch, overrides = {}) {
   return createPolishHttpClient({
@@ -147,6 +155,75 @@ describe("createPolishHttpClient", () => {
     }) as unknown as typeof fetch;
     const result = await httpClient(fetchImpl).getQuota();
     expect(result.quota.remaining).toBe(7);
+  });
+
+  it.each([
+    ["enabled", ENABLED_AVAILABILITY_BODY],
+    ["disabled", DISABLED_AVAILABILITY_BODY],
+  ])("GETs and strictly parses the %s availability envelope", async (_state, body) => {
+    let seen: { url?: string; init?: RequestInit } = {};
+    const controller = new AbortController();
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      seen = { url, init };
+      return jsonResponse(200, body);
+    }) as unknown as typeof fetch;
+
+    const result = await httpClient(fetchImpl).getAvailability({ signal: controller.signal });
+
+    expect(result).toEqual(body);
+    expect(seen.url).toBe("/api/polish/availability");
+    expect(seen.init?.method).toBe("GET");
+    expect(seen.init?.body).toBeUndefined();
+    expect(seen.init?.signal).toBeInstanceOf(AbortSignal);
+    expect((seen.init?.headers as Record<string, string>).Authorization).toBe("Bearer token-abc");
+  });
+
+  it.each([
+    [
+      "partial route",
+      {
+        ...ENABLED_AVAILABILITY_BODY,
+        availability: { ...ENABLED_AVAILABILITY_BODY.availability, profileVersionId: undefined },
+      },
+    ],
+    [
+      "uppercase runtime hash",
+      {
+        ...ENABLED_AVAILABILITY_BODY,
+        availability: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          runtimeContractSha256: "A".repeat(64),
+        },
+      },
+    ],
+    [
+      "extra internal route",
+      { ...ENABLED_AVAILABILITY_BODY, internalRoute: "deepseek_official" },
+    ],
+  ])("rejects a success body with %s without leaking it", async (_case, body) => {
+    const error = (await httpClient(fetchReturning(jsonResponse(200, body)))
+      .getAvailability()
+      .catch((caught: unknown) => caught)) as PolishApiError;
+
+    expect(error.code).toBe(POLISH_TRANSPORT_ERROR_CODES.invalidResponseBody);
+    expect(error.message).not.toContain("deepseek_official");
+    expect(error.message).not.toContain("AAAA");
+  });
+
+  it("aborts an availability read through the shared caller-cancellation path", async () => {
+    const controller = new AbortController();
+    const fetchImpl = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () =>
+          reject(new DOMException("The operation was aborted.", "AbortError")),
+        );
+        setTimeout(() => controller.abort(), 10);
+      })) as unknown as typeof fetch;
+
+    const pending = httpClient(fetchImpl).getAvailability({ signal: controller.signal });
+    const error = (await pending.catch((caught: unknown) => caught)) as PolishApiError;
+
+    expect(error.code).toBe(POLISH_TRANSPORT_ERROR_CODES.requestAborted);
   });
 
   it("getQuota surfaces contract errors the same way", async () => {

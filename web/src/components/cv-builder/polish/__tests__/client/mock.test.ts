@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { polishSuccessResponseSchema, type PolishRequest } from "@/lib/polish/contract";
+import {
+  polishAvailabilityResponseSchema,
+  polishSuccessResponseSchema,
+  type PolishRequest,
+} from "@/lib/polish/contract";
 import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
 import { createMockPolishClient, mockPolishText, PolishApiError } from "../../polish-client";
 import { makeRequest } from "./fixtures";
@@ -15,6 +19,42 @@ describe("mockPolishText", () => {
 });
 
 describe("createMockPolishClient", () => {
+  it("returns deterministic enabled and dark availability authority", async () => {
+    const enabled = await createMockPolishClient({ delayMs: 1 }).getAvailability();
+    expect(polishAvailabilityResponseSchema.safeParse(enabled).success).toBe(true);
+    expect(enabled.availability).toMatchObject({
+      enabled: true,
+      termsAccepted: true,
+      displayDisclosure: {
+        key: "deepseek-official-v1",
+        providerName: "DeepSeek",
+        modelName: "DeepSeek V4 Flash",
+      },
+    });
+
+    const unaccepted = await createMockPolishClient({
+      delayMs: 1,
+      termsAccepted: false,
+    }).getAvailability();
+    expect(unaccepted.availability).toMatchObject({ enabled: true, termsAccepted: false });
+
+    const disabled = await createMockPolishClient({
+      delayMs: 1,
+      availabilityEnabled: false,
+    }).getAvailability();
+    expect(disabled.availability).toEqual({
+      enabled: false,
+      configGeneration: null,
+      routingPolicyVersionId: null,
+      profileVersionId: null,
+      legalBundleVersion: null,
+      runtimeContractId: null,
+      runtimeContractSha256: null,
+      displayDisclosure: null,
+      termsAccepted: false,
+    });
+  });
+
   it("returns a contract-valid deterministic success", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
     const result = await client.polish(makeRequest());

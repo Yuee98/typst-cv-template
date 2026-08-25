@@ -48,6 +48,7 @@ import { expect, vi } from "vitest";
 
 import { DEFAULT_SECTION_ORDER, ORDERED_SECTION_IDS, type CvData } from "@/lib/cv/schema";
 import type {
+  PolishAvailabilityResponse,
   PolishLanguage,
   PolishQuota,
   PolishQuotaResponse,
@@ -55,6 +56,7 @@ import type {
   PolishSuccessResponse,
 } from "@/lib/polish/contract";
 
+import { ENABLED_AVAILABILITY_BODY } from "../client/fixtures";
 import { PolishApiError, type PolishApiClient } from "../../polish-client";
 import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
 import type { PolishScope } from "../../scope-builder";
@@ -166,10 +168,20 @@ export function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-export function makeClient() {
+export interface MakeClientOptions {
+  /** Keep reads pending so ownership/invalidation can be driven explicitly. */
+  deferAvailability?: boolean;
+  availabilityResponse?: PolishAvailabilityResponse;
+}
+
+export function makeClient(options: MakeClientOptions = {}) {
   const polishCalls: Array<{
     request: PolishRequest;
     deferred: Deferred<PolishSuccessResponse>;
+    signal: AbortSignal | undefined;
+  }> = [];
+  const availabilityCalls: Array<{
+    deferred: Deferred<PolishAvailabilityResponse>;
     signal: AbortSignal | undefined;
   }> = [];
   const quotaCalls: Array<Deferred<PolishQuotaResponse>> = [];
@@ -179,13 +191,21 @@ export function makeClient() {
       polishCalls.push({ request, deferred: call, signal: options?.signal });
       return call.promise;
     }),
+    getAvailability: vi.fn((requestOptions?: { signal?: AbortSignal }) => {
+      const call = deferred<PolishAvailabilityResponse>();
+      availabilityCalls.push({ deferred: call, signal: requestOptions?.signal });
+      if (!options.deferAvailability) {
+        call.resolve(options.availabilityResponse ?? ENABLED_AVAILABILITY_BODY);
+      }
+      return call.promise;
+    }),
     getQuota: vi.fn(() => {
       const call = deferred<PolishQuotaResponse>();
       quotaCalls.push(call);
       return call.promise;
     }),
   };
-  return { client, polishCalls, quotaCalls };
+  return { client, polishCalls, availabilityCalls, quotaCalls };
 }
 
 export function makeTermsGateway() {
@@ -262,9 +282,12 @@ export function Harness({
   return null;
 }
 
-export function renderHarness(overrides?: Partial<Omit<HarnessProps, "handleRef">>) {
+export function renderHarness(
+  overrides?: Partial<Omit<HarnessProps, "handleRef">>,
+  clientOptions?: MakeClientOptions,
+) {
   const handleRef = createRef<HarnessHandle>();
-  const { client, polishCalls, quotaCalls } = makeClient();
+  const { client, polishCalls, availabilityCalls, quotaCalls } = makeClient(clientOptions);
   const { termsGateway, hasAcceptedCalls, acceptCalls } = makeTermsGateway();
   const props: Omit<HarnessProps, "handleRef"> = {
     documentId: "doc-1",
@@ -284,6 +307,7 @@ export function renderHarness(overrides?: Partial<Omit<HarnessProps, "handleRef"
     rerender,
     unmount: utils.unmount,
     polishCalls,
+    availabilityCalls,
     quotaCalls,
     hasAcceptedCalls,
     acceptCalls,
@@ -307,11 +331,13 @@ export async function openAccepted(h: ReturnType<typeof renderHarness>, scope: P
   });
   expect(h.quotaCalls).toHaveLength(1);
   expect(h.hasAcceptedCalls).toHaveLength(1);
+  expect(h.availabilityCalls).toHaveLength(1);
   await act(async () => {
     h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
     h.hasAcceptedCalls[0].resolve(true);
   });
   expect(h.flow().terms.status).toBe("accepted");
+  expect(h.flow().availabilityStatus).toBe("ready");
   expect(h.flow().canConfirm).toBe(true);
 }
 

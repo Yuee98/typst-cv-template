@@ -12,10 +12,12 @@ import {
 import {
   createMockPolishClient,
   MOCK_CLIENT_CODEWORDS,
+  MOCK_POLISH_AVAILABILITY_RESPONSE,
   mockPolishText,
 } from "./polish-mock-client";
 import { PolishApiError } from "./polish-api-error";
 import type {
+  PolishAvailabilityResponse,
   PolishQuotaResponse,
   PolishRequest,
   PolishSuccessResponse,
@@ -26,13 +28,19 @@ export interface PolishApiClient {
     request: PolishRequest,
     options?: { signal?: AbortSignal },
   ): Promise<PolishSuccessResponse>;
+  getAvailability(options?: { signal?: AbortSignal }): Promise<PolishAvailabilityResponse>;
   getQuota(options?: { signal?: AbortSignal }): Promise<PolishQuotaResponse>;
 }
 export { PolishApiError };
 
 export { createPolishHttpClient, DEFAULT_POLISH_CLIENT_TIMEOUT_MS };
 export type { CreatePolishHttpClientOptions } from "./polish-http-client";
-export { createMockPolishClient, MOCK_CLIENT_CODEWORDS, mockPolishText };
+export {
+  createMockPolishClient,
+  MOCK_CLIENT_CODEWORDS,
+  MOCK_POLISH_AVAILABILITY_RESPONSE,
+  mockPolishText,
+};
 export type { CreateMockPolishClientOptions } from "./polish-mock-client";
 
 export function createPolishClientFromEnv(

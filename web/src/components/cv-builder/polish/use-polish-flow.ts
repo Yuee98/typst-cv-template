@@ -11,6 +11,8 @@
  *   request through the injectable PolishApiClient with an AbortController,
  * - quota fetch (GET /api/polish/quota — skipped when signed out / no
  *   Supabase, i.e. static mode never requests it),
+ * - runtime availability fetch on dialog open / explicit retry, with no
+ *   render-time or static-mode request,
  * - AI terms gate: query acceptance on open, write the acceptance BEFORE the
  *   first polish request, re-show the red checkbox on 403 AI_TERMS_REQUIRED,
  * - stale guards: whole-snapshot identity baseline (document + request
@@ -110,7 +112,10 @@ import {
 } from "./polish-flow-request";
 import {
   SETTLEMENT_UNRESOLVED,
+  type ActiveAvailabilityRead,
   type ActivePolishOperation,
+  type PolishAvailabilityCandidate,
+  type PolishAvailabilityStatus,
   type SnapshotBaseline,
 } from "./polish-flow-types";
 import {
@@ -172,6 +177,9 @@ export interface PolishFlow {
   getValue: (path: string) => unknown;
   quota: PolishQuota | null;
   quotaStatus: PolishQuotaStatus;
+  /** Current DB-authoritative enabled route candidate; never a user selector. */
+  availabilityCandidate: PolishAvailabilityCandidate | null;
+  availabilityStatus: PolishAvailabilityStatus;
   terms: {
     status: AiTermsGateState["status"];
     serverRejected: boolean;
@@ -212,6 +220,8 @@ export interface PolishFlow {
   refreshTerms: () => void;
   /** Config phase: retry a failed quota fetch. */
   quotaRetry: () => void;
+  /** Config phase: discard any old candidate and fetch a fresh one. */
+  availabilityRetry: () => void;
 }
 
 /**
@@ -242,6 +252,10 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
   const [scopeFailure, setScopeFailure] = useState<PolishScopeFailureCode | null>(null);
   const [quota, setQuota] = useState<PolishQuota | null>(null);
   const [quotaStatus, setQuotaStatus] = useState<PolishQuotaStatus>("idle");
+  const [availabilityCandidate, setAvailabilityCandidate] =
+    useState<PolishAvailabilityCandidate | null>(null);
+  const [availabilityStatus, setAvailabilityStatus] =
+    useState<PolishAvailabilityStatus>("idle");
   const [termsState, dispatchTerms] = useReducer(
     aiTermsGateReducer,
     undefined,
@@ -260,6 +274,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
 
   // Mutable non-render state only.
   const activeOperationRef = useRef<ActivePolishOperation | null>(null);
+  const activeAvailabilityReadRef = useRef<ActiveAvailabilityRead | null>(null);
   const baselineRef = useRef<SnapshotBaseline | null>(null);
   const mountedRef = useRef(true);
   // Identity snapshots for async continuations (event handlers read the
@@ -271,6 +286,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
   // must never overwrite a newer one.
   const termsGenerationRef = useRef(0);
   const quotaGenerationRef = useRef(0);
+  const availabilityGenerationRef = useRef(0);
   // Generation of the cancellation settle-point quota read; only reads with
   // generation >= this value may lift settlementPending.
   const settleGenerationRef = useRef(0);
@@ -322,6 +338,15 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     activeOperationRef.current = null;
   }, []);
 
+  /** Revoke one availability read before any late continuation can publish. */
+  const invalidateAvailabilityRead = useCallback(() => {
+    availabilityGenerationRef.current += 1;
+    const read = activeAvailabilityReadRef.current;
+    if (!read) return;
+    read.controller.abort();
+    activeAvailabilityReadRef.current = null;
+  }, []);
+
   /** Clear the token only when the caller still owns it (relay: never let a
    * late operation clear a newer one's controller). */
   const clearOperationIfOwned = useCallback((operation: ActivePolishOperation) => {
@@ -353,12 +378,14 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      // Kill every pending terms/quota continuation along with the operation.
+      // Kill every pending terms/quota/availability continuation along with
+      // the operation.
       termsGenerationRef.current += 1;
       quotaGenerationRef.current += 1;
+      invalidateAvailabilityRead();
       invalidateActiveOperation();
     };
-  }, [invalidateActiveOperation]);
+  }, [invalidateActiveOperation, invalidateAvailabilityRead]);
 
   // Commit-synchronous identity publication + invalidation (relay round 2):
   // a passive effect would leave a post-commit window in which a resolving
@@ -395,7 +422,10 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       }
     }
     invalidateActiveOperation();
+    invalidateAvailabilityRead();
     baselineRef.current = null;
+    setAvailabilityCandidate(null);
+    setAvailabilityStatus("idle");
 
     if (accountChanged) {
       resetTermsGate();
@@ -421,6 +451,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     language,
     termsState.status,
     invalidateActiveOperation,
+    invalidateAvailabilityRead,
     resetTermsGate,
   ]);
 
@@ -554,6 +585,58 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     }
   }, [session, termsGateway, resetTermsGate]);
 
+  const refreshAvailability = useCallback(
+    async (refreshOptions?: { opening?: boolean }) => {
+      // Public retries are valid only for the currently open dialog. open()
+      // passes an explicit event token because setIsOpen(true) has not
+      // committed when the initial request is started.
+      if (!refreshOptions?.opening && !isOpen) return;
+
+      invalidateAvailabilityRead();
+      setAvailabilityCandidate(null);
+
+      const userId = session?.user.id ?? null;
+      if (!userId || sessionUserIdRef.current !== userId) {
+        setAvailabilityStatus("idle");
+        return;
+      }
+
+      const generation = ++availabilityGenerationRef.current;
+      const controller = new AbortController();
+      const read: ActiveAvailabilityRead = { userId, generation, controller };
+      activeAvailabilityReadRef.current = read;
+      setAvailabilityStatus("loading");
+
+      try {
+        const response = await client.getAvailability({ signal: controller.signal });
+        if (!mountedRef.current) return;
+        if (activeAvailabilityReadRef.current !== read) return;
+        if (sessionUserIdRef.current !== read.userId) return;
+        if (availabilityGenerationRef.current !== read.generation) return;
+
+        if (response.availability.enabled) {
+          setAvailabilityCandidate(response.availability);
+          setAvailabilityStatus("ready");
+        } else {
+          setAvailabilityCandidate(null);
+          setAvailabilityStatus("disabled");
+        }
+      } catch {
+        if (!mountedRef.current) return;
+        if (activeAvailabilityReadRef.current !== read) return;
+        if (sessionUserIdRef.current !== read.userId) return;
+        if (availabilityGenerationRef.current !== read.generation) return;
+        setAvailabilityCandidate(null);
+        setAvailabilityStatus("error");
+      } finally {
+        if (activeAvailabilityReadRef.current === read) {
+          activeAvailabilityReadRef.current = null;
+        }
+      }
+    },
+    [client, invalidateAvailabilityRead, isOpen, session],
+  );
+
   // ── open / close ───────────────────────────────────────────────────
 
   const open = useCallback(
@@ -579,12 +662,14 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       configure(state.params, nextScope);
       void refreshQuota();
       void queryTerms();
+      void refreshAvailability({ opening: true });
     },
     [
       configure,
       documentId,
       invalidateActiveOperation,
       queryTerms,
+      refreshAvailability,
       refreshQuota,
       resetTermsGate,
       state.params,
@@ -617,6 +702,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     // cancellation). Even a response that still lands no-ops because RESET
     // cleared the in-flight id.
     invalidateActiveOperation();
+    invalidateAvailabilityRead();
     baselineRef.current = null;
     dispatch({ type: "RESET" });
     setIsOpen(false);
@@ -625,7 +711,15 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     setConfigChangedHint(false);
     setStaleItemIds(new Set());
     setReferencesStale(false);
-  }, [invalidateActiveOperation, resetTermsGate, state.phase, termsState.status]);
+    setAvailabilityCandidate(null);
+    setAvailabilityStatus("idle");
+  }, [
+    invalidateActiveOperation,
+    invalidateAvailabilityRead,
+    resetTermsGate,
+    state.phase,
+    termsState.status,
+  ]);
 
   // The snapshot is tied to its document: a document switch also hides the
   // dialog immediately (derived, no effect) while the effect above performs
@@ -680,6 +774,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     if (phase !== "config" && phase !== "error") return;
     if (!scope || !documentId || scopeFailure !== null) return;
     if (!session) return;
+    if (availabilityStatus !== "ready" || availabilityCandidate === null) return;
     if (!aiTermsAllowConfirm(termsState, termsChecked)) return;
 
     // Continuation-scope staleness: the identity refs, not this closure's
@@ -837,6 +932,8 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     getValue,
     isBaselineStale,
     language,
+    availabilityCandidate,
+    availabilityStatus,
     refreshQuota,
     scope,
     scopeFailure,
@@ -1031,6 +1128,10 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     void refreshQuota();
   }, [refreshQuota]);
 
+  const availabilityRetry = useCallback(() => {
+    void refreshAvailability();
+  }, [refreshAvailability]);
+
   // ── derived ────────────────────────────────────────────────────────
 
   const signedIn = Boolean(session);
@@ -1039,6 +1140,8 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     scopeFailure === null &&
     state.snapshot !== null &&
     signedIn &&
+    availabilityStatus === "ready" &&
+    availabilityCandidate !== null &&
     // A quota re-read in flight (initial load, or the post-cancel refresh)
     // means the remaining count is unknown/stale: no confirm until it lands.
     quotaStatus !== "loading" &&
@@ -1060,6 +1163,8 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     getValue,
     quota,
     quotaStatus,
+    availabilityCandidate,
+    availabilityStatus,
     terms: {
       status: termsState.status,
       serverRejected: termsState.serverRejected,
@@ -1087,5 +1192,6 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     rejectAll,
     refreshTerms,
     quotaRetry,
+    availabilityRetry,
   };
 }

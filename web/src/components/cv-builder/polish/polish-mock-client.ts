@@ -1,4 +1,9 @@
-import { polishRequestSchema } from "@/lib/polish/contract";
+import { AI_LEGAL_BUNDLE_VERSION } from "@/content/legal/constants";
+import {
+  polishAvailabilityResponseSchema,
+  polishRequestSchema,
+  type PolishAvailabilityResponse,
+} from "@/lib/polish/contract";
 import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
 import { PolishApiError } from "./polish-api-error";
 import type { PolishApiClient } from "./polish-client";
@@ -21,7 +26,47 @@ export interface CreateMockPolishClientOptions {
   slowDelayMs?: number;
   /** Daily quota limit; each successful polish consumes one. */
   quotaLimit?: number;
+  /** Deterministic runtime kill-switch state returned by availability. */
+  availabilityEnabled?: boolean;
+  /** Exact-bundle acceptance bit exposed by the fake availability authority. */
+  termsAccepted?: boolean;
 }
+
+export const MOCK_POLISH_AVAILABILITY_RESPONSE: PolishAvailabilityResponse =
+  polishAvailabilityResponseSchema.parse({
+    requestId: "mock-availability",
+    availability: {
+      enabled: true,
+      configGeneration: "9223372036854775807",
+      routingPolicyVersionId: "00000000-0000-4000-8000-0000000000f1",
+      profileVersionId: "11111111-1111-4111-8111-111111111111",
+      legalBundleVersion: AI_LEGAL_BUNDLE_VERSION,
+      runtimeContractId: "runtime.deepseek-v2.v1",
+      runtimeContractSha256: "a".repeat(64),
+      displayDisclosure: {
+        key: "deepseek-official-v1",
+        providerName: "DeepSeek",
+        modelName: "DeepSeek V4 Flash",
+      },
+      termsAccepted: true,
+    },
+  });
+
+const MOCK_POLISH_DISABLED_RESPONSE: PolishAvailabilityResponse =
+  polishAvailabilityResponseSchema.parse({
+    requestId: "mock-availability-disabled",
+    availability: {
+      enabled: false,
+      configGeneration: null,
+      routingPolicyVersionId: null,
+      profileVersionId: null,
+      legalBundleVersion: null,
+      runtimeContractId: null,
+      runtimeContractSha256: null,
+      displayDisclosure: null,
+      termsAccepted: false,
+    },
+  });
 
 /** Deterministic pseudo-polish: whitespace collapse, else a visible marker. */
 export function mockPolishText(text: string): string {
@@ -125,6 +170,18 @@ export function createMockPolishClient(
         })),
         quota: quota(),
       };
+    },
+
+    async getAvailability(availabilityOptions) {
+      await abortableDelay(Math.min(delayMs, 200), availabilityOptions?.signal);
+      if (options.availabilityEnabled === false) return MOCK_POLISH_DISABLED_RESPONSE;
+      return polishAvailabilityResponseSchema.parse({
+        ...MOCK_POLISH_AVAILABILITY_RESPONSE,
+        availability: {
+          ...MOCK_POLISH_AVAILABILITY_RESPONSE.availability,
+          termsAccepted: options.termsAccepted ?? true,
+        },
+      });
     },
 
     async getQuota(quotaOptions) {
