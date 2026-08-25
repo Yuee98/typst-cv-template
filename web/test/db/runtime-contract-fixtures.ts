@@ -114,7 +114,14 @@ export function sealPriceAsDatabaseOwner(priceId: string): void {
     begin;
     select public.seal_ai_price_components_v1(
       array[${sqlLiteral(priceId)}::uuid],
-      clock_timestamp()
+      greatest(
+        pg_catalog.clock_timestamp(),
+        (
+          select created_at
+          from public.ai_price_versions
+          where id = ${sqlLiteral(priceId)}::uuid
+        )
+      )
     );
     commit;
   `);

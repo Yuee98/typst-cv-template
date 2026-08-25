@@ -1056,8 +1056,10 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         p_provider_billable: false,
         p_usage: null,
         p_metadata: null,
+        p_settlement_contract: "durable_transmission_v1",
       });
       expect(finalized.error).toBeNull();
+      expect(finalized.data).toMatchObject({ ok: true });
       const finalizedState = {
         usage: await getUsageRow(service, user.id),
         rate: await getRateBuckets(service, user.id),
@@ -1146,8 +1148,10 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         p_provider_billable: false,
         p_usage: null,
         p_metadata: null,
+        p_settlement_contract: "durable_transmission_v1",
       });
       expect(finalized.error).toBeNull();
+      expect(finalized.data).toMatchObject({ ok: true });
       expect((await reserveV2(v2User.id, expected, clientRequestId)).data).toMatchObject({
         allowed: false,
         reason: "DUPLICATE_REQUEST",
