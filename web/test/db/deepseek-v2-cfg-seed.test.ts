@@ -46,6 +46,252 @@ const SNAPSHOT_TABLES = [
   "ai_routing_policy_transition_intents",
 ] as const;
 
+const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
+  {
+    schema: "public",
+    name: "apply_ai_price_component_seal_intent",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "60a52cc8fe50c18f5c10e825ed7d22dbc0be6ac268e1f21be134613a28cda113",
+  },
+  {
+    schema: "public",
+    name: "assert_ai_routing_policy_v1",
+    identityArguments: "p_policy_id uuid, p_phase text, p_at timestamp with time zone",
+    prokind: "f",
+    definitionSha256: "13c1c97b4adcd9d6fb46485f937ac667c4c92300b854ec4346c87ad1e15895da",
+  },
+  {
+    schema: "public",
+    name: "complete_ai_polish_provider_attempt",
+    identityArguments:
+      "p_attempt_id uuid, p_status text, p_transmitted boolean, p_retry_eligible boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb",
+    prokind: "f",
+    definitionSha256: "4092c7cda332ea22f1e1cd48ed77847f4ac65fe2314c8ad7d4dae879a16deece",
+  },
+  {
+    schema: "public",
+    name: "complete_ai_polish_provider_attempt_internal",
+    identityArguments:
+      "p_attempt_id uuid, p_status text, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb",
+    prokind: "f",
+    definitionSha256: "1e8604a5d30cce762152bd2d32755c74f06a42b2b5fec8f7ff6bef6226937a1c",
+  },
+  {
+    schema: "public",
+    name: "complete_ai_polish_provider_attempt_transmission_internal",
+    identityArguments:
+      "p_attempt_id uuid, p_status text, p_transmitted boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb",
+    prokind: "f",
+    definitionSha256: "f738cdc7557323bac276221f1d81326694d8253efd4cf425164c239ef03936b2",
+  },
+  {
+    schema: "public",
+    name: "derive_ai_polish_v2_settlement",
+    identityArguments: "p_reservation_id uuid",
+    prokind: "f",
+    definitionSha256: "96ce52e077730429b8317969d0ad3394aa4710c19ea8b88a98a9f5b4dd4ba37c",
+  },
+  {
+    schema: "public",
+    name: "derive_ai_polish_v2_settlement_sequence",
+    identityArguments: "p_reservation_id uuid, p_allow_open_retry boolean",
+    prokind: "f",
+    definitionSha256: "d2233e6a09079f3b43dd6298e824c6a61d950b9e48c0d5c47e10c14d4d5029ea",
+  },
+  {
+    schema: "public",
+    name: "finalize_ai_polish_request",
+    identityArguments:
+      "p_reservation_id uuid, p_status text, p_quota_charged boolean, p_provider_billable boolean, p_usage jsonb, p_metadata jsonb",
+    prokind: "f",
+    definitionSha256: "e3f1d4d5fb32eec8b8aef81001c72dad8463ec61b9792fd9d53d117d1ed56d22",
+  },
+  {
+    schema: "public",
+    name: "finalize_ai_polish_request",
+    identityArguments:
+      "p_reservation_id uuid, p_status text, p_quota_charged boolean, p_provider_billable boolean, p_usage jsonb, p_metadata jsonb, p_settlement_contract text",
+    prokind: "f",
+    definitionSha256: "82d7197b568db9420b7f30d4a760fc56cc52f8e1d7caeb32a993985a33956037",
+  },
+  {
+    schema: "public",
+    name: "get_ai_polish_availability_v1",
+    identityArguments: "p_user_id uuid",
+    prokind: "f",
+    definitionSha256: "e2ed670a39e88f4df1d81ed423688b89ac490dc9dbdc6062e38096752d3261eb",
+  },
+  {
+    schema: "public",
+    name: "get_ai_polish_execution_snapshot_v1",
+    identityArguments: "p_reservation_id uuid, p_user_id uuid",
+    prokind: "f",
+    definitionSha256: "42b8405c1365e2125a86e00dbb741c737a229c54a1640515f9c0ddeee95331fc",
+  },
+  {
+    schema: "public",
+    name: "guard_ai_feature_routing_pointer",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "16c33dc5450acde6ddfafae353f379bc8077ee2ece3614dcb52b3f468d5f51ea",
+  },
+  {
+    schema: "public",
+    name: "guard_ai_price_version",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "aaf09223f0121101d62c3a6fb67a95c8ed167dac286e92b5fc378d219abbbee6",
+  },
+  {
+    schema: "public",
+    name: "guard_ai_routing_policy_version",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "7db4cde2ff3a547667facdcf61ae60c47afcf83e5826805f97e5960b7e00b3d3",
+  },
+  {
+    schema: "public",
+    name: "has_accepted_ai_legal_bundle",
+    identityArguments: "p_user_id uuid, p_legal_bundle_version text",
+    prokind: "f",
+    definitionSha256: "38001bae505723bbf893a2717bc7e3d194b31ee6f71ba78f7c620a22a3478f53",
+  },
+  {
+    schema: "public",
+    name: "lock_and_validate_ai_routing_policy_row_v1",
+    identityArguments:
+      "p_policy ai_routing_policy_versions, p_phase text, p_at timestamp with time zone",
+    prokind: "f",
+    definitionSha256: "4faaf7dab95e997efe27be9b523e86c69124bec608e2e7fa07a63f031e115a52",
+  },
+  {
+    schema: "public",
+    name: "reconcile_stale_ai_polish_reservations",
+    identityArguments: "p_stale_after interval",
+    prokind: "f",
+    definitionSha256: "1640e1b4ee91359891584383205c8482c9de2850467516d515867fea62452b30",
+  },
+  {
+    schema: "public",
+    name: "record_ai_polish_request_cancellation",
+    identityArguments: "p_reservation_id uuid, p_observation text",
+    prokind: "f",
+    definitionSha256: "7df24a481e7ab1e928d86ed8facf7f19dc2f46c6423e64f37ba4384604632300",
+  },
+  {
+    schema: "public",
+    name: "reserve_ai_polish_request_v2",
+    identityArguments:
+      "p_user_id uuid, p_request_id uuid, p_client_request_id uuid, p_expected_route jsonb",
+    prokind: "f",
+    definitionSha256: "b201d838cfdc900951ea8d0c97586b15e4721fdff4de7e1079f713da92c1ee09",
+  },
+  {
+    schema: "public",
+    name: "seal_ai_price_components_v1",
+    identityArguments: "p_price_version_ids uuid[], p_sealed_at timestamp with time zone",
+    prokind: "f",
+    definitionSha256: "0dd187ddb38e0c6647c3e97f91a3acc8c4649108199fcc3fc2be55e020cd5073",
+  },
+  {
+    schema: "public",
+    name: "start_ai_polish_provider_attempt",
+    identityArguments: "p_reservation_id uuid, p_attempt_no integer",
+    prokind: "f",
+    definitionSha256: "a43230f5201790f267ceacdd3cdb3d7c85740633458363236d56c4be3d17516e",
+  },
+  {
+    schema: "public",
+    name: "start_ai_polish_provider_attempt_internal",
+    identityArguments: "p_reservation_id uuid, p_attempt_no integer",
+    prokind: "f",
+    definitionSha256: "2034752c8152f4450ede122ed5a372510366a2e2af3ee7061362d21b4063a4c7",
+  },
+  {
+    schema: "public",
+    name: "transition_ai_routing_policy_v1",
+    identityArguments: "p_policy_id uuid, p_to_status text",
+    prokind: "f",
+    definitionSha256: "345268f4ebcee8b61a2d18d41e5a7dbe48a401fd0ae716a0ccc58ca26bf14f4b",
+  },
+  {
+    schema: "public",
+    name: "validate_ai_routing_policy_transition_v1",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "ab6afa02691efe383095e14c6eebc85c9debc6828fc8fced6771ac9db4a66530",
+  },
+] as const;
+
+const RUNTIME_ROUTINE_AUTHORITY_V1 = [
+  {
+    schema: "public",
+    name: "get_ai_polish_availability_v1",
+    identityArguments: "p_user_id uuid",
+    prokind: "f",
+    definitionSha256: "e2ed670a39e88f4df1d81ed423688b89ac490dc9dbdc6062e38096752d3261eb",
+  },
+  {
+    schema: "public",
+    name: "get_ai_polish_execution_snapshot_v1",
+    identityArguments: "p_reservation_id uuid, p_user_id uuid",
+    prokind: "f",
+    definitionSha256: "42b8405c1365e2125a86e00dbb741c737a229c54a1640515f9c0ddeee95331fc",
+  },
+  {
+    schema: "public",
+    name: "guard_ai_service_runtime_contract_target",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "e04c9e4d3c45e07dd210892567646310ddb020f853b58a8b29af38a894fba395",
+  },
+  {
+    schema: "public",
+    name: "guard_ai_service_runtime_contract_version",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "53df10d400bbcf7da9f652ad899b91de4c570e8712c6700cd61443177422ce5c",
+  },
+  {
+    schema: "public",
+    name: "guard_ai_service_runtime_target_version",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "91a20c5a5cbdd39491171274c0c805f424ae8b3c82970a4124488c0b4c75c128",
+  },
+  {
+    schema: "public",
+    name: "lock_and_validate_ai_routing_policy_row_v1",
+    identityArguments:
+      "p_policy ai_routing_policy_versions, p_phase text, p_at timestamp with time zone",
+    prokind: "f",
+    definitionSha256: "4faaf7dab95e997efe27be9b523e86c69124bec608e2e7fa07a63f031e115a52",
+  },
+  {
+    schema: "public",
+    name: "reserve_ai_polish_request_v2",
+    identityArguments:
+      "p_user_id uuid, p_request_id uuid, p_client_request_id uuid, p_expected_route jsonb",
+    prokind: "f",
+    definitionSha256: "b201d838cfdc900951ea8d0c97586b15e4721fdff4de7e1079f713da92c1ee09",
+  },
+  {
+    schema: "public",
+    name: "validate_ai_routing_policy_row_v1",
+    identityArguments:
+      "p_policy ai_routing_policy_versions, p_phase text, p_at timestamp with time zone, p_discovery_only boolean",
+    prokind: "f",
+    definitionSha256: "82a937c6ba13b6bf8047e064665e594350f232542830d982c0c8e1c3edb3fd01",
+  },
+] as const;
+
+const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
+  routineCount: 358,
+  authorityRootSha256:
+    "05c976caac3503f1c029748cbadda3ea42d420f4701d28563269f48db0470cca",
+} as const;
+
 function parseOwnerJson(sql: string): unknown {
   const result = runOwnerSql(String.raw`
     \set ON_ERROR_STOP on
@@ -328,7 +574,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
     });
   });
 
-  it("denies every API role runtime-catalog DML and exposes no registration definer", () => {
+  it("denies API-role runtime DML and freezes exact routine authority", () => {
     const security = parseOwnerJson(String.raw`
       select pg_catalog.jsonb_build_object(
         'privilegeCount', (
@@ -351,90 +597,154 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             privilege_name.name
           )
         ),
-        'registrationDefinerCount', (
-          select count(*)
+        'publicSecurityDefiners', coalesce((
+          select pg_catalog.jsonb_agg(
+            pg_catalog.jsonb_build_object(
+              'schema', namespace.nspname,
+              'name', procedure.proname,
+              'identityArguments',
+                pg_catalog.pg_get_function_identity_arguments(procedure.oid),
+              'prokind', procedure.prokind,
+              'definitionSha256', pg_catalog.encode(
+                extensions.digest(
+                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  'sha256'
+                ),
+                'hex'
+              )
+            )
+            order by
+              namespace.nspname,
+              procedure.proname,
+              pg_catalog.pg_get_function_identity_arguments(procedure.oid)
+          )
           from pg_catalog.pg_proc as procedure
           join pg_catalog.pg_namespace as namespace
             on namespace.oid = procedure.pronamespace
           where namespace.nspname = 'public'
             and procedure.prokind in ('f', 'p')
             and procedure.prosecdef
-            and (
-              pg_catalog.pg_get_functiondef(procedure.oid) ~*
-                '(insert[[:space:]]+into|update|delete[[:space:]]+from|merge[[:space:]]+into|truncate([[:space:]]+table)?)[[:space:]]+(public[.])?ai_service_runtime_'
-              or (
-                pg_catalog.pg_get_functiondef(procedure.oid) ~* 'execute'
-                and pg_catalog.pg_get_functiondef(procedure.oid) ~*
-                  'ai_service_runtime_'
+        ), '[]'::jsonb),
+        'publicExecuteRoutines', coalesce((
+          select pg_catalog.jsonb_agg(
+            pg_catalog.jsonb_build_object(
+              'schema', namespace.nspname,
+              'name', procedure.proname,
+              'identityArguments',
+                pg_catalog.pg_get_function_identity_arguments(procedure.oid),
+              'prokind', procedure.prokind,
+              'definitionSha256', pg_catalog.encode(
+                extensions.digest(
+                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  'sha256'
+                ),
+                'hex'
               )
             )
-        ),
-        'runtimeMutationRoutineCount', (
-          select count(*)
+            order by
+              namespace.nspname,
+              procedure.proname,
+              pg_catalog.pg_get_function_identity_arguments(procedure.oid)
+          )
           from pg_catalog.pg_proc as procedure
           join pg_catalog.pg_namespace as namespace
             on namespace.oid = procedure.pronamespace
-          where namespace.nspname not in ('pg_catalog', 'information_schema')
+          where namespace.nspname = 'public'
             and procedure.prokind in ('f', 'p')
-            and (
-              pg_catalog.pg_get_functiondef(procedure.oid) ~*
-                '(insert[[:space:]]+into|update|delete[[:space:]]+from|merge[[:space:]]+into|truncate([[:space:]]+table)?)[[:space:]]+(public[.])?ai_service_runtime_'
-              or (
-                pg_catalog.pg_get_functiondef(procedure.oid) ~* 'execute'
-                and pg_catalog.pg_get_functiondef(procedure.oid) ~*
-                  'ai_service_runtime_'
+            and pg_catalog.pg_get_functiondef(procedure.oid) ~* '\mexecute\M'
+        ), '[]'::jsonb),
+        'runtimeRoutines', coalesce((
+          select pg_catalog.jsonb_agg(
+            pg_catalog.jsonb_build_object(
+              'schema', namespace.nspname,
+              'name', procedure.proname,
+              'identityArguments',
+                pg_catalog.pg_get_function_identity_arguments(procedure.oid),
+              'prokind', procedure.prokind,
+              'definitionSha256', pg_catalog.encode(
+                extensions.digest(
+                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  'sha256'
+                ),
+                'hex'
               )
             )
-        ),
-        'publicDefinerDynamicReachableCount', (
-          with recursive routines as (
+            order by
+              namespace.nspname,
+              procedure.proname,
+              pg_catalog.pg_get_function_identity_arguments(procedure.oid)
+          )
+          from pg_catalog.pg_proc as procedure
+          join pg_catalog.pg_namespace as namespace
+            on namespace.oid = procedure.pronamespace
+          where namespace.nspname = 'public'
+            and procedure.prokind in ('f', 'p')
+            and pg_catalog.strpos(
+              pg_catalog.lower(pg_catalog.pg_get_functiondef(procedure.oid)),
+              'ai_service_runtime_'
+            ) > 0
+        ), '[]'::jsonb),
+        'nonSystemRoutineAuthority', (
+          with routines as (
             select
-              procedure.oid,
-              namespace.nspname::text as schema_name,
-              procedure.proname::text as routine_name,
+              namespace.nspname as schema_name,
+              procedure.proname as routine_name,
+              pg_catalog.pg_get_function_identity_arguments(procedure.oid)
+                as identity_arguments,
+              procedure.prokind::text as prokind,
               procedure.prosecdef,
-              pg_catalog.pg_get_functiondef(procedure.oid) as definition
+              pg_catalog.encode(
+                extensions.digest(
+                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  'sha256'
+                ),
+                'hex'
+              ) as definition_sha256
             from pg_catalog.pg_proc as procedure
             join pg_catalog.pg_namespace as namespace
               on namespace.oid = procedure.pronamespace
             where namespace.nspname not in ('pg_catalog', 'information_schema')
+              and namespace.nspname !~ '^pg_'
               and procedure.prokind in ('f', 'p')
           ),
-          dynamic_reachable as (
-            select routine.oid
-            from routines as routine
-            where routine.definition ~* '\mexecute\M'
-
-            union
-
-            select caller.oid
-            from routines as caller
-            join dynamic_reachable as callee_reachable on true
-            join routines as callee on callee.oid = callee_reachable.oid
-            where pg_catalog.strpos(
-              pg_catalog.regexp_replace(
-                pg_catalog.lower(caller.definition),
-                '[[:space:]]+',
-                '',
-                'g'
-              ),
-              pg_catalog.lower(callee.routine_name) || '('
-            ) > 0
+          canonical as (
+            select
+              count(*) as routine_count,
+              pg_catalog.string_agg(
+                pg_catalog.octet_length(
+                  pg_catalog.convert_to(schema_name, 'UTF8')
+                )::text || ':' || schema_name || ':' ||
+                pg_catalog.octet_length(
+                  pg_catalog.convert_to(routine_name, 'UTF8')
+                )::text || ':' || routine_name || ':' ||
+                pg_catalog.octet_length(
+                  pg_catalog.convert_to(identity_arguments, 'UTF8')
+                )::text || ':' || identity_arguments || ':' ||
+                prokind || ':' || prosecdef::text || ':' || definition_sha256,
+                E'\n'
+                order by
+                  schema_name collate "C",
+                  routine_name collate "C",
+                  identity_arguments collate "C"
+              ) as payload
+            from routines
           )
-          select count(*)
-          from dynamic_reachable as reachable
-          join routines as routine on routine.oid = reachable.oid
-          where routine.schema_name = 'public'
-            and routine.prosecdef
+          select pg_catalog.jsonb_build_object(
+            'routineCount', routine_count,
+            'authorityRootSha256',
+              pg_catalog.encode(extensions.digest(payload, 'sha256'), 'hex')
+          )
+          from canonical
         )
       )::text;
     `);
 
     expect(security).toEqual({
       privilegeCount: 0,
-      publicDefinerDynamicReachableCount: 0,
-      registrationDefinerCount: 0,
-      runtimeMutationRoutineCount: 0,
+      nonSystemRoutineAuthority: NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1,
+      publicExecuteRoutines: [],
+      publicSecurityDefiners: PUBLIC_SECURITY_DEFINER_AUTHORITY_V1,
+      runtimeRoutines: RUNTIME_ROUTINE_AUTHORITY_V1,
     });
 
     for (const role of ["anon", "authenticated", "service_role"]) {

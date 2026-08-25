@@ -24,6 +24,8 @@ on:
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
       - "web/src/server/polish/auth.ts"
+      - "web/src/server/polish/deepseek-v2-seed-v1.ts"
+      - "web/src/server/polish/deepseek-v2-seed-v1.test.ts"
       - "web/src/server/polish/lifecycle*.ts"
       - "web/src/server/polish/quota.ts"
       - "web/test/db/**"

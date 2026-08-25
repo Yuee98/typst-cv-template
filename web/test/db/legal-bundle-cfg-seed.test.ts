@@ -152,7 +152,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", ()
     expect(migration).not.toMatch(/\bcreate\s+(?:or\s+replace\s+)?function\b/);
     expect(migration).not.toMatch(/\bgrant\b/);
     expect(migration).not.toMatch(
-      /\b(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?ai_(?:provider_profiles|provider_profile_versions|price_versions|price_components|routing_policy_versions|service_runtime_contract_versions|service_runtime_target_versions|service_runtime_contract_targets|feature_config|request_ledger|provider_attempts|user_terms_acceptances)\b/,
+      /\b(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?(?:ai_(?:provider_profiles|provider_profile_versions|price_versions|price_components|routing_policy_versions|service_runtime_contract_versions|service_runtime_target_versions|service_runtime_contract_targets|feature_config|request_ledger|provider_attempt_ledger|usage_daily|global_usage_daily|profile_usage_daily|rate_minutes|price_component_seal_intents|routing_policy_transition_intents)|user_terms_acceptances)\b/,
     );
   });
 });
