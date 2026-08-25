@@ -11,6 +11,7 @@ import {
   finalizePolishRequestV2,
   getPolishExecutionSnapshotV1,
   PolishLifecycleV2RpcError,
+  recordPolishRequestCancellationV2,
   reservePolishRequestV2,
   serializePolishAttemptCompletionV2,
   serializePolishFinalizeV2,
@@ -147,6 +148,7 @@ function completedFact(
     completedAtMs: 1_250,
     latencyMs: 150,
     ...overrides,
+    retryEligible: overrides.retryEligible ?? false,
   };
 }
 
@@ -365,6 +367,88 @@ describe("RT-009 V2 attempt admission", () => {
   });
 });
 
+describe("RT-009 V2 durable cancellation observation", () => {
+  const observed = {
+    ok: true,
+    reservationId: RESERVATION_ID,
+    state: "observed",
+  } as const;
+
+  it("replays an ambiguous write and accepts only exact identity readback", async () => {
+    const { client, rpc } = sequenceClient(new Error("lost"), { data: observed });
+    await expect(
+      recordPolishRequestCancellationV2(client, {
+        reservationId: RESERVATION_ID,
+      }),
+    ).resolves.toEqual(observed);
+    expect(rpc).toHaveBeenNthCalledWith(2, "record_ai_polish_request_cancellation", {
+      p_reservation_id: RESERVATION_ID,
+      p_observation: "observed",
+    });
+  });
+
+  it("accepts a third-call observed proof but holds an ambiguous marker", async () => {
+    const proved = sequenceClient(
+      new Error("lost-1"),
+      new Error("lost-2"),
+      { data: observed },
+    );
+    await expect(
+      recordPolishRequestCancellationV2(proved.client, {
+        reservationId: RESERVATION_ID,
+      }),
+    ).resolves.toEqual(observed);
+
+    const held = sequenceClient(
+      new Error("lost-1"),
+      new Error("lost-2"),
+      {
+        data: {
+          ok: true,
+          reservationId: RESERVATION_ID,
+          state: "ambiguous",
+        },
+      },
+    );
+    const error = await capturedError(
+      recordPolishRequestCancellationV2(held.client, {
+        reservationId: RESERVATION_ID,
+      }),
+    );
+    expect(error.kind).toBe("CANCELLATION_UNKNOWN");
+  });
+
+  it.each([
+    { ...observed, reservationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+    { ...observed, extra: true },
+    { ok: true, reservationId: RESERVATION_ID, state: "unknown" },
+  ])("rejects malformed or swapped authority readback", async (data) => {
+    const { client } = sequenceClient({ data });
+    const error = await capturedError(
+      recordPolishRequestCancellationV2(client, {
+        reservationId: RESERVATION_ID,
+      }),
+    );
+    expect(error.kind).toBe("CANCELLATION_UNKNOWN");
+  });
+
+  it("surfaces only an exact closed denial as cancellation rejected", async () => {
+    const { client, rpc } = sequenceClient({
+      data: { ok: false, reason: "ALREADY_FINALIZED" },
+    });
+    const error = await capturedError(
+      recordPolishRequestCancellationV2(client, {
+        reservationId: RESERVATION_ID,
+      }),
+    );
+    expect(error).toMatchObject({
+      kind: "CANCELLATION_REJECTED",
+      reason: "ALREADY_FINALIZED",
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("RT-009 V2 terminal attempt persistence", () => {
   it("serializes exact usage, tagged route, cost reconciliation, and metadata", () => {
     const payload = serializePolishAttemptCompletionV2({
@@ -378,6 +462,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       p_attempt_id: ATTEMPT_ID,
       p_status: "succeeded",
       p_transmitted: true,
+      p_retry_eligible: false,
       p_provider_billable: true,
       p_usage: {
         schema_version: "normalized_usage_v2",
@@ -712,7 +797,7 @@ describe("RT-009 V2 request settlement", () => {
         prompt_version: "2026-08-prompt-v1",
         validator_version: "2026-08-validator-v1",
       },
-      p_settlement_contract: "durable_transmission_v1",
+      p_settlement_contract: "durable_cancellation_sequence_v1",
     });
     expect(
       serializePolishFinalizeV2({

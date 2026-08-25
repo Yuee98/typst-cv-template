@@ -104,8 +104,10 @@ interface HarnessOptions {
   readonly getExecutionSnapshot?: PolishRouteDepsV2["getExecutionSnapshot"];
   readonly startAttempt?: PolishRouteDepsV2["startAttempt"];
   readonly completeAttempt?: PolishRouteDepsV2["completeAttempt"];
+  readonly recordCancellation?: PolishRouteDepsV2["recordCancellation"];
   readonly finalize?: PolishRouteDepsV2["finalize"];
   readonly resolveProvider?: PolishRouteDepsV2["resolveProvider"];
+  readonly sleep?: PolishRouteDepsV2["sleep"];
 }
 
 function successfulProviderResult(
@@ -235,6 +237,14 @@ function createHarness(options: HarnessOptions = {}) {
             : false,
       };
     },
+    async recordCancellation(params) {
+      state.calls.push("record_cancellation");
+      return {
+        ok: true,
+        reservationId: params.reservationId,
+        state: "observed",
+      };
+    },
     async finalize(params) {
       state.calls.push("finalize");
       state.finalizeRequests.push(params);
@@ -263,7 +273,7 @@ function createHarness(options: HarnessOptions = {}) {
     providerSubjectSecret: SUBJECT_SECRET,
     routeObservationSecret: ROUTE_SECRET,
     now: () => 1_000,
-    sleep: async () => undefined,
+    sleep: options.sleep ?? (async () => undefined),
     logger: (event) => state.logs.push(event),
   };
   const deps: PolishRouteDepsV2 = {
@@ -275,6 +285,9 @@ function createHarness(options: HarnessOptions = {}) {
     ...(options.startAttempt ? { startAttempt: options.startAttempt } : {}),
     ...(options.completeAttempt
       ? { completeAttempt: options.completeAttempt }
+      : {}),
+    ...(options.recordCancellation
+      ? { recordCancellation: options.recordCancellation }
       : {}),
     ...(options.finalize ? { finalize: options.finalize } : {}),
     ...(options.resolveProvider
@@ -803,6 +816,201 @@ describe("executePolishLifecycleV2 — terminal facts and settlement", () => {
     expect(beforeStart.state.finalizePayloads[0].p_metadata).not.toHaveProperty(
       "usage_schema_version",
     );
+  });
+
+  it("records cancellation before returning when completion response is lost", async () => {
+    const controller = new AbortController();
+    const harness = createHarness({
+      controller,
+      completeAttempt: async (params) => {
+        serializePolishAttemptCompletionV2(params);
+        controller.abort(new DOMException("caller disconnected", "AbortError"));
+        throw new PolishLifecycleV2RpcError("ATTEMPT_COMPLETE_UNKNOWN", {
+          reason: "RPC_ERROR",
+        });
+      },
+    });
+
+    const result = await executePolishLifecycleV2(input(controller), harness.deps);
+    expect(result).toMatchObject({
+      ok: false,
+      code: "CANCELED",
+      attemptCount: 1,
+      settlement: "unknown",
+    });
+    expect(harness.state.calls).toContain("record_cancellation");
+    expect(harness.state.finalizeRequests).toHaveLength(0);
+  });
+
+  it("records cancellation before returning from ambiguous attempt admission", async () => {
+    const controller = new AbortController();
+    const harness = createHarness({
+      controller,
+      startAttempt: async () => {
+        controller.abort(new DOMException("caller disconnected", "AbortError"));
+        throw new PolishLifecycleV2RpcError("ATTEMPT_START_UNKNOWN", {
+          reason: "RPC_ERROR",
+        });
+      },
+    });
+    const result = await executePolishLifecycleV2(input(controller), harness.deps);
+    expect(result).toMatchObject({
+      ok: false,
+      code: "CANCELED",
+      settlement: "unknown",
+    });
+    expect(harness.state.calls).toContain("record_cancellation");
+    expect(harness.state.finalizeRequests).toHaveLength(0);
+  });
+
+  it("durably marks cancellation during a nonzero retry delay before settlement", async () => {
+    const controller = new AbortController();
+    const abort = new DOMException("caller disconnected", "AbortError");
+    const harness = createHarness({
+      controller,
+      providerBehaviors: [async () =>
+        Promise.reject(
+          Object.assign(new Error("retry later"), {
+            code: "UPSTREAM_ERROR",
+            upstreamStatus: 429,
+            retryable: true,
+            retryAfterMs: 1_000,
+          }),
+        )],
+      sleep: async (delayMs) => {
+        expect(delayMs).toBe(1_000);
+        controller.abort(abort);
+        throw abort;
+      },
+    });
+
+    const result = await executePolishLifecycleV2(input(controller), harness.deps);
+    expect(result).toMatchObject({
+      ok: false,
+      code: "CANCELED",
+      attemptCount: 1,
+      settlement: "confirmed",
+    });
+    expect(harness.state.calls).toContain("record_cancellation");
+    expect(harness.state.calls.indexOf("record_cancellation")).toBeLessThan(
+      harness.state.calls.indexOf("finalize"),
+    );
+    expect(harness.state.providerCalls).toHaveLength(1);
+  });
+
+  it("observes abort while terminal completion persistence is awaited", async () => {
+    const controller = new AbortController();
+    const abort = new DOMException("caller disconnected", "AbortError");
+    const harness = createHarness({
+      controller,
+      completeAttempt: async (params) => {
+        serializePolishAttemptCompletionV2(params);
+        controller.abort(abort);
+        return {
+          ok: true,
+          alreadyCompleted: false,
+          status: params.fact.status,
+          usageComplete: true,
+        };
+      },
+    });
+
+    const result = await executePolishLifecycleV2(input(controller), harness.deps);
+    expect(result).toMatchObject({
+      ok: false,
+      code: "CANCELED",
+      attemptCount: 1,
+      settlement: "confirmed",
+    });
+    expect(harness.state.calls).toContain("record_cancellation");
+    expect(harness.state.finalizePayloads[0]).toMatchObject({
+      p_status: "canceled",
+      p_quota_charged: true,
+    });
+  });
+
+  it("cancels after invalid output and before attempt 2 without losing the charged child", async () => {
+    const controller = new AbortController();
+    const harness = createHarness({
+      controller,
+      providerBehaviors: [async () => successfulProviderResult("not-json")],
+      completeAttempt: async (params) => {
+        const payload = serializePolishAttemptCompletionV2(params);
+        expect(payload).toMatchObject({
+          p_status: "invalid_output",
+          p_transmitted: true,
+          p_retry_eligible: true,
+        });
+        controller.abort(new DOMException("caller disconnected", "AbortError"));
+        return {
+          ok: true,
+          alreadyCompleted: false,
+          status: params.fact.status,
+          usageComplete: true,
+        };
+      },
+    });
+    const result = await executePolishLifecycleV2(input(controller), harness.deps);
+    expect(result).toMatchObject({
+      ok: false,
+      code: "CANCELED",
+      attemptCount: 1,
+      settlement: "confirmed",
+    });
+    expect(harness.state.providerCalls).toHaveLength(1);
+    expect(harness.state.finalizePayloads[0]).toMatchObject({
+      p_status: "canceled",
+      p_quota_charged: true,
+    });
+  });
+
+  it("refunds durable cancellation proved before adapter entry", async () => {
+    const controller = new AbortController();
+    const harness = createHarness({
+      controller,
+      startAttempt: async (params) => {
+        controller.abort(new DOMException("caller disconnected", "AbortError"));
+        return attemptReceipt(params.attemptNo);
+      },
+    });
+    const result = await executePolishLifecycleV2(input(controller), harness.deps);
+    expect(result).toMatchObject({
+      ok: false,
+      code: "CANCELED",
+      attemptCount: 1,
+      settlement: "confirmed",
+    });
+    expect(harness.state.providerCalls).toHaveLength(0);
+    expect(harness.state.finalizePayloads[0]).toMatchObject({
+      p_status: "canceled",
+      p_quota_charged: false,
+    });
+  });
+
+  it("reports ambiguous cancellation authority as unknown and never finalizes", async () => {
+    const controller = new AbortController();
+    const abort = new DOMException("caller disconnected", "AbortError");
+    const harness = createHarness({
+      controller,
+      providerBehaviors: [async () => {
+        controller.abort(abort);
+        throw abort;
+      }],
+      recordCancellation: async () => {
+        throw new PolishLifecycleV2RpcError("CANCELLATION_UNKNOWN", {
+          reason: "RPC_ERROR",
+        });
+      },
+    });
+
+    const result = await executePolishLifecycleV2(input(controller), harness.deps);
+    expect(result).toMatchObject({
+      ok: false,
+      code: "CANCELED",
+      attemptCount: 1,
+      settlement: "unknown",
+    });
+    expect(harness.state.finalizeRequests).toHaveLength(0);
   });
 
   it("retains the first terminal child when the second start is denied", async () => {

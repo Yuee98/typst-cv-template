@@ -30,6 +30,7 @@ import {
   type PolishFinalizeResultV2,
   type ProviderAttemptStartV2,
   completePolishProviderAttemptV2,
+  recordPolishRequestCancellationV2,
   startPolishProviderAttemptV2,
 } from "./quota";
 
@@ -168,6 +169,9 @@ export interface PolishRouteDepsV2 {
   readonly completeAttempt: (
     params: Parameters<typeof completePolishProviderAttemptV2>[1],
   ) => ReturnType<typeof completePolishProviderAttemptV2>;
+  readonly recordCancellation: (
+    params: Parameters<typeof recordPolishRequestCancellationV2>[1],
+  ) => ReturnType<typeof recordPolishRequestCancellationV2>;
   readonly finalize: (
     params: PolishFinalizeRequestV2,
   ) => Promise<PolishFinalizeResultV2>;
@@ -474,8 +478,27 @@ export async function executePolishLifecycleV2(
     });
   };
 
-  if (input.signal.aborted) {
+  const cancelAfterReservation = async (): Promise<PolishLifecycleV2Failure> => {
+    try {
+      await deps.recordCancellation({ reservationId: reservation.reservationId });
+    } catch (error) {
+      return failureV2(deps.logger, {
+        requestId: input.requestId,
+        code: "CANCELED",
+        stage: "canceled",
+        attemptCount: 0,
+        settlement:
+          error instanceof PolishLifecycleV2RpcError &&
+          error.kind === "CANCELLATION_UNKNOWN"
+            ? "unknown"
+            : "not_attempted",
+      });
+    }
     return failAfterZeroChild("CANCELED", "canceled");
+  };
+
+  if (input.signal.aborted) {
+    return cancelAfterReservation();
   }
 
   let execution: Awaited<ReturnType<typeof getPolishExecutionSnapshotV1>>;
@@ -487,6 +510,9 @@ export async function executePolishLifecycleV2(
       runtimeTargetResolver: deps.runtimeTargetResolver,
     });
   } catch (error) {
+    if (input.signal.aborted) {
+      return cancelAfterReservation();
+    }
     if (
       error instanceof PolishLifecycleV2RpcError &&
       error.kind === "SNAPSHOT_DENIED" &&
@@ -522,7 +548,7 @@ export async function executePolishLifecycleV2(
   }
 
   if (input.signal.aborted) {
-    return failAfterZeroChild("CANCELED", "canceled");
+    return cancelAfterReservation();
   }
 
   const persistedFacts: PolishAttemptCompletedFactV2[] = [];
@@ -555,6 +581,9 @@ export async function executePolishLifecycleV2(
           routeObservationSecret: deps.routeObservationSecret,
         });
         persistedFacts.push(event.completed);
+        if (input.signal.aborted) {
+          throw input.signal.reason ?? new DOMException("Aborted", "AbortError");
+        }
       },
     });
 
@@ -627,7 +656,25 @@ export async function executePolishLifecycleV2(
     });
     return success;
   } catch (error) {
-    if (error instanceof PolishAttemptPersistenceErrorV2) {
+    const cancellationRequested = input.signal.aborted || isAbortError(error);
+    if (cancellationRequested) {
+      try {
+        await deps.recordCancellation({ reservationId: reservation.reservationId });
+      } catch (cancellationError) {
+        return failureV2(deps.logger, {
+          requestId: input.requestId,
+          code: "CANCELED",
+          stage: "canceled",
+          attemptCount: persistedFacts.length,
+          settlement:
+            cancellationError instanceof PolishLifecycleV2RpcError &&
+            cancellationError.kind === "CANCELLATION_UNKNOWN"
+              ? "unknown"
+              : "not_attempted",
+        });
+      }
+    }
+    if (error instanceof PolishAttemptPersistenceErrorV2 && !cancellationRequested) {
       return failureV2(deps.logger, {
         requestId: input.requestId,
         code: "ATTEMPT_PERSISTENCE_ERROR",
@@ -643,6 +690,15 @@ export async function executePolishLifecycleV2(
       (error.kind === "ATTEMPT_START_REPLAY" ||
         error.kind === "ATTEMPT_START_UNKNOWN")
     ) {
+      if (cancellationRequested) {
+        return failureV2(deps.logger, {
+          requestId: input.requestId,
+          code: "CANCELED",
+          stage: "canceled",
+          attemptCount: admittedAttempts,
+          settlement: "unknown",
+        });
+      }
       return failureV2(deps.logger, {
         requestId: input.requestId,
         code: "ATTEMPT_STATE_UNKNOWN",
@@ -667,6 +723,15 @@ export async function executePolishLifecycleV2(
     }
 
     if (uncompletedAdmission) {
+      if (cancellationRequested) {
+        return failureV2(deps.logger, {
+          requestId: input.requestId,
+          code: "CANCELED",
+          stage: "canceled",
+          attemptCount: admittedAttempts,
+          settlement: "unknown",
+        });
+      }
       return failureV2(deps.logger, {
         requestId: input.requestId,
         code: "ATTEMPT_STATE_UNKNOWN",
@@ -684,7 +749,7 @@ export async function executePolishLifecycleV2(
       | "invalid_output" = "failed_upstream";
     let aggregate: RequestUsageAggregateV2 | null = null;
 
-    if (isAbortError(error)) {
+    if (cancellationRequested) {
       primaryCode = "CANCELED";
       primaryStage = "canceled";
       requestStatus = "canceled";

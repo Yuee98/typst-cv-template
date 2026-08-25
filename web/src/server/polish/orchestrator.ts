@@ -606,6 +606,8 @@ export interface PolishAttemptCompletedFactV2 {
   readonly status: PolishAttemptStatusV2;
   /** Admission/start is not transmission evidence; this flips only at adapter entry. */
   readonly transmitted: boolean;
+  /** Immutable authorization for starting attempt 2; false for every attempt 2. */
+  readonly retryEligible: boolean;
   readonly providerBillable: boolean | null;
   readonly usageObservation: PolishAttemptUsageObservationV2;
   readonly route: PolishRouteObservationV1;
@@ -1037,6 +1039,12 @@ function freezeAttemptCompletedV2(input: CompletedFactInputV2): PolishAttemptCom
   return Object.freeze({
     schemaVersion: "polish_attempt_completed_v2",
     ...input,
+    retryEligible:
+      input.started.attemptNo === 1 &&
+      input.error?.retryable === true &&
+      (input.status === "failed_upstream" ||
+        input.status === "timed_out" ||
+        input.status === "invalid_output"),
     error: input.error === null ? null : Object.freeze({ ...input.error }),
     latencyMs,
   });

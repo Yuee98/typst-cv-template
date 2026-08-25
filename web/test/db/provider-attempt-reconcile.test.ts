@@ -147,6 +147,7 @@ function completeAttemptSql(
       '${attemptId}'::uuid,
       'succeeded',
       true,
+      false,
       true,
       ${jsonbSql(observedUsage())},
       ${jsonbSql(routeObservation())},
@@ -196,7 +197,7 @@ function finalizeAttemptSql(
       true,
       null,
       '{"usage_schema_version":"attempt_v2"}'::jsonb,
-      'durable_transmission_v1'
+      'durable_cancellation_sequence_v1'
     );
     reset role;
     ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
@@ -654,7 +655,12 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     const user = await harness.makeUser("reconcile-whole-reservation");
     const reservation = await harness.reserveV2(user);
     const first = await harness.startAttempt(reservation.reservationId, 1);
-    await harness.complete(completePayload(first.attemptId));
+    await harness.complete(
+      completePayload(first.attemptId, {
+        p_status: "failed_upstream",
+        p_retry_eligible: true,
+      }),
+    );
     const second = await harness.startAttempt(reservation.reservationId, 2);
     ownerRewriteAttempt(
       second.attemptId,
@@ -688,10 +694,13 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     const user = await harness.makeUser("reconcile-mixed-known-unknown");
     const reservation = await harness.reserveV2(user);
     const first = await harness.startAttempt(reservation.reservationId, 1);
-    expect(await harness.complete(completePayload(first.attemptId))).toMatchObject({
+    expect(await harness.complete(completePayload(first.attemptId, {
+      p_status: "failed_upstream",
+      p_retry_eligible: true,
+    }))).toMatchObject({
       ok: true,
       alreadyCompleted: false,
-      status: "succeeded",
+      status: "failed_upstream",
     });
     const second = await harness.startAttempt(reservation.reservationId, 2);
     ownerRewriteAttempt(
@@ -792,7 +801,8 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     const stale = await reconcile();
     expect(stale.data).toEqual({
       releasedCount: 0,
-      abandonedCount: 1,
+      abandonedCount: 0,
+      heldUnknownCount: 1,
       latencyOverflowCount: 0,
     });
     expect(await attempt(started.attemptId)).toMatchObject({
@@ -800,10 +810,10 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       provider_billable: true,
     });
     expect(await request(reservation.reservationId)).toMatchObject({
-      state: "finalized",
-      status: "succeeded",
-      quota_charged: true,
-      provider_billable: true,
+      state: "reserved",
+      status: null,
+      quota_charged: null,
+      provider_billable: null,
     });
   });
 

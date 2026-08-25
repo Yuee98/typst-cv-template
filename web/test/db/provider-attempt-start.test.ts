@@ -550,6 +550,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
         '${attemptId}'::uuid,
         'succeeded',
         true,
+        false,
         true,
         '{
           "schema_version":"normalized_usage_v2",
@@ -588,6 +589,41 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       reset role;
       commit;
     `;
+  }
+
+  async function completeRetryableAttempt(attemptId: string) {
+    const result = await service.rpc("complete_ai_polish_provider_attempt", {
+      p_attempt_id: attemptId,
+      p_status: "failed_upstream",
+      p_transmitted: true,
+      p_retry_eligible: true,
+      p_provider_billable: null,
+      p_usage: null,
+      p_route: {
+        schema_version: "route_observation_v1",
+        gateway_request_id: null,
+        provider_request_id: null,
+        actual_upstream_endpoint: null,
+        actual_model_id: null,
+        router_attempt_count: null,
+      },
+      p_cost: {
+        schema_version: "cost_observation_v1",
+        estimated_currency: null,
+        estimated_cost_nanos: null,
+        provider_reported_currency: null,
+        provider_reported_cost_nanos: null,
+        reconciliation_status: "incomplete_usage",
+      },
+      p_metadata: {
+        schema_version: "attempt_metadata_v1",
+        finish_reason: null,
+        failure_stage: "provider_http",
+        latency_ms: 1,
+      },
+    });
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ ok: true });
   }
 
   async function insertDirectStartedAttempt(
@@ -685,6 +721,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       do $assertions$
       declare
         v_start pg_catalog.pg_proc%rowtype;
+        v_start_internal pg_catalog.pg_proc%rowtype;
         v_v1 pg_catalog.pg_proc%rowtype;
         v_v1_sha256 text;
       begin
@@ -705,11 +742,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
            or v_start.proconfig is distinct from array['search_path=""']::text[]
            or pg_catalog.pg_get_function_identity_arguments(v_start.oid)
              is distinct from 'p_reservation_id uuid, p_attempt_no integer'
-           or pg_catalog.pg_get_function_result(v_start.oid) is distinct from 'jsonb'
-           or pg_catalog.regexp_count(
-             pg_catalog.pg_get_functiondef(v_start.oid),
-             'clock_timestamp\(\)'
-           ) <> 1 then
+           or pg_catalog.pg_get_function_result(v_start.oid) is distinct from 'jsonb' then
           raise exception 'start RPC signature/security/clock contract drifted';
         end if;
 
@@ -726,6 +759,23 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
              where grantee = 0
            ) then
           raise exception 'start RPC ACL drifted';
+        end if;
+
+        select * into strict v_start_internal
+        from pg_catalog.pg_proc
+        where oid = 'public.start_ai_polish_provider_attempt_internal(uuid,integer)'::pg_catalog.regprocedure;
+        if pg_catalog.regexp_count(
+             pg_catalog.pg_get_functiondef(v_start_internal.oid),
+             'clock_timestamp\(\)'
+           ) <> 1
+           or pg_catalog.has_function_privilege(
+             'service_role', v_start_internal.oid, 'EXECUTE'
+           )
+           or exists (
+             select 1 from pg_catalog.aclexplode(v_start_internal.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'internal start authority drifted';
         end if;
 
         select * into v_v1
@@ -1039,6 +1089,8 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     const globalBefore = await getGlobalStartedCount(service);
 
     const first = await startAttempt(reservation.reservationId, 1);
+    if (!first.ok) throw new Error("attempt 1 was unexpectedly denied");
+    await completeRetryableAttempt(first.attemptId);
     const second = await startAttempt(reservation.reservationId, 2);
     expect(first).toMatchObject({ ok: true, attemptNo: 1, alreadyStarted: false });
     expect(second).toMatchObject({ ok: true, attemptNo: 2, alreadyStarted: false });
@@ -1057,7 +1109,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
 
     expect(await startAttempt(reservation.reservationId, 2)).toEqual({
       ok: false,
-      reason: "SERVICE_UNAVAILABLE",
+      reason: "RETRY_SEQUENCE_REJECTED",
     });
     await assertUnstarted(reservation.reservationId, globalBefore);
   });
@@ -1120,7 +1172,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
 
     expect(await startAttempt(reservation.reservationId, 2)).toEqual({
       ok: false,
-      reason: "SERVICE_UNAVAILABLE",
+      reason: "RETRY_SEQUENCE_REJECTED",
     });
     expect((await attemptRows(reservation.reservationId)).map((row) => row.attempt_no)).toEqual([2]);
     expect(await getGlobalStartedCount(service)).toBe(globalBefore);

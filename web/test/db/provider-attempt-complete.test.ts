@@ -135,7 +135,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
       declare
         v_complete pg_catalog.pg_proc%rowtype;
         v_internal pg_catalog.pg_proc%rowtype;
+        v_transmission_internal pg_catalog.pg_proc%rowtype;
         v_capture pg_catalog.pg_proc%rowtype;
+        v_retry_capture pg_catalog.pg_proc%rowtype;
       begin
         if (
           select count(*)
@@ -148,13 +150,13 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
 
         select * into v_complete
         from pg_catalog.pg_proc
-        where oid = 'public.complete_ai_polish_provider_attempt(uuid,text,boolean,boolean,jsonb,jsonb,jsonb,jsonb)'::pg_catalog.regprocedure;
+        where oid = 'public.complete_ai_polish_provider_attempt(uuid,text,boolean,boolean,boolean,jsonb,jsonb,jsonb,jsonb)'::pg_catalog.regprocedure;
 
         if not v_complete.prosecdef
            or v_complete.proconfig is distinct from array['search_path=""']::text[]
            or v_complete.pronargdefaults <> 0
            or pg_catalog.pg_get_function_identity_arguments(v_complete.oid)
-             is distinct from 'p_attempt_id uuid, p_status text, p_transmitted boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb'
+             is distinct from 'p_attempt_id uuid, p_status text, p_transmitted boolean, p_retry_eligible boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb'
            or pg_catalog.pg_get_function_result(v_complete.oid) is distinct from 'jsonb' then
           raise exception 'complete RPC definition drifted';
         end if;
@@ -177,9 +179,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
         select * into strict v_internal
         from pg_catalog.pg_proc
         where oid = 'public.complete_ai_polish_provider_attempt_internal(uuid,text,boolean,jsonb,jsonb,jsonb,jsonb)'::pg_catalog.regprocedure;
+        select * into strict v_transmission_internal
+        from pg_catalog.pg_proc
+        where oid = 'public.complete_ai_polish_provider_attempt_transmission_internal(uuid,text,boolean,boolean,jsonb,jsonb,jsonb,jsonb)'::pg_catalog.regprocedure;
         select * into strict v_capture
         from pg_catalog.pg_proc
         where oid = 'public.capture_ai_provider_attempt_transmission()'::pg_catalog.regprocedure;
+        select * into strict v_retry_capture
+        from pg_catalog.pg_proc
+        where oid = 'public.capture_ai_provider_attempt_retry_eligibility()'::pg_catalog.regprocedure;
 
         if pg_catalog.has_function_privilege(
              'service_role', v_internal.oid, 'EXECUTE'
@@ -196,6 +204,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
         end if;
 
         if pg_catalog.has_function_privilege(
+             'service_role', v_transmission_internal.oid, 'EXECUTE'
+           ) or exists (
+             select 1 from pg_catalog.aclexplode(v_transmission_internal.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'transmission complete primitive is executable';
+        end if;
+
+        if pg_catalog.has_function_privilege(
              'service_role', v_capture.oid, 'EXECUTE'
            )
            or pg_catalog.has_function_privilege('anon', v_capture.oid, 'EXECUTE')
@@ -208,6 +225,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
            ) then
           raise exception 'transmission trigger function is executable';
         end if;
+        if pg_catalog.has_function_privilege(
+             'service_role', v_retry_capture.oid, 'EXECUTE'
+           ) or exists (
+             select 1 from pg_catalog.aclexplode(v_retry_capture.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'retry trigger function is executable';
+        end if;
       end
       $assertions$;
     `);
@@ -216,6 +241,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
       p_attempt_id: crypto.randomUUID(),
       p_status: "succeeded",
       p_transmitted: true,
+      p_retry_eligible: false,
       p_provider_billable: true,
       p_usage: observedUsage(),
       p_route: routeObservation(),
@@ -852,6 +878,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
         p_attempt_id: attempt.attemptId,
         p_status: "unknown-hostile",
         p_transmitted: true,
+        p_retry_eligible: false,
         p_provider_billable: true,
         p_usage: { hostile: true },
         p_route: [],

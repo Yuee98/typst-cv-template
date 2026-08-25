@@ -79,6 +79,7 @@ import {
   finalizePolishRequestV2,
   getPolishExecutionSnapshotV1,
   getPolishQuota,
+  recordPolishRequestCancellationV2,
   reservePolishRequestV2,
   startPolishProviderAttemptV2,
 } from "./quota";
@@ -202,6 +203,8 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
     getExecutionSnapshot: (params) => getPolishExecutionSnapshotV1(adminClient, params),
     startAttempt: (params) => startPolishProviderAttemptV2(adminClient, params),
     completeAttempt: (params) => completePolishProviderAttemptV2(adminClient, params),
+    recordCancellation: (params) =>
+      recordPolishRequestCancellationV2(adminClient, params),
     finalize: (params) => finalizePolishRequestV2(adminClient, params),
     ...runtimeAuthority,
     providerSubjectSecret: hmacSecret,

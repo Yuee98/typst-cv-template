@@ -533,6 +533,8 @@ export type PolishLifecycleV2RpcErrorKind =
   | "ATTEMPT_START_UNKNOWN"
   | "ATTEMPT_COMPLETE_REJECTED"
   | "ATTEMPT_COMPLETE_UNKNOWN"
+  | "CANCELLATION_REJECTED"
+  | "CANCELLATION_UNKNOWN"
   | "FINALIZE_REJECTED"
   | "FINALIZE_CONFLICT"
   | "FINALIZE_UNKNOWN";
@@ -549,6 +551,8 @@ const V2_RPC_ERROR_MESSAGES: Readonly<Record<PolishLifecycleV2RpcErrorKind, stri
   ATTEMPT_START_UNKNOWN: "AI provider attempt admission state is unknown.",
   ATTEMPT_COMPLETE_REJECTED: "AI provider attempt completion was rejected.",
   ATTEMPT_COMPLETE_UNKNOWN: "AI provider attempt completion state is unknown.",
+  CANCELLATION_REJECTED: "AI polish cancellation observation was rejected.",
+  CANCELLATION_UNKNOWN: "AI polish cancellation observation state is unknown.",
   FINALIZE_REJECTED: "AI polish settlement was rejected.",
   FINALIZE_CONFLICT: "AI polish settlement conflicts with persisted state.",
   FINALIZE_UNKNOWN: "AI polish settlement state is unknown.",
@@ -878,6 +882,7 @@ export interface PolishAttemptCompletionRpcPayloadV2 {
   readonly p_status: PolishAttemptStatusV2;
   /** Durable adapter-entry observation persisted with the terminal fact. */
   readonly p_transmitted: boolean;
+  readonly p_retry_eligible: boolean;
   readonly p_provider_billable: boolean | null;
   readonly p_usage: Readonly<{
     schema_version: "normalized_usage_v2";
@@ -955,7 +960,7 @@ function taggedRouteIdV2(
   return observation.kind === "tagged" ? observation.value : null;
 }
 
-/** Pure, strict serializer for the seven-argument terminal-attempt RPC. */
+/** Pure, strict serializer for the nine-argument terminal-attempt RPC. */
 export function serializePolishAttemptCompletionV2(params: {
   attempt: ProviderAttemptStartV2;
   fact: PolishAttemptCompletedFactV2;
@@ -984,6 +989,13 @@ export function serializePolishAttemptCompletionV2(params: {
       fact.started.schemaVersion !== "polish_attempt_started_v2" ||
       fact.started.attemptNo !== attempt.attemptNo ||
       !ATTEMPT_STATUSES_V2.has(fact.status) ||
+      typeof fact.retryEligible !== "boolean" ||
+      (fact.retryEligible &&
+        (fact.started.attemptNo !== 1 ||
+          !["failed_upstream", "timed_out", "invalid_output"].includes(
+            fact.status,
+          ))) ||
+      (fact.started.attemptNo === 2 && fact.retryEligible) ||
       (fact.providerBillable !== null && typeof fact.providerBillable !== "boolean")
     ) {
       throw localContractErrorV2();
@@ -1091,6 +1103,7 @@ export function serializePolishAttemptCompletionV2(params: {
       p_attempt_id: requireCanonicalUuidV2(attempt.attemptId),
       p_status: fact.status,
       p_transmitted: fact.transmitted,
+      p_retry_eligible: fact.retryEligible,
       p_provider_billable: fact.providerBillable,
       p_usage: usage,
       p_route: {
@@ -1208,6 +1221,125 @@ export async function completePolishProviderAttemptV2(
   }
 }
 
+type CancellationObservationV2 = Readonly<{
+  ok: true;
+  reservationId: string;
+  state: "observed" | "ambiguous";
+}>;
+
+function parseCancellationObservationV2(
+  value: unknown,
+  expectedReservationId: string,
+): CancellationObservationV2 {
+  if (typeof value !== "object" || value === null) throw localContractErrorV2();
+  const row = value as {
+    ok?: unknown;
+    reservationId?: unknown;
+    state?: unknown;
+    reason?: unknown;
+  };
+  const keys = Object.keys(row).sort().join(",");
+  if (
+    keys === "ok,reason" &&
+    row.ok === false &&
+    typeof row.reason === "string" &&
+    row.reason.length > 0
+  ) {
+    throw new PolishLifecycleV2RpcError("CANCELLATION_REJECTED", {
+      reason: row.reason,
+    });
+  }
+  if (
+    keys !== "ok,reservationId,state" ||
+    row.ok !== true ||
+    row.reservationId !== expectedReservationId ||
+    !CANONICAL_UUID_V2.test(row.reservationId) ||
+    (row.state !== "observed" && row.state !== "ambiguous")
+  ) {
+    throw localContractErrorV2();
+  }
+  return Object.freeze({
+    ok: true,
+    reservationId: row.reservationId,
+    state: row.state,
+  });
+}
+
+/**
+ * Durably serializes request cancellation with the parent ledger row. An
+ * ambiguous observed-write is followed by an exact readback/replay and then
+ * a monotonic fail-closed marker; callers must not finalize when no observed
+ * receipt is returned.
+ */
+export async function recordPolishRequestCancellationV2(
+  client: SupabaseClient,
+  params: { reservationId: string },
+): Promise<CancellationObservationV2> {
+  const reservationId = requireCanonicalUuidV2(params.reservationId);
+  const observedArgs = freezeRpcValueV2({
+    p_reservation_id: reservationId,
+    p_observation: "observed",
+  });
+  let firstCause: unknown;
+  for (let observationNo = 0; observationNo < 2; observationNo += 1) {
+    const observation = await observeRpcV2(
+      client,
+      "record_ai_polish_request_cancellation",
+      observedArgs,
+    );
+    if (observation.kind === "response") {
+      let result: CancellationObservationV2;
+      try {
+        result = parseCancellationObservationV2(
+          observation.data,
+          reservationId,
+        );
+      } catch (cause) {
+        if (
+          cause instanceof PolishLifecycleV2RpcError &&
+          cause.kind === "CANCELLATION_REJECTED"
+        ) {
+          throw cause;
+        }
+        firstCause ??= cause;
+        continue;
+      }
+      if (result.state !== "observed") {
+        throw new PolishLifecycleV2RpcError("CANCELLATION_UNKNOWN", {
+          reason: "READBACK_MISMATCH",
+          cause: firstCause,
+        });
+      }
+      return result;
+    }
+    firstCause ??= observation.cause;
+  }
+
+  const held = await observeRpcV2(
+    client,
+    "record_ai_polish_request_cancellation",
+    freezeRpcValueV2({
+      p_reservation_id: reservationId,
+      p_observation: "ambiguous",
+    }),
+  );
+  if (held.kind === "response") {
+    try {
+      const result = parseCancellationObservationV2(held.data, reservationId);
+      if (result.state === "observed") return result;
+    } catch (cause) {
+      throw new PolishLifecycleV2RpcError("CANCELLATION_UNKNOWN", {
+        reason: "AMBIGUOUS_MARK_REJECTED",
+        cause,
+      });
+    }
+  }
+  throw new PolishLifecycleV2RpcError("CANCELLATION_UNKNOWN", {
+    reason: "RPC_ERROR",
+    cause: held.kind === "ambiguous" ? held.cause : firstCause,
+  });
+}
+
 export interface PolishFinalizeMetadataV2 {
   readonly granularity: PolishGranularity;
   readonly itemCount: number;
@@ -1248,8 +1380,8 @@ export interface PolishFinalizeRpcPayloadV2 {
   readonly p_provider_billable: boolean | null;
   readonly p_usage: null;
   readonly p_metadata: Readonly<Record<string, string | number>> | null;
-  /** Selects the DB-authoritative durable-transmission settlement path. */
-  readonly p_settlement_contract: "durable_transmission_v1";
+  /** Selects the DB-authoritative durable cancellation/sequence path. */
+  readonly p_settlement_contract: "durable_cancellation_sequence_v1";
 }
 
 function serializeFinalizeMetadataV2(
@@ -1306,7 +1438,7 @@ export function serializePolishFinalizeV2(
         p_provider_billable: false,
         p_usage: null,
         p_metadata: metadata,
-        p_settlement_contract: "durable_transmission_v1",
+        p_settlement_contract: "durable_cancellation_sequence_v1",
       });
     }
 
@@ -1332,7 +1464,7 @@ export function serializePolishFinalizeV2(
         usage_schema_version: "attempt_v2",
         ...metadata,
       },
-      p_settlement_contract: "durable_transmission_v1",
+      p_settlement_contract: "durable_cancellation_sequence_v1",
     });
   } catch (cause) {
     if (cause instanceof PolishLifecycleV2RpcError) throw cause;

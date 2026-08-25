@@ -276,6 +276,19 @@ export function createFakePolishV2RouteDeps(options: {
         usageComplete: payload.p_usage?.usage_complete ?? false,
       };
     },
+    async recordCancellation(params) {
+      const reservation = reservations.get(params.reservationId);
+      if (reservation === undefined || reservation.finalized) {
+        throw new PolishLifecycleV2RpcError("CANCELLATION_REJECTED", {
+          reason: reservation?.finalized ? "ALREADY_FINALIZED" : "NOT_FOUND",
+        });
+      }
+      return Object.freeze({
+        ok: true as const,
+        reservationId: params.reservationId,
+        state: "observed" as const,
+      });
+    },
     async finalize(params) {
       const payload = serializePolishFinalizeV2(params);
       const reservation = reservations.get(payload.p_reservation_id);

@@ -564,6 +564,7 @@ function completeAttemptSql(
       '${attemptId}'::uuid,
       'succeeded',
       true,
+      false,
       true,
       ${jsonbSql(observedUsage())},
       ${jsonbSql(routeObservation())},
@@ -595,7 +596,7 @@ function finalizeAttemptSql(
       true,
       null,
       '{"usage_schema_version":"attempt_v2"}'::jsonb,
-      'durable_transmission_v1'
+      'durable_cancellation_sequence_v1'
     );
     reset role;
     ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
@@ -651,7 +652,7 @@ function finalizeAttemptActionSql(reservationId: string): string {
       true,
       null,
       '{"usage_schema_version":"attempt_v2"}'::jsonb,
-      'durable_transmission_v1'
+      'durable_cancellation_sequence_v1'
     );
     reset role;
     commit;
@@ -706,7 +707,7 @@ function invokeRawFinalize(
       true,
       ${usageSql},
       ${metadataSql},
-      'durable_transmission_v1'
+      'durable_cancellation_sequence_v1'
     );
     reset role;
     commit;
@@ -1329,6 +1330,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           '${v2.attempt.attemptId}'::uuid,
           'succeeded',
           true,
+          false,
           true,
           ${jsonbSql(observedUsage())},
           ${jsonbSql(routeObservation())},
@@ -1347,7 +1349,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           true,
           null,
           '{"usage_schema_version":"attempt_v2"}'::jsonb,
-          'durable_transmission_v1'
+          'durable_cancellation_sequence_v1'
         ) into v_result;
         if not coalesce((v_result ->> 'ok')::boolean, false)
            or coalesce((v_result ->> 'alreadyFinalized')::boolean, true) then
@@ -2366,7 +2368,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         p_provider_billable: true,
         p_usage: null,
         p_metadata: entry.metadata,
-        p_settlement_contract: "durable_transmission_v1",
+        p_settlement_contract: "durable_cancellation_sequence_v1",
       });
       expect(result.error).toBeNull();
       expect(result.data).toEqual({
@@ -2448,7 +2450,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     expect(update.error).toBeNull();
     expect(await harness.finalize(drift.reservation.reservationId)).toEqual({
       ok: false,
-      reason: "SERVICE_UNAVAILABLE",
+      reason: "TRANSMISSION_UNKNOWN_HELD",
+      detail: "INVALID_ATTEMPT_SEQUENCE",
     });
     expect(await getLedgerRow(service, drift.reservation.reservationId)).toMatchObject({
       state: "reserved",
@@ -2475,7 +2478,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
 
     expect(await harness.finalize(value.reservation.reservationId)).toEqual({
       ok: false,
-      reason: "SERVICE_UNAVAILABLE",
+      reason: "TRANSMISSION_UNKNOWN_HELD",
+      detail: "INVALID_ATTEMPT_SEQUENCE",
     });
     expect(
       await fullSettlementSnapshot(
@@ -2668,7 +2672,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     const user = await harness.makeUser("finalize-mixed-cache");
     const reservation = await harness.reserveV2(user);
     const first = await harness.startAttempt(reservation.reservationId, 1);
-    await harness.complete(completePayload(first.attemptId));
+    await harness.complete(
+      completePayload(first.attemptId, {
+        p_status: "failed_upstream",
+        p_retry_eligible: true,
+      }),
+    );
     const second = await harness.startAttempt(reservation.reservationId, 2);
     await harness.complete(
       completePayload(second.attemptId, {
@@ -2738,7 +2747,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       const user = await harness.makeUser(`finalize-lower-bound-${label}`);
       const reservation = await harness.reserveV2(user);
       const first = await harness.startAttempt(reservation.reservationId, 1);
-      await harness.complete(completePayload(first.attemptId));
+      await harness.complete(
+        completePayload(first.attemptId, {
+          p_status: "failed_upstream",
+          p_retry_eligible: true,
+        }),
+      );
       const second = await harness.startAttempt(reservation.reservationId, 2);
       await harness.complete(
         completePayload(second.attemptId, {
@@ -2987,7 +3001,18 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           (index + 1) as 1 | 2,
         );
         expect(
-          await harness.complete(completePayload(attempt.attemptId, overrides)),
+          await harness.complete(
+            completePayload(
+              attempt.attemptId,
+              attempts.length > 1 && index === 0
+                ? {
+                    ...overrides,
+                    p_status: "failed_upstream",
+                    p_retry_eligible: true,
+                  }
+                : overrides,
+            ),
+          ),
         ).toMatchObject({ ok: true, alreadyCompleted: false });
       }
       const lastStatus = attempts.at(-1)?.p_status ?? "succeeded";
@@ -3684,7 +3709,10 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     ]);
 
     await harness.activateFreshRouteFixture();
-    const startFirst = await completed("race-start-before-finalize");
+    const startFirst = await completed("race-start-before-finalize", {
+      p_status: "failed_upstream",
+      p_retry_eligible: true,
+    });
     const starterWins = await runObservedBlockedRace(
       parentLockSql(
         startFirst.reservation.reservationId,
@@ -3716,7 +3744,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       .order("attempt_no");
     expect(admittedAttempts.error).toBeNull();
     expect(admittedAttempts.data).toEqual([
-      { attempt_no: 1, status: "succeeded" },
+      { attempt_no: 1, status: "failed_upstream" },
       { attempt_no: 2, status: "started" },
     ]);
   });
@@ -3780,6 +3808,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       expect(
         await harness.complete(
           completePayload(attempt.attemptId, {
+            ...(attemptNo === 1
+              ? { p_status: "failed_upstream", p_retry_eligible: true }
+              : {}),
             p_cost: costObservation({
               estimated_cost_nanos: "9223372036854775807",
             }),
