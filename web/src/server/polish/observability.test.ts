@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   PolishObservabilityProjectionError,
+  authorizePolishAttemptObservabilityFactV1,
+  authorizePolishRequestObservabilityFactV1,
   createPolishObservabilityProjectorV1,
   projectPolishAttemptObservabilityEventV1,
   projectPolishRequestObservabilityEventV1,
@@ -40,9 +42,37 @@ function observedUsage() {
     availability: "observed",
     complete: true,
     cacheWrite: "reported",
-    inputTotalTokens: "12",
+    inputTotalTokens: "15",
     inputCacheReadTokens: "5",
     inputCacheWriteTokens: "3",
+    inputStandardTokens: "7",
+    outputTokens: "8",
+    reasoningTokens: "2",
+  };
+}
+
+function unavailableUsage() {
+  return {
+    availability: "unavailable",
+    complete: false,
+    cacheWrite: "unavailable",
+    inputTotalTokens: null,
+    inputCacheReadTokens: null,
+    inputCacheWriteTokens: null,
+    inputStandardTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+  };
+}
+
+function notApplicableUsage() {
+  return {
+    availability: "observed",
+    complete: true,
+    cacheWrite: "not_applicable",
+    inputTotalTokens: "7",
+    inputCacheReadTokens: "0",
+    inputCacheWriteTokens: "0",
     inputStandardTokens: "7",
     outputTokens: "8",
     reasoningTokens: "2",
@@ -98,7 +128,9 @@ function requestFact() {
 
 describe("polish observability projections", () => {
   it("projects immutable, content-free attempt events with tagged upstream correlation only", () => {
-    const event = projectPolishAttemptObservabilityEventV1(attemptFact());
+    const event = projectPolishAttemptObservabilityEventV1(
+      authorizePolishAttemptObservabilityFactV1(attemptFact()),
+    );
 
     expect(event).toEqual({
       schemaVersion: "polish_observability_event_v1",
@@ -123,14 +155,21 @@ describe("polish observability projections", () => {
     });
     expect(Object.isFrozen(event)).toBe(true);
     expect(Object.isFrozen(event.profile)).toBe(true);
+    expect(Object.isFrozen(event.policy)).toBe(true);
     expect(Object.isFrozen(event.upstream)).toBe(true);
+    expect(Object.isFrozen(event.usage)).toBe(true);
+    expect(Object.isFrozen(event.cost)).toBe(true);
     expect(JSON.stringify(event)).not.toContain("provider-req-123");
     expect(JSON.stringify(event)).not.toContain("resume body");
   });
 
   it("keeps a retry attempt separate from the request aggregate, preserving the old request id", () => {
-    const retryAttempt = projectPolishAttemptObservabilityEventV1(attemptFact(2));
-    const request = projectPolishRequestObservabilityEventV1(requestFact());
+    const retryAttempt = projectPolishAttemptObservabilityEventV1(
+      authorizePolishAttemptObservabilityFactV1(attemptFact(2)),
+    );
+    const request = projectPolishRequestObservabilityEventV1(
+      authorizePolishRequestObservabilityFactV1(requestFact()),
+    );
 
     expect(retryAttempt).toMatchObject({
       aggregation: "attempt",
@@ -150,7 +189,8 @@ describe("polish observability projections", () => {
   });
 
   it("supports unavailable usage and incomplete cost without inventing token or cost facts", () => {
-    const event = projectPolishAttemptObservabilityEventV1({
+    const event = projectPolishAttemptObservabilityEventV1(
+      authorizePolishAttemptObservabilityFactV1({
       ...attemptFact(),
       upstream: {
         status: "failed_upstream",
@@ -176,7 +216,8 @@ describe("polish observability projections", () => {
         providerReportedNanos: "77",
         reconciliation: "incomplete_usage",
       },
-    });
+      }),
+    );
 
     expect(event).toMatchObject({
       success: false,
@@ -201,7 +242,7 @@ describe("polish observability projections", () => {
     };
 
     for (const fact of [rawProviderId, contentField, unknownRoute, falseMatch]) {
-      expect(() => projectPolishAttemptObservabilityEventV1(fact)).toThrow(
+      expect(() => authorizePolishAttemptObservabilityFactV1(fact)).toThrow(
         PolishObservabilityProjectionError,
       );
     }
@@ -218,18 +259,93 @@ describe("polish observability projections", () => {
     };
 
     for (const fact of [missingReportedWrite, nonConservingTokens]) {
-      expect(() => projectPolishAttemptObservabilityEventV1(fact)).toThrow(
+      expect(() => authorizePolishAttemptObservabilityFactV1(fact)).toThrow(
         PolishObservabilityProjectionError,
       );
     }
+
+    expect(() => authorizePolishAttemptObservabilityFactV1({
+      ...attemptFact(),
+      usage: { ...observedUsage(), inputTotalTokens: "12" },
+    })).toThrow(PolishObservabilityProjectionError);
+    expect(() => projectPolishAttemptObservabilityEventV1(
+      authorizePolishAttemptObservabilityFactV1({ ...attemptFact(), usage: notApplicableUsage() }),
+    )).not.toThrow();
+    expect(() => projectPolishAttemptObservabilityEventV1(
+      authorizePolishAttemptObservabilityFactV1({ ...attemptFact(), upstream: {
+        ...attemptFact().upstream,
+        status: "failed_upstream",
+      }, usage: unavailableUsage(), cost: {
+        currency: "CNY",
+        estimatedNanos: null,
+        providerReportedNanos: null,
+        reconciliation: "incomplete_usage",
+      } }),
+    )).not.toThrow();
+    expect(() => authorizePolishAttemptObservabilityFactV1({
+      ...attemptFact(),
+      usage: { ...observedUsage(), reasoningTokens: "9" },
+    })).toThrow(PolishObservabilityProjectionError);
+    expect(() => authorizePolishAttemptObservabilityFactV1({
+      ...attemptFact(),
+      cost: { currency: "CNY", estimatedNanos: null, providerReportedNanos: null, reconciliation: "not_available" },
+    })).toThrow(PolishObservabilityProjectionError);
+  });
+
+  it("rejects accessor, prototype, symbol, and non-enumerable input records", () => {
+    const accessor = { ...attemptFact() } as Record<string, unknown>;
+    Object.defineProperty(accessor, "requestId", { enumerable: true, get: () => REQUEST_ID });
+    const customPrototype = Object.assign(Object.create({ inherited: true }), attemptFact());
+    const symbol = { ...attemptFact(), [Symbol("extra")]: "secret" };
+    const nonEnumerable = { ...attemptFact() } as Record<string, unknown>;
+    Object.defineProperty(nonEnumerable, "extra", { enumerable: false, value: "secret" });
+
+    for (const fact of [accessor, customPrototype, symbol, nonEnumerable]) {
+      expect(() => authorizePolishAttemptObservabilityFactV1(fact)).toThrow(
+        PolishObservabilityProjectionError,
+      );
+    }
+  });
+
+  it("requires a branded authoritative fact before projection", () => {
+    expect(() => projectPolishAttemptObservabilityEventV1(attemptFact() as never)).toThrow(
+      PolishObservabilityProjectionError,
+    );
+    expect(() => projectPolishRequestObservabilityEventV1(requestFact() as never)).toThrow(
+      PolishObservabilityProjectionError,
+    );
+    expect(() => projectPolishAttemptObservabilityEventV1({
+      kind: "polish_authoritative_attempt_fact_v1",
+      fact: attemptFact(),
+    } as never)).toThrow(PolishObservabilityProjectionError);
+  });
+
+  it("ties retry state to terminal outcome and success to observed usage/transmission", () => {
+    expect(() => authorizePolishRequestObservabilityFactV1({
+      ...requestFact(),
+      retry: "succeeded",
+      outcome: "failed_upstream",
+      upstream: { transmittedAttemptCount: 2, successfulAttemptCount: 0, latestHttpStatus: 503 },
+    })).toThrow(PolishObservabilityProjectionError);
+    expect(() => authorizePolishRequestObservabilityFactV1({
+      ...requestFact(),
+      retry: "exhausted",
+      outcome: "succeeded",
+    })).toThrow(PolishObservabilityProjectionError);
+    expect(() => authorizePolishAttemptObservabilityFactV1({
+      ...attemptFact(),
+      upstream: { ...attemptFact().upstream, transmitted: false, httpStatus: null },
+      usage: unavailableUsage(),
+      cost: { currency: "CNY", estimatedNanos: null, providerReportedNanos: null, reconciliation: "incomplete_usage" },
+    })).toThrow(PolishObservabilityProjectionError);
   });
 
   it("offers a backend-neutral composition seam without swallowing sink behavior", () => {
     const emitted: unknown[] = [];
     const projector = createPolishObservabilityProjectorV1((event) => emitted.push(event));
 
-    const attempt = projector.emitAttempt(attemptFact());
-    const request = projector.emitRequest(requestFact());
+    const attempt = projector.emitAttempt(authorizePolishAttemptObservabilityFactV1(attemptFact()));
+    const request = projector.emitRequest(authorizePolishRequestObservabilityFactV1(requestFact()));
 
     expect(emitted).toEqual([attempt, request]);
     expect(Object.isFrozen(projector)).toBe(true);
