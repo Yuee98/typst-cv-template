@@ -43,6 +43,7 @@ jobs:
 
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      DB_TESTS_REQUIRED: "1"
 
     steps:
       - name: Checkout
@@ -76,8 +77,8 @@ jobs:
       - name: Run CFG-001 fresh-reset gate
         run: pnpm --filter web test:db:cfg001-fresh
 
-      # scripts/run-db-tests.mjs auto-detects the instance via
-      # `supabase status -o env` and streams SUPABASE_TEST_* to Vitest. It
-      # starts from the fresh schema left by the preceding isolated gate.
+      # Required mode makes status, local-API, and child-process failures hard
+      # CI errors. The runner accepts only HTTP loopback endpoints and clears
+      # the isolated selector before the ordinary full DB suite.
       - name: Run real-DB suite
         run: pnpm --filter web test:db
