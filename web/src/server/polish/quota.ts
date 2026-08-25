@@ -1219,6 +1219,8 @@ export type PolishFinalizeRequestV2 =
       settlementKind: "attempt_v2";
       reservationId: string;
       status: "succeeded" | "canceled" | "failed_upstream" | "invalid_output";
+      /** True only after the selected adapter was entered for this request. */
+      transmitted: boolean;
       providerBillable: boolean | null;
       metadata: PolishFinalizeMetadataV2;
     }>
@@ -1302,6 +1304,7 @@ export function serializePolishFinalizeV2(
       !(["succeeded", "canceled", "failed_upstream", "invalid_output"] as const).includes(
         params.status,
       ) ||
+      typeof params.transmitted !== "boolean" ||
       (params.providerBillable !== null && typeof params.providerBillable !== "boolean")
     ) {
       throw localContractErrorV2();
@@ -1310,7 +1313,9 @@ export function serializePolishFinalizeV2(
     return freezeRpcValueV2({
       p_reservation_id: reservationId,
       p_status: params.status,
-      p_quota_charged: params.status === "succeeded",
+      p_quota_charged:
+        params.status === "succeeded" ||
+        (params.status === "canceled" && params.transmitted),
       p_provider_billable: params.providerBillable,
       p_usage: null,
       p_metadata: {

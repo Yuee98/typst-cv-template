@@ -692,6 +692,7 @@ describe("RT-009 V2 request settlement", () => {
         settlementKind: "attempt_v2",
         reservationId: RESERVATION_ID,
         status: "succeeded",
+        transmitted: true,
         providerBillable: true,
         metadata: FINALIZE_METADATA,
       }),
@@ -716,7 +717,29 @@ describe("RT-009 V2 request settlement", () => {
         settlementKind: "attempt_v2",
         reservationId: RESERVATION_ID,
         status: "failed_upstream",
+        transmitted: true,
         providerBillable: null,
+        metadata: FINALIZE_METADATA,
+      }).p_quota_charged,
+    ).toBe(false);
+
+    expect(
+      serializePolishFinalizeV2({
+        settlementKind: "attempt_v2",
+        reservationId: RESERVATION_ID,
+        status: "canceled",
+        transmitted: true,
+        providerBillable: null,
+        metadata: FINALIZE_METADATA,
+      }).p_quota_charged,
+    ).toBe(true);
+    expect(
+      serializePolishFinalizeV2({
+        settlementKind: "attempt_v2",
+        reservationId: RESERVATION_ID,
+        status: "canceled",
+        transmitted: false,
+        providerBillable: false,
         metadata: FINALIZE_METADATA,
       }).p_quota_charged,
     ).toBe(false);
@@ -761,6 +784,7 @@ describe("RT-009 V2 request settlement", () => {
         settlementKind: "attempt_v2",
         reservationId: RESERVATION_ID,
         status: "succeeded",
+        transmitted: true,
         providerBillable: true,
         metadata: FINALIZE_METADATA,
       }),
@@ -784,6 +808,7 @@ describe("RT-009 V2 request settlement", () => {
         settlementKind: "attempt_v2",
         reservationId: RESERVATION_ID,
         status: "succeeded",
+        transmitted: true,
         providerBillable: true,
         metadata: FINALIZE_METADATA,
       }),
@@ -814,6 +839,7 @@ describe("RT-009 V2 request settlement", () => {
         settlementKind: "attempt_v2",
         reservationId: RESERVATION_ID,
         status: "failed_upstream",
+        transmitted: true,
         providerBillable: null,
         metadata: FINALIZE_METADATA,
       }),

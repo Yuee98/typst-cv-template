@@ -339,12 +339,14 @@ async function settleAttemptFactsV2(
   reservationId: string,
   request: PolishRequest,
   status: "succeeded" | "canceled" | "failed_upstream" | "invalid_output",
+  attemptFacts: readonly PolishAttemptCompletedFactV2[],
   aggregate: RequestUsageAggregateV2,
 ): Promise<SettlementObservationV2> {
   return observeSettlementV2(deps, {
     settlementKind: "attempt_v2",
     reservationId,
     status,
+    transmitted: attemptFacts.some((fact) => fact.transmitted),
     providerBillable: aggregate.providerBillable,
     metadata: requestMetadataV2(request),
   });
@@ -572,6 +574,7 @@ export async function executePolishLifecycleV2(
       reservation.reservationId,
       input.request,
       "succeeded",
+      persistedFacts,
       result.aggregate,
     );
     if (settlement.disposition === "conflict") {
@@ -719,6 +722,7 @@ export async function executePolishLifecycleV2(
         reservation.reservationId,
         input.request,
         requestStatus,
+        persistedFacts,
         aggregate,
       );
     } else {

@@ -764,7 +764,7 @@ describe("executePolishLifecycleV2 — terminal facts and settlement", () => {
     });
     expect(afterStart.state.finalizePayloads[0]).toMatchObject({
       p_status: "canceled",
-      p_quota_charged: false,
+      p_quota_charged: true,
       p_metadata: { usage_schema_version: "attempt_v2" },
     });
 
