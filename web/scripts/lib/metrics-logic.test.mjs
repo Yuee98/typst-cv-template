@@ -310,6 +310,15 @@ describe("metrics logic", () => {
     });
     const malformedOnly = buildMetrics({ requests: [malformed], attempts: [] });
     expect(malformedOnly.alerts.unexpectedRoute).toEqual({ requestCount: 1, attemptCount: 0 });
+    const endpointShapedModel = buildMetrics({
+      requests: [requestRow({ model_id: "https://secret.example.test/model" })],
+      attempts: [],
+    });
+    expect(endpointShapedModel.alerts.unexpectedRoute).toEqual({
+      requestCount: 1,
+      attemptCount: 0,
+    });
+    expect(JSON.stringify(endpointShapedModel)).not.toContain("secret.example.test");
     const malformedLegacy = buildMetrics({
       requests: [requestRow({ route_schema_version: "legacy_pricing_v1", profile_version_id: null })],
       attempts: [],
