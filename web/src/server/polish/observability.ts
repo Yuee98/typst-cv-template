@@ -15,6 +15,7 @@ const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const CURRENCY = /^[A-Z]{3}$/u;
 const HMAC_TAG = /^hmac-sha256:[0-9a-f]{64}$/u;
 const MAX_POSTGRES_BIGINT = BigInt("9223372036854775807");
+const AUTHORIZED_FACT = Symbol("polish-observability-authorized-fact");
 
 const ATTEMPT_STATUSES = [
   "succeeded",
@@ -149,8 +150,61 @@ export type PolishObservabilityEventV1 =
 export type PolishObservabilitySinkV1 = (event: PolishObservabilityEventV1) => void;
 
 export interface PolishObservabilityProjectorV1 {
-  readonly emitAttempt: (fact: unknown) => PolishAttemptObservabilityEventV1;
-  readonly emitRequest: (fact: unknown) => PolishRequestObservabilityEventV1;
+  readonly emitAttempt: (
+    fact: PolishAuthoritativeAttemptObservabilityFactV1,
+  ) => PolishAttemptObservabilityEventV1;
+  readonly emitRequest: (
+    fact: PolishAuthoritativeRequestObservabilityFactV1,
+  ) => PolishRequestObservabilityEventV1;
+}
+
+/**
+ * This is an API boundary marker, not a database provenance proof.  The
+ * caller must mint it only from an already persisted/authoritative fact.
+ * The private runtime symbol prevents accidentally passing an arbitrary
+ * object to the projector.  HMAC tags are likewise consumed as already
+ * authorized correlation observations; this module does not verify them.
+ */
+export interface PolishAuthoritativeAttemptObservabilityFactV1 {
+  readonly kind: "polish_authoritative_attempt_fact_v1";
+}
+
+export interface PolishAuthoritativeRequestObservabilityFactV1 {
+  readonly kind: "polish_authoritative_request_fact_v1";
+}
+
+type InternalAttemptFact = PolishAuthoritativeAttemptObservabilityFactV1 & {
+  readonly [AUTHORIZED_FACT]: "attempt";
+  readonly fact: ParsedAttemptFact;
+};
+
+type InternalRequestFact = PolishAuthoritativeRequestObservabilityFactV1 & {
+  readonly [AUTHORIZED_FACT]: "request";
+  readonly fact: ParsedRequestFact;
+};
+
+interface ParsedAttemptFact {
+  readonly requestId: string;
+  readonly attemptId: string;
+  readonly attemptNo: 1 | 2;
+  readonly profile: PolishObservabilityProfileV1;
+  readonly policy: PolishObservabilityPolicyV1;
+  readonly upstream: PolishAttemptUpstreamObservationV1;
+  readonly usage: PolishObservabilityUsageV1;
+  readonly cost: PolishObservabilityCostV1;
+}
+
+interface ParsedRequestFact {
+  readonly requestId: string;
+  readonly attemptCount: number;
+  readonly retryCount: number;
+  readonly retry: RequestRetryState;
+  readonly outcome: RequestStatus;
+  readonly profile: PolishObservabilityProfileV1;
+  readonly policy: PolishObservabilityPolicyV1;
+  readonly upstream: PolishRequestUpstreamObservationV1;
+  readonly usage: PolishObservabilityUsageV1;
+  readonly cost: PolishObservabilityCostV1;
 }
 
 function invalid(): never {
@@ -159,12 +213,21 @@ function invalid(): never {
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) invalid();
-  return value as Record<string, unknown>;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) invalid();
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") invalid();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) invalid();
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
 }
 
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): void {
   if (
-    Object.keys(value).length !== keys.length ||
+    Reflect.ownKeys(value).length !== keys.length ||
     keys.some((key) => !Object.hasOwn(value, key))
   ) {
     invalid();
@@ -188,6 +251,7 @@ function codeId(value: unknown): string {
 
 function decimal(value: unknown): string {
   if (typeof value !== "string" || !DECIMAL.test(value)) invalid();
+  if (value.length > 19) invalid();
   if (BigInt(value) > MAX_POSTGRES_BIGINT) invalid();
   return value;
 }
@@ -290,15 +354,39 @@ function usage(value: unknown): PolishObservabilityUsageV1 {
     ) {
       invalid();
     }
-    if (
-      BigInt(values.inputCacheReadTokens) + BigInt(values.inputStandardTokens) !==
-      BigInt(values.inputTotalTokens)
-    ) {
-      invalid();
+    if (cacheWrite === "reported") {
+      if (values.inputCacheWriteTokens === null) invalid();
+      if (
+        BigInt(values.inputCacheReadTokens) +
+          BigInt(values.inputCacheWriteTokens) +
+          BigInt(values.inputStandardTokens) !==
+        BigInt(values.inputTotalTokens)
+      ) {
+        invalid();
+      }
+    } else if (cacheWrite === "unavailable") {
+      if (values.inputCacheWriteTokens !== null) invalid();
+      if (
+        BigInt(values.inputCacheReadTokens) + BigInt(values.inputStandardTokens) !==
+        BigInt(values.inputTotalTokens)
+      ) {
+        invalid();
+      }
+    } else {
+      if (
+        values.inputCacheReadTokens !== "0" ||
+        values.inputCacheWriteTokens !== "0" ||
+        BigInt(values.inputCacheReadTokens) +
+          BigInt(values.inputCacheWriteTokens) +
+          BigInt(values.inputStandardTokens) !==
+        BigInt(values.inputTotalTokens)
+      ) {
+        invalid();
+      }
     }
     if (
-      (cacheWrite === "reported" && values.inputCacheWriteTokens === null) ||
-      (cacheWrite !== "reported" && values.inputCacheWriteTokens !== null)
+      values.reasoningTokens !== null &&
+      BigInt(values.reasoningTokens) > BigInt(values.outputTokens)
     ) {
       invalid();
     }
@@ -319,7 +407,8 @@ function cost(value: unknown): PolishObservabilityCostV1 {
     (reconciliation === "mismatch" &&
       (estimatedNanos === null || providerReportedNanos === null || estimatedNanos === providerReportedNanos)) ||
     (reconciliation === "incomplete_usage" && estimatedNanos !== null) ||
-    (reconciliation === "not_available" && providerReportedNanos !== null)
+    (reconciliation === "not_available" &&
+      (estimatedNanos === null || providerReportedNanos !== null))
   ) {
     invalid();
   }
@@ -337,7 +426,12 @@ function attemptUpstream(value: unknown): PolishAttemptUpstreamObservationV1 {
   if (typeof source.transmitted !== "boolean") invalid();
   const status = oneOf(source.status, ATTEMPT_STATUSES);
   const statusCode = httpStatus(source.httpStatus);
-  if (!source.transmitted && statusCode !== null) invalid();
+  if (
+    !source.transmitted &&
+    (!["canceled", "timed_out"].includes(status) || statusCode !== null)
+  ) {
+    invalid();
+  }
   return Object.freeze({
     status,
     transmitted: source.transmitted,
@@ -363,11 +457,8 @@ function requestUpstream(value: unknown, attemptCount: number): PolishRequestUps
   return Object.freeze({ transmittedAttemptCount, successfulAttemptCount, latestHttpStatus });
 }
 
-/** Project one persisted terminal provider-attempt fact; never pass an array here. */
-export function projectPolishAttemptObservabilityEventV1(
-  fact: unknown,
-): PolishAttemptObservabilityEventV1 {
-  const source = record(fact);
+function parseAttemptFact(value: unknown): ParsedAttemptFact {
+  const source = record(value);
   exactKeys(source, [
     "requestId",
     "attemptId",
@@ -381,28 +472,28 @@ export function projectPolishAttemptObservabilityEventV1(
   const attemptNo = count(source.attemptNo, 2);
   if (attemptNo === 0) invalid();
   const upstream = attemptUpstream(source.upstream);
+  const parsedUsage = usage(source.usage);
+  if (
+    (upstream.status === "succeeded" || upstream.status === "invalid_output") &&
+    (!upstream.transmitted || parsedUsage.availability !== "observed")
+  ) {
+    invalid();
+  }
+  if (!upstream.transmitted && parsedUsage.availability !== "unavailable") invalid();
   return Object.freeze({
-    schemaVersion: "polish_observability_event_v1",
-    event: "ai_polish_attempt",
-    aggregation: "attempt",
     requestId: uuid(source.requestId),
     attemptId: uuid(source.attemptId),
     attemptNo: attemptNo as 1 | 2,
-    retry: attemptNo === 2,
-    success: upstream.status === "succeeded",
     profile: profile(source.profile),
     policy: policy(source.policy),
     upstream,
-    usage: usage(source.usage),
+    usage: parsedUsage,
     cost: cost(source.cost),
   });
 }
 
-/** Project one terminal user-visible request aggregate; it intentionally carries no attempt array. */
-export function projectPolishRequestObservabilityEventV1(
-  fact: unknown,
-): PolishRequestObservabilityEventV1 {
-  const source = record(fact);
+function parseRequestFact(value: unknown): ParsedRequestFact {
+  const source = record(value);
   exactKeys(source, [
     "requestId",
     "attemptCount",
@@ -423,7 +514,12 @@ export function projectPolishRequestObservabilityEventV1(
     retryCount !== Math.max(0, attemptCount - 1) ||
     (attemptCount === 0 && retry !== "not_attempted") ||
     (attemptCount === 1 && retry !== "not_needed") ||
-    (attemptCount === 2 && retry !== "succeeded" && retry !== "exhausted") ||
+    (attemptCount === 2 &&
+      ((outcome === "succeeded" && retry !== "succeeded") ||
+        (outcome !== "succeeded" && retry !== "exhausted"))) ||
+    (attemptCount === 0 &&
+      !["released", "abandoned", "canceled"].includes(outcome)) ||
+    (attemptCount > 0 && ["released", "abandoned"].includes(outcome)) ||
     (outcome === "succeeded" && attemptCount === 0)
   ) {
     invalid();
@@ -431,20 +527,109 @@ export function projectPolishRequestObservabilityEventV1(
   const upstream = requestUpstream(source.upstream, attemptCount);
   if ((outcome === "succeeded") !== (upstream.successfulAttemptCount > 0)) invalid();
   return Object.freeze({
-    schemaVersion: "polish_observability_event_v1",
-    event: "ai_polish_request",
-    aggregation: "request",
     requestId: uuid(source.requestId),
     attemptCount,
     retryCount,
     retry,
-    success: outcome === "succeeded",
     outcome,
     profile: profile(source.profile),
     policy: policy(source.policy),
     upstream,
     usage: usage(source.usage),
     cost: cost(source.cost),
+  });
+}
+
+export function authorizePolishAttemptObservabilityFactV1(
+  fact: unknown,
+): PolishAuthoritativeAttemptObservabilityFactV1 {
+  const parsed = parseAttemptFact(fact);
+  return Object.freeze({
+    kind: "polish_authoritative_attempt_fact_v1" as const,
+    fact: parsed,
+    [AUTHORIZED_FACT]: "attempt" as const,
+  }) as PolishAuthoritativeAttemptObservabilityFactV1;
+}
+
+export function authorizePolishRequestObservabilityFactV1(
+  fact: unknown,
+): PolishAuthoritativeRequestObservabilityFactV1 {
+  const parsed = parseRequestFact(fact);
+  return Object.freeze({
+    kind: "polish_authoritative_request_fact_v1" as const,
+    fact: parsed,
+    [AUTHORIZED_FACT]: "request" as const,
+  }) as PolishAuthoritativeRequestObservabilityFactV1;
+}
+
+function internalAttemptFact(
+  fact: PolishAuthoritativeAttemptObservabilityFactV1,
+): InternalAttemptFact {
+  if (
+    typeof fact !== "object" ||
+    fact === null ||
+    (fact as Partial<InternalAttemptFact>)[AUTHORIZED_FACT] !== "attempt"
+  ) {
+    invalid();
+  }
+  return fact as InternalAttemptFact;
+}
+
+function internalRequestFact(
+  fact: PolishAuthoritativeRequestObservabilityFactV1,
+): InternalRequestFact {
+  if (
+    typeof fact !== "object" ||
+    fact === null ||
+    (fact as Partial<InternalRequestFact>)[AUTHORIZED_FACT] !== "request"
+  ) {
+    invalid();
+  }
+  return fact as InternalRequestFact;
+}
+
+/** Project one authorized persisted terminal provider-attempt fact. */
+export function projectPolishAttemptObservabilityEventV1(
+  fact: PolishAuthoritativeAttemptObservabilityFactV1,
+): PolishAttemptObservabilityEventV1 {
+  const source = internalAttemptFact(fact).fact;
+  return Object.freeze({
+    schemaVersion: "polish_observability_event_v1",
+    event: "ai_polish_attempt",
+    aggregation: "attempt",
+    requestId: source.requestId,
+    attemptId: source.attemptId,
+    attemptNo: source.attemptNo,
+    retry: source.attemptNo === 2,
+    success: source.upstream.status === "succeeded",
+    profile: source.profile,
+    policy: source.policy,
+    upstream: source.upstream,
+    usage: source.usage,
+    cost: source.cost,
+  });
+}
+
+/** Project one authorized terminal user-visible request aggregate. */
+export function projectPolishRequestObservabilityEventV1(
+  fact: PolishAuthoritativeRequestObservabilityFactV1,
+): PolishRequestObservabilityEventV1 {
+  const source = internalRequestFact(fact).fact;
+  return Object.freeze({
+    schemaVersion: "polish_observability_event_v1",
+    event: "ai_polish_request",
+    aggregation: "request",
+    requestId: source.requestId,
+    attemptCount: source.attemptCount,
+    retryCount: source.retryCount,
+    retry: source.retry,
+    success: source.outcome === "succeeded",
+    outcome: source.outcome,
+    profile: source.profile,
+    policy: source.policy,
+    upstream: source.upstream,
+    usage: source.usage,
+    cost: source.cost,
   });
 }
 
@@ -458,12 +643,12 @@ export function createPolishObservabilityProjectorV1(
 ): PolishObservabilityProjectorV1 {
   if (typeof sink !== "function") invalid();
   return Object.freeze({
-    emitAttempt(fact: unknown): PolishAttemptObservabilityEventV1 {
+    emitAttempt(fact: PolishAuthoritativeAttemptObservabilityFactV1): PolishAttemptObservabilityEventV1 {
       const event = projectPolishAttemptObservabilityEventV1(fact);
       sink(event);
       return event;
     },
-    emitRequest(fact: unknown): PolishRequestObservabilityEventV1 {
+    emitRequest(fact: PolishAuthoritativeRequestObservabilityFactV1): PolishRequestObservabilityEventV1 {
       const event = projectPolishRequestObservabilityEventV1(fact);
       sink(event);
       return event;
