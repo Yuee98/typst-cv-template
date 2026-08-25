@@ -4,8 +4,19 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeExecutionTargetV1 } from "./lifecycle-v2-contract";
+import { MIMO_V2_SEED_IDENTITY_V1 } from "./mimo-v2-seed-identity-v1";
 import {
+  DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
+  DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
+  DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
+  DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1,
+  DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1,
+  DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
+  DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+  DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
+  DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256,
   DEEPSEEK_PROFILE_KEY,
+  DEEPSEEK_PROFILE_VERSION_ID,
   DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID,
   DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1,
   DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
@@ -16,6 +27,12 @@ import {
   DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
   DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256,
   DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256,
+  MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID,
+  MIMO_PROFILE_KEY,
+  MIMO_PROFILE_VERSION_ID,
+  MIMO_SERVICE_RUNTIME_TARGET_ID,
+  MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256,
+  validateDeepSeekMiMoServiceRuntimeContractV1Registry,
   validateServiceRuntimeContractV1Registry,
 } from "./service-runtime-contract-v1";
 
@@ -45,6 +62,54 @@ const EXPECTED_FACT_IDS = [
   "fact.route.no-selector.v1",
   "fact.route.readonly.v1",
 ] as const;
+
+const EXPECTED_DEEPSEEK_MIMO_FACT_IDS = [
+  "fact.acceptance.authorization.v1",
+  "fact.deepseek.adapter.wire.v1",
+  "fact.deepseek.display.registration.v1",
+  "fact.deepseek.display.selection.v1",
+  "fact.deepseek.endpoint.resolution.v1",
+  "fact.deepseek.endpoint.selection.v1",
+  "fact.deepseek.gateway.service.v1",
+  "fact.deepseek.model.selection.v1",
+  "fact.deepseek.subject.derivation.v1",
+  "fact.deepseek.subject.send.v1",
+  "fact.deepseek.submitted.v1",
+  "fact.deepseek.wire.selection.v1",
+  "fact.material.reaccept.v1",
+  "fact.mimo.adapter.wire.v1",
+  "fact.mimo.display.registration.v1",
+  "fact.mimo.display.selection.v1",
+  "fact.mimo.endpoint.resolution.v1",
+  "fact.mimo.endpoint.selection.v1",
+  "fact.mimo.gateway.service.v1",
+  "fact.mimo.model.selection.v1",
+  "fact.mimo.subject.none.v1",
+  "fact.mimo.submitted.v1",
+  "fact.mimo.wire.selection.v1",
+  "fact.neutral.ledger.v1",
+  "fact.neutral.plaintext.v1",
+  "fact.neutral.quota.v1",
+  "fact.neutral.retention.v1",
+  "fact.neutral.retry.v1",
+  "fact.neutral.scope.v1",
+  "fact.privacy.recipient.deepseek.v1",
+  "fact.privacy.recipient.mimo.v1",
+  "fact.route.change-gate.v1",
+  "fact.route.no-fallback.deepseek.v1",
+  "fact.route.no-fallback.mimo.v1",
+  "fact.route.no-selector.v1",
+  "fact.route.readonly.v1",
+] as const;
+
+const MIMO_REVIEWED_SOURCE_PATHS = Object.freeze([
+  "web/src/server/polish/mimo.ts",
+  "web/src/server/polish/mimo.test.ts",
+  "web/src/server/polish/mimo.live.test.ts",
+  "web/test/fixtures/mimo-responses/content-filter.json",
+  "web/test/fixtures/mimo-responses/incomplete-max-output.json",
+  "web/test/fixtures/mimo-responses/success.json",
+]);
 
 const READONLY_ROUTE_AUTHORITY = Object.freeze({
   implementation: Object.freeze([
@@ -101,6 +166,9 @@ type Mutable<T> = T extends readonly (infer Item)[]
     ? { -readonly [Key in keyof T]: Mutable<T[Key]> }
     : T;
 type MutableRegistry = Mutable<typeof DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1>;
+type MutableCombinedRegistry = Mutable<
+  typeof DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1
+>;
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (
@@ -198,6 +266,100 @@ function expectResignedRegistryRejection(
   );
   expect(() =>
     validateServiceRuntimeContractV1Registry(candidate),
+  ).toThrow(/frozen reviewed tuple/u);
+}
+
+function frozenCombinedCandidate(
+  mutate: (candidate: MutableCombinedRegistry) => void,
+): MutableCombinedRegistry {
+  const candidate = structuredClone(
+    DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+  ) as MutableCombinedRegistry;
+  mutate(candidate);
+  return deepFreeze(candidate);
+}
+
+function resignCombinedCandidate(
+  mutate: (candidate: MutableCombinedRegistry) => void,
+): MutableCombinedRegistry {
+  const candidate = structuredClone(
+    DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+  ) as MutableCombinedRegistry;
+  mutate(candidate);
+
+  candidate.requiredServiceFacts.sort((left, right) =>
+    Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8")),
+  );
+  candidate.evidence.sort((left, right) =>
+    Buffer.compare(
+      Buffer.from(left.descriptor.runtime_evidence_id, "utf8"),
+      Buffer.from(right.descriptor.runtime_evidence_id, "utf8"),
+    ),
+  );
+  for (const evidence of candidate.evidence) {
+    evidence.sha256 = independentRuntimeFingerprint(
+      evidence.descriptor as unknown as Readonly<Record<string, unknown>>,
+    );
+  }
+  for (const target of candidate.targets) {
+    target.sha256 = independentRuntimeFingerprint(
+      target.descriptor as unknown as Readonly<Record<string, unknown>>,
+    );
+  }
+  candidate.contract.runtime_target_ids = candidate.targets.map(
+    (target) => target.descriptor.runtime_target_id,
+  );
+  candidate.contract.runtime_target_sha256s = candidate.targets.map(
+    (target) => target.sha256,
+  );
+  candidate.contract.service_fact_ids = candidate.requiredServiceFacts.map(
+    (pair) => pair.id,
+  );
+  candidate.contract.service_fact_sha256s = candidate.requiredServiceFacts.map(
+    (pair) => pair.sha256,
+  );
+  candidate.contract.runtime_evidence_ids = candidate.evidence.map(
+    (evidence) => evidence.descriptor.runtime_evidence_id,
+  );
+  candidate.contract.runtime_evidence_sha256s = candidate.evidence.map(
+    (evidence) => evidence.sha256,
+  );
+  candidate.contractSha256 = independentRuntimeFingerprint(
+    candidate.contract as unknown as Readonly<Record<string, unknown>>,
+  );
+  for (const target of candidate.targets) {
+    target.executionTarget.runtimeContractSha256 = candidate.contractSha256;
+  }
+  candidate.runtimeTargetSetSha256 = independentRuntimeTargetSetFingerprint(
+    candidate.targets,
+  );
+  return deepFreeze(candidate);
+}
+
+function expectCombinedRegistryRejection(
+  mutate: (candidate: MutableCombinedRegistry) => void,
+  pattern?: RegExp,
+): void {
+  const action = () =>
+    validateDeepSeekMiMoServiceRuntimeContractV1Registry(
+      frozenCombinedCandidate(mutate),
+    );
+  if (pattern === undefined) expect(action).toThrow();
+  else expect(action).toThrow(pattern);
+}
+
+function expectResignedCombinedRegistryRejection(
+  mutate: (candidate: MutableCombinedRegistry) => void,
+): void {
+  const candidate = resignCombinedCandidate(mutate);
+  expect(candidate.contract.runtime_contract_id).toBe(
+    DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
+  );
+  expect(candidate.runtimeTargetSetSha256).toBe(
+    independentRuntimeTargetSetFingerprint(candidate.targets),
+  );
+  expect(() =>
+    validateDeepSeekMiMoServiceRuntimeContractV1Registry(candidate),
   ).toThrow(/frozen reviewed tuple/u);
 }
 
@@ -310,11 +472,15 @@ function parseReviewedTreeEntry(line: string, expectedPath: string): ReviewedTre
   return { mode, objectId, path };
 }
 
-let reviewedTreeLines: ReadonlyMap<string, string> | undefined;
+const REVIEWED_TREE_LINES_BY_COMMIT = new Map<
+  string,
+  ReadonlyMap<string, string>
+>();
 
-function reviewedTreeLine(path: string): string {
+function reviewedTreeLineAtCommit(commitOid: string, path: string): string {
+  const commit = commitOid.slice("sha1:".length);
+  let reviewedTreeLines = REVIEWED_TREE_LINES_BY_COMMIT.get(commit);
   if (reviewedTreeLines === undefined) {
-    const commit = DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID.slice("sha1:".length);
     const listing = git(["ls-tree", "-r", "--full-tree", commit]);
     if (listing.status !== 0) throw new Error("reviewed source tree lookup failed");
     const entries = new Map<string, string>();
@@ -324,23 +490,37 @@ function reviewedTreeLine(path: string): string {
       if (tab >= 0) entries.set(line.slice(tab + 1), line);
     }
     reviewedTreeLines = entries;
+    REVIEWED_TREE_LINES_BY_COMMIT.set(commit, entries);
   }
   const line = reviewedTreeLines.get(path);
   if (line === undefined) throw new Error("unresolved reviewed source path");
   return line;
 }
 
-function readReviewedBlob(path: string): Buffer {
-  const entry = parseReviewedTreeEntry(reviewedTreeLine(path), path);
+function readReviewedBlobAtCommit(commitOid: string, path: string): Buffer {
+  const entry = parseReviewedTreeEntry(
+    reviewedTreeLineAtCommit(commitOid, path),
+    path,
+  );
   const blob = git(["cat-file", "blob", entry.objectId]);
   if (blob.status !== 0) throw new Error("reviewed source blob cannot be read");
   return blob.stdout;
+}
+
+function readReviewedBlob(path: string): Buffer {
+  return readReviewedBlobAtCommit(DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID, path);
 }
 
 function cloneExecutionTarget(): Mutable<RuntimeExecutionTargetV1> {
   return structuredClone(
     DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
   ) as Mutable<RuntimeExecutionTargetV1>;
+}
+
+function cloneCombinedExecutionTarget(
+  target: Readonly<RuntimeExecutionTargetV1>,
+): Mutable<RuntimeExecutionTargetV1> {
+  return structuredClone(target) as Mutable<RuntimeExecutionTargetV1>;
 }
 
 describe("DeepSeek service runtime contract V1", () => {
@@ -782,6 +962,388 @@ describe("DeepSeek service runtime contract V1", () => {
     expect(() => validateServiceRuntimeContractV1Registry(customArray)).toThrow(
       /exact array/u,
     );
+  });
+});
+
+describe("reviewed DeepSeek and MiMo service runtime contract V1", () => {
+  it("freezes the accepted two-target identity without changing the DeepSeek-only pair", () => {
+    expect(() =>
+      validateDeepSeekMiMoServiceRuntimeContractV1Registry(
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+      ),
+    ).not.toThrow();
+    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
+      "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d",
+    );
+    expect(MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256).toBe(
+      "091416c8ff3d9c3b32c24d6906b8d618a70da91a9e3cd68132aadcfa964121a6",
+    );
+    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
+      "2ae3a6e969ceee2772d2863ffa23d11dd8e5e725b32df39969f5ade746b55878",
+    );
+    expect(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
+        (pair) => pair.id,
+      ),
+    ).toEqual(EXPECTED_DEEPSEEK_MIMO_FACT_IDS);
+    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets).toHaveLength(2);
+    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets).toMatchObject([
+      {
+        descriptor: {
+          runtime_target_id: DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
+          profile_key: DEEPSEEK_PROFILE_KEY,
+        },
+        sha256: DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256,
+        profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
+      },
+      {
+        descriptor: {
+          runtime_target_id: MIMO_SERVICE_RUNTIME_TARGET_ID,
+          profile_key: MIMO_PROFILE_KEY,
+        },
+        sha256: MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256,
+        profileVersionId: MIMO_PROFILE_VERSION_ID,
+      },
+    ]);
+    expect(MIMO_PROFILE_VERSION_ID).toBe(
+      MIMO_V2_SEED_IDENTITY_V1.profile.profileVersionId,
+    );
+    expect(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1).toMatchObject({
+      contract: {
+        runtimeContractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
+        runtimeContractSha256:
+          DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
+        reviewedSourceCommitOid: DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
+        runtimeTargetSetSha256:
+          DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256,
+      },
+      targets: [
+        {
+          runtimeTargetId: DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
+          profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
+        },
+        {
+          runtimeTargetId: MIMO_SERVICE_RUNTIME_TARGET_ID,
+          profileVersionId: MIMO_V2_SEED_IDENTITY_V1.profile.profileVersionId,
+        },
+      ],
+    });
+    expect(Object.isFrozen(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1)).toBe(
+      true,
+    );
+
+    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
+      "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
+    );
+    expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256).toBe(
+      "aa4948f6f0060a08ada1d0b831babd17c37287be02a9a8f2f9ec69c0f2bed119",
+    );
+    expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
+      "5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340",
+    );
+    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.reviewedSourceCommitOid).toBe(
+      "sha1:b2390ff817612df7e3eed40aa775ff4cd4228085",
+    );
+    expect(
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
+        (pair) => pair.id,
+      ),
+    ).toEqual(EXPECTED_FACT_IDS);
+  });
+
+  it("independently reproduces every combined evidence, target, root, and target-set hash", () => {
+    for (const item of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
+      expect(
+        independentRuntimeFingerprint(
+          item.descriptor as unknown as Readonly<Record<string, unknown>>,
+        ),
+        item.descriptor.runtime_evidence_id,
+      ).toBe(item.sha256);
+    }
+    for (const target of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets) {
+      expect(
+        independentRuntimeFingerprint(
+          target.descriptor as unknown as Readonly<Record<string, unknown>>,
+        ),
+        target.descriptor.runtime_target_id,
+      ).toBe(target.sha256);
+    }
+    expect(
+      independentRuntimeFingerprint(
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.contract as unknown as Readonly<
+          Record<string, unknown>
+        >,
+      ),
+    ).toBe(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256);
+    expect(
+      independentRuntimeTargetSetFingerprint(
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets,
+      ),
+    ).toBe(DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256);
+  });
+
+  it("requires deterministic implementation and test evidence for all 36 exact facts", () => {
+    const authorities = new Map<string, Set<string>>();
+    for (const evidence of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
+      expect([
+        "service-implementation",
+        "service-test",
+      ]).toContain(evidence.descriptor.authority_kind);
+      const kinds = authorities.get(evidence.descriptor.supported_fact_id) ??
+        new Set<string>();
+      kinds.add(evidence.descriptor.authority_kind);
+      authorities.set(evidence.descriptor.supported_fact_id, kinds);
+    }
+    expect([...authorities.keys()].sort()).toEqual(
+      [...EXPECTED_DEEPSEEK_MIMO_FACT_IDS].sort(),
+    );
+    for (const factId of EXPECTED_DEEPSEEK_MIMO_FACT_IDS) {
+      expect(authorities.get(factId), factId).toEqual(
+        new Set(["service-implementation", "service-test"]),
+      );
+    }
+  });
+
+  it("resolves every combined source blob at the exact reviewed identity commit", () => {
+    const cache = new Map<string, Buffer>();
+    const evidencePaths = new Set<string>();
+    for (const evidence of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
+      const { source_repo_path: path, source_git_blob_sha256: expected } =
+        evidence.descriptor;
+      evidencePaths.add(path);
+      let bytes = cache.get(path);
+      if (bytes === undefined) {
+        bytes = readReviewedBlobAtCommit(
+          DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
+          path,
+        );
+        cache.set(path, bytes);
+      }
+      expect(createHash("sha256").update(bytes).digest("hex"), path).toBe(
+        expected,
+      );
+    }
+    expect(
+      MIMO_REVIEWED_SOURCE_PATHS.every((path) => evidencePaths.has(path)),
+    ).toBe(true);
+  }, 20_000);
+
+  it("binds all six MiMo adapter artifacts byte-for-byte to the Relay-closed source snapshot", () => {
+    const evidenceHashByPath = new Map(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence.map((evidence) => [
+        evidence.descriptor.source_repo_path,
+        evidence.descriptor.source_git_blob_sha256,
+      ]),
+    );
+    for (const path of MIMO_REVIEWED_SOURCE_PATHS) {
+      const reviewedBytes = readReviewedBlobAtCommit(
+        DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
+        path,
+      );
+      const relayClosedBytes = readReviewedBlobAtCommit(
+        MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID,
+        path,
+      );
+      expect(reviewedBytes, path).toEqual(relayClosedBytes);
+      expect(createHash("sha256").update(reviewedBytes).digest("hex"), path).toBe(
+        evidenceHashByPath.get(path),
+      );
+    }
+  }, 15_000);
+
+  it("keeps both exact reviewed commits and makes the combined source a proper ancestor", () => {
+    for (const oid of [
+      DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
+      MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID,
+    ]) {
+      const commit = oid.slice("sha1:".length);
+      const type = git(["cat-file", "-t", commit]);
+      expect(type.status, oid).toBe(0);
+      expect(type.stdout.toString("utf8").trim(), oid).toBe("commit");
+    }
+    const reviewed = DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID.slice(
+      "sha1:".length,
+    );
+    const head = git(["rev-parse", "HEAD"]);
+    expect(head.status).toBe(0);
+    const headOid = head.stdout.toString("utf8").trim();
+    expect(git(["merge-base", "--is-ancestor", reviewed, headOid]).status).toBe(
+      0,
+    );
+    expect(headOid).not.toBe(reviewed);
+  });
+
+  it("rejects missing, extra, reordered, and cross-bound targets", () => {
+    expectCombinedRegistryRejection((candidate) => {
+      candidate.targets.pop();
+    }, /contain 2 targets/u);
+    expectCombinedRegistryRejection((candidate) => {
+      candidate.targets.push(structuredClone(candidate.targets[0]));
+    }, /contain 2 targets/u);
+    expectCombinedRegistryRejection((candidate) => {
+      candidate.targets.reverse();
+    }, /reviewed profile\/legal route/u);
+    expectCombinedRegistryRejection((candidate) => {
+      [candidate.targets[0].executionTarget, candidate.targets[1].executionTarget] =
+        [candidate.targets[1].executionTarget, candidate.targets[0].executionTarget];
+    }, /execution target identity/u);
+    expectCombinedRegistryRejection((candidate) => {
+      [candidate.targets[0].profileVersionId, candidate.targets[1].profileVersionId] =
+        [candidate.targets[1].profileVersionId, candidate.targets[0].profileVersionId];
+    }, /reviewed profile\/legal route/u);
+    expectCombinedRegistryRejection((candidate) => {
+      candidate.targets[1].descriptor.legal_manifest_id =
+        candidate.targets[0].descriptor.legal_manifest_id;
+      candidate.targets[1].descriptor.legal_manifest_sha256 =
+        candidate.targets[0].descriptor.legal_manifest_sha256;
+    }, /reviewed profile\/legal route/u);
+  });
+
+  it("rejects missing, extra, cross-bound, and coherently re-signed evidence blobs", () => {
+    expectCombinedRegistryRejection((candidate) => {
+      const index = candidate.evidence.findIndex(
+        (evidence) =>
+          evidence.descriptor.source_repo_path ===
+          "web/test/fixtures/mimo-responses/success.json",
+      );
+      if (index < 0) throw new Error("missing MiMo success evidence");
+      candidate.evidence.splice(index, 1);
+    });
+    expectCombinedRegistryRejection((candidate) => {
+      candidate.evidence.push(structuredClone(candidate.evidence[0]));
+    }, /sorted and unique|duplicate or rebound/u);
+    expectCombinedRegistryRejection((candidate) => {
+      const mimoEvidence = candidate.evidence.find(
+        (evidence) =>
+          evidence.descriptor.supported_fact_id === "fact.mimo.adapter.wire.v1",
+      );
+      const deepSeekFact = candidate.requiredServiceFacts.find(
+        (pair) => pair.id === "fact.deepseek.adapter.wire.v1",
+      );
+      if (mimoEvidence === undefined || deepSeekFact === undefined) {
+        throw new Error("missing cross-bound evidence authority");
+      }
+      mimoEvidence.descriptor.supported_fact_id = deepSeekFact.id;
+      mimoEvidence.descriptor.supported_fact_sha256 = deepSeekFact.sha256;
+    });
+    expectCombinedRegistryRejection((candidate) => {
+      const evidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
+      );
+      if (evidence === undefined) throw new Error("missing MiMo source evidence");
+      delete (
+        evidence.descriptor as unknown as Record<string, unknown>
+      ).source_git_blob_sha256;
+    }, /keys do not match/u);
+    expectCombinedRegistryRejection((candidate) => {
+      const evidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
+      );
+      if (evidence === undefined) throw new Error("missing MiMo source evidence");
+      (
+        evidence.descriptor as unknown as Record<string, unknown>
+      ).source_git_blob_sha256_extra = "a".repeat(64);
+    }, /keys do not match/u);
+    expectResignedCombinedRegistryRejection((candidate) => {
+      const mimoEvidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
+      );
+      const deepSeekEvidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.source_repo_path === "web/src/server/polish/deepseek.ts",
+      );
+      if (mimoEvidence === undefined || deepSeekEvidence === undefined) {
+        throw new Error("missing cross-bound source evidence");
+      }
+      mimoEvidence.descriptor.source_repo_path =
+        deepSeekEvidence.descriptor.source_repo_path;
+      mimoEvidence.descriptor.source_git_blob_sha256 =
+        deepSeekEvidence.descriptor.source_git_blob_sha256;
+    });
+    expectResignedCombinedRegistryRejection((candidate) => {
+      const evidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
+      );
+      if (evidence === undefined) throw new Error("missing MiMo source evidence");
+      evidence.descriptor.source_git_blob_sha256 = "a".repeat(64);
+    });
+    expectResignedCombinedRegistryRejection((candidate) => {
+      const evidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.source_repo_path ===
+          "web/test/fixtures/mimo-responses/content-filter.json",
+      );
+      if (evidence === undefined) throw new Error("missing MiMo fixture evidence");
+      evidence.descriptor.source_repo_path =
+        "web/test/fixtures/mimo-responses/rebound.json";
+    });
+  });
+
+  it("keeps the validators and resolvers fail-closed across contract boundaries", () => {
+    expect(() =>
+      validateServiceRuntimeContractV1Registry(
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+      ),
+    ).toThrow();
+    expect(() =>
+      validateDeepSeekMiMoServiceRuntimeContractV1Registry(
+        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+      ),
+    ).toThrow();
+    expect(
+      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
+        DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
+      ),
+    ).toBe(false);
+    expect(
+      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
+        DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("DeepSeek and MiMo runtime target resolver V1", () => {
+  it("accepts only either exact reviewed combined target", () => {
+    for (const target of [
+      DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
+      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
+    ]) {
+      expect(DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(target)).toBe(true);
+      expect(
+        DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(
+          cloneCombinedExecutionTarget(target),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(
+        DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects profile/version/route crossing and every nested route drift", () => {
+    const crossed = cloneCombinedExecutionTarget(
+      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
+    );
+    crossed.profileVersionId = DEEPSEEK_PROFILE_VERSION_ID;
+    expect(DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(crossed)).toBe(false);
+
+    for (const key of Object.keys(
+      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1.routeDescriptor,
+    )) {
+      const target = cloneCombinedExecutionTarget(
+        DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
+      );
+      const route = target.routeDescriptor as unknown as Record<string, unknown>;
+      route[key] = `${String(route[key])}.drift`;
+      expect(DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(target), key).toBe(false);
+    }
   });
 });
 
