@@ -112,6 +112,43 @@ function frozenCandidate(
   return deepFreeze(candidate);
 }
 
+function resignCandidate(
+  mutate: (candidate: MutableRegistry) => void,
+): MutableRegistry {
+  const candidate = structuredClone(
+    DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+  ) as MutableRegistry;
+  mutate(candidate);
+
+  candidate.evidence.sort((left, right) =>
+    Buffer.compare(
+      Buffer.from(left.descriptor.runtime_evidence_id, "utf8"),
+      Buffer.from(right.descriptor.runtime_evidence_id, "utf8"),
+    ),
+  );
+  for (const evidence of candidate.evidence) {
+    evidence.sha256 = independentRuntimeFingerprint(
+      evidence.descriptor as unknown as Readonly<Record<string, unknown>>,
+    );
+  }
+  candidate.contract.runtime_evidence_ids = candidate.evidence.map(
+    (evidence) => evidence.descriptor.runtime_evidence_id,
+  );
+  candidate.contract.runtime_evidence_sha256s = candidate.evidence.map(
+    (evidence) => evidence.sha256,
+  );
+  candidate.contractSha256 = independentRuntimeFingerprint(
+    candidate.contract as unknown as Readonly<Record<string, unknown>>,
+  );
+  for (const target of candidate.targets) {
+    target.executionTarget.runtimeContractSha256 = candidate.contractSha256;
+  }
+  candidate.runtimeTargetSetSha256 = independentRuntimeTargetSetFingerprint(
+    candidate.targets,
+  );
+  return deepFreeze(candidate);
+}
+
 function expectRegistryRejection(
   mutate: (candidate: MutableRegistry) => void,
   pattern?: RegExp,
@@ -120,6 +157,33 @@ function expectRegistryRejection(
     validateServiceRuntimeContractV1Registry(frozenCandidate(mutate));
   if (pattern === undefined) expect(action).toThrow();
   else expect(action).toThrow(pattern);
+}
+
+function expectResignedRegistryRejection(
+  mutate: (candidate: MutableRegistry) => void,
+): void {
+  const candidate = resignCandidate(mutate);
+  expect(candidate.contract.runtime_contract_id).toBe(
+    DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
+  );
+  expect(candidate.contractSha256).not.toBe(
+    DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
+  );
+  expect(candidate.contract.runtime_evidence_ids).toEqual(
+    candidate.evidence.map((evidence) => evidence.descriptor.runtime_evidence_id),
+  );
+  expect(candidate.contract.runtime_evidence_sha256s).toEqual(
+    candidate.evidence.map((evidence) => evidence.sha256),
+  );
+  expect(candidate.targets.every(
+    (target) => target.executionTarget.runtimeContractSha256 === candidate.contractSha256,
+  )).toBe(true);
+  expect(candidate.runtimeTargetSetSha256).toBe(
+    independentRuntimeTargetSetFingerprint(candidate.targets),
+  );
+  expect(() =>
+    validateServiceRuntimeContractV1Registry(candidate),
+  ).toThrow(/frozen reviewed tuple/u);
 }
 
 function independentRuntimeFingerprint(
@@ -501,35 +565,93 @@ describe("DeepSeek service runtime contract V1", () => {
   });
 
   it("rejects a coherent re-sign of a source tuple, even with the same evidence ID", () => {
-    expectRegistryRejection((candidate) => {
-      const evidence = candidate.evidence[0];
+    expectResignedRegistryRejection((candidate) => {
+      const evidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.runtime_evidence_id ===
+          "runtime-evidence.acceptance.authorization.v1.implementation.01.v1",
+      );
+      if (evidence === undefined) throw new Error("missing acceptance evidence");
       evidence.descriptor.source_repo_path = "web/src/server/polish/other.ts";
       evidence.descriptor.source_git_blob_sha256 = "a".repeat(64);
-      evidence.sha256 = independentRuntimeFingerprint(
-        evidence.descriptor as unknown as Readonly<Record<string, unknown>>,
-      );
-
-      const evidenceIndex = candidate.contract.runtime_evidence_ids.indexOf(
-        evidence.descriptor.runtime_evidence_id,
-      );
-      candidate.contract.runtime_evidence_sha256s[evidenceIndex] = evidence.sha256;
-      candidate.contractSha256 = independentRuntimeFingerprint(
-        candidate.contract as unknown as Readonly<Record<string, unknown>>,
-      );
-      candidate.targets[0].executionTarget.runtimeContractSha256 =
-        candidate.contractSha256;
-    }, /frozen reviewed tuple/u);
+    });
   });
 
-  it("rejects exact-tuple additions, removals, and reordering", () => {
-    expectRegistryRejection((candidate) => {
-      candidate.evidence.push(structuredClone(candidate.evidence[0]));
+  it("rejects every coherently re-signed evidence metamorphic class", () => {
+    expectResignedRegistryRejection((candidate) => {
+      const evidence = candidate.evidence.find(
+        (item) =>
+          item.descriptor.runtime_evidence_id ===
+          "runtime-evidence.acceptance.authorization.v1.implementation.01.v1",
+      );
+      if (evidence === undefined) throw new Error("missing acceptance evidence");
+      evidence.descriptor.runtime_evidence_id =
+        "runtime-evidence.acceptance.authorization.v1.implementation.00.v1";
     });
-    expectRegistryRejection((candidate) => {
-      candidate.evidence.pop();
+
+    expectResignedRegistryRejection((candidate) => {
+      const implementation = candidate.evidence.find(
+        (item) =>
+          item.descriptor.runtime_evidence_id ===
+          "runtime-evidence.acceptance.authorization.v1.implementation.01.v1",
+      );
+      const test = candidate.evidence.find(
+        (item) =>
+          item.descriptor.runtime_evidence_id ===
+          "runtime-evidence.acceptance.authorization.v1.test.01.v1",
+      );
+      if (implementation === undefined || test === undefined) {
+        throw new Error("missing acceptance authority pair");
+      }
+      implementation.descriptor.authority_kind = "service-test";
+      test.descriptor.authority_kind = "service-implementation";
     });
-    expectRegistryRejection((candidate) => {
-      candidate.evidence.reverse();
+
+    expectResignedRegistryRejection((candidate) => {
+      const extra = structuredClone(candidate.evidence[0]);
+      extra.descriptor.runtime_evidence_id =
+        "runtime-evidence.acceptance.authorization.v1.implementation.03.v1";
+      candidate.evidence.push(extra);
+    });
+
+    expectResignedRegistryRejection((candidate) => {
+      const index = candidate.evidence.findIndex(
+        (item) =>
+          item.descriptor.runtime_evidence_id ===
+          "runtime-evidence.neutral.quota.v1.implementation.05.v1",
+      );
+      if (index < 0) throw new Error("missing redundant quota authority");
+      candidate.evidence.splice(index, 1);
+    });
+
+    expectResignedRegistryRejection((candidate) => {
+      const first = candidate.evidence.find(
+        (item) =>
+          item.descriptor.runtime_evidence_id ===
+          "runtime-evidence.neutral.quota.v1.implementation.01.v1",
+      );
+      const second = candidate.evidence.find(
+        (item) =>
+          item.descriptor.runtime_evidence_id ===
+          "runtime-evidence.neutral.quota.v1.implementation.02.v1",
+      );
+      if (first === undefined || second === undefined) {
+        throw new Error("missing quota source permutation pair");
+      }
+      [
+        first.descriptor.source_repo_path,
+        second.descriptor.source_repo_path,
+      ] = [
+        second.descriptor.source_repo_path,
+        first.descriptor.source_repo_path,
+      ];
+      [
+        first.descriptor.source_git_blob_sha256,
+        second.descriptor.source_git_blob_sha256,
+      ] = [
+        second.descriptor.source_git_blob_sha256,
+        first.descriptor.source_git_blob_sha256,
+      ];
     });
   });
 
