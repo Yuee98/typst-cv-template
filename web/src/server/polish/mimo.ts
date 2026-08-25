@@ -21,11 +21,17 @@ import {
 } from "./adapter-registry";
 import { MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
 import { resolveProfile } from "./profile-registry";
+import {
+  POLISH_STABLE_PROMPT_BLOCK_ID,
+  POLISH_VARIABLE_PROMPT_BLOCK_ID,
+} from "./prompt";
 
 export const MIMO_RESPONSES_V1_ADAPTER_KIND = "mimo_responses_v1" as const;
 export const MIMO_RESPONSES_V1_PROFILE_KEY =
   "mimo.cn.mimo-v2.5-pro.responses.v1" as const;
 export const MIMO_RESPONSES_MAX_OUTPUT_TOKENS = 131_072;
+const POLISH_OUTPUT_SCHEMA_NAME = "polish_items_v1";
+const MISSING_DATA_PROPERTY = Symbol("missing-data-property");
 
 export interface MimoResponsesV1AdapterOptions {
   /** Secrets are resolved only through the code-owned credential alias. */
@@ -72,6 +78,24 @@ export class MimoResponsesV1AdapterError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ownDataProperty(
+  value: Record<string, unknown>,
+  property: string,
+): unknown | typeof MISSING_DATA_PROPERTY {
+  const descriptor = Object.getOwnPropertyDescriptor(value, property);
+  return descriptor !== undefined && "value" in descriptor
+    ? descriptor.value
+    : MISSING_DATA_PROPERTY;
+}
+
+function malformedRequest(): MimoResponsesV1AdapterError {
+  return new MimoResponsesV1AdapterError(
+    "UPSTREAM_ERROR",
+    "MiMo request violates the canonical prompt-only contract",
+    { retryable: false },
+  );
 }
 
 function safeRouteToken(value: unknown, maxLength = 256): string | undefined {
@@ -199,84 +223,141 @@ function assertRequestAndBuildBody(
   request: PolishInferenceRequestV2,
   modelId: string,
 ): Record<string, unknown> {
-  if (request.schemaVersion !== "polish_inference_request_v2") {
-    throw new MimoResponsesV1AdapterError(
-      "UPSTREAM_ERROR",
-      "MiMo request uses an unknown inference schema",
-      { retryable: false },
-    );
-  }
-  if (request.outputContract.kind !== "json_object") {
-    throw new MimoResponsesV1AdapterError(
-      "UPSTREAM_ERROR",
-      "MiMo prompt-only adapter cannot preserve this output contract",
-      { retryable: false },
-    );
-  }
-  if (
-    !Number.isSafeInteger(request.maxOutputTokens) ||
-    request.maxOutputTokens < 1 ||
-    request.maxOutputTokens > MIMO_RESPONSES_MAX_OUTPUT_TOKENS
-  ) {
-    throw new MimoResponsesV1AdapterError(
-      "UPSTREAM_ERROR",
-      "MiMo maxOutputTokens is outside the documented range",
-      { retryable: false },
-    );
-  }
+  try {
+    const requestRecord = request as unknown;
+    if (!isRecord(requestRecord)) throw malformedRequest();
+    const schemaVersion = ownDataProperty(requestRecord, "schemaVersion");
+    const prompt = ownDataProperty(requestRecord, "prompt");
+    const outputContract = ownDataProperty(requestRecord, "outputContract");
+    const maxOutputTokens = ownDataProperty(requestRecord, "maxOutputTokens");
+    if (
+      schemaVersion !== "polish_inference_request_v2" ||
+      !isRecord(prompt) ||
+      !isRecord(outputContract) ||
+      !Number.isSafeInteger(maxOutputTokens) ||
+      (maxOutputTokens as number) < 1 ||
+      (maxOutputTokens as number) > MIMO_RESPONSES_MAX_OUTPUT_TOKENS
+    ) {
+      throw malformedRequest();
+    }
 
-  const [stable, variable] = request.prompt.blocks;
-  if (
-    request.prompt.blocks.length !== 2 ||
-    stable?.role !== "developer" ||
-    stable.stability !== "stable" ||
-    variable?.role !== "user" ||
-    variable.stability !== "variable" ||
-    stable.id.length === 0 ||
-    variable.id.length === 0 ||
-    stable.id === variable.id ||
-    stable.content.length === 0 ||
-    variable.content.length === 0 ||
-    request.prompt.explicitCacheBoundaryAfter !== stable.id
-  ) {
-    throw new MimoResponsesV1AdapterError(
-      "UPSTREAM_ERROR",
-      "MiMo request does not use the canonical stable-prefix prompt",
-      { retryable: false },
-    );
-  }
+    const blocks = ownDataProperty(prompt, "blocks");
+    const boundary = ownDataProperty(prompt, "explicitCacheBoundaryAfter");
+    if (
+      !Array.isArray(blocks) ||
+      blocks.length !== 2 ||
+      !Object.hasOwn(blocks, 0) ||
+      !Object.hasOwn(blocks, 1)
+    ) {
+      throw malformedRequest();
+    }
+    const stableDescriptor = Object.getOwnPropertyDescriptor(blocks, "0");
+    const variableDescriptor = Object.getOwnPropertyDescriptor(blocks, "1");
+    const stable =
+      stableDescriptor !== undefined && "value" in stableDescriptor
+        ? stableDescriptor.value
+        : MISSING_DATA_PROPERTY;
+    const variable =
+      variableDescriptor !== undefined && "value" in variableDescriptor
+        ? variableDescriptor.value
+        : MISSING_DATA_PROPERTY;
+    if (!isRecord(stable) || !isRecord(variable)) throw malformedRequest();
 
-  return {
-    model: modelId,
-    // MiMo documents `instructions` and string `input`. The code-owned stable
-    // instructions precede the variable user suffix, preserving auto-cache
-    // prefix semantics without sending undocumented cache controls.
-    instructions: stable.content,
-    input: variable.content,
-    max_output_tokens: request.maxOutputTokens,
-    stream: false,
-    reasoning: { effort: "none" },
-  };
+    const stableId = ownDataProperty(stable, "id");
+    const stableRole = ownDataProperty(stable, "role");
+    const stableStability = ownDataProperty(stable, "stability");
+    const stableContent = ownDataProperty(stable, "content");
+    const variableId = ownDataProperty(variable, "id");
+    const variableRole = ownDataProperty(variable, "role");
+    const variableStability = ownDataProperty(variable, "stability");
+    const variableContent = ownDataProperty(variable, "content");
+    const outputKind = ownDataProperty(outputContract, "kind");
+    const schemaName = ownDataProperty(outputContract, "schemaName");
+    const outputSchema = ownDataProperty(outputContract, "schema");
+    if (
+      stableId !== POLISH_STABLE_PROMPT_BLOCK_ID ||
+      stableRole !== "developer" ||
+      stableStability !== "stable" ||
+      typeof stableContent !== "string" ||
+      stableContent.length === 0 ||
+      variableId !== POLISH_VARIABLE_PROMPT_BLOCK_ID ||
+      variableRole !== "user" ||
+      variableStability !== "variable" ||
+      typeof variableContent !== "string" ||
+      variableContent.length === 0 ||
+      boundary !== stableId ||
+      outputKind !== "json_object" ||
+      schemaName !== POLISH_OUTPUT_SCHEMA_NAME ||
+      !isRecord(outputSchema)
+    ) {
+      throw malformedRequest();
+    }
+
+    return {
+      model: modelId,
+      // MiMo documents `instructions` and string `input`. The code-owned stable
+      // instructions precede the variable user suffix, preserving auto-cache
+      // prefix semantics without sending undocumented cache controls.
+      instructions: stableContent,
+      input: variableContent,
+      max_output_tokens: maxOutputTokens,
+      stream: false,
+      reasoning: { effort: "none" },
+    };
+  } catch (error) {
+    if (error instanceof MimoResponsesV1AdapterError) throw error;
+    throw malformedRequest();
+  }
 }
 
 function extractOutputText(payload: Record<string, unknown>): {
   text: string;
   hasOutputText: boolean;
+  structurallyValid: boolean;
 } {
-  if (!Array.isArray(payload.output)) return { text: "", hasOutputText: false };
+  if (payload.output === undefined) {
+    return { text: "", hasOutputText: false, structurallyValid: true };
+  }
+  if (!Array.isArray(payload.output)) {
+    return { text: "", hasOutputText: false, structurallyValid: false };
+  }
 
   const chunks: string[] = [];
+  let hasOutputText = false;
+  let structurallyValid = true;
   for (const item of payload.output) {
-    if (!isRecord(item) || item.type !== "message" || !Array.isArray(item.content)) {
+    if (!isRecord(item)) {
+      structurallyValid = false;
+      continue;
+    }
+    if (item.type === "reasoning") continue;
+    if (
+      item.type !== "message" ||
+      item.role !== "assistant" ||
+      (item.status !== "completed" &&
+        item.status !== "in_progress" &&
+        item.status !== "incomplete") ||
+      !Array.isArray(item.content)
+    ) {
+      structurallyValid = false;
       continue;
     }
     for (const part of item.content) {
-      if (isRecord(part) && part.type === "output_text" && typeof part.text === "string") {
-        chunks.push(part.text);
+      if (
+        !isRecord(part) ||
+        part.type !== "output_text" ||
+        typeof part.text !== "string"
+      ) {
+        structurallyValid = false;
+        continue;
       }
+      hasOutputText = true;
+      chunks.push(part.text);
     }
   }
-  return { text: chunks.join(""), hasOutputText: chunks.length > 0 };
+  return structurallyValid
+    ? { text: chunks.join(""), hasOutputText, structurallyValid: true }
+    : { text: "", hasOutputText: false, structurallyValid: false };
 }
 
 function normalizeFinishReason(
@@ -401,12 +482,12 @@ export function createMimoResponsesV1Adapter(
       const bodyHasError = payloadRecord?.error !== undefined && payloadRecord.error !== null;
       const extracted = payloadRecord
         ? extractOutputText(payloadRecord)
-        : { text: "", hasOutputText: false };
+        : { text: "", hasOutputText: false, structurallyValid: false };
 
       return {
         schemaVersion: "polish_inference_result_v2",
-        text: bodyHasError ? "" : extracted.text,
-        finishReason: bodyHasError
+        text: bodyHasError || !extracted.structurallyValid ? "" : extracted.text,
+        finishReason: bodyHasError || !extracted.structurallyValid
           ? "unknown"
           : normalizeFinishReason(payloadRecord ?? {}, extracted.hasOutputText),
         usage,
