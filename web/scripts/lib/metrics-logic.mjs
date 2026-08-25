@@ -23,6 +23,7 @@ const CURRENCY = /^[A-Z]{3}$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const SAFE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,199}$/u;
 const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
+const URI_SCHEME_PREFIX = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const SAFE_HASH = /^[0-9a-f]{64}$/u;
 const MAX_PG_BIGINT = 9223372036854775807n;
 const MAX_LATENCY_MS = 2147483647;
@@ -58,7 +59,11 @@ function safeToken(value) {
 }
 
 function safeModel(value) {
-  return typeof value === "string" && SAFE_MODEL.test(value) ? value : null;
+  return typeof value === "string"
+    && SAFE_MODEL.test(value)
+    && !URI_SCHEME_PREFIX.test(value)
+    ? value
+    : null;
 }
 
 function safeHash(value) {
