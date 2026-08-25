@@ -25,7 +25,7 @@ export const DEEPSEEK_PROFILE_KEY =
 export const DEEPSEEK_PROFILE_VERSION_ID =
   "11111111-1111-4111-8111-111111111111" as const;
 export const DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID =
-  "sha1:96eb76fa8035b6f82a8fcb0e7670f416fcb09ef6" as const;
+  "sha1:b2390ff817612df7e3eed40aa775ff4cd4228085" as const;
 
 const DEEPSEEK_ROUTE_DESCRIPTOR_ID = "route.deepseek.official.v1" as const;
 const DEEPSEEK_DISPLAY_DISCLOSURE_KEY = "deepseek-official-v1" as const;
@@ -252,15 +252,15 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   quota: source(
     "web/src/server/polish/quota.ts",
-    "7622867a2dda9e2615887174cc1318a1b3ade4263f4b3b99b3e5ec8c95570db0",
+    "00cfc0bf32b40e7726a8e6426cd20d6fd7af201f824a6cd4610f3c3f54efb271",
   ),
   quotaTest: source(
     "web/src/server/polish/quota-v2.test.ts",
-    "46225414b83c1bc297fc60bb51c48b325f5214b2be45a91adb5ceae06d515c81",
+    "b79ea98a972b67fd005091b075e394db65d693eca82ede889fc075270a8cfc3d",
   ),
   handler: source(
     "web/src/server/polish/handler.ts",
-    "77ca0cd6effe51a1c0510a1c634c5f57e6f4f4262f602691b18bd569bd2b77fc",
+    "8fc828a6670a0d0f24a78031408ac6220cd6c524f5f97fd737fafb26cf761c84",
   ),
   handlerTest: source(
     "web/src/server/polish/handler.test.ts",
@@ -284,11 +284,11 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   lifecycleV2: source(
     "web/src/server/polish/lifecycle-v2.ts",
-    "67834f11f408f87879362eb7f9e7d0cfc7e107a66dabc35a19caee2f1fbbe02a",
+    "ee01910e11617bd28f1490538f21b90e5aa3be4e3ed470e4d1e07801029b4e10",
   ),
   lifecycleV2Test: source(
     "web/src/server/polish/__tests__/lifecycle/v2.test.ts",
-    "1c10b9dba3d5308f0805c047fa9138a12064de10173c94d9fab37607ae5f1876",
+    "e84c75f1c96c76700d757ce5c52405e49076af5a08e875f5cdcb4b185071d173",
   ),
   attemptComplete: source(
     "supabase/migrations/20260824000000_complete_ai_polish_provider_attempt.sql",
@@ -304,7 +304,7 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   attemptFinalizeTest: source(
     "web/test/db/provider-attempt-finalize.test.ts",
-    "ffe4cee61a9f5422b4c89ae9e03602c09404cb2a28ccad50a6cdb2688c8cac84",
+    "606161a35db9fed4c2c5e063a8d4999f6271423f13318ccb6a3d6c189a36ec78",
   ),
   attemptReconcile: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
@@ -685,7 +685,7 @@ const CONTRACT_DESCRIPTOR = deepFreeze<ServiceRuntimeContractDescriptorV1>({
 });
 const CONTRACT_SHA256 = fingerprintLegalDescriptorV1(CONTRACT_DESCRIPTOR).sha256;
 const EXPECTED_CONTRACT_SHA256 =
-  "90f9d25e413cbd98b4dd8d083c37e2a8bcbc98a34c6831c26ca074bd859706c7";
+  "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9";
 if (CONTRACT_SHA256 !== EXPECTED_CONTRACT_SHA256) {
   throw new Error("reviewed DeepSeek runtime contract hash drift");
 }

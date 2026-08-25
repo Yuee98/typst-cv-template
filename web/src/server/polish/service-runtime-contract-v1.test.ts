@@ -357,7 +357,7 @@ describe("DeepSeek service runtime contract V1", () => {
       "5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340",
     );
     expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
-      "90f9d25e413cbd98b4dd8d083c37e2a8bcbc98a34c6831c26ca074bd859706c7",
+      "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
     );
     expect(
       DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
