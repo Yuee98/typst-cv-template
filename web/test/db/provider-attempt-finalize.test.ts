@@ -564,6 +564,7 @@ function completeAttemptSql(
       '${attemptId}'::uuid,
       'succeeded',
       true,
+      true,
       ${jsonbSql(observedUsage())},
       ${jsonbSql(routeObservation())},
       ${jsonbSql(costObservation())},
@@ -593,7 +594,8 @@ function finalizeAttemptSql(
       true,
       true,
       null,
-      '{"usage_schema_version":"attempt_v2"}'::jsonb
+      '{"usage_schema_version":"attempt_v2"}'::jsonb,
+      'durable_transmission_v1'
     );
     reset role;
     ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
@@ -648,7 +650,8 @@ function finalizeAttemptActionSql(reservationId: string): string {
       true,
       true,
       null,
-      '{"usage_schema_version":"attempt_v2"}'::jsonb
+      '{"usage_schema_version":"attempt_v2"}'::jsonb,
+      'durable_transmission_v1'
     );
     reset role;
     commit;
@@ -702,7 +705,8 @@ function invokeRawFinalize(
       true,
       true,
       ${usageSql},
-      ${metadataSql}
+      ${metadataSql},
+      'durable_transmission_v1'
     );
     reset role;
     commit;
@@ -1093,12 +1097,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     };
   }
 
-  it("keeps the exact public finalize definition, defaults, invoker boundary, and ACL", () => {
+  it("keeps schema-gated V1 compatibility and the audited V2 finalize ACL", () => {
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
       do $assertions$
       declare
         v_finalize pg_catalog.pg_proc%rowtype;
+        v_finalize_v2 pg_catalog.pg_proc%rowtype;
+        v_internal pg_catalog.pg_proc%rowtype;
+        v_derive pg_catalog.pg_proc%rowtype;
         v_definition text;
       begin
         if (
@@ -1106,8 +1113,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           from pg_catalog.pg_proc
           where pronamespace = 'public'::pg_catalog.regnamespace
             and proname = 'finalize_ai_polish_request'
-        ) <> 1 then
-          raise exception 'finalize RPC must have one overload';
+        ) <> 2 then
+          raise exception 'finalize RPC must have exact V1 and V2 overloads';
         end if;
 
         select * into v_finalize
@@ -1117,7 +1124,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           pg_catalog.pg_get_functiondef(v_finalize.oid)
         );
 
-        if v_finalize.prosecdef
+        if not v_finalize.prosecdef
            or v_finalize.provolatile is distinct from 'v'
            or v_finalize.proconfig is distinct from array['search_path=""']::text[]
            or v_finalize.pronargdefaults <> 3
@@ -1125,6 +1132,29 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
              is distinct from 'p_reservation_id uuid, p_status text, p_quota_charged boolean, p_provider_billable boolean, p_usage jsonb, p_metadata jsonb'
            or pg_catalog.pg_get_function_result(v_finalize.oid) is distinct from 'jsonb' then
           raise exception 'finalize RPC definition drifted';
+        end if;
+
+        select * into v_finalize_v2
+        from pg_catalog.pg_proc
+        where oid = 'public.finalize_ai_polish_request(uuid,text,boolean,boolean,jsonb,jsonb,text)'::pg_catalog.regprocedure;
+        if not v_finalize_v2.prosecdef
+           or v_finalize_v2.proconfig is distinct from array['search_path=""']::text[]
+           or v_finalize_v2.pronargdefaults <> 0
+           or pg_catalog.pg_get_function_identity_arguments(v_finalize_v2.oid)
+             is distinct from 'p_reservation_id uuid, p_status text, p_quota_charged boolean, p_provider_billable boolean, p_usage jsonb, p_metadata jsonb, p_settlement_contract text'
+           or not pg_catalog.has_function_privilege(
+             'service_role', v_finalize_v2.oid, 'EXECUTE'
+           )
+           or pg_catalog.has_function_privilege('anon', v_finalize_v2.oid, 'EXECUTE')
+           or pg_catalog.has_function_privilege(
+             'authenticated', v_finalize_v2.oid, 'EXECUTE'
+           )
+           or exists (
+             select 1
+             from pg_catalog.aclexplode(v_finalize_v2.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'audited V2 finalize RPC drifted';
         end if;
 
         if not pg_catalog.has_function_privilege(
@@ -1140,6 +1170,41 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
              where grantee = 0
            ) then
           raise exception 'finalize RPC ACL drifted';
+        end if;
+
+        select * into strict v_internal
+        from pg_catalog.pg_proc
+        where oid = 'public.finalize_ai_polish_request_internal(uuid,text,boolean,boolean,jsonb,jsonb)'::pg_catalog.regprocedure;
+        select * into strict v_derive
+        from pg_catalog.pg_proc
+        where oid = 'public.derive_ai_polish_v2_settlement(uuid)'::pg_catalog.regprocedure;
+
+        if pg_catalog.has_function_privilege(
+             'service_role', v_internal.oid, 'EXECUTE'
+           )
+           or pg_catalog.has_function_privilege('anon', v_internal.oid, 'EXECUTE')
+           or pg_catalog.has_function_privilege(
+             'authenticated', v_internal.oid, 'EXECUTE'
+           )
+           or exists (
+             select 1 from pg_catalog.aclexplode(v_internal.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'internal finalize primitive is executable';
+        end if;
+
+        if pg_catalog.has_function_privilege(
+             'service_role', v_derive.oid, 'EXECUTE'
+           )
+           or pg_catalog.has_function_privilege('anon', v_derive.oid, 'EXECUTE')
+           or pg_catalog.has_function_privilege(
+             'authenticated', v_derive.oid, 'EXECUTE'
+           )
+           or exists (
+             select 1 from pg_catalog.aclexplode(v_derive.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'settlement derivation helper is executable';
         end if;
 
         if v_definition !~
@@ -1264,6 +1329,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           '${v2.attempt.attemptId}'::uuid,
           'succeeded',
           true,
+          true,
           ${jsonbSql(observedUsage())},
           ${jsonbSql(routeObservation())},
           ${jsonbSql(costObservation())},
@@ -1280,7 +1346,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           true,
           true,
           null,
-          '{"usage_schema_version":"attempt_v2"}'::jsonb
+          '{"usage_schema_version":"attempt_v2"}'::jsonb,
+          'durable_transmission_v1'
         ) into v_result;
         if not coalesce((v_result ->> 'ok')::boolean, false)
            or coalesce((v_result ->> 'alreadyFinalized')::boolean, true) then
@@ -2034,7 +2101,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       {
         label: "attempt-v2",
         options: {},
-        expected: "NO_PROVIDER_ATTEMPTS",
+        expected: "SETTLEMENT_ASSERTION_CONFLICT",
       },
       {
         label: "status",
@@ -2044,7 +2111,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           providerBillable: false,
           metadata: null,
         },
-        expected: "INTERNAL_ERROR",
+        expected: "SETTLEMENT_ASSERTION_CONFLICT",
       },
       {
         label: "quota",
@@ -2054,7 +2121,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           providerBillable: false,
           metadata: null,
         },
-        expected: "INTERNAL_ERROR",
+        expected: "SETTLEMENT_ASSERTION_CONFLICT",
       },
       {
         label: "billable",
@@ -2064,7 +2131,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           providerBillable: null,
           metadata: null,
         },
-        expected: "INTERNAL_ERROR",
+        expected: "SETTLEMENT_ASSERTION_CONFLICT",
       },
       {
         label: "usage-object",
@@ -2299,9 +2366,16 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         p_provider_billable: true,
         p_usage: null,
         p_metadata: entry.metadata,
+        p_settlement_contract: "durable_transmission_v1",
       });
       expect(result.error).toBeNull();
-      expect(result.data).toEqual({ ok: false, reason: "INTERNAL_ERROR" });
+      expect(result.data).toEqual({
+        ok: false,
+        reason:
+          entry.quotaCharged !== true
+            ? "SETTLEMENT_ASSERTION_CONFLICT"
+            : "INTERNAL_ERROR",
+      });
       expect(
         await settlementSnapshot(
           value.user.id,
@@ -2575,7 +2649,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         usage: { hostile: true },
         metadata: 9,
       }),
-    ).toEqual({ ...result, alreadyFinalized: true });
+    ).toEqual({ ok: false, reason: "FINALIZE_CONFLICT" });
     const profileAfter = await service
       .from("ai_profile_usage_daily")
       .select("*")
@@ -2706,13 +2780,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       await harness.finalize(trueCase.reservation.reservationId, {
         providerBillable: false,
       }),
-    ).toEqual({ ok: false, reason: "INTERNAL_ERROR" });
+    ).toEqual({ ok: false, reason: "SETTLEMENT_ASSERTION_CONFLICT" });
     expect(await getLedgerRow(service, trueCase.reservation.reservationId)).toMatchObject({
       state: "reserved",
     });
 
     const falseCase = await completed("finalize-billable-false", {
       p_status: "canceled",
+      p_transmitted: false,
       p_provider_billable: false,
       p_usage: null,
       p_cost: costObservation({
@@ -2725,6 +2800,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     expect(
       await harness.finalize(falseCase.reservation.reservationId, {
         status: "canceled",
+        quotaCharged: false,
         providerBillable: false,
       }),
     ).toMatchObject({ ok: true });
@@ -2764,7 +2840,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     ).toEqual(expect.arrayContaining(["provider_billable", "estimated_cost"]));
   });
 
-  it("proves the dormant owner-OID abandoned branch through an app-ungranted definer probe", async () => {
+  it("rejects abandoned settlement through the audited public signature", async () => {
     const direct = await completed("finalize-abandoned-direct");
     const directBefore = await settlementSnapshot(
       direct.user.id,
@@ -2776,266 +2852,16 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         quotaCharged: false,
         providerBillable: true,
       }),
-    ).toEqual({ ok: false, reason: "INVALID_STATUS" });
+    ).toEqual({ ok: false, reason: "AUDITED_SETTLEMENT_REJECTED" });
     expect(
       await settlementSnapshot(direct.user.id, direct.reservation.reservationId),
     ).toEqual(directBefore);
-
-    const v1User = await harness.makeUser("finalize-abandoned-owner-v1");
-    const v1Reserve = await tryReserve(service, v1User.id);
-    expect(v1Reserve.ok).toBe(true);
-    const v1ReservationId = (v1Reserve as { reservationId: string }).reservationId;
-
-    const zeroUser = await harness.makeUser("finalize-abandoned-owner-zero");
-    const zero = await harness.reserveV2(zeroUser);
-    const inProgress = await started("finalize-abandoned-owner-started");
-    const mismatch = await completed("finalize-abandoned-owner-mismatch");
-    const owner = await completed("finalize-abandoned-owner-success");
-
-    const suffix = randomUUID().replaceAll("-", "");
-    const probeFunction = `db010_owner_finalize_probe_${suffix}`;
-    const probeCaller = `db010_owner_probe_caller_${suffix}`;
-    let probeCreated = false;
-
-    const invokeProbe = (reservationId: string, providerBillable: boolean) => {
-      const result = runOwnerSql(String.raw`
-        \set ON_ERROR_STOP on
-        \pset format unaligned
-        \pset tuples_only on
-        begin;
-        set local role ${probeCaller};
-        select public.${probeFunction}(
-          '${reservationId}'::uuid,
-          ${providerBillable}
-        );
-        commit;
-      `);
-      const payload = result.stdout
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .find((line) => line.startsWith("{"));
-      if (!payload) {
-        throw new Error(`owner probe returned no JSON payload: ${result.stdout}`);
-      }
-      return JSON.parse(payload) as Record<string, unknown>;
-    };
-
-    try {
-      runOwnerSql(String.raw`
-        \set ON_ERROR_STOP on
-        begin;
-        create role ${probeCaller}
-          nologin nosuperuser nocreatedb nocreaterole noinherit
-          noreplication nobypassrls;
-        grant ${probeCaller} to postgres with set true;
-        create function public.${probeFunction}(
-          p_reservation_id uuid,
-          p_provider_billable boolean
-        )
-        returns jsonb
-        language plpgsql
-        security definer
-        set search_path = ''
-        as $probe$
-        declare
-          v_current_user_oid oid;
-          v_finalize_owner_oid oid;
-        begin
-          select role_row.oid into strict v_current_user_oid
-          from pg_catalog.pg_roles as role_row
-          where role_row.rolname = current_user;
-          select finalize_proc.proowner into strict v_finalize_owner_oid
-          from pg_catalog.pg_proc as finalize_proc
-          where finalize_proc.oid =
-            'public.finalize_ai_polish_request(uuid,text,boolean,boolean,jsonb,jsonb)'::pg_catalog.regprocedure;
-          if v_current_user_oid is distinct from v_finalize_owner_oid then
-            raise exception 'probe did not enter the exact finalize owner OID';
-          end if;
-          return public.finalize_ai_polish_request(
-            p_reservation_id,
-            'abandoned',
-            false,
-            p_provider_billable,
-            null,
-            '{"usage_schema_version":"attempt_v2"}'::jsonb
-          );
-        end
-        $probe$;
-        revoke all on function public.${probeFunction}(uuid, boolean)
-          from public, anon, authenticated, service_role, authenticator;
-        grant execute on function public.${probeFunction}(uuid, boolean)
-          to ${probeCaller};
-
-        do $assertions$
-        declare
-          v_finalize pg_catalog.pg_proc%rowtype;
-          v_probe pg_catalog.pg_proc%rowtype;
-          v_owner_name name;
-        begin
-          select * into strict v_finalize
-          from pg_catalog.pg_proc
-          where oid =
-            'public.finalize_ai_polish_request(uuid,text,boolean,boolean,jsonb,jsonb)'::pg_catalog.regprocedure;
-          select * into strict v_probe
-          from pg_catalog.pg_proc
-          where oid =
-            'public.${probeFunction}(uuid,boolean)'::pg_catalog.regprocedure;
-          select rolname into strict v_owner_name
-          from pg_catalog.pg_roles
-          where oid = v_finalize.proowner;
-
-          if v_probe.proowner is distinct from v_finalize.proowner
-             or not v_probe.prosecdef
-             or v_probe.proconfig is distinct from
-               array['search_path=""']::text[] then
-            raise exception 'owner probe definition or owner OID drifted';
-          end if;
-          if v_owner_name in (
-               'anon', 'authenticated', 'service_role', 'authenticator'
-             )
-             or pg_catalog.pg_has_role(
-               'service_role', v_finalize.proowner, 'SET'
-             ) then
-            raise exception 'finalize owner is reachable from an application role';
-          end if;
-          if v_finalize.prosecdef
-             or not pg_catalog.has_function_privilege(
-               'service_role', v_finalize.oid, 'EXECUTE'
-             )
-             or pg_catalog.has_function_privilege(
-               'anon', v_finalize.oid, 'EXECUTE'
-             )
-             or pg_catalog.has_function_privilege(
-               'authenticated', v_finalize.oid, 'EXECUTE'
-             ) then
-            raise exception 'public finalize invoker ACL drifted';
-          end if;
-          if pg_catalog.has_function_privilege(
-               'service_role', v_probe.oid, 'EXECUTE'
-             )
-             or pg_catalog.has_function_privilege(
-               'anon', v_probe.oid, 'EXECUTE'
-             )
-             or pg_catalog.has_function_privilege(
-               'authenticated', v_probe.oid, 'EXECUTE'
-             )
-             or not pg_catalog.has_function_privilege(
-               '${probeCaller}', v_probe.oid, 'EXECUTE'
-             )
-             or exists (
-               select 1
-               from pg_catalog.aclexplode(v_probe.proacl)
-               where grantee = 0
-             ) then
-            raise exception 'owner probe ACL is reachable from an application role';
-          end if;
-        end
-        $assertions$;
-        commit;
-      `);
-      probeCreated = true;
-
-      const rejectionCases = [
-        {
-          label: "genuine-v1",
-          userId: v1User.id,
-          reservationId: v1ReservationId,
-          providerBillable: true,
-          expected: { ok: false, reason: "INVALID_STATUS" },
-        },
-        {
-          label: "v2-zero-child",
-          userId: zeroUser.id,
-          reservationId: zero.reservationId,
-          providerBillable: false,
-          expected: { ok: false, reason: "INVALID_STATUS" },
-        },
-        {
-          label: "started-child",
-          userId: inProgress.user.id,
-          reservationId: inProgress.reservation.reservationId,
-          providerBillable: true,
-          expected: { ok: false, reason: "ATTEMPT_IN_PROGRESS" },
-        },
-        {
-          label: "billability-mismatch",
-          userId: mismatch.user.id,
-          reservationId: mismatch.reservation.reservationId,
-          providerBillable: false,
-          expected: { ok: false, reason: "INTERNAL_ERROR" },
-        },
-      ];
-      for (const entry of rejectionCases) {
-        const before = await settlementSnapshot(entry.userId, entry.reservationId);
-        expect(
-          invokeProbe(entry.reservationId, entry.providerBillable),
-          entry.label,
-        ).toEqual(entry.expected);
-        expect(
-          await settlementSnapshot(entry.userId, entry.reservationId),
-          entry.label,
-        ).toEqual(before);
-      }
-
-      const ownerResult = invokeProbe(owner.reservation.reservationId, true);
-      expect(ownerResult).toMatchObject({
-        ok: true,
-        alreadyFinalized: false,
-        status: "abandoned",
-        quotaCharged: false,
-      });
-      expect(await getLedgerRow(service, owner.reservation.reservationId)).toMatchObject({
-        state: "finalized",
-        status: "abandoned",
-        quota_charged: false,
-        usage_schema_version: "request_usage_aggregate_v2",
-      });
-
-      const finalizedBeforeReplay = await settlementSnapshot(
-        owner.user.id,
-        owner.reservation.reservationId,
-      );
-      expect(
-        await harness.finalize(owner.reservation.reservationId, {
-          status: "abandoned",
-          quotaCharged: true,
-          providerBillable: false,
-          usage: { hostile: true },
-          metadata: "hostile-owner-replay",
-        }),
-      ).toEqual({ ...ownerResult, alreadyFinalized: true });
-      expect(
-        await settlementSnapshot(owner.user.id, owner.reservation.reservationId),
-      ).toEqual(finalizedBeforeReplay);
-    } finally {
-      if (probeCreated) {
-        runOwnerSql(String.raw`
-          \set ON_ERROR_STOP on
-          begin;
-          drop function public.${probeFunction}(uuid, boolean);
-          drop role ${probeCaller};
-          do $cleanup$
-          begin
-            if pg_catalog.to_regprocedure(
-                 'public.${probeFunction}(uuid,boolean)'
-               ) is not null
-               or exists (
-                 select 1 from pg_catalog.pg_roles
-                 where rolname = '${probeCaller}'
-               ) then
-              raise exception 'owner probe cleanup failed';
-            end if;
-          end
-          $cleanup$;
-          commit;
-        `);
-      }
-    }
   });
 
   it("returns exact finalized readback before unknown selector, scalar metadata, usage, or billability parsing", async () => {
     const { user, reservation } = await completed("finalize-hostile-replay");
     const first = await harness.finalize(reservation.reservationId);
+    expect(first).toMatchObject({ ok: true, alreadyFinalized: false });
     const before = {
       request: await getLedgerRow(service, reservation.reservationId),
       usage: await getUsageRow(service, user.id),
@@ -3054,7 +2880,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         usage: { hostile: true },
         metadata: "unknown-source",
       }),
-    ).toEqual({ ...first, alreadyFinalized: true });
+    ).toEqual({ ok: false, reason: "FINALIZE_CONFLICT" });
     expect({
       request: await getLedgerRow(service, reservation.reservationId),
       usage: await getUsageRow(service, user.id),
@@ -3164,7 +2990,33 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
           await harness.complete(completePayload(attempt.attemptId, overrides)),
         ).toMatchObject({ ok: true, alreadyCompleted: false });
       }
-      expect(await harness.finalize(reservation.reservationId)).toMatchObject({
+      const lastStatus = attempts.at(-1)?.p_status ?? "succeeded";
+      const derivedStatus =
+        lastStatus === "timed_out" ? "failed_upstream" : lastStatus;
+      const derivedQuota =
+        derivedStatus === "succeeded"
+          ? true
+          : derivedStatus === "canceled"
+            ? attempts.some((attempt) => attempt.p_transmitted !== false)
+            : false;
+      const billableFacts = attempts.map(
+        (attempt) =>
+          attempt.p_provider_billable === undefined
+            ? true
+            : attempt.p_provider_billable,
+      );
+      const derivedBillable = billableFacts.some((billable) => billable === true)
+        ? true
+        : billableFacts.every((billable) => billable === false)
+          ? false
+          : null;
+      expect(
+        await harness.finalize(reservation.reservationId, {
+          status: derivedStatus,
+          quotaCharged: derivedQuota,
+          providerBillable: derivedBillable,
+        }),
+      ).toMatchObject({
         ok: true,
         alreadyFinalized: false,
       });
@@ -3345,6 +3197,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         },
         {
           p_status: "canceled",
+          p_transmitted: false,
           p_provider_billable: false,
           p_usage: null,
           p_cost: costObservation({
@@ -3378,6 +3231,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
 
     const completeNull = await completed("daily-cost-complete-null", {
       p_status: "canceled",
+      p_transmitted: false,
       p_provider_billable: false,
       p_usage: null,
       p_cost: costObservation({
@@ -3419,7 +3273,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         status: "succeeded",
         providerBillable: true,
       }),
-    ).toEqual({ ...completeNullResult, alreadyFinalized: true });
+    ).toEqual({ ok: false, reason: "FINALIZE_CONFLICT" });
     expect(await getProfileDaily()).toEqual(beforeReplay);
 
     const known = await completed("daily-cost-known");
@@ -3432,6 +3286,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
 
     const secondCompleteNull = await completed("daily-cost-known-then-null", {
       p_status: "canceled",
+      p_transmitted: false,
       p_provider_billable: false,
       p_usage: null,
       p_cost: costObservation({
@@ -3893,7 +3748,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         const safeStaleOutcome =
           (staleResult.status === 0 &&
             staleResult.stdout.includes('"reason": "ATTEMPT_IN_PROGRESS"')) ||
-          (staleResult.status !== 0 && staleResult.stderr.includes("40001"));
+          (staleResult.status !== 0 &&
+            (staleResult.stderr.includes("40001") ||
+              staleResult.stderr.includes("could not serialize access")));
         expect(safeStaleOutcome, staleResult.stderr || staleResult.stdout).toBe(true);
       } finally {
         if (!released) {
@@ -4032,6 +3889,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
         seed: { usageIncompleteCount: maxInteger },
         completion: {
           p_status: "canceled",
+          p_transmitted: false,
           p_provider_billable: false,
           p_usage: null,
           p_cost: costObservation({

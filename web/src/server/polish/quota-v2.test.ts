@@ -377,6 +377,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
     expect(payload).toEqual({
       p_attempt_id: ATTEMPT_ID,
       p_status: "succeeded",
+      p_transmitted: true,
       p_provider_billable: true,
       p_usage: {
         schema_version: "normalized_usage_v2",
@@ -711,6 +712,7 @@ describe("RT-009 V2 request settlement", () => {
         prompt_version: "2026-08-prompt-v1",
         validator_version: "2026-08-validator-v1",
       },
+      p_settlement_contract: "durable_transmission_v1",
     });
     expect(
       serializePolishFinalizeV2({

@@ -134,6 +134,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
       do $assertions$
       declare
         v_complete pg_catalog.pg_proc%rowtype;
+        v_internal pg_catalog.pg_proc%rowtype;
+        v_capture pg_catalog.pg_proc%rowtype;
       begin
         if (
           select count(*)
@@ -146,18 +148,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
 
         select * into v_complete
         from pg_catalog.pg_proc
-        where oid = 'public.complete_ai_polish_provider_attempt(uuid,text,boolean,jsonb,jsonb,jsonb,jsonb)'::pg_catalog.regprocedure;
+        where oid = 'public.complete_ai_polish_provider_attempt(uuid,text,boolean,boolean,jsonb,jsonb,jsonb,jsonb)'::pg_catalog.regprocedure;
 
         if not v_complete.prosecdef
            or v_complete.proconfig is distinct from array['search_path=""']::text[]
            or v_complete.pronargdefaults <> 0
            or pg_catalog.pg_get_function_identity_arguments(v_complete.oid)
-             is distinct from 'p_attempt_id uuid, p_status text, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb'
-           or pg_catalog.pg_get_function_result(v_complete.oid) is distinct from 'jsonb'
-           or pg_catalog.regexp_count(
-             pg_catalog.pg_get_functiondef(v_complete.oid),
-             'clock_timestamp\(\)'
-           ) <> 1 then
+             is distinct from 'p_attempt_id uuid, p_status text, p_transmitted boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb'
+           or pg_catalog.pg_get_function_result(v_complete.oid) is distinct from 'jsonb' then
           raise exception 'complete RPC definition drifted';
         end if;
 
@@ -175,6 +173,41 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
            ) then
           raise exception 'complete RPC ACL drifted';
         end if;
+
+        select * into strict v_internal
+        from pg_catalog.pg_proc
+        where oid = 'public.complete_ai_polish_provider_attempt_internal(uuid,text,boolean,jsonb,jsonb,jsonb,jsonb)'::pg_catalog.regprocedure;
+        select * into strict v_capture
+        from pg_catalog.pg_proc
+        where oid = 'public.capture_ai_provider_attempt_transmission()'::pg_catalog.regprocedure;
+
+        if pg_catalog.has_function_privilege(
+             'service_role', v_internal.oid, 'EXECUTE'
+           )
+           or pg_catalog.has_function_privilege('anon', v_internal.oid, 'EXECUTE')
+           or pg_catalog.has_function_privilege(
+             'authenticated', v_internal.oid, 'EXECUTE'
+           )
+           or exists (
+             select 1 from pg_catalog.aclexplode(v_internal.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'internal complete primitive is executable';
+        end if;
+
+        if pg_catalog.has_function_privilege(
+             'service_role', v_capture.oid, 'EXECUTE'
+           )
+           or pg_catalog.has_function_privilege('anon', v_capture.oid, 'EXECUTE')
+           or pg_catalog.has_function_privilege(
+             'authenticated', v_capture.oid, 'EXECUTE'
+           )
+           or exists (
+             select 1 from pg_catalog.aclexplode(v_capture.proacl)
+             where grantee = 0 and privilege_type = 'EXECUTE'
+           ) then
+          raise exception 'transmission trigger function is executable';
+        end if;
       end
       $assertions$;
     `);
@@ -182,6 +215,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
     const denied = await anon.rpc("complete_ai_polish_provider_attempt", {
       p_attempt_id: crypto.randomUUID(),
       p_status: "succeeded",
+      p_transmitted: true,
       p_provider_billable: true,
       p_usage: observedUsage(),
       p_route: routeObservation(),
@@ -817,6 +851,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt completion RPC (real DB)", () =
       await harness.complete({
         p_attempt_id: attempt.attemptId,
         p_status: "unknown-hostile",
+        p_transmitted: true,
         p_provider_billable: true,
         p_usage: { hostile: true },
         p_route: [],

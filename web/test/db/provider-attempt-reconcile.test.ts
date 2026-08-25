@@ -147,6 +147,7 @@ function completeAttemptSql(
       '${attemptId}'::uuid,
       'succeeded',
       true,
+      true,
       ${jsonbSql(observedUsage())},
       ${jsonbSql(routeObservation())},
       ${jsonbSql(costObservation())},
@@ -194,7 +195,8 @@ function finalizeAttemptSql(
       true,
       true,
       null,
-      '{"usage_schema_version":"attempt_v2"}'::jsonb
+      '{"usage_schema_version":"attempt_v2"}'::jsonb,
+      'durable_transmission_v1'
     );
     reset role;
     ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
@@ -575,7 +577,7 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     }
   });
 
-  it("terminalizes a stale started attempt to the canonical unknown shape and settles once", async () => {
+  it("holds a stale started attempt charged without fabricating terminal facts", async () => {
     const user = await harness.makeUser("reconcile-canonical-unknown");
     const reservation = await harness.reserveV2(user);
     const started = await harness.startAttempt(reservation.reservationId, 1);
@@ -589,41 +591,18 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     expect(result.error).toBeNull();
     expect(result.data).toEqual({
       releasedCount: 0,
-      abandonedCount: 1,
+      abandonedCount: 0,
+      heldUnknownCount: 1,
       latencyOverflowCount: 0,
     });
 
-    const terminal = await attempt(started.attemptId);
-    expect(terminal).toMatchObject({
-      status: "unknown",
+    const held = await attempt(started.attemptId);
+    expect(held).toMatchObject({
+      status: "started",
+      transmitted: null,
+      terminal_at: null,
       provider_billable: null,
-      usage_observation_kind: "unavailable",
-      usage_schema_version: null,
-      input_total_tokens: null,
-      input_cache_read_tokens: null,
-      input_cache_write_tokens: null,
-      input_standard_tokens: null,
-      output_tokens: null,
-      reasoning_tokens: null,
-      cache_usage_reporting: null,
-      usage_complete: false,
-      route_observation_schema_version: "route_observation_v1",
-      gateway_request_id: null,
-      provider_request_id: null,
-      actual_upstream_endpoint: null,
-      actual_model_id: null,
-      router_attempt_count: null,
-      cost_observation_schema_version: "cost_observation_v1",
-      estimated_currency: null,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-      cost_reconciliation_status: "incomplete_usage",
-      finish_reason: null,
-      failure_stage: "provider_timeout",
     });
-    expect(terminal.terminal_at).toBeTruthy();
-    expect(terminal.latency_ms).toBeGreaterThanOrEqual(120_000);
     for (const key of [
       "route_schema_version",
       "config_generation",
@@ -646,60 +625,29 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       "calculator_kind",
       "billing_currency",
     ]) {
-      expect(terminal[key], key).toEqual(frozen[key]);
+      expect(held[key], key).toEqual(frozen[key]);
     }
 
-    const settled = await request(reservation.reservationId);
-    expect(settled).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
-      quota_charged: false,
-      provider_billable: null,
-      usage_schema_version: "request_usage_aggregate_v2",
-      billing_currency: "CNY",
-      usage_complete: false,
-      estimated_cost_nanos: null,
-      known_estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-      cost_reconciliation_status: "incomplete_usage",
+    expect(await request(reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      status: null,
+      quota_charged: null,
     });
-
-    const daily = await service
-      .from("ai_profile_usage_daily")
-      .select("*")
-      .eq("profile_version_id", reservation.routeSnapshot.profileVersionId)
-      .eq("billing_currency", "CNY")
-      .single();
-    expect(daily.error).toBeNull();
-    expect(daily.data).toMatchObject({
-      request_count: 1,
-      usage_incomplete_count: 1,
-      cost_incomplete_count: 1,
-      provider_report_incomplete_count: 1,
-      known_estimated_cost_nanos: 0,
-      estimated_cost_nanos: null,
-      provider_reported_cost_nanos: null,
-    });
+    expect(
+      await service
+        .from("ai_profile_usage_daily")
+        .select("*")
+        .eq("profile_version_id", reservation.routeSnapshot.profileVersionId),
+    ).toMatchObject({ error: null, data: [] });
 
     const duplicate = await reconcile();
     expect(duplicate.data).toEqual({
       releasedCount: 0,
       abandonedCount: 0,
+      heldUnknownCount: 1,
       latencyOverflowCount: 0,
     });
-    const dailyAfter = await service
-      .from("ai_profile_usage_daily")
-      .select("request_count,usage_incomplete_count,cost_incomplete_count,provider_report_incomplete_count")
-      .eq("profile_version_id", reservation.routeSnapshot.profileVersionId)
-      .eq("billing_currency", "CNY")
-      .single();
-    expect(dailyAfter.data).toMatchObject({
-      request_count: 1,
-      usage_incomplete_count: 1,
-      cost_incomplete_count: 1,
-      provider_report_incomplete_count: 1,
-    });
+    expect(await attempt(started.attemptId)).toEqual(held);
   });
 
   it("uses a strict whole-reservation terminal watermark and preserves a live completion path", async () => {
@@ -735,7 +683,7 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     });
   });
 
-  it("preserves known lower bounds when a stale sibling becomes unknown", async () => {
+  it("holds mixed known terminal and stale started siblings without double accounting", async () => {
     await harness.activateFreshRouteFixture();
     const user = await harness.makeUser("reconcile-mixed-known-unknown");
     const reservation = await harness.reserveV2(user);
@@ -760,91 +708,29 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     expect(result.error).toBeNull();
     expect(result.data).toEqual({
       releasedCount: 0,
-      abandonedCount: 1,
+      abandonedCount: 0,
+      heldUnknownCount: 1,
       latencyOverflowCount: 0,
     });
     expect(await attempt(first.attemptId)).toEqual(firstBeforeReconcile);
     expect(await attempt(second.attemptId)).toMatchObject({
-      status: "unknown",
+      status: "started",
+      transmitted: null,
+      terminal_at: null,
       provider_billable: null,
-      usage_observation_kind: "unavailable",
-      usage_schema_version: null,
-      input_total_tokens: null,
-      input_cache_read_tokens: null,
-      input_cache_write_tokens: null,
-      input_standard_tokens: null,
-      output_tokens: null,
-      reasoning_tokens: null,
-      cache_usage_reporting: null,
-      usage_complete: false,
-      route_observation_schema_version: "route_observation_v1",
-      gateway_request_id: null,
-      provider_request_id: null,
-      actual_upstream_endpoint: null,
-      actual_model_id: null,
-      router_attempt_count: null,
-      cost_observation_schema_version: "cost_observation_v1",
-      estimated_currency: null,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-      cost_reconciliation_status: "incomplete_usage",
-      finish_reason: null,
-      failure_stage: "provider_timeout",
     });
 
-    const settled = await request(reservation.reservationId);
-    expect(settled).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
-      quota_charged: false,
-      provider_billable: true,
-      usage_schema_version: "request_usage_aggregate_v2",
-      input_total_tokens: 100,
-      input_cache_read_tokens: 60,
-      input_cache_write_tokens: null,
-      input_standard_tokens: 30,
-      output_tokens: 20,
-      reasoning_tokens: null,
-      cache_usage_reporting: "unavailable",
-      usage_complete: false,
-      incomplete_fields: expect.arrayContaining([
-        "attempt_usage",
-        "input_cache_write",
-        "reasoning",
-        "estimated_cost",
-      ]),
-      billing_currency: "CNY",
-      known_estimated_cost_nanos: 1234,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-      cost_reconciliation_status: "incomplete_usage",
+    expect(await request(reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      status: null,
+      quota_charged: null,
     });
-    expect(settled.incomplete_fields).not.toContain("provider_billable");
-
-    const daily = await service
-      .from("ai_profile_usage_daily")
-      .select("*")
-      .eq("profile_version_id", reservation.routeSnapshot.profileVersionId)
-      .eq("billing_currency", "CNY")
-      .single();
-    expect(daily.error).toBeNull();
-    expect(daily.data).toMatchObject({
-      request_count: 1,
-      usage_incomplete_count: 1,
-      cost_incomplete_count: 1,
-      provider_report_incomplete_count: 1,
-      input_total_tokens: 100,
-      input_cache_read_tokens: 60,
-      input_cache_write_tokens: null,
-      input_standard_tokens: 30,
-      output_tokens: 20,
-      reasoning_tokens: null,
-      known_estimated_cost_nanos: 1234,
-      estimated_cost_nanos: null,
-      provider_reported_cost_nanos: null,
-    });
+    expect(
+      await service
+        .from("ai_profile_usage_daily")
+        .select("*")
+        .eq("profile_version_id", reservation.routeSnapshot.profileVersionId),
+    ).toMatchObject({ error: null, data: [] });
 
     const afterSettlement = {
       settlement: await settlementSnapshot(
@@ -858,6 +744,7 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     expect((await reconcile()).data).toEqual({
       releasedCount: 0,
       abandonedCount: 0,
+      heldUnknownCount: 1,
       latencyOverflowCount: 0,
     });
     expect({
@@ -914,7 +801,8 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     });
     expect(await request(reservation.reservationId)).toMatchObject({
       state: "finalized",
-      status: "abandoned",
+      status: "succeeded",
+      quota_charged: true,
       provider_billable: true,
     });
   });
@@ -962,8 +850,9 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       commit;
     `);
     expect(await attempt(maxAttempt.attemptId)).toMatchObject({
-      status: "unknown",
-      latency_ms: INT_MAX,
+      status: "started",
+      terminal_at: null,
+      latency_ms: null,
     });
   });
 
@@ -989,7 +878,8 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     const result = await reconcile();
     expect(result.data).toEqual({
       releasedCount: 0,
-      abandonedCount: 1,
+      abandonedCount: 0,
+      heldUnknownCount: 1,
       latencyOverflowCount: 1,
     });
     expect(await attempt(overflowAttempt.attemptId)).toMatchObject({
@@ -1001,8 +891,8 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       state: "reserved",
     });
     expect(await request(validReservation.reservationId)).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
+      state: "reserved",
+      status: null,
     });
 
     const overflowAttemptBeforeRetry = await attempt(overflowAttempt.attemptId);
@@ -1027,7 +917,7 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     );
   });
 
-  it("rolls unknown terminalization back when nested DB-010 settlement fails", async () => {
+  it("does not inspect or mutate corrupt route aliases on an unknown hold", async () => {
     const user = await harness.makeUser("reconcile-nested-rollback");
     const reservation = await harness.reserveV2(user);
     const started = await harness.startAttempt(reservation.reservationId, 1);
@@ -1042,7 +932,8 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     );
 
     const result = await reconcile();
-    expect(result.error).not.toBeNull();
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ heldUnknownCount: 1 });
     expect(await attempt(started.attemptId)).toMatchObject({
       status: "started",
       terminal_at: null,
@@ -1132,9 +1023,9 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
         contenderResult,
       ]);
       expect(reconciled.status, reconciled.stderr).toBe(0);
-      expect(reconciled.stdout).toContain('"abandonedCount": 1');
+      expect(reconciled.stdout).toContain('"heldUnknownCount": 1');
       expect(completed.status, completed.stderr).toBe(0);
-      expect(completed.stdout).toContain('"reason": "REQUEST_ALREADY_FINALIZED"');
+      expect(completed.stdout).toContain('"status": "succeeded"');
     } finally {
       reconcileHolder.release();
       await Promise.allSettled([
@@ -1143,11 +1034,12 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       ]);
     }
     expect(await attempt(reconcileFirst.started.attemptId)).toMatchObject({
-      status: "unknown",
+      status: "succeeded",
+      transmitted: true,
     });
     expect(await request(reconcileFirst.reservation.reservationId)).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
+      state: "reserved",
+      status: null,
     });
     expect((await reconcile()).data).toEqual({
       releasedCount: 0,
@@ -1195,12 +1087,13 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
     });
     expect((await reconcile()).data).toEqual({
       releasedCount: 0,
-      abandonedCount: 1,
+      abandonedCount: 0,
+      heldUnknownCount: 1,
       latencyOverflowCount: 0,
     });
     expect(await request(finalizeFirst.reservation.reservationId)).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
+      state: "reserved",
+      status: null,
     });
 
     const reconcileFirst = await staleStarted("reconcile-first-finalize-late");
@@ -1235,10 +1128,9 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
         contenderResult,
       ]);
       expect(reconciled.status, reconciled.stderr).toBe(0);
-      expect(reconciled.stdout).toContain('"abandonedCount": 1');
+      expect(reconciled.stdout).toContain('"heldUnknownCount": 2');
       expect(finalized.status, finalized.stderr).toBe(0);
-      expect(finalized.stdout).toContain('"alreadyFinalized": true');
-      expect(finalized.stdout).toContain('"status": "abandoned"');
+      expect(finalized.stdout).toContain('"reason": "ATTEMPT_IN_PROGRESS"');
     } finally {
       reconcileHolder.release();
       await Promise.allSettled([
@@ -1247,12 +1139,13 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       ]);
     }
     expect(await request(reconcileFirst.reservation.reservationId)).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
+      state: "reserved",
+      status: null,
     });
     expect((await reconcile()).data).toEqual({
       releasedCount: 0,
       abandonedCount: 0,
+      heldUnknownCount: 2,
       latencyOverflowCount: 0,
     });
   });
@@ -1356,7 +1249,7 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       first.release();
       const settled = await first.result;
       expect(settled.status, settled.stderr).toBe(0);
-      expect(settled.stdout).toContain('"abandonedCount": 1');
+      expect(settled.stdout).toContain('"heldUnknownCount": 1');
     } finally {
       first.release();
       await Promise.allSettled([
@@ -1371,17 +1264,11 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       reservation.routeSnapshot.profileVersionId,
     );
     expect(settledSnapshot.request).toMatchObject({
-      state: "finalized",
-      status: "abandoned",
-      quota_charged: false,
+      state: "reserved",
+      status: null,
+      quota_charged: null,
     });
-    expect(settledSnapshot.profile).toHaveLength(1);
-    expect(settledSnapshot.profile?.[0]).toMatchObject({
-      request_count: 1,
-      usage_incomplete_count: 1,
-      cost_incomplete_count: 1,
-      provider_report_incomplete_count: 1,
-    });
+    expect(settledSnapshot.profile).toEqual([]);
 
     const late = await service.rpc("complete_ai_polish_provider_attempt", {
       ...completePayload(started.attemptId),
@@ -1389,18 +1276,23 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
       p_route: routeObservation(),
     });
     expect(late.error).toBeNull();
-    expect(late.data).toEqual({ ok: false, reason: "REQUEST_ALREADY_FINALIZED" });
+    expect(late.data).toMatchObject({
+      ok: true,
+      alreadyCompleted: false,
+      status: "succeeded",
+    });
     expect((await reconcile()).data).toEqual({
       releasedCount: 0,
       abandonedCount: 0,
       latencyOverflowCount: 0,
     });
-    expect(
-      await settlementSnapshot(
-        user.id,
-        reservation.reservationId,
-        reservation.routeSnapshot.profileVersionId,
-      ),
-    ).toEqual(settledSnapshot);
+    expect(await request(reservation.reservationId)).toMatchObject({
+      state: "reserved",
+      status: null,
+    });
+    expect(await attempt(started.attemptId)).toMatchObject({
+      status: "succeeded",
+      transmitted: true,
+    });
   });
 });

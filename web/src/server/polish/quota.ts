@@ -876,6 +876,8 @@ export async function startPolishProviderAttemptV2(
 export interface PolishAttemptCompletionRpcPayloadV2 {
   readonly p_attempt_id: string;
   readonly p_status: PolishAttemptStatusV2;
+  /** Durable adapter-entry observation persisted with the terminal fact. */
+  readonly p_transmitted: boolean;
   readonly p_provider_billable: boolean | null;
   readonly p_usage: Readonly<{
     schema_version: "normalized_usage_v2";
@@ -1088,6 +1090,7 @@ export function serializePolishAttemptCompletionV2(params: {
     const payload: PolishAttemptCompletionRpcPayloadV2 = {
       p_attempt_id: requireCanonicalUuidV2(attempt.attemptId),
       p_status: fact.status,
+      p_transmitted: fact.transmitted,
       p_provider_billable: fact.providerBillable,
       p_usage: usage,
       p_route: {
@@ -1219,7 +1222,10 @@ export type PolishFinalizeRequestV2 =
       settlementKind: "attempt_v2";
       reservationId: string;
       status: "succeeded" | "canceled" | "failed_upstream" | "invalid_output";
-      /** True only after the selected adapter was entered for this request. */
+      /**
+       * Process-local assertion used only to build p_quota_charged. The DB
+       * independently derives and verifies it from durable child facts.
+       */
       transmitted: boolean;
       providerBillable: boolean | null;
       metadata: PolishFinalizeMetadataV2;
@@ -1242,6 +1248,8 @@ export interface PolishFinalizeRpcPayloadV2 {
   readonly p_provider_billable: boolean | null;
   readonly p_usage: null;
   readonly p_metadata: Readonly<Record<string, string | number>> | null;
+  /** Selects the DB-authoritative durable-transmission settlement path. */
+  readonly p_settlement_contract: "durable_transmission_v1";
 }
 
 function serializeFinalizeMetadataV2(
@@ -1279,7 +1287,8 @@ function serializeFinalizeMetadataV2(
 /**
  * Serializes the mutually exclusive V2 settlement sources. Attempt-backed
  * settlement always selects child aggregation and zero-child release never
- * includes that selector.
+ * includes that selector. p_quota_charged is an assertion, not authority: the
+ * audited DB signature recomputes it from locked attempt rows.
  */
 export function serializePolishFinalizeV2(
   params: PolishFinalizeRequestV2,
@@ -1297,6 +1306,7 @@ export function serializePolishFinalizeV2(
         p_provider_billable: false,
         p_usage: null,
         p_metadata: metadata,
+        p_settlement_contract: "durable_transmission_v1",
       });
     }
 
@@ -1322,6 +1332,7 @@ export function serializePolishFinalizeV2(
         usage_schema_version: "attempt_v2",
         ...metadata,
       },
+      p_settlement_contract: "durable_transmission_v1",
     });
   } catch (cause) {
     if (cause instanceof PolishLifecycleV2RpcError) throw cause;

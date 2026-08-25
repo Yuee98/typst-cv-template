@@ -62,6 +62,7 @@ export interface SettlementAttempt {
 export interface CompletePayload {
   p_attempt_id: string;
   p_status: string;
+  p_transmitted: boolean;
   p_provider_billable: boolean | null;
   p_usage: unknown;
   p_route: unknown;
@@ -133,6 +134,7 @@ export function completePayload(
   return {
     p_attempt_id: attemptId,
     p_status: "succeeded",
+    p_transmitted: true,
     p_provider_billable: true,
     p_usage: observedUsage(),
     p_route: routeObservation(),
@@ -280,6 +282,7 @@ export class SettlementHarness {
         options.metadata === undefined
           ? { usage_schema_version: "attempt_v2" }
           : options.metadata,
+      p_settlement_contract: "durable_transmission_v1",
     });
     expect(result.error).toBeNull();
     return result.data;

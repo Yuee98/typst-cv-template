@@ -342,6 +342,8 @@ async function settleAttemptFactsV2(
   attemptFacts: readonly PolishAttemptCompletedFactV2[],
   aggregate: RequestUsageAggregateV2,
 ): Promise<SettlementObservationV2> {
+  // This any-transmitted value is only a consistency assertion. Durable
+  // attempt rows are the settlement authority inside the DB transaction.
   return observeSettlementV2(deps, {
     settlementKind: "attempt_v2",
     reservationId,
