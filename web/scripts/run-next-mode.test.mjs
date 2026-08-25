@@ -10,6 +10,12 @@ describe("run-next-mode static AI boundary", () => {
     expect(source).toContain('...(mode === "static" ? { NEXT_PUBLIC_AI_POLISH_ENABLED: "false" } : {}),');
   });
 
+  it("preserves the caller environment before applying the static-only override", () => {
+    expect(source.indexOf("...process.env,")).toBeLessThan(
+      source.indexOf('...(mode === "static" ? { NEXT_PUBLIC_AI_POLISH_ENABLED: "false" } : {}),'),
+    );
+  });
+
   it("keeps the conflicting static flag guard ahead of generated-route mutation", () => {
     expect(source.indexOf("checkFlagConsistency(mode);")).toBeLessThan(source.indexOf("await syncApiRoutes(mode);"));
   });

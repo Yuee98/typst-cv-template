@@ -70,11 +70,7 @@ export function PolishDialog({
         </div>
       )}
       {phase === "preview" && <PolishPreviewPhase flow={flow} language={language} />}
-      {phase === "error" && (
-        <div aria-live="assertive" aria-atomic="true">
-          <PolishErrorPhase flow={flow} />
-        </div>
-      )}
+      {phase === "error" && <PolishErrorPhase flow={flow} />}
     </ModalDialog>
   );
 }

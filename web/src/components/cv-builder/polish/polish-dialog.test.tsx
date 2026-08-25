@@ -203,15 +203,14 @@ describe("PolishDialog E2EE plaintext warning", () => {
 });
 
 describe("PolishDialog provider disclosure", () => {
-  it("announces phase loading and errors without moving focus away from their controls", () => {
+  it("uses one polite loading region and one non-nested assertive error alert", () => {
     const loading = renderDialog(
       makeStubFlow({ state: { ...createInitialState(), phase: "loading" } }),
     );
-    expect(
-      screen
-        .getByText(messages.PolishDialog.loading.title)
-        .closest('[aria-live="polite"]'),
-    ).not.toBeNull();
+    const loadingRegion = screen.getByRole("status");
+    expect(loadingRegion.getAttribute("aria-live")).toBe("polite");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.queryByRole("alert")).toBeNull();
     loading.unmount();
 
     renderDialog(
@@ -223,11 +222,10 @@ describe("PolishDialog provider disclosure", () => {
         },
       }),
     );
-    expect(
-      screen
-        .getByText(messages.PolishDialog.errors.upstream)
-        .closest('[aria-live="assertive"]'),
-    ).not.toBeNull();
+    const alert = screen.getByRole("alert");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(alert.closest("[aria-live]")).toBeNull();
+    expect(document.activeElement).not.toBe(alert);
   });
 
   it("keeps the refreshed recipient and content visible under the route-changed hint", () => {
