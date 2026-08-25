@@ -670,7 +670,12 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
 
       const generation = ++availabilityGenerationRef.current;
       const controller = new AbortController();
-      const read: ActiveAvailabilityRead = { userId, generation, controller };
+      const read: ActiveAvailabilityRead = {
+        kind: "ordinary",
+        userId,
+        generation,
+        controller,
+      };
       activeAvailabilityReadRef.current = read;
       setAvailabilityStatus("loading");
       dispatchTerms({ type: "QUERY_START" });
@@ -768,6 +773,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       const generation = ++availabilityGenerationRef.current;
       const controller = new AbortController();
       const read: ActiveAvailabilityRead = {
+        kind: "post_acceptance",
         userId: operation.userId,
         generation,
         controller,
@@ -950,10 +956,17 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     (params: PolishParams) => {
       if (state.phase !== "config" || !scope) return;
       setConfigChangedHint(false);
-      if (termsState.status === "accepting") {
-        // The param change invalidates the in-flight acceptance (configure
-        // below); unlock the gate and immediately re-query so the dialog is
-        // not stuck in "accepting" until the old write settles.
+      const replacesPostAcceptanceRead =
+        activeAvailabilityReadRef.current?.kind === "post_acceptance";
+      if (termsState.status === "accepting" || replacesPostAcceptanceRead) {
+        // An acceptance write or its confirm-owned second authority read is
+        // tied to the reviewed configuration. Reconfiguration must revoke
+        // that exact read before configure() invalidates the operation, then
+        // establish a new ordinary route read. Otherwise the old read loses
+        // operation ownership and can leave a candidate-free loading state.
+        // Ordinary initial/manual reads are deliberately preserved across
+        // parameter changes because their route authority is content-neutral.
+        if (replacesPostAcceptanceRead) invalidateAvailabilityRead();
         resetTermsGate();
         configure(params, scope);
         void refreshAvailability();
@@ -961,7 +974,15 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       }
       configure(params, scope);
     },
-    [configure, refreshAvailability, resetTermsGate, scope, state.phase, termsState.status],
+    [
+      configure,
+      invalidateAvailabilityRead,
+      refreshAvailability,
+      resetTermsGate,
+      scope,
+      state.phase,
+      termsState.status,
+    ],
   );
 
   const setLevel = useCallback(

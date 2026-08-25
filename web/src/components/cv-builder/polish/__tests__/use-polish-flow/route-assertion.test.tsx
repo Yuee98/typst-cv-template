@@ -79,6 +79,57 @@ type DeferredAcceptanceHarness = Awaited<
   ReturnType<typeof beginDeferredAcceptance>
 >;
 
+const SECOND_AWAIT_RECONFIGURATIONS: ReadonlyArray<
+  readonly [
+    string,
+    (harness: DeferredAcceptanceHarness) => void,
+    Readonly<Record<string, unknown>>,
+  ]
+> = [
+  ["context level", (harness) => harness.flow().setLevel(2), { level: 2 }],
+  [
+    "style preset",
+    (harness) => harness.flow().setStylePreset("concise"),
+    { stylePreset: "concise" },
+  ],
+  [
+    "custom style instruction",
+    (harness) => harness.flow().setStyleInstruction("直接、具体"),
+    { styleInstruction: "直接、具体" },
+  ],
+];
+
+const LATE_SECOND_READ_OUTCOMES: ReadonlyArray<
+  readonly [string, (harness: DeferredAcceptanceHarness) => void]
+> = [
+  [
+    "success",
+    (harness) =>
+      harness.availabilityCalls[1].deferred.resolve(
+        withAcceptedTerms(ENABLED_AVAILABILITY_BODY),
+      ),
+  ],
+  [
+    "rejection",
+    (harness) =>
+      harness.availabilityCalls[1].deferred.reject(new TypeError("network")),
+  ],
+  [
+    "cancellation",
+    (harness) =>
+      harness.availabilityCalls[1].deferred.reject(
+        new DOMException("aborted", "AbortError"),
+      ),
+  ],
+  [
+    "timeout",
+    (harness) =>
+      harness.availabilityCalls[1].deferred.reject(
+        new PolishApiError({ code: "CLIENT_TIMEOUT" }),
+      ),
+  ],
+];
+
 const SECOND_AWAIT_INVALIDATIONS: ReadonlyArray<
   readonly [string, (harness: DeferredAcceptanceHarness) => void]
 > = [
@@ -399,6 +450,103 @@ describe("usePolishFlow exact route assertion", () => {
     expect(h.flow().state.snapshot?.apiRequest.items[0].text).toBe(
       "第二次 authority await 期间变化",
     );
+  });
+
+  it.each(SECOND_AWAIT_RECONFIGURATIONS)(
+    "%s replaces an operation-owned second read and requires explicit reconfirmation",
+    async (_label, reconfigure, expectedParams) => {
+      const h = await beginDeferredAcceptance();
+      await act(async () => h.acceptCalls[0].resolve());
+      expect(h.availabilityCalls).toHaveLength(2);
+
+      act(() => reconfigure(h));
+
+      expect(h.availabilityCalls[1].signal?.aborted).toBe(true);
+      expect(h.availabilityCalls).toHaveLength(3);
+      expect(h.availabilityCalls[2].signal?.aborted).toBe(false);
+      expect(h.flow().availabilityStatus).toBe("loading");
+      expect(h.flow().availabilityCandidate).toBeNull();
+      expect(h.flow().state.params).toEqual(expect.objectContaining(expectedParams));
+      expect(h.polishCalls).toHaveLength(0);
+
+      await act(async () => {
+        h.availabilityCalls[1].deferred.resolve(
+          withAcceptedTerms(ENABLED_AVAILABILITY_BODY),
+        );
+      });
+      expect(h.flow().availabilityStatus).toBe("loading");
+      expect(h.availabilityCalls[2].signal?.aborted).toBe(false);
+      expect(h.polishCalls).toHaveLength(0);
+
+      await act(async () => {
+        h.availabilityCalls[2].deferred.resolve(
+          withAcceptedTerms(ENABLED_AVAILABILITY_BODY),
+        );
+      });
+      expect(h.flow().availabilityStatus).toBe("ready");
+      expect(h.flow().terms.status).toBe("accepted");
+      expect(h.flow().canConfirm).toBe(true);
+      expect(h.polishCalls).toHaveLength(0);
+
+      act(() => h.flow().confirm());
+      expect(h.polishCalls).toHaveLength(1);
+    },
+  );
+
+  it.each(LATE_SECOND_READ_OUTCOMES)(
+    "keeps the replacement authority read owned after the old second read has a late %s",
+    async (_label, settleOldRead) => {
+      const h = await beginDeferredAcceptance();
+      await act(async () => h.acceptCalls[0].resolve());
+
+      act(() => h.flow().setLevel(2));
+      expect(h.availabilityCalls).toHaveLength(3);
+      const replacementRead = h.availabilityCalls[2];
+
+      await act(async () => settleOldRead(h));
+      expect(replacementRead.signal?.aborted).toBe(false);
+      expect(h.flow().availabilityStatus).toBe("loading");
+      expect(h.flow().availabilityCandidate).toBeNull();
+      expect(h.polishCalls).toHaveLength(0);
+
+      await act(async () => {
+        replacementRead.deferred.resolve(
+          withAcceptedTerms(ENABLED_AVAILABILITY_BODY),
+        );
+      });
+      expect(h.flow().availabilityStatus).toBe("ready");
+      expect(h.flow().canConfirm).toBe(true);
+      expect(h.polishCalls).toHaveLength(0);
+    },
+  );
+
+  it("keeps one replacement read through repeated custom-instruction setters", async () => {
+    const h = await beginDeferredAcceptance();
+    await act(async () => h.acceptCalls[0].resolve());
+
+    act(() => h.flow().setStyleInstruction("直"));
+    expect(h.availabilityCalls).toHaveLength(3);
+    const replacementRead = h.availabilityCalls[2];
+
+    act(() => h.flow().setStyleInstruction("直接"));
+    act(() => h.flow().setStyleInstruction("直接、具体"));
+    expect(h.availabilityCalls).toHaveLength(3);
+    expect(replacementRead.signal?.aborted).toBe(false);
+
+    await act(async () => {
+      h.availabilityCalls[1].deferred.reject(new TypeError("late old read"));
+      replacementRead.deferred.resolve(
+        withAcceptedTerms(ENABLED_AVAILABILITY_BODY),
+      );
+    });
+    expect(h.flow().state.params.styleInstruction).toBe("直接、具体");
+    expect(h.flow().availabilityStatus).toBe("ready");
+    expect(h.flow().canConfirm).toBe(true);
+    expect(h.polishCalls).toHaveLength(0);
+
+    act(() => h.flow().confirm());
+    expect(h.polishCalls).toHaveLength(1);
+    expect(h.polishCalls[0].request.styleInstruction).toBe("直接、具体");
   });
 
   it.each(SECOND_AWAIT_INVALIDATIONS)(

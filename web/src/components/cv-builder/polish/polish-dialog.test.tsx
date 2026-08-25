@@ -142,6 +142,45 @@ describe("PolishDialog terms-acceptance lock", () => {
     });
     expect(flow.close).toHaveBeenCalledTimes(1);
   });
+
+  it("checking: normal UI reconfiguration routes through the safe hook setters", () => {
+    const setLevel = vi.fn();
+    const setStylePreset = vi.fn();
+    const setStyleInstruction = vi.fn();
+    const flow = makeStubFlow({
+      availabilityCandidate: null,
+      availabilityStatus: "loading",
+      terms: {
+        status: "checking",
+        serverRejected: false,
+        checked: false,
+        setChecked: vi.fn(),
+      },
+      setLevel,
+      setStylePreset,
+      setStyleInstruction,
+    });
+    renderDialog(flow);
+
+    const radios = screen.getAllByRole("radio");
+    expect((radios[2] as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(radios[2]);
+    expect(setLevel).toHaveBeenCalledWith(2);
+
+    const concise = screen.getByRole("button", {
+      name: messages.PolishDialog.style.presets.concise,
+    });
+    expect((concise as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(concise);
+    expect(setStylePreset).toHaveBeenCalledWith("concise");
+
+    const instruction = screen.getByLabelText(
+      messages.PolishDialog.style.heading,
+    );
+    expect((instruction as HTMLTextAreaElement).disabled).toBe(false);
+    fireEvent.change(instruction, { target: { value: "Direct and specific" } });
+    expect(setStyleInstruction).toHaveBeenCalledWith("Direct and specific");
+  });
 });
 
 describe("PolishDialog E2EE plaintext warning", () => {

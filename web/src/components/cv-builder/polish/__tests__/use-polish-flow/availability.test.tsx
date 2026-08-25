@@ -53,6 +53,26 @@ describe("usePolishFlow runtime availability", () => {
     expect(h.flow().canConfirm).toBe(true);
   });
 
+  it("keeps an ordinary initial availability read alive across configuration changes", async () => {
+    const h = renderHarness(undefined, { deferAvailability: true });
+
+    act(() => h.flow().open(SCOPE));
+    expect(h.availabilityCalls).toHaveLength(1);
+    act(() => h.flow().setLevel(2));
+
+    expect(h.availabilityCalls).toHaveLength(1);
+    expect(h.availabilityCalls[0].signal?.aborted).toBe(false);
+    expect(h.flow().state.params.level).toBe(2);
+
+    await act(async () => {
+      h.availabilityCalls[0].deferred.resolve(ENABLED_AVAILABILITY_BODY);
+      h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+    });
+    expect(h.flow().availabilityStatus).toBe("ready");
+    expect(h.flow().state.snapshot?.apiRequest.context.level).toBe(2);
+    expect(h.flow().canConfirm).toBe(true);
+  });
+
   it("clears stale disclosure immediately and lets only the newest refresh publish", async () => {
     const h = renderHarness(undefined, { deferAvailability: true });
     act(() => h.flow().open(SCOPE));

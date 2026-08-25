@@ -35,6 +35,8 @@ export interface ActivePolishOperation {
 
 /** One authenticated availability read and its exact async owner. */
 export interface ActiveAvailabilityRead {
+  /** Ordinary dialog read or the confirm-owned post-acceptance authority proof. */
+  kind: "ordinary" | "post_acceptance";
   /** Immutable account key captured before the request starts. */
   userId: string;
   /** Monotonic read generation; older same-account reads cannot publish. */
