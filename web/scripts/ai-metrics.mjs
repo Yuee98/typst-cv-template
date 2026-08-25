@@ -174,7 +174,7 @@ async function fetchAttemptRows(cutoffIso) {
           "cost_reconciliation_status,route_schema_version,config_generation," +
           "routing_policy_version_id,profile_version_id,price_version_id,legal_bundle_version," +
           "runtime_contract_id,runtime_contract_sha256,gateway_kind,model_id,wire_api_kind," +
-          "display_disclosure_key,billing_currency",
+          "display_disclosure_key,billing_currency,latency_ms",
       )
       .gte("started_at", cutoffIso)
       .order("started_at", { ascending: true })

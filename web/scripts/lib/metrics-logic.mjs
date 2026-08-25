@@ -22,8 +22,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const CURRENCY = /^[A-Z]{3}$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const SAFE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,199}$/u;
+const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
 const SAFE_HASH = /^[0-9a-f]{64}$/u;
 const MAX_PG_BIGINT = 9223372036854775807n;
+const MAX_LATENCY_MS = 2147483647;
 const ROUTE_SCHEMA = "route_snapshot_v1";
 const LEGACY_ROUTE = "legacy_v1";
 const LEGACY_PRICING_ROUTE = "legacy_pricing_v1";
@@ -53,6 +55,10 @@ function safeCurrency(value) {
 
 function safeToken(value) {
   return typeof value === "string" && SAFE_TOKEN.test(value) ? value : null;
+}
+
+function safeModel(value) {
+  return typeof value === "string" && SAFE_MODEL.test(value) ? value : null;
 }
 
 function safeHash(value) {
@@ -123,7 +129,7 @@ function routeKind(row) {
     && safeToken(row.runtime_contract_id) !== null
     && safeHash(row.runtime_contract_sha256) !== null
     && gatewayDimension(row.gateway_kind) !== null
-    && safeToken(row.model_id) !== null
+    && safeModel(row.model_id) !== null
     && ["chat_completions_v1", "responses_v1"].includes(row.wire_api_kind)
     && safeToken(row.display_disclosure_key) !== null
     && safeCurrency(row.billing_currency) !== null) {
@@ -142,12 +148,17 @@ function groupKey(row) {
   if (routeKind(row) === LEGACY_ROUTE) {
     return {
       routeSchemaVersion: LEGACY_ROUTE,
+      configGeneration: null,
       profileVersionId: null,
       routingPolicyVersionId: null,
       priceVersionId: null,
+      legalBundleVersion: null,
       runtimeContractId: null,
       runtimeContractSha256: null,
       gatewayKind: null,
+      modelId: null,
+      wireApiKind: null,
+      displayDisclosureKey: null,
       currency: null,
     };
   }
@@ -166,24 +177,52 @@ function groupKey(row) {
   if (routeKind(row) !== ROUTE_SCHEMA) {
     return {
       routeSchemaVersion: "unexpected_route",
+      configGeneration: null,
       profileVersionId: null,
       routingPolicyVersionId: null,
       priceVersionId: null,
+      legalBundleVersion: null,
       runtimeContractId: null,
       runtimeContractSha256: null,
       gatewayKind: null,
+      modelId: null,
+      wireApiKind: null,
+      displayDisclosureKey: null,
       currency: null,
     };
   }
   return {
-      routeSchemaVersion: ROUTE_SCHEMA,
-      profileVersionId: safeUuid(row.profile_version_id),
-      routingPolicyVersionId: safeUuid(row.routing_policy_version_id),
-      priceVersionId: safeUuid(row.price_version_id),
-      runtimeContractId: safeToken(row.runtime_contract_id),
-      runtimeContractSha256: safeHash(row.runtime_contract_sha256),
-      gatewayKind: gatewayDimension(row.gateway_kind),
-      currency: safeCurrency(row.billing_currency),
+    routeSchemaVersion: ROUTE_SCHEMA,
+    configGeneration: decimal(row.config_generation).toString(),
+    profileVersionId: safeUuid(row.profile_version_id),
+    routingPolicyVersionId: safeUuid(row.routing_policy_version_id),
+    priceVersionId: safeUuid(row.price_version_id),
+    legalBundleVersion: safeToken(row.legal_bundle_version),
+    runtimeContractId: safeToken(row.runtime_contract_id),
+    runtimeContractSha256: safeHash(row.runtime_contract_sha256),
+    gatewayKind: gatewayDimension(row.gateway_kind),
+    modelId: safeModel(row.model_id),
+    wireApiKind: row.wire_api_kind,
+    displayDisclosureKey: safeToken(row.display_disclosure_key),
+    currency: safeCurrency(row.billing_currency),
+  };
+}
+
+function boundedLatency(value) {
+  return Number.isInteger(value) && value >= 0 && value <= MAX_LATENCY_MS ? value : null;
+}
+
+function percentileValue(values, fraction) {
+  if (values.length === 0) return null;
+  const rank = Math.max(1, Math.ceil(fraction * values.length));
+  return [...values].sort((left, right) => left - right)[rank - 1];
+}
+
+function serializeLatency(values) {
+  return {
+    knownCount: values.length,
+    p50Ms: percentileValue(values, 0.5),
+    p95Ms: percentileValue(values, 0.95),
   };
 }
 
@@ -215,6 +254,7 @@ function newAccumulator(kind) {
       (kind === "request" ? REQUEST_STATUSES : ATTEMPT_STATUSES).map((status) => [status, 0]),
     ),
     usageIncompleteCount: 0,
+    latencies: [],
     usage: {
       inputCacheReadTokens: 0n,
       inputCacheWriteTokens: 0n,
@@ -257,6 +297,8 @@ function addRow(accumulator, row) {
     : decimal(row.attempt_no) !== null && decimal(row.attempt_no) > 1n;
   if (retry) accumulator.retryCount += 1;
   if (row.usage_complete !== true) accumulator.usageIncompleteCount += 1;
+  const latency = boundedLatency(row.latency_ms);
+  if (latency !== null) accumulator.latencies.push(latency);
 
   const usageFields = [
     ["inputCacheReadTokens", row.input_cache_read_tokens ?? row.input_cached_tokens],
@@ -285,11 +327,16 @@ function addRow(accumulator, row) {
     accumulator.cost.estimatedCount += 1;
   }
   const reported = decimal(row.provider_reported_cost_nanos);
-  if (reported !== null && key.currency !== null) {
+  const reportedCurrency = safeCurrency(row.provider_reported_currency);
+  const reportedCurrencyMismatch = reported !== null
+    && (key.currency === null || reportedCurrency !== key.currency);
+  if (reported !== null && key.currency !== null && !reportedCurrencyMismatch) {
     accumulator.cost.providerReportedNanos += reported;
     accumulator.cost.providerReportedCount += 1;
   }
-  const reconciliation = typeof row.cost_reconciliation_status === "string"
+  const reconciliation = reportedCurrencyMismatch
+    ? "unknown"
+    : typeof row.cost_reconciliation_status === "string"
     ? row.cost_reconciliation_status
     : "unknown";
   if (Object.hasOwn(accumulator.cost.reconciliationCounts, reconciliation)) {
@@ -308,6 +355,7 @@ function addRow(accumulator, row) {
       successCount: 0,
       retryCount: 0,
       usageIncompleteCount: 0,
+      latencies: [],
       usage: {
         inputCacheReadTokens: 0n,
         inputCacheWriteTokens: 0n,
@@ -335,6 +383,7 @@ function addRow(accumulator, row) {
   if (status === "succeeded") group.successCount += 1;
   if (retry) group.retryCount += 1;
   if (row.usage_complete !== true) group.usageIncompleteCount += 1;
+  if (latency !== null) group.latencies.push(latency);
   for (const [name, value] of usageFields) {
     const parsed = decimal(value);
     if (parsed !== null) group.usage[name] += parsed;
@@ -342,7 +391,7 @@ function addRow(accumulator, row) {
   if (estimatedParsed !== null && key.currency !== null) {
     group.cost.knownEstimatedNanos += estimatedParsed;
   }
-  if (reported !== null && key.currency !== null) {
+  if (reported !== null && key.currency !== null && !reportedCurrencyMismatch) {
     group.cost.providerReportedNanos += reported;
   }
   if (Object.hasOwn(group.cost.reconciliationCounts, reconciliation)) {
@@ -377,6 +426,7 @@ function serializeAccumulator(accumulator) {
     totalRetries: accumulator.retryCount,
     statusCounts: { ...accumulator.statusCounts },
     usageIncompleteCount: accumulator.usageIncompleteCount,
+    latency: serializeLatency(accumulator.latencies),
     usage: serializeUsage(accumulator.usage),
     cost: {
       byCurrency: Object.fromEntries(
@@ -388,15 +438,19 @@ function serializeAccumulator(accumulator) {
       reconciliationCounts: { ...accumulator.cost.reconciliationCounts },
     },
     groups: [...accumulator.groups.values()]
-      .map((group) => ({
-        ...group,
-        usage: serializeUsage(group.usage),
-        cost: {
-          knownEstimatedNanos: group.cost.knownEstimatedNanos.toString(),
-          providerReportedNanos: group.cost.providerReportedNanos.toString(),
-          reconciliationCounts: { ...group.cost.reconciliationCounts },
-        },
-      }))
+      .map((group) => {
+        const { latencies, ...publicGroup } = group;
+        return {
+          ...publicGroup,
+          latency: serializeLatency(latencies),
+          usage: serializeUsage(group.usage),
+          cost: {
+            knownEstimatedNanos: group.cost.knownEstimatedNanos.toString(),
+            providerReportedNanos: group.cost.providerReportedNanos.toString(),
+            reconciliationCounts: { ...group.cost.reconciliationCounts },
+          },
+        };
+      })
       .sort((left, right) => JSON.stringify(left.key).localeCompare(JSON.stringify(right.key))),
   };
 }
