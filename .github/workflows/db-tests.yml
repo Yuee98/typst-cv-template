@@ -8,7 +8,9 @@ name: DB integration tests
 # workflow runs automatically only when migrations or their production/test
 # adapters change. workflow_dispatch remains available for release checkpoints.
 # Local equivalent:
-#   pnpm supabase:start && pnpm supabase:reset && pnpm --filter web test:db
+#   pnpm supabase:start
+#   pnpm --filter web test:db:cfg001-fresh
+#   pnpm --filter web test:db
 on:
   pull_request:
     paths:
@@ -16,6 +18,8 @@ on:
       - "supabase/config.toml"
       - "supabase/migrations/**"
       - "supabase/seed.sql"
+      - "web/package.json"
+      - "web/scripts/run-cfg001-fresh-reset.mjs"
       - "web/scripts/run-db-tests.mjs"
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
@@ -64,10 +68,14 @@ jobs:
       - name: Start local Supabase
         run: pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler
 
-      - name: Apply migrations from scratch
-        run: pnpm exec supabase db reset
+      # Hard-fail proof of the exact post-migration seed cardinality and dark
+      # feature state. The runner verifies loopback and resets before running
+      # only the order-sensitive CFG-001 suite.
+      - name: Run CFG-001 fresh-reset gate
+        run: pnpm --filter web test:db:cfg001-fresh
 
       # scripts/run-db-tests.mjs auto-detects the instance via
-      # `supabase status -o env` and streams SUPABASE_TEST_* to vitest.
+      # `supabase status -o env` and streams SUPABASE_TEST_* to Vitest. It
+      # starts from the fresh schema left by the preceding isolated gate.
       - name: Run real-DB suite
         run: pnpm --filter web test:db

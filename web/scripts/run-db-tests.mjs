@@ -93,15 +93,18 @@ if (!(await isReachable(detected.url))) {
 }
 
 log(`running against ${detected.url}`);
+const fullSuiteEnv = {
+  ...process.env,
+  SUPABASE_TEST_URL: detected.url,
+  SUPABASE_TEST_PUBLISHABLE_KEY: detected.publishableKey,
+  SUPABASE_TEST_SECRET_KEY: detected.secretKey,
+};
+delete fullSuiteEnv.CFG001_FRESH_RESET;
+
 const run = spawnSync("pnpm exec vitest run --config vitest.db.config.mts", {
   cwd: webRoot,
   shell: true,
   stdio: "inherit",
-  env: {
-    ...process.env,
-    SUPABASE_TEST_URL: detected.url,
-    SUPABASE_TEST_PUBLISHABLE_KEY: detected.publishableKey,
-    SUPABASE_TEST_SECRET_KEY: detected.secretKey,
-  },
+  env: fullSuiteEnv,
 });
 process.exit(run.status ?? 1);
