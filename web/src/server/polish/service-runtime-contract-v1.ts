@@ -214,6 +214,14 @@ const SOURCE_BLOBS = Object.freeze({
     "web/src/server/polish/lifecycle-availability.test.ts",
     "43a5d667d37313b428823066f1f0218c11f774d9048e09a2acbd143035a7bbf5",
   ),
+  availabilityDbTest: source(
+    "web/test/db/ai-polish-availability-v1.test.ts",
+    "25efda681c279adcfb18cdce607fb1e045f128c1769bd6f36afd08cb6f5286db",
+  ),
+  availabilityServer: source(
+    "web/src/server/polish/lifecycle-availability.ts",
+    "ea09dde773e91f1ec71b6be5894674a6f58cfc877fe452a94f44e87b4317f346",
+  ),
   profileRegistry: source(
     "web/src/server/polish/profile-registry.ts",
     "b379ba9f9907360f76ac50c8f676e009d194dadd49707afd24732fc6c9e326b6",
@@ -509,8 +517,18 @@ const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
     }),
     Object.freeze({
       factId: "fact.route.readonly.v1",
-      implementation: sourceSet(SOURCE_BLOBS.configPhase),
-      test: sourceSet(SOURCE_BLOBS.dialogTest),
+      implementation: sourceSet(
+        SOURCE_BLOBS.reserve,
+        SOURCE_BLOBS.availabilityServer,
+        SOURCE_BLOBS.flow,
+        SOURCE_BLOBS.configPhase,
+      ),
+      test: sourceSet(
+        SOURCE_BLOBS.availabilityDbTest,
+        SOURCE_BLOBS.availabilityTest,
+        SOURCE_BLOBS.routeAssertionTest,
+        SOURCE_BLOBS.dialogTest,
+      ),
     }),
   ]);
 
@@ -626,7 +644,7 @@ const CONTRACT_DESCRIPTOR = deepFreeze<ServiceRuntimeContractDescriptorV1>({
 });
 const CONTRACT_SHA256 = fingerprintLegalDescriptorV1(CONTRACT_DESCRIPTOR).sha256;
 const EXPECTED_CONTRACT_SHA256 =
-  "596e423e65520dcd870cac1f9ab69691a10b958e370539a3d46894eb34780269";
+  "346371bd3dcc9f7bfb79392bcb76ef389cfe76f0ea509303656c60369b1ba874";
 if (CONTRACT_SHA256 !== EXPECTED_CONTRACT_SHA256) {
   throw new Error("reviewed DeepSeek runtime contract hash drift");
 }

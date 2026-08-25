@@ -46,6 +46,21 @@ const EXPECTED_FACT_IDS = [
   "fact.route.readonly.v1",
 ] as const;
 
+const READONLY_ROUTE_AUTHORITY = Object.freeze({
+  implementation: Object.freeze([
+    "supabase/migrations/20260823234000_reserve_ai_polish_v2.sql",
+    "web/src/server/polish/lifecycle-availability.ts",
+    "web/src/components/cv-builder/polish/use-polish-flow.ts",
+    "web/src/components/cv-builder/polish/polish-config-phase.tsx",
+  ]),
+  test: Object.freeze([
+    "web/test/db/ai-polish-availability-v1.test.ts",
+    "web/src/server/polish/lifecycle-availability.test.ts",
+    "web/src/components/cv-builder/polish/__tests__/use-polish-flow/route-assertion.test.tsx",
+    "web/src/components/cv-builder/polish/polish-dialog.test.tsx",
+  ]),
+});
+
 const RUNTIME_SCHEMA_FIELDS = Object.freeze({
   ai_service_runtime_evidence_v1: Object.freeze([
     "schema_version",
@@ -342,7 +357,7 @@ describe("DeepSeek service runtime contract V1", () => {
       "5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340",
     );
     expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
-      "596e423e65520dcd870cac1f9ab69691a10b958e370539a3d46894eb34780269",
+      "346371bd3dcc9f7bfb79392bcb76ef389cfe76f0ea509303656c60369b1ba874",
     );
     expect(
       DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
@@ -434,6 +449,22 @@ describe("DeepSeek service runtime contract V1", () => {
         ),
       ).size,
     ).toBe(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence.length);
+  });
+
+  it("binds readonly routing to DB availability, strict server projection, a fresh client candidate, and rendered disclosure", () => {
+    const readonlyEvidence = DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence.filter(
+      (item) => item.descriptor.supported_fact_id === "fact.route.readonly.v1",
+    );
+    for (const authorityKind of ["service-implementation", "service-test"] as const) {
+      const paths = readonlyEvidence
+        .filter((item) => item.descriptor.authority_kind === authorityKind)
+        .map((item) => item.descriptor.source_repo_path);
+      expect(paths).toEqual(
+        READONLY_ROUTE_AUTHORITY[
+          authorityKind === "service-implementation" ? "implementation" : "test"
+        ],
+      );
+    }
   });
 
   it("resolves every source to exact regular blob bytes at the reviewed commit", () => {
@@ -636,6 +667,18 @@ describe("DeepSeek service runtime contract V1", () => {
         second.descriptor.source_git_blob_sha256,
         first.descriptor.source_git_blob_sha256,
       ];
+    });
+  });
+
+  it("rejects a coherently re-signed readonly fact backed only by static UI evidence", () => {
+    expectResignedRegistryRejection((candidate) => {
+      candidate.evidence = candidate.evidence.filter((item) =>
+        item.descriptor.supported_fact_id !== "fact.route.readonly.v1" ||
+        item.descriptor.source_repo_path ===
+          "web/src/components/cv-builder/polish/polish-config-phase.tsx" ||
+        item.descriptor.source_repo_path ===
+          "web/src/components/cv-builder/polish/polish-dialog.test.tsx",
+      );
     });
   });
 
