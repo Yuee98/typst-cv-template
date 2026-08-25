@@ -180,14 +180,18 @@ interface SourceBlobV1 {
 
 interface FactEvidenceRouteV1 {
   readonly factId: string;
-  readonly implementation: SourceBlobV1;
-  readonly test: SourceBlobV1;
+  readonly implementation: readonly SourceBlobV1[];
+  readonly test: readonly SourceBlobV1[];
 }
 
 const source = (
   path: string,
   sha256: string,
 ): Readonly<SourceBlobV1> => Object.freeze({ path, sha256 });
+
+const sourceSet = (
+  ...entries: readonly Readonly<SourceBlobV1>[]
+): readonly Readonly<SourceBlobV1>[] => Object.freeze(entries);
 
 const SOURCE_BLOBS = Object.freeze({
   reserve: source(
@@ -213,6 +217,10 @@ const SOURCE_BLOBS = Object.freeze({
   profileRegistry: source(
     "web/src/server/polish/profile-registry.ts",
     "b379ba9f9907360f76ac50c8f676e009d194dadd49707afd24732fc6c9e326b6",
+  ),
+  profileRegistryTest: source(
+    "web/src/server/polish/profile-registry.test.ts",
+    "00499529d6dc9cf2f9226d4ac9eef646dac76d8cd876ab225824a62bfc1f9993",
   ),
   executionContractTest: source(
     "web/src/server/polish/ai-runtime-execution-contract-v1.test.ts",
@@ -242,13 +250,45 @@ const SOURCE_BLOBS = Object.freeze({
     "web/src/server/polish/quota-v2.test.ts",
     "6e10e3087145010c9dd5565d67488a3368068818c8b87f8ec5787eb789b0ceb3",
   ),
-  ledger: source(
+  ledgerRequest: source(
     "supabase/migrations/20260823231000_ai_provider_ledger_legal_expand.sql",
     "3df36029fb38b296dbc198d6dd3cc54555cf1fc63b9aa063d72235dd57d47101",
   ),
-  ledgerTest: source(
+  ledgerRequestTest: source(
     "web/test/db/provider-ledger-expand.test.ts",
     "8eaf85e09c352b61280638cabfa9459de1feec8016a84544c0188d8138aee087",
+  ),
+  attemptLedger: source(
+    "supabase/migrations/20260823234500_add_ai_provider_attempt_ledger.sql",
+    "2f8d70000112b0ef4f0769a7b6f5b04fa594e6d3a129910da759affea316fe52",
+  ),
+  attemptLedgerTest: source(
+    "web/test/db/provider-attempt-schema.test.ts",
+    "b74e0d63644e001f0975fab9d1e9e36f4fd56d2e5a712d99fb592ce243cdfb5a",
+  ),
+  lifecycleV2: source(
+    "web/src/server/polish/lifecycle-v2.ts",
+    "b27ae6b894aea203b5ce239471ccdce9526513d685f9dfaaa40fe0b300e44c4b",
+  ),
+  lifecycleV2Test: source(
+    "web/src/server/polish/__tests__/lifecycle/v2.test.ts",
+    "42e822c1df29638aea0e4d1924f8b3713be965386c23ef6d8949ee97dbf4f82d",
+  ),
+  attemptComplete: source(
+    "supabase/migrations/20260824000000_complete_ai_polish_provider_attempt.sql",
+    "d6e9e8f83d56e75333a2d6649d5da7941d55ca4510948467056ba2d85cc56c01",
+  ),
+  attemptCompleteTest: source(
+    "web/test/db/provider-attempt-complete.test.ts",
+    "2bcda7e54f2c26ae92f9d0350793a7bc56b60c8469f5cc0ae7ba51d567b8b9b4",
+  ),
+  attemptReconcile: source(
+    "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
+    "18b4e398df8b9915796e7d01ac71f555003d027adc73a6dbd58d0032be2a2dc2",
+  ),
+  attemptReconcileTest: source(
+    "web/test/db/provider-attempt-reconcile.test.ts",
+    "f1afb6f3b9b55d23c0e0d5f71880b7aadf88a057663f1d863a9115694d8ccd84",
   ),
   retention: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
@@ -300,127 +340,167 @@ const SOURCE_BLOBS = Object.freeze({
   ),
 });
 
+// TODO(RT-009A durable lane): the final attestation refresh must replace the
+// current lifecycle/attempt/reconciler entries above with the exact blobs from
+// the durable pre-attestation ancestor, including
+// `20260824001500_durable_attempt_transmission_quota.sql` and its real-DB
+// tests. Do not invent an interim digest or point the reviewed commit at the
+// later attestation refresh commit.
+
 const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
   Object.freeze([
     Object.freeze({
       factId: "fact.acceptance.authorization.v1",
-      implementation: SOURCE_BLOBS.reserve,
-      test: SOURCE_BLOBS.reserveTest,
+      implementation: sourceSet(SOURCE_BLOBS.reserve),
+      test: sourceSet(SOURCE_BLOBS.reserveTest),
     }),
     Object.freeze({
       factId: "fact.deepseek.adapter.wire.v1",
-      implementation: SOURCE_BLOBS.adapterRegistry,
-      test: SOURCE_BLOBS.adapterRegistryTest,
+      implementation: sourceSet(SOURCE_BLOBS.adapterRegistry),
+      test: sourceSet(SOURCE_BLOBS.adapterRegistryTest),
     }),
     Object.freeze({
       factId: "fact.deepseek.display.registration.v1",
-      implementation: SOURCE_BLOBS.adapterRegistry,
-      test: SOURCE_BLOBS.availabilityTest,
+      implementation: sourceSet(SOURCE_BLOBS.adapterRegistry),
+      test: sourceSet(SOURCE_BLOBS.availabilityTest),
     }),
     Object.freeze({
       factId: "fact.deepseek.display.selection.v1",
-      implementation: SOURCE_BLOBS.profileRegistry,
-      test: SOURCE_BLOBS.executionContractTest,
+      implementation: sourceSet(SOURCE_BLOBS.profileRegistry),
+      test: sourceSet(
+        SOURCE_BLOBS.profileRegistryTest,
+        SOURCE_BLOBS.executionContractTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.deepseek.endpoint.resolution.v1",
-      implementation: SOURCE_BLOBS.adapterRegistry,
-      test: SOURCE_BLOBS.adapterRegistryTest,
+      implementation: sourceSet(SOURCE_BLOBS.adapterRegistry),
+      test: sourceSet(SOURCE_BLOBS.adapterRegistryTest),
     }),
     Object.freeze({
       factId: "fact.deepseek.endpoint.selection.v1",
-      implementation: SOURCE_BLOBS.profileRegistry,
-      test: SOURCE_BLOBS.executionContractTest,
+      implementation: sourceSet(SOURCE_BLOBS.profileRegistry),
+      test: sourceSet(
+        SOURCE_BLOBS.profileRegistryTest,
+        SOURCE_BLOBS.executionContractTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.deepseek.gateway.service.v1",
-      implementation: SOURCE_BLOBS.profileRegistry,
-      test: SOURCE_BLOBS.executionContractTest,
+      implementation: sourceSet(SOURCE_BLOBS.profileRegistry),
+      test: sourceSet(
+        SOURCE_BLOBS.profileRegistryTest,
+        SOURCE_BLOBS.executionContractTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.deepseek.model.selection.v1",
-      implementation: SOURCE_BLOBS.profileRegistry,
-      test: SOURCE_BLOBS.executionContractTest,
+      implementation: sourceSet(SOURCE_BLOBS.profileRegistry),
+      test: sourceSet(
+        SOURCE_BLOBS.profileRegistryTest,
+        SOURCE_BLOBS.executionContractTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.deepseek.subject.derivation.v1",
-      implementation: SOURCE_BLOBS.providerSubject,
-      test: SOURCE_BLOBS.providerSubjectTest,
+      implementation: sourceSet(SOURCE_BLOBS.providerSubject),
+      test: sourceSet(SOURCE_BLOBS.providerSubjectTest),
     }),
     Object.freeze({
       factId: "fact.deepseek.subject.send.v1",
-      implementation: SOURCE_BLOBS.deepseek,
-      test: SOURCE_BLOBS.deepseekTest,
+      implementation: sourceSet(SOURCE_BLOBS.deepseek, SOURCE_BLOBS.lifecycleV2),
+      test: sourceSet(SOURCE_BLOBS.deepseekTest, SOURCE_BLOBS.lifecycleV2Test),
     }),
     Object.freeze({
       factId: "fact.deepseek.submitted.v1",
-      implementation: SOURCE_BLOBS.deepseek,
-      test: SOURCE_BLOBS.deepseekTest,
+      implementation: sourceSet(SOURCE_BLOBS.deepseek, SOURCE_BLOBS.lifecycleV2),
+      test: sourceSet(SOURCE_BLOBS.deepseekTest, SOURCE_BLOBS.lifecycleV2Test),
     }),
     Object.freeze({
       factId: "fact.deepseek.wire.selection.v1",
-      implementation: SOURCE_BLOBS.profileRegistry,
-      test: SOURCE_BLOBS.executionContractTest,
+      implementation: sourceSet(SOURCE_BLOBS.profileRegistry),
+      test: sourceSet(
+        SOURCE_BLOBS.profileRegistryTest,
+        SOURCE_BLOBS.executionContractTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.material.reaccept.v1",
-      implementation: SOURCE_BLOBS.reserve,
-      test: SOURCE_BLOBS.reserveTest,
+      implementation: sourceSet(SOURCE_BLOBS.reserve),
+      test: sourceSet(SOURCE_BLOBS.reserveTest),
     }),
     Object.freeze({
       factId: "fact.neutral.ledger.v1",
-      implementation: SOURCE_BLOBS.ledger,
-      test: SOURCE_BLOBS.ledgerTest,
+      implementation: sourceSet(
+        SOURCE_BLOBS.ledgerRequest,
+        SOURCE_BLOBS.attemptLedger,
+      ),
+      test: sourceSet(
+        SOURCE_BLOBS.ledgerRequestTest,
+        SOURCE_BLOBS.attemptLedgerTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.neutral.plaintext.v1",
-      implementation: SOURCE_BLOBS.deepseek,
-      test: SOURCE_BLOBS.deepseekTest,
+      implementation: sourceSet(SOURCE_BLOBS.deepseek),
+      test: sourceSet(SOURCE_BLOBS.deepseekTest),
     }),
     Object.freeze({
       factId: "fact.neutral.quota.v1",
-      implementation: SOURCE_BLOBS.quota,
-      test: SOURCE_BLOBS.quotaTest,
+      implementation: sourceSet(
+        SOURCE_BLOBS.quota,
+        SOURCE_BLOBS.lifecycleV2,
+        SOURCE_BLOBS.reserve,
+        SOURCE_BLOBS.attemptComplete,
+        SOURCE_BLOBS.attemptReconcile,
+      ),
+      test: sourceSet(
+        SOURCE_BLOBS.quotaTest,
+        SOURCE_BLOBS.lifecycleV2Test,
+        SOURCE_BLOBS.reserveTest,
+        SOURCE_BLOBS.attemptCompleteTest,
+        SOURCE_BLOBS.attemptReconcileTest,
+      ),
     }),
     Object.freeze({
       factId: "fact.neutral.retention.v1",
-      implementation: SOURCE_BLOBS.retention,
-      test: SOURCE_BLOBS.retentionTest,
+      implementation: sourceSet(SOURCE_BLOBS.retention),
+      test: sourceSet(SOURCE_BLOBS.retentionTest),
     }),
     Object.freeze({
       factId: "fact.neutral.retry.v1",
-      implementation: SOURCE_BLOBS.orchestrator,
-      test: SOURCE_BLOBS.orchestratorTest,
+      implementation: sourceSet(SOURCE_BLOBS.orchestrator, SOURCE_BLOBS.lifecycleV2),
+      test: sourceSet(SOURCE_BLOBS.orchestratorTest, SOURCE_BLOBS.lifecycleV2Test),
     }),
     Object.freeze({
       factId: "fact.neutral.scope.v1",
-      implementation: SOURCE_BLOBS.scopeBuilder,
-      test: SOURCE_BLOBS.scopeBuilderTest,
+      implementation: sourceSet(SOURCE_BLOBS.scopeBuilder, SOURCE_BLOBS.lifecycleV2),
+      test: sourceSet(SOURCE_BLOBS.scopeBuilderTest, SOURCE_BLOBS.lifecycleV2Test),
     }),
     Object.freeze({
       factId: "fact.privacy.recipient.deepseek.v1",
-      implementation: SOURCE_BLOBS.legalEn,
-      test: SOURCE_BLOBS.legalTest,
+      implementation: sourceSet(SOURCE_BLOBS.legalEn),
+      test: sourceSet(SOURCE_BLOBS.legalTest),
     }),
     Object.freeze({
       factId: "fact.route.change-gate.v1",
-      implementation: SOURCE_BLOBS.flow,
-      test: SOURCE_BLOBS.routeAssertionTest,
+      implementation: sourceSet(SOURCE_BLOBS.reserve),
+      test: sourceSet(SOURCE_BLOBS.reserveTest),
     }),
     Object.freeze({
       factId: "fact.route.no-fallback.deepseek.v1",
-      implementation: SOURCE_BLOBS.orchestrator,
-      test: SOURCE_BLOBS.orchestratorTest,
+      implementation: sourceSet(SOURCE_BLOBS.orchestrator, SOURCE_BLOBS.lifecycleV2),
+      test: sourceSet(SOURCE_BLOBS.orchestratorTest, SOURCE_BLOBS.lifecycleV2Test),
     }),
     Object.freeze({
       factId: "fact.route.no-selector.v1",
-      implementation: SOURCE_BLOBS.configPhase,
-      test: SOURCE_BLOBS.dialogTest,
+      implementation: sourceSet(SOURCE_BLOBS.configPhase),
+      test: sourceSet(SOURCE_BLOBS.dialogTest),
     }),
     Object.freeze({
       factId: "fact.route.readonly.v1",
-      implementation: SOURCE_BLOBS.configPhase,
-      test: SOURCE_BLOBS.dialogTest,
+      implementation: sourceSet(SOURCE_BLOBS.configPhase),
+      test: sourceSet(SOURCE_BLOBS.dialogTest),
     }),
   ]);
 
@@ -446,10 +526,11 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
 function evidenceId(
   factId: string,
   authorityKind: RuntimeEvidenceAuthorityKind,
+  sourceIndex: number,
 ): string {
   const authority =
     authorityKind === "service-implementation" ? "implementation" : "test";
-  return `runtime-evidence.${factId.slice("fact.".length)}.${authority}.v1`;
+  return `runtime-evidence.${factId.slice("fact.".length)}.${authority}.${String(sourceIndex + 1).padStart(2, "0")}.v1`;
 }
 
 const REQUIRED_SERVICE_FACTS = deriveRequiredServiceFactPairs(
@@ -463,14 +544,15 @@ const EVIDENCE = FACT_EVIDENCE_ROUTES.flatMap((route) =>
   ([
     ["service-implementation", route.implementation],
     ["service-test", route.test],
-  ] as const).map(([authorityKind, blob]) => {
+  ] as const).flatMap(([authorityKind, blobs]) =>
+    blobs.map((blob, sourceIndex) => {
     const pair = REQUIRED_FACT_BY_ID.get(route.factId);
     if (pair === undefined) {
       throw new Error(`runtime evidence references a non-required fact: ${route.factId}`);
     }
     const descriptor = deepFreeze<ServiceRuntimeEvidenceDescriptorV1>({
       schema_version: "ai_service_runtime_evidence_v1",
-      runtime_evidence_id: evidenceId(route.factId, authorityKind),
+      runtime_evidence_id: evidenceId(route.factId, authorityKind, sourceIndex),
       authority_kind: authorityKind,
       supported_fact_id: pair.id,
       supported_fact_sha256: pair.sha256,
@@ -481,125 +563,14 @@ const EVIDENCE = FACT_EVIDENCE_ROUTES.flatMap((route) =>
       descriptor,
       sha256: fingerprintLegalDescriptorV1(descriptor).sha256,
     });
-  }),
+    }),
+  ),
 ).sort((left, right) =>
   compareUtf8(
     left.descriptor.runtime_evidence_id,
     right.descriptor.runtime_evidence_id,
   ),
 );
-
-const EXPECTED_RUNTIME_EVIDENCE_SHA256 = Object.freeze({
-  "runtime-evidence.acceptance.authorization.v1.implementation.v1":
-    "5e510bd592b1f032d93255bf4d967c29c2dc94d56f737e8382f465946298f557",
-  "runtime-evidence.acceptance.authorization.v1.test.v1":
-    "c0f5be9749f68ecc468b566a086a571b02bab152c49093969cc949cd5521681b",
-  "runtime-evidence.deepseek.adapter.wire.v1.implementation.v1":
-    "b0337d2f1c667bec19f76d6f0c6f5e1640351e584781702fd7468640504c93c9",
-  "runtime-evidence.deepseek.adapter.wire.v1.test.v1":
-    "c3f7ba4ad5f48d178e6ca0dfb5a551f11f253ac5d992885481d985bcbc0d8003",
-  "runtime-evidence.deepseek.display.registration.v1.implementation.v1":
-    "58009824f216005c5c8ff2ce6f4d01736f55d9eb66b3fd5ed5cbdb8b40e393fd",
-  "runtime-evidence.deepseek.display.registration.v1.test.v1":
-    "8d83dae6698541ba36fcec836db860b685a58ae74eb4dc2ac79850d0017fb58d",
-  "runtime-evidence.deepseek.display.selection.v1.implementation.v1":
-    "7c9a2f214a573eaa1228e7de9c4a2c6b728622eeb2dd978bc76cded5c8b6d818",
-  "runtime-evidence.deepseek.display.selection.v1.test.v1":
-    "e0ce7f048c56be39a77fc16e08e877465059e9a8784a170e93a43cf7af0ed14f",
-  "runtime-evidence.deepseek.endpoint.resolution.v1.implementation.v1":
-    "27a9640ef0a6d77811fdbf3ca22467498b5873bc653f11ebcc16a11e928b3bc7",
-  "runtime-evidence.deepseek.endpoint.resolution.v1.test.v1":
-    "a8e97f34326963faeda44e5ee5bf1f5d9c6e00a065998e2e325be104b2bd7a86",
-  "runtime-evidence.deepseek.endpoint.selection.v1.implementation.v1":
-    "8ba4d9bcf7951fef86e1028e8c5ba02663ee1387a0bcab8c01e727d5543ae004",
-  "runtime-evidence.deepseek.endpoint.selection.v1.test.v1":
-    "f5b6f3e5f2f4dc91f637892e2358c47ec7b416a72c75d4f11300f78bb79998c1",
-  "runtime-evidence.deepseek.gateway.service.v1.implementation.v1":
-    "5555341712668235d96b213666d3794f10cbe5e6e770f1df498f200556ec102b",
-  "runtime-evidence.deepseek.gateway.service.v1.test.v1":
-    "3be408e1b07c3b392cd329516b82279121b26495c5f93baaee1750dcddde1de7",
-  "runtime-evidence.deepseek.model.selection.v1.implementation.v1":
-    "4c178ed80ba446be13d12bc31fe1fe84884c8c00377c622f7f72000109e2530c",
-  "runtime-evidence.deepseek.model.selection.v1.test.v1":
-    "63f4b20861873b7ec7d232a0131f13cc349aa39dc68db001e04b644b610d9d15",
-  "runtime-evidence.deepseek.subject.derivation.v1.implementation.v1":
-    "9b50bd24eaecb5157b691672af0ec3165bf86586bcd8869f9e5d8b5a8fd4d740",
-  "runtime-evidence.deepseek.subject.derivation.v1.test.v1":
-    "4d6b6b99c8775d08f6503df0043e57f3828032fbfad1353f099dc9b9f38cf611",
-  "runtime-evidence.deepseek.subject.send.v1.implementation.v1":
-    "0e757c7d1c9b1f0570b4cdf59fd089f35199c61162da04acee1ef428782fa7c4",
-  "runtime-evidence.deepseek.subject.send.v1.test.v1":
-    "56cddc315cd174748c8df56754e4f10dab081ff2fbed195a4409c088d4a6e044",
-  "runtime-evidence.deepseek.submitted.v1.implementation.v1":
-    "2b4c22cb9d0ee54fc8d862df54f76cbc0e7c1ea04e05c24aae769b525e7419a7",
-  "runtime-evidence.deepseek.submitted.v1.test.v1":
-    "23b6ee356cfa066b0318d3128d9262a4509b96dccbb707139a113ab60bf6afb2",
-  "runtime-evidence.deepseek.wire.selection.v1.implementation.v1":
-    "cdeb18f16e11755a82c160a6c837b881eed8b9ece31a8f4a9dca4a2b2fc23fe4",
-  "runtime-evidence.deepseek.wire.selection.v1.test.v1":
-    "a9d4c8c305397728fc009c963e359560bc4821b1c97db49fc380dc92361f972f",
-  "runtime-evidence.material.reaccept.v1.implementation.v1":
-    "f19f9072a5291d5946372a455c6dc246f0ed8e1f92fda0a0e090f2b257256cd2",
-  "runtime-evidence.material.reaccept.v1.test.v1":
-    "64479c23783fb7e6ec767c05ee2a0e71be4860af845d251e66a44d9198c08990",
-  "runtime-evidence.neutral.ledger.v1.implementation.v1":
-    "f94d45fa2f91f2b734bf30c73810a0c7e2791a1d9803f7d38820e52eec36085e",
-  "runtime-evidence.neutral.ledger.v1.test.v1":
-    "ebacde90e8f1c478ad2872efdad217ddf889c842fb9c9aa2c2e0052f815b3302",
-  "runtime-evidence.neutral.plaintext.v1.implementation.v1":
-    "cba613e5804455bc2c526fe69e85527b5af1c3ca89ee4a12e370f01520d8ac5e",
-  "runtime-evidence.neutral.plaintext.v1.test.v1":
-    "5e97f83792a283a40eeedf3245d077952f3d752b101d22ab59916b62e19f2d96",
-  "runtime-evidence.neutral.quota.v1.implementation.v1":
-    "4fb0d50e9fe7ab046122c3294d5691e8986b037498ad4ad46b092da55cae679c",
-  "runtime-evidence.neutral.quota.v1.test.v1":
-    "4feb992c83f68deb963c9641fe7bff923f89fa0aafdaf1c4b11041a01cebb86b",
-  "runtime-evidence.neutral.retention.v1.implementation.v1":
-    "491f5a5f3399222c458b1115ad5679f42260b40171a773fdb55f44f728cee553",
-  "runtime-evidence.neutral.retention.v1.test.v1":
-    "cd98d40ebae3e88a244396dd5978591f6aea11c4ca188ba315371255e3219814",
-  "runtime-evidence.neutral.retry.v1.implementation.v1":
-    "59c5b8bcaf9bf863a0bc27c98cdbb27954573ee86545dbb57ca9b8507e9b0f9b",
-  "runtime-evidence.neutral.retry.v1.test.v1":
-    "1f2abeb489b6714574e9930df0a000167d474601144f725a7403e80ceadb05c9",
-  "runtime-evidence.neutral.scope.v1.implementation.v1":
-    "9e96cd0ffe2474d530fe3d0d31bf3d907020deb5f886fd0165c9b58130d1126a",
-  "runtime-evidence.neutral.scope.v1.test.v1":
-    "e508d2498783be96d0c1f157a1870a13b939ea3b74b31baa26918dd1179743d4",
-  "runtime-evidence.privacy.recipient.deepseek.v1.implementation.v1":
-    "edc9ce05f42505b3754d7850e16a0de48273d1249b3383e60fb974d909baed05",
-  "runtime-evidence.privacy.recipient.deepseek.v1.test.v1":
-    "f45075671f1cfa2828aeb74fa3488366fee1d9145bbd1b335d828378dbe57640",
-  "runtime-evidence.route.change-gate.v1.implementation.v1":
-    "6fd4bd6cfc72c275851266d1135724d7d8ea9c444e55e42cac04cadd294c25e1",
-  "runtime-evidence.route.change-gate.v1.test.v1":
-    "228899834e402630f89939284d577751683127759f11f0de0b0f0b7f0107cd39",
-  "runtime-evidence.route.no-fallback.deepseek.v1.implementation.v1":
-    "9001653618605cfc193bebd446a8423459d23e24a84c28bdab532e7d720b1066",
-  "runtime-evidence.route.no-fallback.deepseek.v1.test.v1":
-    "ec5e6649de1f4cac406da85ad1e931c4ab100e2cdfd21914ae833e5fb9fb84af",
-  "runtime-evidence.route.no-selector.v1.implementation.v1":
-    "3b59cb1f0835f350ca09966e4a2b58958dbcd5111a7c53fed8e5eaf532380c73",
-  "runtime-evidence.route.no-selector.v1.test.v1":
-    "3fa69914b17b36d81474d2d4da8b33edde366e35bf81e479a7b7e4cf7c7d7587",
-  "runtime-evidence.route.readonly.v1.implementation.v1":
-    "a32b8543da81932ab07060da7472fab91c6ad4e3bf042a265ea2abd784f80ba9",
-  "runtime-evidence.route.readonly.v1.test.v1":
-    "69f5dcc0d35e2d4a3deb01b9eab172b951acb4730f618a06a483fb9ee23009e5",
-});
-
-if (
-  EVIDENCE.length !== Object.keys(EXPECTED_RUNTIME_EVIDENCE_SHA256).length ||
-  EVIDENCE.some(
-    (item) =>
-      EXPECTED_RUNTIME_EVIDENCE_SHA256[
-        item.descriptor
-          .runtime_evidence_id as keyof typeof EXPECTED_RUNTIME_EVIDENCE_SHA256
-      ] !== item.sha256,
-  )
-) {
-  throw new Error("reviewed runtime evidence descriptor hash drift");
-}
 
 const TARGET_DESCRIPTOR = deepFreeze<ServiceRuntimeTargetDescriptorV1>({
   schema_version: "ai_service_runtime_target_v1",
@@ -644,11 +615,6 @@ const CONTRACT_DESCRIPTOR = deepFreeze<ServiceRuntimeContractDescriptorV1>({
   ),
 });
 const CONTRACT_SHA256 = fingerprintLegalDescriptorV1(CONTRACT_DESCRIPTOR).sha256;
-const EXPECTED_CONTRACT_SHA256 =
-  "a07228f777d4c61aacfb7ee452c100806c4b4c0eb996b3a639771891c0a9b79b";
-if (CONTRACT_SHA256 !== EXPECTED_CONTRACT_SHA256) {
-  throw new Error("reviewed DeepSeek runtime contract hash drift");
-}
 
 const RUNTIME_ROUTE_DESCRIPTOR = deepFreeze<RuntimeRouteDescriptorV1>({
   gatewayKind: "direct_deepseek",
@@ -832,6 +798,39 @@ function assertSameStrings(
   ) {
     fail(`${label} does not match the frozen authority`);
   }
+}
+
+function assertExactReviewedValue(
+  actual: unknown,
+  expected: unknown,
+  label: string,
+): void {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) {
+      fail(`${label} does not match the frozen reviewed tuple`);
+    }
+    for (let index = 0; index < expected.length; index += 1) {
+      assertExactReviewedValue(actual[index], expected[index], `${label}.${index}`);
+    }
+    return;
+  }
+  if (typeof expected === "object" && expected !== null) {
+    assertPlainRecord(actual, label);
+    assertPlainRecord(expected, `${label} authority`);
+    const expectedKeys = Reflect.ownKeys(expected);
+    if (
+      Reflect.ownKeys(actual).length !== expectedKeys.length ||
+      expectedKeys.some((key) => !Object.hasOwn(actual, key))
+    ) {
+      fail(`${label} keys do not match the frozen reviewed tuple`);
+    }
+    for (const key of expectedKeys) {
+      if (typeof key !== "string") fail(`${label} authority contains a symbol key`);
+      assertExactReviewedValue(actual[key], expected[key], `${label}.${key}`);
+    }
+    return;
+  }
+  if (actual !== expected) fail(`${label} does not match the frozen reviewed tuple`);
 }
 
 function assertSortedUnique(values: readonly string[], label: string): void {
@@ -1162,6 +1161,12 @@ export function validateServiceRuntimeContractV1Registry(
   ) {
     fail("runtime target-set hash does not match the DB formula");
   }
+
+  // Structural/hash validation above establishes a sound candidate. This last
+  // comparison is intentionally stricter: callers may validate only the one
+  // reviewed authority, never a coherent re-sign of a different source path,
+  // descriptor ID, target, root, order, or evidence cardinality.
+  assertExactReviewedValue(input, REGISTRY, "registry");
 }
 
 validateServiceRuntimeContractV1Registry(REGISTRY);

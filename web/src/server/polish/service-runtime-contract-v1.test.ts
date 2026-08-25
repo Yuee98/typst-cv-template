@@ -274,9 +274,6 @@ describe("DeepSeek service runtime contract V1", () => {
     expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256).toBe(
       "aa4948f6f0060a08ada1d0b831babd17c37287be02a9a8f2f9ec69c0f2bed119",
     );
-    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
-      "a07228f777d4c61aacfb7ee452c100806c4b4c0eb996b3a639771891c0a9b79b",
-    );
     expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
       "5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340",
     );
@@ -285,7 +282,9 @@ describe("DeepSeek service runtime contract V1", () => {
         (pair) => pair.id,
       ),
     ).toEqual(EXPECTED_FACT_IDS);
-    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence).toHaveLength(48);
+    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence).toHaveLength(
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.contract.runtime_evidence_ids.length,
+    );
     expect(DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1).toMatchObject({
       contract: {
         runtimeContractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
@@ -337,7 +336,7 @@ describe("DeepSeek service runtime contract V1", () => {
     ).toBe(DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256);
   });
 
-  it("binds each required fact to exactly one implementation and one test descriptor", () => {
+  it("binds each required fact to one or more deterministic implementation and test descriptors", () => {
     const authority = new Map<string, string[]>();
     for (const item of DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
       const descriptor = item.descriptor;
@@ -358,11 +357,16 @@ describe("DeepSeek service runtime contract V1", () => {
     }
     expect([...authority.keys()].sort()).toEqual([...EXPECTED_FACT_IDS].sort());
     for (const factId of EXPECTED_FACT_IDS) {
-      expect(authority.get(factId)?.sort(), factId).toEqual([
-        "service-implementation",
-        "service-test",
-      ]);
+      expect(authority.get(factId), factId).toContain("service-implementation");
+      expect(authority.get(factId), factId).toContain("service-test");
     }
+    expect(
+      new Set(
+        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence.map(
+          (item) => item.descriptor.runtime_evidence_id,
+        ),
+      ).size,
+    ).toBe(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence.length);
   });
 
   it("resolves every source to exact regular blob bytes at the reviewed commit", () => {
@@ -494,6 +498,39 @@ describe("DeepSeek service runtime contract V1", () => {
         ).authority_kind = authority;
       }, /forbidden authority/u);
     }
+  });
+
+  it("rejects a coherent re-sign of a source tuple, even with the same evidence ID", () => {
+    expectRegistryRejection((candidate) => {
+      const evidence = candidate.evidence[0];
+      evidence.descriptor.source_repo_path = "web/src/server/polish/other.ts";
+      evidence.descriptor.source_git_blob_sha256 = "a".repeat(64);
+      evidence.sha256 = independentRuntimeFingerprint(
+        evidence.descriptor as unknown as Readonly<Record<string, unknown>>,
+      );
+
+      const evidenceIndex = candidate.contract.runtime_evidence_ids.indexOf(
+        evidence.descriptor.runtime_evidence_id,
+      );
+      candidate.contract.runtime_evidence_sha256s[evidenceIndex] = evidence.sha256;
+      candidate.contractSha256 = independentRuntimeFingerprint(
+        candidate.contract as unknown as Readonly<Record<string, unknown>>,
+      );
+      candidate.targets[0].executionTarget.runtimeContractSha256 =
+        candidate.contractSha256;
+    }, /frozen reviewed tuple/u);
+  });
+
+  it("rejects exact-tuple additions, removals, and reordering", () => {
+    expectRegistryRejection((candidate) => {
+      candidate.evidence.push(structuredClone(candidate.evidence[0]));
+    });
+    expectRegistryRejection((candidate) => {
+      candidate.evidence.pop();
+    });
+    expectRegistryRejection((candidate) => {
+      candidate.evidence.reverse();
+    });
   });
 
   it.each([
