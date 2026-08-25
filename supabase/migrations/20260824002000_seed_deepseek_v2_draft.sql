@@ -7,6 +7,88 @@
 
 begin;
 
+-- A fresh database has no DeepSeek price identities, so the canonical six
+-- components may be bootstrapped below.  Once either canonical price identity
+-- exists, however, a partial/substituted/extended component set is evidence of
+-- a corrupted prior seed and must fail before this migration repairs anything.
+-- Reapplication is therefore exact-or-fail rather than a partial upsert.
+do $$
+declare
+  v_existing_price_count bigint;
+  v_component_count bigint;
+  v_exact_component_count bigint;
+begin
+  select count(*) into v_existing_price_count
+  from public.ai_price_versions
+  where id in (
+    '11111111-1111-4111-8111-111111111112'::uuid,
+    '11111111-1111-4111-8111-111111111113'::uuid
+  ) or (
+    profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
+    and pricing_lane in ('offpeak', 'peak')
+    and version = 1
+  );
+
+  if v_existing_price_count > 0 then
+    select count(*) into v_component_count
+    from public.ai_price_components
+    where price_version_id in (
+      '11111111-1111-4111-8111-111111111112'::uuid,
+      '11111111-1111-4111-8111-111111111113'::uuid
+    );
+
+    select count(*) into v_exact_component_count
+    from public.ai_price_components as actual
+    join (
+      values
+        ('11111111-1111-4111-8111-111111111112'::uuid, 'input_cache_read'::text, 50000000::bigint),
+        ('11111111-1111-4111-8111-111111111112'::uuid, 'input_standard'::text, 1500000000::bigint),
+        ('11111111-1111-4111-8111-111111111112'::uuid, 'output'::text, 4500000000::bigint),
+        ('11111111-1111-4111-8111-111111111113'::uuid, 'input_cache_read'::text, 100000000::bigint),
+        ('11111111-1111-4111-8111-111111111113'::uuid, 'input_standard'::text, 3000000000::bigint),
+        ('11111111-1111-4111-8111-111111111113'::uuid, 'output'::text, 9000000000::bigint)
+    ) as expected(price_version_id, component, nanos_per_million)
+      using (price_version_id, component, nanos_per_million);
+
+    if v_component_count <> 6 or v_exact_component_count <> 6 then
+      raise exception 'DeepSeek V2 price component mismatch'
+        using errcode = '23514';
+    end if;
+  end if;
+end;
+$$;
+
+-- The root may be sealed only by this bootstrap.  An existing unsealed or
+-- rebound root is a partial prior seed, not an invitation to repair a
+-- security boundary on reapplication.
+do $$
+begin
+  if exists (
+    select 1
+    from public.ai_service_runtime_contract_versions
+    where runtime_contract_id = 'runtime.deepseek-v2.v1'
+  ) and not exists (
+    select 1
+    from public.ai_service_runtime_contract_versions
+    where runtime_contract_id = 'runtime.deepseek-v2.v1'
+      and runtime_contract_sha256 =
+        '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
+      and reviewed_source_commit_oid =
+        'sha1:b2390ff817612df7e3eed40aa775ff4cd4228085'
+      and legal_bundle_version = '2026-08-23-multi-provider-v1'
+      and bundle_contract_sha256 =
+        'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18'
+      and runtime_target_set_sha256 =
+        '5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340'
+      and sealed_at is not null
+      and sealed_at >= created_at
+  ) then
+    raise exception 'DeepSeek V2 runtime contract mismatch'
+      using errcode = '23514';
+  end if;
+end;
+$$;
+
 insert into public.ai_provider_profiles (
   id,
   profile_key,

@@ -5,7 +5,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { DEEPSEEK_V2_SEED_V1 } from "@/server/polish/deepseek-v2-seed-v1";
 
-import { createServiceClient, RUN_DB_TESTS } from "./helpers";
+import {
+  acceptAiLegalBundle,
+  createServiceClient,
+  createTestUser,
+  deleteTestUser,
+  RUN_DB_TESTS,
+  setDailyUsageCount,
+} from "./helpers";
 import { runOwnerSql } from "./runtime-contract-fixtures";
 
 const SEED = DEEPSEEK_V2_SEED_V1;
@@ -333,6 +340,71 @@ function snapshotSeedRows(): string {
     .findLast((line) => line.startsWith("{"));
   if (!snapshot) throw new Error("seed snapshot returned no JSON");
   return snapshot;
+}
+
+const MIGRATION_URL = new URL(
+  "../../../supabase/migrations/20260824002000_seed_deepseek_v2_draft.sql",
+  import.meta.url,
+);
+
+function migrationBody(): string {
+  return readFileSync(MIGRATION_URL, "utf8")
+    .replace(/^begin;\s*$/mu, "")
+    .replace(/^commit;\s*$/mu, "");
+}
+
+function withUserTriggersDisabled(tables: readonly string[], body: string): string {
+  return [
+    ...tables.map((table) => `alter table public.${table} disable trigger user;`),
+    body,
+    ...[...tables]
+      .reverse()
+      .map((table) => `alter table public.${table} enable trigger user;`),
+  ].join("\n");
+}
+
+interface HostileSeedCase {
+  name: string;
+  precondition: string;
+  expectedError: string;
+}
+
+function expectHostileSeedRollback({
+  precondition,
+  expectedError,
+}: HostileSeedCase): void {
+  const before = snapshotSeedRows();
+  const result = runOwnerSql(
+    String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      ${precondition}
+      ${migrationBody()}
+      commit;
+    `,
+    { expectFailure: true },
+  );
+
+  expect(result.stderr).toContain(expectedError);
+  expect(snapshotSeedRows()).toBe(before);
+}
+
+async function createHistoricalFixture(service: SupabaseClient): Promise<string> {
+  const user = await createTestUser(service, "cfg001-history");
+  try {
+    await acceptAiLegalBundle(service, user.id, SEED.legalBundle.version);
+    await setDailyUsageCount(service, user.id, 7);
+    const { error } = await service.from("ai_request_ledger").insert({
+      request_id: crypto.randomUUID(),
+      client_request_id: crypto.randomUUID(),
+      user_id: user.id,
+    });
+    if (error) throw new Error(`create CFG001 request fixture failed: ${error.message}`);
+    return user.id;
+  } catch (error) {
+    await deleteTestUser(service, user.id);
+    throw error;
+  }
 }
 
 describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => {
@@ -784,49 +856,394 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
     }
   });
 
-  it("reapplies once as owner without changing any seeded byte projection", () => {
-    const migrationPath = new URL(
-      "../../../supabase/migrations/20260824002000_seed_deepseek_v2_draft.sql",
-      import.meta.url,
-    );
-    const migration = readFileSync(migrationPath, "utf8");
-    const before = snapshotSeedRows();
+  it("reapplies exactly without touching unrelated historical request, usage, or acceptance rows", async () => {
+    const userId = await createHistoricalFixture(service);
+    try {
+      const before = snapshotSeedRows();
 
-    runOwnerSql(migration);
+      runOwnerSql(readFileSync(MIGRATION_URL, "utf8"));
 
-    expect(snapshotSeedRows()).toBe(before);
+      expect(snapshotSeedRows()).toBe(before);
+    } finally {
+      await deleteTestUser(service, userId);
+    }
   });
 
-  it("rolls back the whole migration when an immutable seed fact conflicts", () => {
-    const migrationPath = new URL(
-      "../../../supabase/migrations/20260824002000_seed_deepseek_v2_draft.sql",
-      import.meta.url,
-    );
-    const migrationBody = readFileSync(migrationPath, "utf8")
-      .replace(/^begin;\s*$/mu, "")
-      .replace(/^commit;\s*$/mu, "");
-    const before = snapshotSeedRows();
-
-    const conflict = runOwnerSql(
-      String.raw`
-        \set ON_ERROR_STOP on
-        begin;
-        alter table public.ai_provider_profile_versions
-          disable trigger guard_ai_provider_profile_version;
-        update public.ai_provider_profile_versions
-        set model_snapshot = 'owner-corrupted-snapshot'
-        where id = '${SEED.profile.profileVersionId}'::uuid;
-        alter table public.ai_provider_profile_versions
-          enable trigger guard_ai_provider_profile_version;
-
-        ${migrationBody}
-        rollback;
+  const HOSTILE_SEED_CASES: readonly HostileSeedCase[] = [
+    {
+      name: "fixed profile ID has a wrong projection",
+      precondition: withUserTriggersDisabled(
+        ["ai_provider_profiles"],
+        String.raw`
+          update public.ai_provider_profiles
+          set display_name = 'hostile-profile-projection'
+          where id = '${SEED.profile.id}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 profile identity mismatch",
+    },
+    {
+      name: "alternate profile natural key occupies the expected identity",
+      precondition: withUserTriggersDisabled(
+        ["ai_provider_profiles"],
+        String.raw`
+          update public.ai_provider_profiles
+          set profile_key = 'hostile.alternate.profile.natural-key.v1'
+          where id = '${SEED.profile.id}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 profile identity mismatch",
+    },
+    {
+      name: "fixed profile-version ID has a wrong projection",
+      precondition: withUserTriggersDisabled(
+        ["ai_provider_profile_versions"],
+        String.raw`
+          update public.ai_provider_profile_versions
+          set model_snapshot = 'hostile-profile-version-projection'
+          where id = '${SEED.profile.profileVersionId}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 profile version mismatch",
+    },
+    {
+      name: "profile-version natural key is rebound to another profile",
+      precondition: withUserTriggersDisabled(
+        ["ai_provider_profile_versions"],
+        String.raw`
+          insert into public.ai_provider_profiles (
+            id, profile_key, display_name, gateway_kind, model_vendor
+          ) values (
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
+            'hostile.alternate.profile-version-owner.v1',
+            'Hostile alternate profile-version owner',
+            'direct_deepseek',
+            'deepseek'
+          );
+          update public.ai_provider_profile_versions
+          set profile_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid
+          where id = '${SEED.profile.profileVersionId}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 profile version mismatch",
+    },
+    {
+      name: "fixed price ID has a wrong projection",
+      precondition: withUserTriggersDisabled(
+        ["ai_price_versions"],
+        String.raw`
+          update public.ai_price_versions
+          set currency = 'USD'
+          where id = '${SEED.pricing.rows[0].id}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "price natural key no longer matches its fixed ID",
+      precondition: withUserTriggersDisabled(
+        ["ai_price_versions"],
+        String.raw`
+          update public.ai_price_versions
+          set version = 2
+          where id = '${SEED.pricing.rows[0].id}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "price component is substituted",
+      precondition: withUserTriggersDisabled(
+        ["ai_price_components"],
+        String.raw`
+          update public.ai_price_components
+          set nanos_per_million = nanos_per_million + 1
+          where price_version_id = '${SEED.pricing.rows[0].id}'::uuid
+            and component = 'output';
+        `,
+      ),
+      expectedError: "DeepSeek V2 price component mismatch",
+    },
+    {
+      name: "existing price identity has a missing component",
+      precondition: withUserTriggersDisabled(
+        ["ai_price_components"],
+        String.raw`
+          delete from public.ai_price_components
+          where price_version_id = '${SEED.pricing.rows[0].id}'::uuid
+            and component = 'output';
+        `,
+      ),
+      expectedError: "DeepSeek V2 price component mismatch",
+    },
+    {
+      name: "existing price identity has an additional component",
+      precondition: String.raw`
+        insert into public.ai_price_components (
+          price_version_id, component, nanos_per_million
+        ) values (
+          '${SEED.pricing.rows[0].id}'::uuid,
+          'input_cache_write',
+          1
+        );
       `,
-      { expectFailure: true },
-    );
+      expectedError: "DeepSeek V2 price component mismatch",
+    },
+    {
+      name: "runtime target projection is wrong",
+      precondition: String.raw`
+          alter table public.ai_service_runtime_contract_targets
+            drop constraint ai_service_runtime_contract_targets_projection_fkey;
+          alter table public.ai_service_runtime_target_versions disable trigger user;
+          update public.ai_service_runtime_target_versions
+          set route_descriptor_sha256 = repeat('0', 64)
+          where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}';
+          alter table public.ai_service_runtime_target_versions enable trigger user;
+        `,
+      expectedError: "DeepSeek V2 runtime target mismatch",
+    },
+    {
+      name: "runtime root source is rebound",
+      precondition: withUserTriggersDisabled(
+        ["ai_service_runtime_contract_versions"],
+        String.raw`
+          update public.ai_service_runtime_contract_versions
+          set reviewed_source_commit_oid = 'sha1:0000000000000000000000000000000000000000'
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+        `,
+      ),
+      expectedError: "DeepSeek V2 runtime contract mismatch",
+    },
+    {
+      name: "existing runtime root is missing its seal",
+      precondition: withUserTriggersDisabled(
+        ["ai_service_runtime_contract_versions"],
+        String.raw`
+          update public.ai_service_runtime_contract_versions
+          set sealed_at = null
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+        `,
+      ),
+      expectedError: "DeepSeek V2 runtime contract mismatch",
+    },
+    {
+      name: "sealed runtime membership is rebound",
+      precondition: String.raw`
+          alter table public.ai_service_runtime_contract_targets
+            drop constraint ai_service_runtime_contract_targets_projection_fkey;
+          alter table public.ai_service_runtime_contract_targets disable trigger user;
+          update public.ai_service_runtime_contract_targets
+          set profile_key = 'hostile.rebound.runtime-profile.v1'
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          alter table public.ai_service_runtime_contract_targets enable trigger user;
+        `,
+      expectedError: "DeepSeek V2 runtime membership mismatch",
+    },
+    {
+      name: "sealed runtime root is missing its exact membership",
+      precondition: withUserTriggersDisabled(
+        ["ai_service_runtime_contract_targets"],
+        String.raw`
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+        `,
+      ),
+      expectedError: "sealed runtime contract target sets are immutable",
+    },
+    {
+      name: "sealed runtime root has an additional membership",
+      precondition: withUserTriggersDisabled(
+        ["ai_service_runtime_contract_targets"],
+        String.raw`
+          insert into public.ai_service_runtime_target_versions (
+            runtime_target_id,
+            runtime_target_sha256,
+            profile_key,
+            legal_manifest_id,
+            manifest_sha256,
+            route_descriptor_id,
+            route_descriptor_sha256
+          ) values (
+            'runtime-target.hostile.additional.v1',
+            repeat('1', 64),
+            'hostile.additional.runtime-profile.v1',
+            '${SEED.runtime.targets[0].legalManifestId}',
+            '${SEED.runtime.targets[0].manifestSha256}',
+            'route.hostile.additional.v1',
+            repeat('2', 64)
+          );
+          insert into public.ai_service_runtime_contract_targets (
+            runtime_contract_id,
+            runtime_contract_sha256,
+            runtime_target_id,
+            runtime_target_sha256,
+            profile_key,
+            legal_manifest_id,
+            manifest_sha256,
+            route_descriptor_id,
+            route_descriptor_sha256
+          ) values (
+            '${SEED.runtime.contract.runtimeContractId}',
+            '${SEED.runtime.contract.runtimeContractSha256}',
+            'runtime-target.hostile.additional.v1',
+            repeat('1', 64),
+            'hostile.additional.runtime-profile.v1',
+            '${SEED.runtime.targets[0].legalManifestId}',
+            '${SEED.runtime.targets[0].manifestSha256}',
+            'route.hostile.additional.v1',
+            repeat('2', 64)
+          );
+        `,
+      ),
+      expectedError: "DeepSeek V2 runtime membership mismatch",
+    },
+    {
+      name: "fixed policy ID has a wrong projection",
+      precondition: withUserTriggersDisabled(
+        ["ai_routing_policy_versions"],
+        String.raw`
+          update public.ai_routing_policy_versions
+          set config_sha256 = repeat('0', 64)
+          where id = '${SEED.policy.id}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek G2 draft routing policy mismatch",
+    },
+    {
+      name: "alternate policy natural key occupies the expected identity",
+      precondition: withUserTriggersDisabled(
+        ["ai_routing_policy_versions"],
+        String.raw`
+          update public.ai_routing_policy_versions
+          set id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'
+          where id = '${SEED.policy.id}'::uuid;
+        `,
+      ),
+      expectedError: "duplicate key value violates unique constraint",
+    },
+  ];
 
-    expect(conflict.stderr).toContain("DeepSeek V2 profile version mismatch");
-    expect(snapshotSeedRows()).toBe(before);
+  it.each(HOSTILE_SEED_CASES)(
+    "rejects hostile seed state: $name, then restores every CFG table byte-for-byte",
+    (seedCase) => {
+      expectHostileSeedRollback(seedCase);
+    },
+  );
+
+  it("rolls back a full empty-seed bootstrap after a late policy natural-key conflict", async () => {
+    const userId = await createHistoricalFixture(service);
+    try {
+      expectHostileSeedRollback({
+        name: "late policy natural-key conflict after bootstrap",
+        precondition: withUserTriggersDisabled(
+          [
+            "ai_routing_policy_versions",
+            "ai_service_runtime_contract_targets",
+            "ai_service_runtime_contract_versions",
+            "ai_service_runtime_target_versions",
+            "ai_price_components",
+            "ai_price_versions",
+            "ai_provider_profile_versions",
+            "ai_provider_profiles",
+          ],
+          String.raw`
+            delete from public.ai_routing_policy_versions
+            where id = '${SEED.policy.id}'::uuid;
+            delete from public.ai_service_runtime_contract_targets
+            where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+            delete from public.ai_service_runtime_contract_versions
+            where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+            delete from public.ai_service_runtime_target_versions
+            where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}';
+            delete from public.ai_price_components
+            where price_version_id in (
+              '${SEED.pricing.rows[0].id}'::uuid,
+              '${SEED.pricing.rows[1].id}'::uuid
+            );
+            delete from public.ai_price_versions
+            where id in (
+              '${SEED.pricing.rows[0].id}'::uuid,
+              '${SEED.pricing.rows[1].id}'::uuid
+            );
+            delete from public.ai_provider_profile_versions
+            where id = '${SEED.profile.profileVersionId}'::uuid;
+            delete from public.ai_provider_profiles
+            where id = '${SEED.profile.id}'::uuid;
+
+            insert into public.ai_provider_profiles (
+              id, profile_key, display_name, gateway_kind, model_vendor
+            ) values (
+              'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'::uuid,
+              'hostile.bootstrap.policy-owner.v1',
+              'Hostile bootstrap policy owner',
+              'direct_deepseek',
+              'deepseek'
+            );
+            insert into public.ai_provider_profile_versions (
+              id,
+              profile_id,
+              version,
+              status,
+              adapter_kind,
+              wire_api_kind,
+              credential_alias,
+              endpoint_alias,
+              model_id,
+              model_snapshot,
+              upstream_route,
+              capability_contract_id,
+              cache_policy_id,
+              legal_manifest_id,
+              display_disclosure_key,
+              config,
+              config_sha256
+            ) values (
+              'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'::uuid,
+              'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'::uuid,
+              1,
+              'draft',
+              'deepseek_chat_v1',
+              'chat_completions_v1',
+              'hostile_bootstrap_credential',
+              'hostile_bootstrap_endpoint',
+              'hostile-bootstrap-model',
+              'hostile-bootstrap-snapshot',
+              '{}'::jsonb,
+              'hostile_bootstrap_capability',
+              'hostile_bootstrap_cache',
+              '${SEED.runtime.targets[0].legalManifestId}',
+              'hostile-bootstrap-disclosure',
+              '{}'::jsonb,
+              repeat('3', 64)
+            );
+            insert into public.ai_routing_policy_versions (
+              id,
+              policy_key,
+              version,
+              status,
+              timezone,
+              rules,
+              default_profile_version_id,
+              legal_bundle_version,
+              config_sha256
+            ) values (
+              'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
+              '${SEED.policy.policyKey}',
+              ${SEED.policy.version},
+              'draft',
+              'Asia/Shanghai',
+              '{}'::jsonb,
+              'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'::uuid,
+              '${SEED.legalBundle.version}',
+              repeat('4', 64)
+            );
+          `,
+        ),
+        expectedError: "duplicate key value violates unique constraint",
+      });
+    } finally {
+      await deleteTestUser(service, userId);
+    }
   });
 
   it("keeps the feature dark and availability on the exact disabled shape", async () => {
