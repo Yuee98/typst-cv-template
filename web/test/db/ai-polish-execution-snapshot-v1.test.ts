@@ -323,8 +323,10 @@ describe.skipIf(!RUN_DB_TESTS)("AI polish execution snapshot V1 (real DB)", () =
       p_provider_billable: false,
       p_usage: null,
       p_metadata: null,
+      p_settlement_contract: "durable_transmission_v1",
     });
     expect(finalized.error).toBeNull();
+    expect(finalized.data).toMatchObject({ ok: true });
 
     ownerReplica(String.raw`
       update public.ai_request_ledger

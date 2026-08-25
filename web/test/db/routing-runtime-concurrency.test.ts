@@ -571,7 +571,8 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
         false,
         false,
         null,
-        null
+        null,
+        'durable_transmission_v1'
       );
       reset role;
     `;

@@ -787,7 +787,7 @@ describe.skipIf(!RUN_DB_TESTS)("secure provider-attempt reconciler (real DB)", (
 
     ownerRewriteAttempt(
       started.attemptId,
-      "terminal_at = pg_catalog.transaction_timestamp() - interval '2 minutes'",
+      "terminal_at = started_at",
     );
     const stale = await reconcile();
     expect(stale.data).toEqual({

@@ -550,6 +550,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
         '${attemptId}'::uuid,
         'succeeded',
         true,
+        true,
         '{
           "schema_version":"normalized_usage_v2",
           "input_total_tokens":100,
