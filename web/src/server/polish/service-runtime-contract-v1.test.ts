@@ -341,6 +341,9 @@ describe("DeepSeek service runtime contract V1", () => {
     expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
       "5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340",
     );
+    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
+      "596e423e65520dcd870cac1f9ab69691a10b958e370539a3d46894eb34780269",
+    );
     expect(
       DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
         (pair) => pair.id,
@@ -447,7 +450,7 @@ describe("DeepSeek service runtime contract V1", () => {
     }
   }, 15_000);
 
-  it("keeps the reviewed source at HEAD only before attestation files enter Git", () => {
+  it("keeps the reviewed source as a proper ancestor of the attestation refresh", () => {
     const reviewed = DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID.slice("sha1:".length);
     const type = git(["cat-file", "-t", reviewed]);
     expect(type.status).toBe(0);
@@ -457,23 +460,10 @@ describe("DeepSeek service runtime contract V1", () => {
     const headOid = head.stdout.toString("utf8").trim();
     const ancestor = git(["merge-base", "--is-ancestor", reviewed, headOid]);
     expect(ancestor.status).toBe(0);
-    if (headOid === reviewed) {
-      expect(() =>
-        readReviewedBlob(
-          "web/src/server/polish/service-runtime-contract-v1.ts",
-        ),
-      ).toThrow(/unresolved/u);
-      expect(() =>
-        readReviewedBlob(
-          "web/src/server/polish/service-runtime-contract-v1.test.ts",
-        ),
-      ).toThrow(/unresolved/u);
-    } else {
-      expect(headOid).not.toBe(reviewed);
-    }
+    expect(headOid).not.toBe(reviewed);
   });
 
-  it("rejects unresolved, tree, symlink, submodule, self, and future source identities", () => {
+  it("rejects unresolved, tree, symlink, and submodule source identities", () => {
     expect(() => readReviewedBlob("does/not/exist.ts")).toThrow(/unresolved/u);
     expect(() =>
       parseReviewedTreeEntry(
@@ -493,12 +483,6 @@ describe("DeepSeek service runtime contract V1", () => {
         "vendor/repo",
       ),
     ).toThrow(/regular Git blob/u);
-    expect(() =>
-      readReviewedBlob("web/src/server/polish/service-runtime-contract-v1.ts"),
-    ).toThrow(/unresolved/u);
-    expect(() =>
-      readReviewedBlob("web/src/server/polish/handler-runtime-authority.ts.future"),
-    ).toThrow(/unresolved/u);
   });
 
   it("rejects missing, extra, reordered, wrong-hash, and wrong-scope fact authority", () => {

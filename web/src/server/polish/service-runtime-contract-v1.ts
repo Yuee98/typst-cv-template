@@ -25,7 +25,7 @@ export const DEEPSEEK_PROFILE_KEY =
 export const DEEPSEEK_PROFILE_VERSION_ID =
   "11111111-1111-4111-8111-111111111111" as const;
 export const DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID =
-  "sha1:9fef6614b71ec420df303025e73f4b6b6580460f" as const;
+  "sha1:d78c84de0b39dcc0d80277a428bedb353bd86973" as const;
 
 const DEEPSEEK_ROUTE_DESCRIPTOR_ID = "route.deepseek.official.v1" as const;
 const DEEPSEEK_DISPLAY_DISCLOSURE_KEY = "deepseek-official-v1" as const;
@@ -244,11 +244,11 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   quota: source(
     "web/src/server/polish/quota.ts",
-    "2d0315146a262fb3bdb9cd926cb70ec3943b1163c185391ac8a5b7f10c8e79fe",
+    "1f60251d1906c1628120ceaaa4ddb77927067242675eab1dee2e9c2a323e13f2",
   ),
   quotaTest: source(
     "web/src/server/polish/quota-v2.test.ts",
-    "6e10e3087145010c9dd5565d67488a3368068818c8b87f8ec5787eb789b0ceb3",
+    "48c3d15ca6ae8834c9c59049acf6bcb8f27a04871fa0ed186226c9ebe2bab6a0",
   ),
   ledgerRequest: source(
     "supabase/migrations/20260823231000_ai_provider_ledger_legal_expand.sql",
@@ -268,11 +268,11 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   lifecycleV2: source(
     "web/src/server/polish/lifecycle-v2.ts",
-    "b27ae6b894aea203b5ce239471ccdce9526513d685f9dfaaa40fe0b300e44c4b",
+    "a1cb4e9ef23e196afd2d260cc34a750a69edc85a7fabbcce9c74921e4e39ccf8",
   ),
   lifecycleV2Test: source(
     "web/src/server/polish/__tests__/lifecycle/v2.test.ts",
-    "42e822c1df29638aea0e4d1924f8b3713be965386c23ef6d8949ee97dbf4f82d",
+    "fdd47010a863f49658fcce59a70c265c0dc2ed998371671217e4e8f8e75f4629",
   ),
   attemptComplete: source(
     "supabase/migrations/20260824000000_complete_ai_polish_provider_attempt.sql",
@@ -280,7 +280,11 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   attemptCompleteTest: source(
     "web/test/db/provider-attempt-complete.test.ts",
-    "2bcda7e54f2c26ae92f9d0350793a7bc56b60c8469f5cc0ae7ba51d567b8b9b4",
+    "5996ee3cc9e9fc2b3998a5aadc3e2ef09fb72d0c052ad1eada277eb805c96de0",
+  ),
+  attemptFinalizeTest: source(
+    "web/test/db/provider-attempt-finalize.test.ts",
+    "7a47599bca77698aea849b14f481bdea58c419e26a4ac19a1fa4c0e805c0fcd2",
   ),
   attemptReconcile: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
@@ -288,7 +292,15 @@ const SOURCE_BLOBS = Object.freeze({
   ),
   attemptReconcileTest: source(
     "web/test/db/provider-attempt-reconcile.test.ts",
-    "f1afb6f3b9b55d23c0e0d5f71880b7aadf88a057663f1d863a9115694d8ccd84",
+    "4b189dcabdfcedeee274df5d2da830e77336619c96f41f89b5afd7150a55618d",
+  ),
+  durableTransmission: source(
+    "supabase/migrations/20260824001500_durable_attempt_transmission_quota.sql",
+    "0552ee6226e89fdafd2bb6e1b26b3ee588a46df93d3852b0fc125fdea849672a",
+  ),
+  durableTransmissionTest: source(
+    "web/test/db/provider-attempt-transmission.test.ts",
+    "dc869e9395c36ad7cbbcc6f78a0af8966369e8c8b2ade6aa8c19d8f4b9949b03",
   ),
   retention: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
@@ -339,13 +351,6 @@ const SOURCE_BLOBS = Object.freeze({
     "9d2795b58d69506e461df6f135f67b02bacbd6eae3efd81141c23215efc07cae",
   ),
 });
-
-// TODO(RT-009A durable lane): the final attestation refresh must replace the
-// current lifecycle/attempt/reconciler entries above with the exact blobs from
-// the durable pre-attestation ancestor, including
-// `20260824001500_durable_attempt_transmission_quota.sql` and its real-DB
-// tests. Do not invent an interim digest or point the reviewed commit at the
-// later attestation refresh commit.
 
 const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
   Object.freeze([
@@ -434,10 +439,12 @@ const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
       implementation: sourceSet(
         SOURCE_BLOBS.ledgerRequest,
         SOURCE_BLOBS.attemptLedger,
+        SOURCE_BLOBS.durableTransmission,
       ),
       test: sourceSet(
         SOURCE_BLOBS.ledgerRequestTest,
         SOURCE_BLOBS.attemptLedgerTest,
+        SOURCE_BLOBS.durableTransmissionTest,
       ),
     }),
     Object.freeze({
@@ -453,13 +460,16 @@ const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
         SOURCE_BLOBS.reserve,
         SOURCE_BLOBS.attemptComplete,
         SOURCE_BLOBS.attemptReconcile,
+        SOURCE_BLOBS.durableTransmission,
       ),
       test: sourceSet(
         SOURCE_BLOBS.quotaTest,
         SOURCE_BLOBS.lifecycleV2Test,
         SOURCE_BLOBS.reserveTest,
         SOURCE_BLOBS.attemptCompleteTest,
+        SOURCE_BLOBS.attemptFinalizeTest,
         SOURCE_BLOBS.attemptReconcileTest,
+        SOURCE_BLOBS.durableTransmissionTest,
       ),
     }),
     Object.freeze({
@@ -615,6 +625,11 @@ const CONTRACT_DESCRIPTOR = deepFreeze<ServiceRuntimeContractDescriptorV1>({
   ),
 });
 const CONTRACT_SHA256 = fingerprintLegalDescriptorV1(CONTRACT_DESCRIPTOR).sha256;
+const EXPECTED_CONTRACT_SHA256 =
+  "596e423e65520dcd870cac1f9ab69691a10b958e370539a3d46894eb34780269";
+if (CONTRACT_SHA256 !== EXPECTED_CONTRACT_SHA256) {
+  throw new Error("reviewed DeepSeek runtime contract hash drift");
+}
 
 const RUNTIME_ROUTE_DESCRIPTOR = deepFreeze<RuntimeRouteDescriptorV1>({
   gatewayKind: "direct_deepseek",
