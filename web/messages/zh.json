@@ -430,6 +430,7 @@
       "quota_exhausted": "今日配额已用完。",
       "rate_limited": "请求过于频繁，请稍后再试。",
       "duplicate": "已有相同请求在处理，请稍候。",
+      "route_changed": "AI 服务路由已更新，请返回确认后再提交。",
       "too_large": "内容超出大小限制，请缩小范围后重试。",
       "timeout": "AI 服务响应超时，请重试。",
       "invalid_output": "AI 返回了无效结果，可重试。",

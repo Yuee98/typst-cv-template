@@ -593,6 +593,22 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
     expect(result).toMatchObject({ ok: true, attemptCount: 1, settlement: "confirmed" });
     expect(deps.providerV2).toBe(providerV2);
     expect(deps.legacyV1.aiPolishEnabled).toBe(true);
+    const disabledDeps = createFakePolishV2RouteDeps({
+      provider: createFakePolishProvider({ delayMs: 0 }),
+      providerV2,
+      env: {
+        POLISH_FAKE_LLM: "true",
+        POLISH_FAKE_BACKEND: "true",
+        AI_POLISH_ENABLED: "false",
+      },
+    });
+    await expect(executePolishLifecycleV2(input(), disabledDeps)).resolves.toMatchObject({
+      ok: false,
+      code: "AI_DISABLED",
+      stage: "reserve",
+      attemptCount: 0,
+      settlement: "not_reserved",
+    });
     expect(() =>
       createFakePolishV2RouteDeps({
         provider: createFakePolishProvider({ delayMs: 0 }),

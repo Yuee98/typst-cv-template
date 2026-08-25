@@ -8,7 +8,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { polishAvailabilityResponseSchema } from "@/lib/polish/contract";
+import {
+  polishAvailabilityResponseSchema,
+  polishErrorResponseSchema,
+} from "@/lib/polish/contract";
+import { FAKE_V2_EXPECTED_ROUTE, FAKE_V2_POLICY_VERSION_ID } from "./backend-fake";
 
 const ENV_KEYS = [
   "POLISH_FAKE_LLM",
@@ -51,15 +55,17 @@ afterEach(() => {
 });
 
 describe("handler.ts — refuse-to-start on misconfiguration", () => {
-  it("throws on import when the real provider has no DEEPSEEK_API_KEY", async () => {
-    await expect(
-      importHandler({
-        NODE_ENV: "production",
-        AI_POLISH_ENABLED: "true",
-        AI_USER_ID_HMAC_SECRET: "secret",
-        ...SUPABASE_ENV,
-      }),
-    ).rejects.toThrow(/DEEPSEEK_API_KEY/);
+  it("does not bind an unselected provider credential at module startup", async () => {
+    const { POST, GET, AVAILABILITY_GET } = await importHandler({
+      NODE_ENV: "production",
+      AI_POLISH_ENABLED: "false",
+      AI_USER_ID_HMAC_SECRET: "secret",
+      DEEPSEEK_API_KEY: undefined,
+      ...SUPABASE_ENV,
+    });
+    expect(typeof POST).toBe("function");
+    expect(typeof GET).toBe("function");
+    expect(typeof AVAILABILITY_GET).toBe("function");
   });
 
   it("throws on import with POLISH_FAKE_LLM=true in production without the CI marker", async () => {
@@ -70,7 +76,7 @@ describe("handler.ts — refuse-to-start on misconfiguration", () => {
         CI: undefined,
         AI_POLISH_ENABLED: "true",
       }),
-    ).rejects.toThrow(/Refusing to start/);
+    ).rejects.toThrow(/forbidden/);
   });
 
   it("throws on import when POLISH_FAKE_BACKEND=true without POLISH_FAKE_LLM", async () => {
@@ -150,12 +156,38 @@ describe("handler.ts — valid configurations boot", () => {
             { id: "i1", kind: "experience_bullet", text: "建设内部平台，将部署时间缩短 30%。" },
           ],
           context: { level: 0, references: [] },
+          expectedRoute: FAKE_V2_EXPECTED_ROUTE,
         }),
       }),
     );
     expect(polish.status).toBe(200);
     const body = (await polish.json()) as { requestId: string };
     expect(polish.headers.get("x-request-id")).toBe(body.requestId);
+
+    const routeChanged = await POST(
+      new Request("https://test.local/api/polish", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer ci-smoke-token",
+        },
+        body: JSON.stringify({
+          clientRequestId: "123e4567-e89b-42d3-a456-426614174001",
+          granularity: "item",
+          sectionId: "experience",
+          language: "zh",
+          items: [
+            { id: "i0", kind: "experience_bullet", text: "负责后端服务开发。" },
+          ],
+          context: { level: 0, references: [] },
+          expectedRoute: { ...FAKE_V2_EXPECTED_ROUTE, configGeneration: "1" },
+        }),
+      }),
+    );
+    expect(routeChanged.status).toBe(409);
+    expect(
+      polishErrorResponseSchema.parse(await routeChanged.json()).error.code,
+    ).toBe("AI_ROUTE_CHANGED");
 
     const noToken = await POST(
       new Request("https://test.local/api/polish", {
@@ -184,6 +216,12 @@ describe("handler.ts — valid configurations boot", () => {
     expect(availabilityBody).toMatchObject({
       availability: {
         enabled: true,
+        configGeneration: FAKE_V2_EXPECTED_ROUTE.configGeneration,
+        routingPolicyVersionId: FAKE_V2_POLICY_VERSION_ID,
+        profileVersionId: FAKE_V2_EXPECTED_ROUTE.profileVersionId,
+        legalBundleVersion: FAKE_V2_EXPECTED_ROUTE.legalBundleVersion,
+        runtimeContractId: FAKE_V2_EXPECTED_ROUTE.runtimeContractId,
+        runtimeContractSha256: FAKE_V2_EXPECTED_ROUTE.runtimeContractSha256,
         displayDisclosure: {
           key: "deepseek-official-v1",
           providerName: "DeepSeek",
@@ -205,6 +243,18 @@ describe("handler.ts — valid configurations boot", () => {
     expect(typeof POST).toBe("function");
     expect(typeof GET).toBe("function");
     expect(typeof AVAILABILITY_GET).toBe("function");
+    const quotaWithoutToken = await GET(
+      new Request("https://test.local/api/polish/quota"),
+    );
+    expect(quotaWithoutToken.status).toBe(401);
+    const postWithoutToken = await POST(
+      new Request("https://test.local/api/polish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(postWithoutToken.status).toBe(401);
   });
 
   it("local dev mode (fake LLM + real backend) boots without DEEPSEEK_API_KEY", async () => {
@@ -220,7 +270,7 @@ describe("handler.ts — valid configurations boot", () => {
   });
 
   it("fake backend returns the stable disabled candidate when its UI switch is off", async () => {
-    const { AVAILABILITY_GET } = await importHandler({
+    const { AVAILABILITY_GET, POST } = await importHandler({
       ...FAKE_SMOKE_ENV,
       AI_POLISH_ENABLED: "false",
     });
@@ -239,5 +289,32 @@ describe("handler.ts — valid configurations boot", () => {
         termsAccepted: false,
       },
     });
+
+    const polish = await POST(
+      new Request("https://test.local/api/polish", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer ci-smoke-token",
+        },
+        body: JSON.stringify({
+          clientRequestId: "123e4567-e89b-42d3-a456-426614174000",
+          granularity: "item",
+          sectionId: "experience",
+          language: "zh",
+          items: [
+            {
+              id: "i0",
+              kind: "experience_bullet",
+              text: "负责后端服务开发，将 P99 延迟降低 40%。",
+            },
+          ],
+          context: { level: 0, references: [] },
+          expectedRoute: FAKE_V2_EXPECTED_ROUTE,
+        }),
+      }),
+    );
+    expect(polish.status).toBe(503);
+    expect(polishErrorResponseSchema.parse(await polish.json()).error.code).toBe("AI_DISABLED");
   });
 });

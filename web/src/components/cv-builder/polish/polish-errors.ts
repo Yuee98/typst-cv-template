@@ -38,6 +38,8 @@ export type PolishErrorKind =
   | "rate_limited"
   /** 409 REQUEST_IN_PROGRESS / DUPLICATE_REQUEST — dedup conflict. */
   | "duplicate"
+  /** 409 AI_ROUTE_CHANGED — refresh availability and reconfirm; never blind retry. */
+  | "route_changed"
   /** 413 PAYLOAD_TOO_LARGE — narrow the scope; not retryable as-is. */
   | "too_large"
   /** 504 UPSTREAM_TIMEOUT or the client-side hard timeout; retryable. */
@@ -67,6 +69,7 @@ const KIND_BY_CODE: Record<string, PolishErrorKind> = {
   RATE_LIMITED: "rate_limited",
   REQUEST_IN_PROGRESS: "duplicate",
   DUPLICATE_REQUEST: "duplicate",
+  AI_ROUTE_CHANGED: "route_changed",
   PAYLOAD_TOO_LARGE: "too_large",
   UPSTREAM_TIMEOUT: "timeout",
   [POLISH_TRANSPORT_ERROR_CODES.clientTimeout]: "timeout",

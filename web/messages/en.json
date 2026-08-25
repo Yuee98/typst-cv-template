@@ -430,6 +430,7 @@
       "quota_exhausted": "Today's quota is exhausted.",
       "rate_limited": "Too many requests. Please try again later.",
       "duplicate": "An identical request is already being processed. Please wait.",
+      "route_changed": "The AI service route changed. Go back, review it, and confirm again.",
       "too_large": "The content exceeds the size limit; narrow the scope and try again.",
       "timeout": "The AI service timed out. Please try again.",
       "invalid_output": "The AI returned an invalid result. You can try again.",

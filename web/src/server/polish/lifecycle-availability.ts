@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   polishAvailabilityResponseSchema,
   polishAvailabilitySchema,
+  polishCanonicalUuidSchema,
   polishConfigGenerationSchema,
   polishRouteIdentifierSchema,
   polishRuntimeContractSha256Schema,
@@ -20,8 +21,8 @@ import { baseHeaders, errorResponse } from "./lifecycle-http";
 const dbAvailabilityEnabledSchema = z.strictObject({
   enabled: z.literal(true),
   configGeneration: polishConfigGenerationSchema,
-  routingPolicyVersionId: z.uuid(),
-  profileVersionId: z.uuid(),
+  routingPolicyVersionId: polishCanonicalUuidSchema,
+  profileVersionId: polishCanonicalUuidSchema,
   legalBundleVersion: polishRouteIdentifierSchema,
   runtimeContractId: polishRouteIdentifierSchema,
   runtimeContractSha256: polishRuntimeContractSha256Schema,

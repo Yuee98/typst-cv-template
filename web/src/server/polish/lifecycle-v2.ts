@@ -408,8 +408,9 @@ function outcomeSettlementV2(
 }
 
 /**
- * Dormant, authenticated/non-HTTP V2 lifecycle. It never parses bearer
- * tokens or public response bodies and is not imported by the current route.
+ * Authenticated, non-HTTP V2 lifecycle. The public route binds this only
+ * after bearer/body validation; this layer never parses transport input or
+ * projects public response bodies.
  */
 export async function executePolishLifecycleV2(
   rawInput: PolishLifecycleV2Input,

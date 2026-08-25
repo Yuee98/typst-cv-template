@@ -7,13 +7,15 @@
 //
 //   1. POST /api/polish WITHOUT a token → 401 UNAUTHORIZED (works in every
 //      mode; the deployment switch is on for the smoke server).
-//   2. GET /api/polish/quota WITHOUT a token → 401 UNAUTHORIZED.
-//   3. Full chain with a token → 200 success shape. This requires the CI
+//   2. GET quota/availability WITHOUT a token → 401 UNAUTHORIZED.
+//   3. GET availability with a token → enabled candidate; project its exact
+//      assertion-only expected_route_v1 object.
+//   4. Full V2 chain with a token → 200 success shape. This requires the CI
 //      fake backend (POLISH_FAKE_LLM=true + POLISH_FAKE_BACKEND=true), where
 //      any Bearer token authenticates and the deterministic fake LLM echoes
 //      the targets, so the whole lifecycle (auth → reserve → orchestrate →
 //      finalize) runs without Supabase or a DeepSeek key.
-//   4. GET /api/polish/quota with a token → 200 quota shape.
+//   5. GET /api/polish/quota with a token → 200 quota shape.
 //
 // Every response must carry `Cache-Control: no-store` and an `X-Request-Id`
 // header echoing body.requestId. ci.yml's web-server-build job runs this
@@ -104,14 +106,52 @@ await expectUnauthorized("POST /api/polish (no token)", polishNoToken);
 const quotaNoToken = await fetch(`${baseUrl}/api/polish/quota`);
 await expectUnauthorized("GET /api/polish/quota (no token)", quotaNoToken);
 
-// 3. Full chain through the fake backend: one item-granularity request.
+const availabilityNoToken = await fetch(`${baseUrl}/api/polish/availability`);
+await expectUnauthorized(
+  "GET /api/polish/availability (no token)",
+  availabilityNoToken,
+);
+
+// 3. The POST assertion is derived from the server-owned candidate. It never
+// includes provider/model/endpoint/policy/display fields.
+const availability = await fetch(`${baseUrl}/api/polish/availability`, {
+  headers: { authorization: `Bearer ${SMOKE_TOKEN}` },
+});
+check(
+  "GET /api/polish/availability: status 200",
+  availability.status === 200,
+  `got ${availability.status}`,
+);
+const availabilityBody = await readJson("GET /api/polish/availability", availability);
+const candidate = availabilityBody?.availability;
+check(
+  "GET /api/polish/availability: enabled candidate",
+  candidate?.enabled === true && candidate?.termsAccepted === true,
+  `got ${JSON.stringify(candidate)}`,
+);
+if (availabilityBody !== null) {
+  checkCommonHeaders("GET /api/polish/availability", availability, availabilityBody);
+}
+const expectedRoute =
+  candidate?.enabled === true
+    ? {
+        schemaVersion: "expected_route_v1",
+        configGeneration: candidate.configGeneration,
+        profileVersionId: candidate.profileVersionId,
+        legalBundleVersion: candidate.legalBundleVersion,
+        runtimeContractId: candidate.runtimeContractId,
+        runtimeContractSha256: candidate.runtimeContractSha256,
+      }
+    : null;
+
+// 4. Full chain through the fake backend: one item-granularity request.
 const polish = await fetch(`${baseUrl}/api/polish`, {
   method: "POST",
   headers: {
     "content-type": "application/json",
     authorization: `Bearer ${SMOKE_TOKEN}`,
   },
-  body: JSON.stringify(POLISH_BODY),
+  body: JSON.stringify({ ...POLISH_BODY, expectedRoute }),
 });
 check("POST /api/polish: status 200", polish.status === 200, `got ${polish.status}`);
 const polishBody = await readJson("POST /api/polish", polish);
@@ -138,7 +178,7 @@ if (polishBody !== null) {
   checkCommonHeaders("POST /api/polish", polish, polishBody);
 }
 
-// 4. Quota route with a token.
+// 5. Quota route with a token.
 const quota = await fetch(`${baseUrl}/api/polish/quota`, {
   headers: { authorization: `Bearer ${SMOKE_TOKEN}` },
 });

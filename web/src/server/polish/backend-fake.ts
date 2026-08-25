@@ -13,9 +13,9 @@
  * Supabase (only the LLM is faked), which is how the full chain is manually
  * verified end-to-end.
  *
- * Safety: this module is only reachable when POLISH_FAKE_LLM=true, which
- * getPolishProvider() refuses in production (unless the CI marker is set), so
- * these stubs can never serve a real deployment.
+ * Safety: both fake factories require POLISH_FAKE_LLM=true and the V2 factory
+ * additionally requires POLISH_FAKE_BACKEND=true; production is allowed only
+ * with the process-owned CI marker, so these stubs cannot serve a deployment.
  */
 
 import { randomUUID } from "node:crypto";
@@ -26,9 +26,10 @@ import type { PolishRouteDepsV2 } from "./lifecycle-v2";
 import {
   parseExecutionSnapshotV1,
   sameRouteSnapshotV1,
+  type ExpectedRouteV1,
   type RouteSnapshotV1,
 } from "./lifecycle-v2-contract";
-import { resolveProfile } from "./profile-registry";
+import { INITIAL_LEGAL_BUNDLE_VERSION, resolveProfile } from "./profile-registry";
 import type { FakePolishInferenceProviderV2 } from "./provider-fake";
 import {
   PolishLifecycleV2RpcError,
@@ -101,8 +102,16 @@ interface FakeV2Reservation {
   finalized: boolean;
 }
 
-const FAKE_V2_POLICY_VERSION_ID = "00000000-0000-4000-8000-0000000000f1";
+export const FAKE_V2_POLICY_VERSION_ID = "00000000-0000-4000-8000-0000000000f1";
 const FAKE_V2_PRICE_VERSION_ID = "00000000-0000-4000-8000-0000000000f2";
+export const FAKE_V2_EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
+  schemaVersion: "expected_route_v1",
+  configGeneration: "9223372036854775807",
+  profileVersionId: "11111111-1111-4111-8111-111111111111",
+  legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
+  runtimeContractId: "runtime.deepseek-v2.v1",
+  runtimeContractSha256: "a".repeat(64),
+});
 const FAKE_V2_PRICE = Object.freeze({
   schemaVersion: "price_snapshot_v1" as const,
   priceVersionId: FAKE_V2_PRICE_VERSION_ID,
@@ -116,17 +125,28 @@ const FAKE_V2_PRICE = Object.freeze({
   parameters: Object.freeze({}),
 });
 
-function fakeV2Route(expected: Parameters<PolishRouteDepsV2["reserve"]>[0]["expectedRoute"]): RouteSnapshotV1 {
+function sameExpectedRoute(left: ExpectedRouteV1, right: ExpectedRouteV1): boolean {
+  return (
+    left.schemaVersion === right.schemaVersion &&
+    left.configGeneration === right.configGeneration &&
+    left.profileVersionId === right.profileVersionId &&
+    left.legalBundleVersion === right.legalBundleVersion &&
+    left.runtimeContractId === right.runtimeContractId &&
+    left.runtimeContractSha256 === right.runtimeContractSha256
+  );
+}
+
+function fakeV2Route(): RouteSnapshotV1 {
   const profile = resolveProfile("deepseek.official.deepseek-v4-flash.chat.v1");
   return Object.freeze({
     schemaVersion: "route_snapshot_v1",
-    configGeneration: expected.configGeneration,
+    configGeneration: FAKE_V2_EXPECTED_ROUTE.configGeneration,
     routingPolicyVersionId: FAKE_V2_POLICY_VERSION_ID,
-    profileVersionId: expected.profileVersionId,
+    profileVersionId: FAKE_V2_EXPECTED_ROUTE.profileVersionId,
     priceVersionId: FAKE_V2_PRICE_VERSION_ID,
-    legalBundleVersion: expected.legalBundleVersion,
-    runtimeContractId: expected.runtimeContractId,
-    runtimeContractSha256: expected.runtimeContractSha256,
+    legalBundleVersion: FAKE_V2_EXPECTED_ROUTE.legalBundleVersion,
+    runtimeContractId: FAKE_V2_EXPECTED_ROUTE.runtimeContractId,
+    runtimeContractSha256: FAKE_V2_EXPECTED_ROUTE.runtimeContractSha256,
     gatewayKind: profile.gatewayKind,
     modelId: profile.modelId,
     wireApiKind: profile.wireApiKind,
@@ -152,8 +172,18 @@ export function createFakePolishV2RouteDeps(options: {
 
   return {
     async reserve(params) {
+      if (!legacyV1.aiPolishEnabled) {
+        throw new PolishLifecycleV2RpcError("RESERVE_DENIED", {
+          reason: "AI_DISABLED",
+        });
+      }
+      if (!sameExpectedRoute(params.expectedRoute, FAKE_V2_EXPECTED_ROUTE)) {
+        throw new PolishLifecycleV2RpcError("RESERVE_DENIED", {
+          reason: "AI_ROUTE_CHANGED",
+        });
+      }
       const reservationId = randomUUID();
-      const route = fakeV2Route(params.expectedRoute);
+      const route = fakeV2Route();
       reservations.set(reservationId, {
         userId: params.userId,
         route,

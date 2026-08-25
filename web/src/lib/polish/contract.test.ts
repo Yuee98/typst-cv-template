@@ -26,11 +26,16 @@ import {
   POLISHABLE_FIELD_KINDS,
   polishAvailabilityResponseSchema,
   polishConfigGenerationSchema,
+  polishExpectedRouteFromAvailability,
+  polishExpectedRouteSchema,
   polishErrorResponseSchema,
+  polishPostRequestSchema,
   polishQuotaResponseSchema,
   polishRequestSchema,
   polishSuccessResponseSchema,
   type PolishAvailabilityResponse,
+  type PolishExpectedRoute,
+  type PolishPostRequest,
   type PolishRequest,
 } from "./contract";
 
@@ -500,6 +505,7 @@ describe("capability matrix & constants", () => {
     expect(POLISH_ERROR_HTTP_STATUS.AI_TERMS_REQUIRED).toBe(403);
     expect(POLISH_ERROR_HTTP_STATUS.REQUEST_IN_PROGRESS).toBe(409);
     expect(POLISH_ERROR_HTTP_STATUS.DUPLICATE_REQUEST).toBe(409);
+    expect(POLISH_ERROR_HTTP_STATUS.AI_ROUTE_CHANGED).toBe(409);
     expect(POLISH_ERROR_HTTP_STATUS.PAYLOAD_TOO_LARGE).toBe(413);
     expect(POLISH_ERROR_HTTP_STATUS.QUOTA_EXCEEDED).toBe(429);
     expect(POLISH_ERROR_HTTP_STATUS.RATE_LIMITED).toBe(429);
@@ -663,7 +669,9 @@ describe("GET /api/polish/availability response schema", () => {
   it("rejects malformed route identity, hash and disclosure values", () => {
     const variants = [
       { routingPolicyVersionId: "not-a-uuid" },
+      { routingPolicyVersionId: VALID_UUID.toUpperCase() },
       { profileVersionId: "not-a-uuid" },
+      { profileVersionId: "223E4567-E89B-42D3-A456-426614174000" },
       { legalBundleVersion: "Uppercase" },
       { runtimeContractId: " contains-space" },
       { runtimeContractSha256: "A".repeat(64) },
@@ -711,6 +719,79 @@ describe("GET /api/polish/availability response schema", () => {
     ) satisfies PolishAvailabilityResponse;
     if (!response.availability.enabled) throw new Error("enabled fixture decoded as disabled");
     expect(response.availability.displayDisclosure.providerName).toBe("DeepSeek");
+  });
+
+  it("projects only assertion fields from an enabled candidate", () => {
+    const expected = polishExpectedRouteFromAvailability(
+      ENABLED.availability,
+    ) satisfies PolishExpectedRoute | null;
+    expect(expected).toEqual({
+      schemaVersion: "expected_route_v1",
+      configGeneration: "7",
+      profileVersionId: "223e4567-e89b-42d3-a456-426614174000",
+      legalBundleVersion: "2026-08-23-multi-provider-v1",
+      runtimeContractId: "deepseek-g2-runtime-v1",
+      runtimeContractSha256: "a".repeat(64),
+    });
+    expect(expected).not.toHaveProperty("routingPolicyVersionId");
+    expect(expected).not.toHaveProperty("displayDisclosure");
+    expect(polishExpectedRouteFromAvailability(DISABLED.availability)).toBeNull();
+  });
+
+  it("requires the exact six-field expected route on the V2 POST body", () => {
+    const expectedRoute = polishExpectedRouteFromAvailability(ENABLED.availability);
+    if (expectedRoute === null) throw new Error("enabled fixture did not project a route");
+    const post = polishPostRequestSchema.parse({
+      ...makeRequest(),
+      expectedRoute,
+    }) satisfies PolishPostRequest;
+    expect(post.expectedRoute).toEqual(expectedRoute);
+    expect(polishPostRequestSchema.safeParse(makeRequest()).success).toBe(false);
+    expect(polishRequestSchema.safeParse(post).success).toBe(false);
+
+    for (const key of Object.keys(expectedRoute)) {
+      const missing = { ...expectedRoute } as Record<string, unknown>;
+      delete missing[key];
+      expect(
+        polishPostRequestSchema.safeParse({ ...makeRequest(), expectedRoute: missing }).success,
+        key,
+      ).toBe(false);
+    }
+    for (const forbidden of [
+      { provider: "deepseek" },
+      { model: "deepseek-v4-flash" },
+      { endpointAlias: "deepseek_official" },
+      { routingPolicyVersionId: VALID_UUID },
+      { profileVersionId: expectedRoute.profileVersionId.toUpperCase() },
+      { runtimeContractId: null },
+      { runtimeContractSha256: null },
+    ]) {
+      expect(
+        polishExpectedRouteSchema.safeParse({ ...expectedRoute, ...forbidden }).success,
+        JSON.stringify(forbidden),
+      ).toBe(false);
+    }
+  });
+
+  it("preserves all content cross-field refinements on the extended POST schema", () => {
+    const expectedRoute = polishExpectedRouteFromAvailability(ENABLED.availability);
+    expect(
+      polishPostRequestSchema.safeParse({
+        ...makeRequest(),
+        items: [
+          { id: "i0", kind: "experience_bullet", text: "第一项" },
+          { id: "i1", kind: "experience_bullet", text: "第二项" },
+        ],
+        expectedRoute,
+      }).success,
+    ).toBe(false);
+    expect(
+      polishPostRequestSchema.safeParse({
+        ...makeRequest(),
+        clientRequestId: VALID_UUID.toUpperCase(),
+        expectedRoute,
+      }).success,
+    ).toBe(false);
   });
 });
 
