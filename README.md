@@ -137,10 +137,16 @@ Experience text can be polished at four scopes: one bullet, one project, every p
 | Gate | Scope | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_AI_POLISH_ENABLED` | Build-time browser flag | Shows or removes the AI entry points. It is not a security switch. `build:static` refuses `true`, so the Pages artifact can never contain an AI entry point. |
-| `AI_POLISH_ENABLED` | Vercel deployment | Disables both AI API routes before auth, database access, or provider work. Any value other than the exact string `true` returns `503 AI_DISABLED`. A Vercel env change requires a new deployment. |
+| `AI_POLISH_ENABLED` | Vercel deployment | Disables all three AI API routes before auth, database access, or provider work. Any value other than the exact string `true` returns `503 AI_DISABLED`. A Vercel env change requires a new deployment. |
 | `public.ai_feature_config.ai_polish_enabled` | Supabase runtime | The immediate operational kill switch. Reserve and provider-start RPCs also enforce the non-empty canary allowlist and global daily limit without a redeploy. |
 
-The API routes (`/api/polish` and `/api/polish/quota`) exist only in the **server build**. The static Pages export contains neither route and never receives server-only secrets. See `web/.env.example` for the complete environment variable contract.
+The AI API routes (`POST /api/polish`, `GET /api/polish/quota`, and `GET /api/polish/availability`) exist only in the **server build**. The static Pages export exposes none of these routes and never receives server-only secrets. See `web/.env.example` for the complete environment variable contract.
+
+#### Multi-provider runtime authority and credentials
+
+Provider/profile versions, exact price versions, routing policy, legal bundle, and runtime-contract ID/hash are **DB-authoritative, versioned snapshots**. The server freezes that exact route before transmission; the reviewed code registry constrains adapter, endpoint, credential alias, cache policy, and legal manifest references. Environment variables only supply credentials for those aliases. They are not a provider or model selector. Do not add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing variables: doing so would bypass the DB validation, auditing, canary, and legal gates.
+
+`DEEPSEEK_API_KEY` and `MIMO_API_KEY` are server-only credential aliases for the current official gateways. The initial route does not become enabled merely because either key exists; it still requires an approved active DB profile and policy. `OPENROUTER_API_KEY` is a future optional alias only, remains outside the initial route, and requires a separately reviewed exact upstream, profile, disclosure, and activation. No provider key may enter browser bundles, the database, application logs, or ledger/error payloads.
 
 ### Deployment topology
 
@@ -166,12 +172,13 @@ Create environment-specific values rather than sharing the production database o
 |---|---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Test project | Production project | Browser-safe project coordinates |
 | `SUPABASE_SERVICE_ROLE_KEY` | Test project | Production project | Sensitive; server only |
-| `DEEPSEEK_API_KEY` | Non-production key; it may also be used locally | Prefer a separate production key | Sensitive; server only |
+| `DEEPSEEK_API_KEY` / `MIMO_API_KEY` | Non-production keys for an approved Preview profile; otherwise leave unset | Prefer separate production keys for an approved Production profile | Sensitive server-only credential aliases; keys alone do not activate routing |
+| `OPENROUTER_API_KEY` | Leave unset for the initial route | Leave unset for the initial route | Future optional alias, not initial-route enablement |
 | `AI_USER_ID_HMAC_SECRET` | Independent random secret | Independent random secret | Sensitive; never expose with `NEXT_PUBLIC_` |
 | `AI_POLISH_ENABLED` | `false` for the initial closed-state deployment | `false` before the first production promotion | Deployment-level API gate |
 | `NEXT_PUBLIC_AI_POLISH_ENABLED` | `false` for the initial closed-state deployment | `false` before the first production promotion | Build-time UI gate |
 
-Do not set `POLISH_FAKE_LLM`, `POLISH_FAKE_BACKEND`, or `NEXT_PUBLIC_AI_POLISH_MOCK` in a hosted deployment. `AI_POLISH_MODEL` and `AI_POLISH_GLOBAL_DAILY_LIMIT` are not application environment variables; the model is pinned in code and the global limit lives in `public.ai_feature_config`.
+Do not set `POLISH_FAKE_LLM`, `POLISH_FAKE_BACKEND`, or `NEXT_PUBLIC_AI_POLISH_MOCK` in a hosted deployment. `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL`, and `AI_POLISH_GLOBAL_DAILY_LIMIT` are not application routing variables: the DB selects the reviewed profile/price/policy/legal/runtime snapshot, while the global limit lives in `public.ai_feature_config`.
 
 Use two independent Supabase projects when database branching is unavailable: the test project watches `main`, while the production project watches `release`. Enable `pg_cron` in the `pg_catalog` schema before applying the migrations; the migration schedules `ai-polish-retention-cleanup` and `ai-polish-stale-reconciliation`. In each project's GitHub Integration, “production branch” means the branch deployed to that project—it does not make the test project the user-facing production database.
 

@@ -49,8 +49,12 @@ start when `CI=true`.
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | `supabase status` → Publishable key |
 | `SUPABASE_SERVICE_ROLE_KEY` | `supabase status` → Secret key |
 | `DEEPSEEK_API_KEY` | DeepSeek console (real key — billed per token) |
+| `MIMO_API_KEY` | MiMo console; server-only alias for a separately approved DB profile, not used by the current DeepSeek smoke |
+| `OPENROUTER_API_KEY` | Future optional server-only alias; leave unset for the initial route |
 | `AI_USER_ID_HMAC_SECRET` | generate locally, e.g. `openssl rand -hex 32` |
 | `AI_POLISH_ENABLED` | set to `true` (deployment switch checked by the smoke) |
+
+The database is the runtime authority for the provider/profile version, exact price version, routing policy, legal bundle, and runtime-contract ID/hash; the server freezes that route before a transmission. `DEEPSEEK_API_KEY` and `MIMO_API_KEY` only satisfy code-registered credential aliases and cannot activate a route by themselves. `OPENROUTER_API_KEY` is deliberately future optional, not initial-route enablement. Never add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing switches: those would bypass DB validation, audit, canary, and legal controls. No key belongs in browser code, database rows, logs, ledger data, or error payloads.
 
 The DB-side runtime switch (`ai_feature_config.ai_polish_enabled`) must also
 be `true`; the smoke enables it via the service role when it finds it off
@@ -90,6 +94,7 @@ hosted project); build and start both get explicit `POLISH_FAKE_LLM=false` /
 `POLISH_FAKE_BACKEND=false` / `CI=false`; and a non-official
 `DEEPSEEK_BASE_URL` is rejected unless `--allow-custom-upstream` is passed
 (that run is loudly declared **not** proof of official DeepSeek integration).
+This local smoke override is not a runtime routing authority and must not be promoted to an application environment selector.
 
 Cost discipline: every request uses one very short item; the run makes 2
 user-visible polish requests (one success, one canceled) and each may use up
