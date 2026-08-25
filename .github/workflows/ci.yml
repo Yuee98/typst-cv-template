@@ -32,6 +32,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # Runtime evidence is resolved from the reviewed ancestor, which may
+          # predate the PR checkout by more than GitHub's default shallow clone.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -44,6 +48,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Runtime source-evidence preflight
+        run: pnpm --filter web exec vitest run src/server/polish/service-runtime-contract-v1.test.ts
 
       - name: Lint
         run: pnpm lint
@@ -99,6 +106,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The runtime contract test proves its reviewed source is a reachable
+          # ancestor and every cited path is a regular blob at that ancestor.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -111,6 +122,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Runtime source-evidence preflight
+        run: pnpm --filter web exec vitest run src/server/polish/service-runtime-contract-v1.test.ts
 
       - name: Lint
         run: pnpm lint
@@ -182,6 +196,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
