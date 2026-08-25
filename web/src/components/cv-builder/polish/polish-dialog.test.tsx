@@ -56,6 +56,7 @@ function makeStubFlow(overrides?: Partial<PolishFlow>): PolishFlow {
       setChecked: vi.fn(),
     },
     configChangedHint: false,
+    routeChangedHint: false,
     staleItemIds: new Set(),
     referencesStale: false,
     canConfirm: false,
@@ -163,6 +164,14 @@ describe("PolishDialog E2EE plaintext warning", () => {
 });
 
 describe("PolishDialog provider disclosure", () => {
+  it("keeps the refreshed recipient and content visible under the route-changed hint", () => {
+    renderDialog(makeStubFlow({ routeChangedHint: true }));
+
+    expect(screen.getByText(messages.PolishDialog.routeChanged)).toBeTruthy();
+    expect(screen.getByText(/DeepSeek · DeepSeek V4 Flash/)).toBeTruthy();
+    expect(screen.getByText(messages.PolishDialog.privacyReminder)).toBeTruthy();
+  });
+
   it("renders the exact DeepSeek recipient, model and code-owned annex without a selector", () => {
     renderDialog(makeStubFlow());
 

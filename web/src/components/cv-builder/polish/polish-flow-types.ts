@@ -1,4 +1,8 @@
-import type { PolishAvailability, PolishLanguage } from "@/lib/polish/contract";
+import type {
+  PolishAvailability,
+  PolishExpectedRoute,
+  PolishLanguage,
+} from "@/lib/polish/contract";
 
 import type { SnapshotPathValues } from "./stale-guard";
 
@@ -14,6 +18,10 @@ export interface ActivePolishOperation {
   documentId: string;
   /** Immutable owner: the request language at confirm time. */
   language: PolishLanguage;
+  /** Enabled availability publication reviewed for this exact attempt. */
+  availabilityGeneration: number;
+  /** Compare-only route assertion frozen before any acceptance await. */
+  expectedRoute: PolishExpectedRoute;
   /** Dedup key minted at CONFIRM time; null during terms acceptance. */
   clientRequestId: string | null;
   /** In-flight request controller; null until the request fires. */
@@ -37,6 +45,11 @@ export interface ActiveAvailabilityRead {
 
 export type PolishAvailabilityCandidate = Extract<PolishAvailability, { enabled: true }>;
 export type PolishAvailabilityStatus = "idle" | "loading" | "ready" | "disabled" | "error";
+
+export interface PublishedAvailabilityCandidate {
+  generation: number;
+  candidate: PolishAvailabilityCandidate;
+}
 
 /**
  * Everything a snapshot's validity depends on beyond its path values: the

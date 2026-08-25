@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
   polishAvailabilityResponseSchema,
+  polishExpectedRouteFromAvailability,
   polishSuccessResponseSchema,
-  type PolishRequest,
+  type PolishPostRequest,
 } from "@/lib/polish/contract";
 import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
-import { createMockPolishClient, mockPolishText, PolishApiError } from "../../polish-client";
+import {
+  createMockPolishClient,
+  MOCK_POLISH_AVAILABILITY_RESPONSE,
+  mockPolishText,
+  PolishApiError,
+} from "../../polish-client";
 import { makeRequest } from "./fixtures";
+
+function makeMockRequest(overrides: Partial<PolishPostRequest> = {}): PolishPostRequest {
+  const expectedRoute = polishExpectedRouteFromAvailability(
+    MOCK_POLISH_AVAILABILITY_RESPONSE.availability,
+  );
+  if (!expectedRoute) throw new Error("mock availability fixture must be enabled");
+  return makeRequest({ expectedRoute, ...overrides });
+}
 
 describe("mockPolishText", () => {
   it("collapses redundant whitespace when that changes the text", () => {
@@ -57,13 +71,13 @@ describe("createMockPolishClient", () => {
 
   it("returns a contract-valid deterministic success", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
-    const result = await client.polish(makeRequest());
+    const result = await client.polish(makeMockRequest());
     expect(polishSuccessResponseSchema.safeParse(result).success).toBe(true);
     expect(result.items[0].polished).toBe("[mock] 五年后端开发经验，专注高并发分布式系统。");
     expect(result.quota.remaining).toBe(19);
 
     const again = await client.polish(
-      makeRequest({ clientRequestId: "123e4567-e89b-42d3-a456-426614174001" }),
+      makeMockRequest({ clientRequestId: "123e4567-e89b-42d3-a456-426614174001" }),
     );
     expect(again.items[0].polished).toBe(result.items[0].polished);
   });
@@ -73,12 +87,12 @@ describe("createMockPolishClient", () => {
     const quotaBefore = await client.getQuota();
     expect(quotaBefore.quota).toMatchObject({ limit: 1, remaining: 1 });
 
-    await client.polish(makeRequest());
+    await client.polish(makeMockRequest());
     const quotaAfter = await client.getQuota();
     expect(quotaAfter.quota.remaining).toBe(0);
 
     const error = (await client
-      .polish(makeRequest({ clientRequestId: "123e4567-e89b-42d3-a456-426614174002" }))
+      .polish(makeMockRequest({ clientRequestId: "123e4567-e89b-42d3-a456-426614174002" }))
       .catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe("QUOTA_EXCEEDED");
     expect(error.resetAt).toBeDefined();
@@ -86,8 +100,10 @@ describe("createMockPolishClient", () => {
 
   it("rejects a reused clientRequestId as DUPLICATE_REQUEST", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
-    await client.polish(makeRequest());
-    const error = (await client.polish(makeRequest()).catch((e: unknown) => e)) as PolishApiError;
+    await client.polish(makeMockRequest());
+    const error = (await client
+      .polish(makeMockRequest())
+      .catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe("DUPLICATE_REQUEST");
     expect(error.status).toBe(409);
   });
@@ -95,19 +111,19 @@ describe("createMockPolishClient", () => {
   it("honors the FAIL_UPSTREAM and FAIL_JSON codewords", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
     const upstream = (await client
-      .polish(makeRequest({ styleInstruction: "FAIL_UPSTREAM" }))
+      .polish(makeMockRequest({ styleInstruction: "FAIL_UPSTREAM" }))
       .catch((e: unknown) => e)) as PolishApiError;
     expect(upstream.code).toBe("UPSTREAM_ERROR");
 
     const json = (await client
-      .polish(makeRequest({ styleInstruction: "FAIL_JSON" }))
+      .polish(makeMockRequest({ styleInstruction: "FAIL_JSON" }))
       .catch((e: unknown) => e)) as PolishApiError;
     expect(json.code).toBe("INVALID_MODEL_OUTPUT");
   });
 
   it("rejects a malformed request as INVALID_REQUEST", async () => {
     const client = createMockPolishClient({ delayMs: 1 });
-    const bad = { ...makeRequest(), granularity: "section" } as PolishRequest;
+    const bad = { ...makeMockRequest(), granularity: "section" } as PolishPostRequest;
     const error = (await client.polish(bad).catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe("INVALID_REQUEST");
   });
@@ -117,8 +133,32 @@ describe("createMockPolishClient", () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
     const error = (await client
-      .polish(makeRequest({ styleInstruction: "SLOW" }), { signal: controller.signal })
+      .polish(makeMockRequest({ styleInstruction: "SLOW" }), { signal: controller.signal })
       .catch((e: unknown) => e)) as PolishApiError;
     expect(error.code).toBe(POLISH_TRANSPORT_ERROR_CODES.requestAborted);
+  });
+
+  it("rejects a stale route assertion instead of echoing caller authority", async () => {
+    const client = createMockPolishClient({ delayMs: 1 });
+    const request = makeMockRequest();
+    const error = (await client
+      .polish({
+        ...request,
+        expectedRoute: { ...request.expectedRoute, configGeneration: "1" },
+      })
+      .catch((caught: unknown) => caught)) as PolishApiError;
+
+    expect(error.code).toBe("AI_ROUTE_CHANGED");
+    expect(error.status).toBe(409);
+  });
+
+  it("keeps the dark availability authority dark at the POST boundary", async () => {
+    const client = createMockPolishClient({ delayMs: 1, availabilityEnabled: false });
+    const error = (await client
+      .polish(makeMockRequest())
+      .catch((caught: unknown) => caught)) as PolishApiError;
+
+    expect(error.code).toBe("AI_DISABLED");
+    expect(error.status).toBe(503);
   });
 });

@@ -341,6 +341,7 @@
     },
     "signInRequired": "Sign in to use AI polish.",
     "configChanged": "The form content changed; the disclosure was rebuilt. Please review and confirm again.",
+    "routeChanged": "The AI service route changed. Review the recipient and content again; nothing is submitted until you confirm.",
     "disclosure": {
       "heading": "Content sent to the AI service",
       "summary": "{targetCount} text(s) ({targetChars} chars) · {referenceCount} context item(s) ({referenceChars} chars)",

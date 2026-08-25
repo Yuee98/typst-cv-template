@@ -1,4 +1,4 @@
-import type { PolishSuccessResponse } from "@/lib/polish/contract";
+import type { PolishPostRequest, PolishSuccessResponse } from "@/lib/polish/contract";
 
 import {
   PolishApiError,
@@ -6,7 +6,6 @@ import {
 } from "./polish-client";
 import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
 import type { PolishError } from "./polish-reducer";
-import type { PolishSnapshot } from "./scope-builder";
 import {
   belongsToOwner,
   isOperationOwned,
@@ -21,7 +20,7 @@ import {
  */
 export interface PolishRequestLifecycleContext {
   operation: ActivePolishOperation;
-  requestSnapshot: PolishSnapshot;
+  postRequest: PolishPostRequest;
   controller: AbortController;
   client: PolishApiClient;
   isMounted: () => boolean;
@@ -32,6 +31,7 @@ export interface PolishRequestLifecycleContext {
   refreshQuotaOnSettle: () => void;
   onSuccess: (response: PolishSuccessResponse, snapshotStale: boolean) => void;
   onTermsRequired: () => void;
+  onRouteChanged: () => void;
   onFailure: (error: unknown) => void;
 }
 
@@ -45,7 +45,7 @@ export async function runPolishRequest(
 ): Promise<void> {
   const {
     operation,
-    requestSnapshot,
+    postRequest,
     controller,
     client,
   } = context;
@@ -61,7 +61,7 @@ export async function runPolishRequest(
   };
 
   try {
-    const response = await client.polish(requestSnapshot.apiRequest, {
+    const response = await client.polish(postRequest, {
       signal: controller.signal,
     });
     if (!context.isMounted()) return;
@@ -92,6 +92,10 @@ export async function runPolishRequest(
     context.clearOperationIfOwned(operation);
     if (error instanceof PolishApiError && error.code === "AI_TERMS_REQUIRED") {
       context.onTermsRequired();
+      return;
+    }
+    if (error instanceof PolishApiError && error.code === "AI_ROUTE_CHANGED") {
+      context.onRouteChanged();
       return;
     }
     context.onFailure(error);

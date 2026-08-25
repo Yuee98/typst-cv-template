@@ -341,6 +341,7 @@
     },
     "signInRequired": "登录后可使用 AI 润色。",
     "configChanged": "表单内容已变化，披露信息已更新，请重新确认。",
+    "routeChanged": "AI 服务路由已更新。请重新核对接收方与发送内容，再次确认后才会提交。",
     "disclosure": {
       "heading": "将发送给 AI 服务的内容",
       "summary": "{targetCount} 条正文（{targetChars} 字符）· {referenceCount} 条上下文（{referenceChars} 字符）",

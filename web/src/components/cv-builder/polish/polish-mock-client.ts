@@ -1,7 +1,9 @@
 import { AI_LEGAL_BUNDLE_VERSION } from "@/content/legal/constants";
 import {
+  polishExpectedRouteFromAvailability,
   polishAvailabilityResponseSchema,
-  polishRequestSchema,
+  polishPostRequestSchema,
+  type PolishExpectedRoute,
   type PolishAvailabilityResponse,
 } from "@/lib/polish/contract";
 import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
@@ -68,6 +70,25 @@ const MOCK_POLISH_DISABLED_RESPONSE: PolishAvailabilityResponse =
     },
   });
 
+const MOCK_POLISH_EXPECTED_ROUTE: PolishExpectedRoute = (() => {
+  const route = polishExpectedRouteFromAvailability(
+    MOCK_POLISH_AVAILABILITY_RESPONSE.availability,
+  );
+  if (!route) throw new Error("mock enabled availability did not produce an expected route");
+  return route;
+})();
+
+function sameExpectedRoute(left: PolishExpectedRoute, right: PolishExpectedRoute): boolean {
+  return (
+    left.schemaVersion === right.schemaVersion &&
+    left.configGeneration === right.configGeneration &&
+    left.profileVersionId === right.profileVersionId &&
+    left.legalBundleVersion === right.legalBundleVersion &&
+    left.runtimeContractId === right.runtimeContractId &&
+    left.runtimeContractSha256 === right.runtimeContractSha256
+  );
+}
+
 /** Deterministic pseudo-polish: whitespace collapse, else a visible marker. */
 export function mockPolishText(text: string): string {
   const collapsed = text.trim().replace(/\s+/g, " ");
@@ -125,9 +146,15 @@ export function createMockPolishClient(
 
   return {
     async polish(polishRequest, polishOptions) {
-      const parsed = polishRequestSchema.safeParse(polishRequest);
+      const parsed = polishPostRequestSchema.safeParse(polishRequest);
       if (!parsed.success) {
         throw new PolishApiError({ code: "INVALID_REQUEST", status: 400 });
+      }
+      if (options.availabilityEnabled === false) {
+        throw new PolishApiError({ code: "AI_DISABLED", status: 503 });
+      }
+      if (!sameExpectedRoute(parsed.data.expectedRoute, MOCK_POLISH_EXPECTED_ROUTE)) {
+        throw new PolishApiError({ code: "AI_ROUTE_CHANGED", status: 409 });
       }
       if (seenClientRequestIds.has(polishRequest.clientRequestId)) {
         throw new PolishApiError({

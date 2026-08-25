@@ -18,14 +18,14 @@ import {
 import { PolishApiError } from "./polish-api-error";
 import type {
   PolishAvailabilityResponse,
+  PolishPostRequest,
   PolishQuotaResponse,
-  PolishRequest,
   PolishSuccessResponse,
 } from "@/lib/polish/contract";
 
 export interface PolishApiClient {
   polish(
-    request: PolishRequest,
+    request: PolishPostRequest,
     options?: { signal?: AbortSignal },
   ): Promise<PolishSuccessResponse>;
   getAvailability(options?: { signal?: AbortSignal }): Promise<PolishAvailabilityResponse>;

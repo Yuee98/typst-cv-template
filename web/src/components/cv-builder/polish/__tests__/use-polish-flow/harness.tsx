@@ -50,9 +50,9 @@ import { DEFAULT_SECTION_ORDER, ORDERED_SECTION_IDS, type CvData } from "@/lib/c
 import type {
   PolishAvailabilityResponse,
   PolishLanguage,
+  PolishPostRequest,
   PolishQuota,
   PolishQuotaResponse,
-  PolishRequest,
   PolishSuccessResponse,
 } from "@/lib/polish/contract";
 
@@ -176,17 +176,21 @@ export interface MakeClientOptions {
 
 export function makeClient(options: MakeClientOptions = {}) {
   const polishCalls: Array<{
-    request: PolishRequest;
+    request: PolishPostRequest;
     deferred: Deferred<PolishSuccessResponse>;
     signal: AbortSignal | undefined;
   }> = [];
+  // Compatibility name for existing ownership tests: these deferred booleans
+  // now resolve the exact availability snapshot's termsAccepted bit. There is
+  // no separate production terms query after UX-004.
+  const hasAcceptedCalls: Array<Deferred<boolean>> = [];
   const availabilityCalls: Array<{
     deferred: Deferred<PolishAvailabilityResponse>;
     signal: AbortSignal | undefined;
   }> = [];
   const quotaCalls: Array<Deferred<PolishQuotaResponse>> = [];
   const client: PolishApiClient = {
-    polish: vi.fn((request: PolishRequest, options?: { signal?: AbortSignal }) => {
+    polish: vi.fn((request: PolishPostRequest, options?: { signal?: AbortSignal }) => {
       const call = deferred<PolishSuccessResponse>();
       polishCalls.push({ request, deferred: call, signal: options?.signal });
       return call.promise;
@@ -195,7 +199,22 @@ export function makeClient(options: MakeClientOptions = {}) {
       const call = deferred<PolishAvailabilityResponse>();
       availabilityCalls.push({ deferred: call, signal: requestOptions?.signal });
       if (!options.deferAvailability) {
-        call.resolve(options.availabilityResponse ?? ENABLED_AVAILABILITY_BODY);
+        const accepted = deferred<boolean>();
+        hasAcceptedCalls.push(accepted);
+        void accepted.promise.then(
+          (termsAccepted) => {
+            const response = options.availabilityResponse ?? ENABLED_AVAILABILITY_BODY;
+            call.resolve(
+              response.availability.enabled
+                ? {
+                    ...response,
+                    availability: { ...response.availability, termsAccepted },
+                  }
+                : response,
+            );
+          },
+          (reason) => call.reject(reason),
+        );
       }
       return call.promise;
     }),
@@ -205,29 +224,24 @@ export function makeClient(options: MakeClientOptions = {}) {
       return call.promise;
     }),
   };
-  return { client, polishCalls, availabilityCalls, quotaCalls };
+  return { client, polishCalls, availabilityCalls, hasAcceptedCalls, quotaCalls };
 }
 
 export function makeTermsGateway() {
-  const hasAcceptedCalls: Array<Deferred<boolean>> = [];
-  const acceptCalls: Array<Deferred<void>> = [];
+  type LegalBundleVersion = Parameters<PolishTermsGateway["accept"]>[0];
+  const acceptCalls: Array<Deferred<void> & { legalBundleVersion: LegalBundleVersion }> = [];
   const termsGateway: PolishTermsGateway = {
-    hasAccepted: vi.fn(() => {
-      const call = deferred<boolean>();
-      hasAcceptedCalls.push(call);
-      return call.promise;
-    }),
-    accept: vi.fn(() => {
+    accept: vi.fn((legalBundleVersion: LegalBundleVersion) => {
       const call = deferred<void>();
-      acceptCalls.push(call);
+      acceptCalls.push({ ...call, legalBundleVersion });
       return call.promise;
     }),
   };
-  return { termsGateway, hasAcceptedCalls, acceptCalls };
+  return { termsGateway, acceptCalls };
 }
 
 export function successResponse(
-  request: PolishRequest,
+  request: PolishPostRequest,
   remaining: number,
   requestId = "srv-req-1",
 ): PolishSuccessResponse {
@@ -287,8 +301,9 @@ export function renderHarness(
   clientOptions?: MakeClientOptions,
 ) {
   const handleRef = createRef<HarnessHandle>();
-  const { client, polishCalls, availabilityCalls, quotaCalls } = makeClient(clientOptions);
-  const { termsGateway, hasAcceptedCalls, acceptCalls } = makeTermsGateway();
+  const { client, polishCalls, availabilityCalls, hasAcceptedCalls, quotaCalls } =
+    makeClient(clientOptions);
+  const { termsGateway, acceptCalls } = makeTermsGateway();
   const props: Omit<HarnessProps, "handleRef"> = {
     documentId: "doc-1",
     language: "zh",
@@ -450,8 +465,8 @@ export function RaceParent({
 
 export function renderRaceParent() {
   const handleRef = createRef<RaceParentHandle>();
-  const { client, polishCalls, quotaCalls } = makeClient();
-  const { termsGateway, hasAcceptedCalls, acceptCalls } = makeTermsGateway();
+  const { client, polishCalls, hasAcceptedCalls, quotaCalls } = makeClient();
+  const { termsGateway, acceptCalls } = makeTermsGateway();
   const onCommitRef: { current: (() => void) | null } = { current: null };
   render(
     <RaceParent
@@ -584,8 +599,8 @@ export function UnmountRaceParent({
 
 export function renderUnmountRace() {
   const handleRef = createRef<UnmountRaceHandle>();
-  const { client, polishCalls, quotaCalls } = makeClient();
-  const { termsGateway, hasAcceptedCalls, acceptCalls } = makeTermsGateway();
+  const { client, polishCalls, hasAcceptedCalls, quotaCalls } = makeClient();
+  const { termsGateway, acceptCalls } = makeTermsGateway();
   const onCommitRef: { current: (() => void) | null } = { current: null };
   render(
     <UnmountRaceParent

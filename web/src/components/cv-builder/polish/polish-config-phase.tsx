@@ -53,6 +53,15 @@ export function PolishConfigPhase({ flow }: { flow: PolishFlow }) {
         disclosure && <DisclosureSummary disclosure={disclosure} />
       )}
 
+      {flow.routeChangedHint && (
+        <div
+          role="status"
+          className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning-foreground"
+        >
+          {t("routeChanged")}
+        </div>
+      )}
+
       <AvailabilityDisclosure flow={flow} />
 
       {/* Fixed privacy reminder; the E2EE variant gets warning-level styling
@@ -357,7 +366,12 @@ function StyleSelector({ flow }: { flow: PolishFlow }) {
 function TermsRow({ flow }: { flow: PolishFlow }) {
   const t = useTranslations("PolishDialog");
   const { terms } = flow;
-  if (!flow.signedIn || terms.status === "accepted" || terms.status === "unknown") {
+  if (
+    !flow.signedIn ||
+    flow.availabilityStatus !== "ready" ||
+    terms.status === "accepted" ||
+    terms.status === "unknown"
+  ) {
     return null;
   }
   if (terms.status === "checking") {

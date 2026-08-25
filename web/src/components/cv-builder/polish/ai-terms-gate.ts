@@ -3,7 +3,8 @@
  *
  * Pure state machine, mirroring the dialog flow:
  *
- * - unknown → checking → accepted | required | error
+ * - unknown → checking → accepted | required | error, initialized from the
+ *   exact availability snapshot's `termsAccepted` bit
  * - required → accepting → accepted | error (confirm writes the acceptance
  *   record BEFORE the polish request is fired)
  * - any state → required (serverRejected) when the server answers 403
@@ -17,7 +18,7 @@
 export type AiTermsStatus =
   /** Not queried yet (dialog just opened, or signed out). */
   | "unknown"
-  /** Acceptance query in flight. */
+  /** Authenticated availability/legal-state read in flight. */
   | "checking"
   /** Not accepted — the checkbox gates the confirm button. */
   | "required"
@@ -25,7 +26,7 @@ export type AiTermsStatus =
   | "accepting"
   /** Accepted — no checkbox, confirm allowed. */
   | "accepted"
-  /** Query or acceptance write failed; retry offered. */
+  /** Availability/legal-state read or acceptance write failed; retry offered. */
   | "error";
 
 export interface AiTermsGateState {

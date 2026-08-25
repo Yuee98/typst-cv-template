@@ -46,7 +46,6 @@ describe("usePolishFlow runtime availability", () => {
     await act(async () => {
       h.availabilityCalls[0].deferred.resolve(ENABLED_AVAILABILITY_BODY);
       h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
-      h.hasAcceptedCalls[0].resolve(true);
     });
 
     expect(h.flow().availabilityStatus).toBe("ready");
@@ -93,7 +92,6 @@ describe("usePolishFlow runtime availability", () => {
     await act(async () => {
       h.availabilityCalls[0].deferred.resolve(DISABLED_AVAILABILITY_BODY);
       h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
-      h.hasAcceptedCalls[0].resolve(true);
     });
     expect(h.flow().availabilityStatus).toBe("disabled");
     expect(h.flow().availabilityCandidate).toBeNull();
@@ -128,7 +126,6 @@ describe("usePolishFlow runtime availability", () => {
         },
       });
       h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
-      h.hasAcceptedCalls[0].resolve(true);
     });
 
     expect(h.flow().availabilityStatus).toBe("ready");
