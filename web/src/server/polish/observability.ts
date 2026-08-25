@@ -15,7 +15,8 @@ const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const CURRENCY = /^[A-Z]{3}$/u;
 const HMAC_TAG = /^hmac-sha256:[0-9a-f]{64}$/u;
 const MAX_POSTGRES_BIGINT = BigInt("9223372036854775807");
-const AUTHORIZED_FACT = Symbol("polish-observability-authorized-fact");
+const VALIDATED_ATTEMPT_FACTS = new WeakSet<object>();
+const VALIDATED_REQUEST_FACTS = new WeakSet<object>();
 
 const ATTEMPT_STATUSES = [
   "succeeded",
@@ -151,35 +152,34 @@ export type PolishObservabilitySinkV1 = (event: PolishObservabilityEventV1) => v
 
 export interface PolishObservabilityProjectorV1 {
   readonly emitAttempt: (
-    fact: PolishAuthoritativeAttemptObservabilityFactV1,
+    fact: PolishValidatedAttemptObservabilityFactV1,
   ) => PolishAttemptObservabilityEventV1;
   readonly emitRequest: (
-    fact: PolishAuthoritativeRequestObservabilityFactV1,
+    fact: PolishValidatedRequestObservabilityFactV1,
   ) => PolishRequestObservabilityEventV1;
 }
 
 /**
- * This is an API boundary marker, not a database provenance proof.  The
- * caller must mint it only from an already persisted/authoritative fact.
- * The private runtime symbol prevents accidentally passing an arbitrary
- * object to the projector.  HMAC tags are likewise consumed as already
- * authorized correlation observations; this module does not verify them.
+ * This is a validated-shape boundary, not a database provenance proof.
+ * Integration MUST call it only with a fact from a persisted aggregate
+ * builder; that cross-file gate is intentionally still open here. The
+ * module-private WeakSet prevents copying, proxying, or rebinding a validated
+ * object into the projector. HMAC tags are consumed as already-authorized
+ * correlation observations; this module does not verify them.
  */
-export interface PolishAuthoritativeAttemptObservabilityFactV1 {
-  readonly kind: "polish_authoritative_attempt_fact_v1";
+export interface PolishValidatedAttemptObservabilityFactV1 {
+  readonly kind: "polish_validated_attempt_fact_v1";
 }
 
-export interface PolishAuthoritativeRequestObservabilityFactV1 {
-  readonly kind: "polish_authoritative_request_fact_v1";
+export interface PolishValidatedRequestObservabilityFactV1 {
+  readonly kind: "polish_validated_request_fact_v1";
 }
 
-type InternalAttemptFact = PolishAuthoritativeAttemptObservabilityFactV1 & {
-  readonly [AUTHORIZED_FACT]: "attempt";
+type InternalAttemptFact = PolishValidatedAttemptObservabilityFactV1 & {
   readonly fact: ParsedAttemptFact;
 };
 
-type InternalRequestFact = PolishAuthoritativeRequestObservabilityFactV1 & {
-  readonly [AUTHORIZED_FACT]: "request";
+type InternalRequestFact = PolishValidatedRequestObservabilityFactV1 & {
   readonly fact: ParsedRequestFact;
 };
 
@@ -428,7 +428,10 @@ function attemptUpstream(value: unknown): PolishAttemptUpstreamObservationV1 {
   const statusCode = httpStatus(source.httpStatus);
   if (
     !source.transmitted &&
-    (!["canceled", "timed_out"].includes(status) || statusCode !== null)
+    (!["canceled", "timed_out"].includes(status) ||
+      statusCode !== null ||
+      source.gatewayRequestTag !== null ||
+      source.providerRequestTag !== null)
   ) {
     invalid();
   }
@@ -445,7 +448,7 @@ function requestUpstream(value: unknown, attemptCount: number): PolishRequestUps
   const source = record(value);
   exactKeys(source, ["transmittedAttemptCount", "successfulAttemptCount", "latestHttpStatus"]);
   const transmittedAttemptCount = count(source.transmittedAttemptCount, 2);
-  const successfulAttemptCount = count(source.successfulAttemptCount, 2);
+  const successfulAttemptCount = count(source.successfulAttemptCount, 1);
   const latestHttpStatus = httpStatus(source.latestHttpStatus);
   if (
     transmittedAttemptCount > attemptCount ||
@@ -517,15 +520,25 @@ function parseRequestFact(value: unknown): ParsedRequestFact {
     (attemptCount === 2 &&
       ((outcome === "succeeded" && retry !== "succeeded") ||
         (outcome !== "succeeded" && retry !== "exhausted"))) ||
-    (attemptCount === 0 &&
-      !["released", "abandoned", "canceled"].includes(outcome)) ||
-    (attemptCount > 0 && ["released", "abandoned"].includes(outcome)) ||
-    (outcome === "succeeded" && attemptCount === 0)
+    (attemptCount === 0 && outcome !== "released") ||
+    (outcome === "released" && attemptCount !== 0)
   ) {
     invalid();
   }
   const upstream = requestUpstream(source.upstream, attemptCount);
-  if ((outcome === "succeeded") !== (upstream.successfulAttemptCount > 0)) invalid();
+  const parsedUsage = usage(source.usage);
+  if (outcome === "succeeded") {
+    if (
+      attemptCount === 0 ||
+      upstream.transmittedAttemptCount < 1 ||
+      upstream.successfulAttemptCount !== 1 ||
+      parsedUsage.availability !== "observed"
+    ) {
+      invalid();
+    }
+  } else if (upstream.successfulAttemptCount !== 0) {
+    invalid();
+  }
   return Object.freeze({
     requestId: uuid(source.requestId),
     attemptCount,
@@ -535,40 +548,42 @@ function parseRequestFact(value: unknown): ParsedRequestFact {
     profile: profile(source.profile),
     policy: policy(source.policy),
     upstream,
-    usage: usage(source.usage),
+    usage: parsedUsage,
     cost: cost(source.cost),
   });
 }
 
-export function authorizePolishAttemptObservabilityFactV1(
+export function validatePolishAttemptObservabilityFactV1(
   fact: unknown,
-): PolishAuthoritativeAttemptObservabilityFactV1 {
+): PolishValidatedAttemptObservabilityFactV1 {
   const parsed = parseAttemptFact(fact);
-  return Object.freeze({
-    kind: "polish_authoritative_attempt_fact_v1" as const,
+  const validated = Object.freeze({
+    kind: "polish_validated_attempt_fact_v1" as const,
     fact: parsed,
-    [AUTHORIZED_FACT]: "attempt" as const,
-  }) as PolishAuthoritativeAttemptObservabilityFactV1;
+  });
+  VALIDATED_ATTEMPT_FACTS.add(validated);
+  return validated;
 }
 
-export function authorizePolishRequestObservabilityFactV1(
+export function validatePolishRequestObservabilityFactV1(
   fact: unknown,
-): PolishAuthoritativeRequestObservabilityFactV1 {
+): PolishValidatedRequestObservabilityFactV1 {
   const parsed = parseRequestFact(fact);
-  return Object.freeze({
-    kind: "polish_authoritative_request_fact_v1" as const,
+  const validated = Object.freeze({
+    kind: "polish_validated_request_fact_v1" as const,
     fact: parsed,
-    [AUTHORIZED_FACT]: "request" as const,
-  }) as PolishAuthoritativeRequestObservabilityFactV1;
+  });
+  VALIDATED_REQUEST_FACTS.add(validated);
+  return validated;
 }
 
 function internalAttemptFact(
-  fact: PolishAuthoritativeAttemptObservabilityFactV1,
+  fact: PolishValidatedAttemptObservabilityFactV1,
 ): InternalAttemptFact {
   if (
     typeof fact !== "object" ||
     fact === null ||
-    (fact as Partial<InternalAttemptFact>)[AUTHORIZED_FACT] !== "attempt"
+    !VALIDATED_ATTEMPT_FACTS.has(fact)
   ) {
     invalid();
   }
@@ -576,21 +591,24 @@ function internalAttemptFact(
 }
 
 function internalRequestFact(
-  fact: PolishAuthoritativeRequestObservabilityFactV1,
+  fact: PolishValidatedRequestObservabilityFactV1,
 ): InternalRequestFact {
   if (
     typeof fact !== "object" ||
     fact === null ||
-    (fact as Partial<InternalRequestFact>)[AUTHORIZED_FACT] !== "request"
+    !VALIDATED_REQUEST_FACTS.has(fact)
   ) {
     invalid();
   }
   return fact as InternalRequestFact;
 }
 
-/** Project one authorized persisted terminal provider-attempt fact. */
+/**
+ * Project one validated terminal provider-attempt shape. Persisted provenance
+ * remains an integration responsibility and is not established here.
+ */
 export function projectPolishAttemptObservabilityEventV1(
-  fact: PolishAuthoritativeAttemptObservabilityFactV1,
+  fact: PolishValidatedAttemptObservabilityFactV1,
 ): PolishAttemptObservabilityEventV1 {
   const source = internalAttemptFact(fact).fact;
   return Object.freeze({
@@ -610,9 +628,12 @@ export function projectPolishAttemptObservabilityEventV1(
   });
 }
 
-/** Project one authorized terminal user-visible request aggregate. */
+/**
+ * Project one validated terminal request aggregate shape. Its persisted
+ * request/attempt authority must be established before this call.
+ */
 export function projectPolishRequestObservabilityEventV1(
-  fact: PolishAuthoritativeRequestObservabilityFactV1,
+  fact: PolishValidatedRequestObservabilityFactV1,
 ): PolishRequestObservabilityEventV1 {
   const source = internalRequestFact(fact).fact;
   return Object.freeze({
@@ -643,12 +664,12 @@ export function createPolishObservabilityProjectorV1(
 ): PolishObservabilityProjectorV1 {
   if (typeof sink !== "function") invalid();
   return Object.freeze({
-    emitAttempt(fact: PolishAuthoritativeAttemptObservabilityFactV1): PolishAttemptObservabilityEventV1 {
+    emitAttempt(fact: PolishValidatedAttemptObservabilityFactV1): PolishAttemptObservabilityEventV1 {
       const event = projectPolishAttemptObservabilityEventV1(fact);
       sink(event);
       return event;
     },
-    emitRequest(fact: PolishAuthoritativeRequestObservabilityFactV1): PolishRequestObservabilityEventV1 {
+    emitRequest(fact: PolishValidatedRequestObservabilityFactV1): PolishRequestObservabilityEventV1 {
       const event = projectPolishRequestObservabilityEventV1(fact);
       sink(event);
       return event;
