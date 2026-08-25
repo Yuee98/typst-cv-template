@@ -880,6 +880,31 @@ describe("RT-009 V2 request settlement", () => {
     expect(rpc.mock.calls[0][1]).toBe(rpc.mock.calls[1][1]);
   });
 
+  it("does not launch a second finalize write after cancellation becomes observable", async () => {
+    const controller = new AbortController();
+    const rpc = vi.fn(async () => {
+      controller.abort(new DOMException("caller disconnected", "AbortError"));
+      throw new Error("lost response after the first write");
+    });
+    const client = { rpc } as unknown as SupabaseClient;
+    const error = await capturedError(
+      finalizePolishRequestV2(
+        client,
+        {
+          settlementKind: "zero_child_release",
+          reservationId: RESERVATION_ID,
+        },
+        { signal: controller.signal },
+      ),
+    );
+    expect(error).toMatchObject({
+      kind: "FINALIZE_UNKNOWN",
+      reason: "CANCELED_BEFORE_RETRY",
+    });
+    expect(error.message).not.toContain("lost response");
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
   it("withholds success on conflicting settlement and leaves double ambiguity unknown", async () => {
     const conflict = sequenceClient({
       data: {

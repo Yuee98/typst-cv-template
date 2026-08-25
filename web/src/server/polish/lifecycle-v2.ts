@@ -26,6 +26,7 @@ import {
   getPolishExecutionSnapshotV1,
   PolishLifecycleV2RpcError,
   reservePolishRequestV2,
+  type PolishFinalizeCallOptionsV2,
   type PolishFinalizeRequestV2,
   type PolishFinalizeResultV2,
   type ProviderAttemptStartV2,
@@ -174,6 +175,7 @@ export interface PolishRouteDepsV2 {
   ) => ReturnType<typeof recordPolishRequestCancellationV2>;
   readonly finalize: (
     params: PolishFinalizeRequestV2,
+    options?: PolishFinalizeCallOptionsV2,
   ) => Promise<PolishFinalizeResultV2>;
   readonly runtimeTargetResolver: RuntimeTargetResolverV1;
   readonly resolveProvider: PolishAdapterResolverV2;
@@ -232,6 +234,16 @@ interface SettlementObservationV2 {
     | "rejected";
   readonly result?: PolishFinalizeResultV2;
 }
+
+interface CancellationAwareSettlementObservationV2
+  extends SettlementObservationV2 {
+  readonly cancellationRequested: boolean;
+}
+
+type CancellationAuthorityObservationV2 =
+  | "observed"
+  | "finalized_first"
+  | "unknown";
 
 function safeRequestIdV2(value: unknown): string | null {
   return typeof value === "string" && CANONICAL_UUID_V2.test(value) ? value : null;
@@ -307,11 +319,12 @@ function requestMetadataV2(request: PolishRequest) {
 async function observeSettlementV2(
   deps: PolishRouteDepsV2,
   params: PolishFinalizeRequestV2,
+  options: PolishFinalizeCallOptionsV2 = {},
 ): Promise<SettlementObservationV2> {
   try {
     return Object.freeze({
       disposition: "confirmed" as const,
-      result: await deps.finalize(params),
+      result: await deps.finalize(params, options),
     });
   } catch (error) {
     if (error instanceof PolishLifecycleV2RpcError) {
@@ -326,16 +339,177 @@ async function observeSettlementV2(
   }
 }
 
+async function observeCancellationAuthorityV2(
+  deps: PolishRouteDepsV2,
+  reservationId: string,
+): Promise<CancellationAuthorityObservationV2> {
+  try {
+    const result = await deps.recordCancellation({ reservationId });
+    return result.state === "observed" ? "observed" : "unknown";
+  } catch (error) {
+    if (
+      error instanceof PolishLifecycleV2RpcError &&
+      error.kind === "CANCELLATION_REJECTED" &&
+      error.reason === "ALREADY_FINALIZED"
+    ) {
+      return "finalized_first";
+    }
+    return "unknown";
+  }
+}
+
+function cancellationSettlementParamsV2(
+  params: PolishFinalizeRequestV2,
+): PolishFinalizeRequestV2 {
+  if (params.settlementKind === "zero_child_release") return params;
+  return Object.freeze({ ...params, status: "canceled" as const });
+}
+
+function settlementResultMatchesParamsV2(
+  result: PolishFinalizeResultV2,
+  params: PolishFinalizeRequestV2,
+): boolean {
+  if (params.settlementKind === "zero_child_release") {
+    return result.status === "released" && result.quotaCharged === false;
+  }
+  return (
+    result.status === params.status &&
+    result.quotaCharged ===
+      (params.status === "succeeded" ||
+        (params.status === "canceled" && params.transmitted))
+  );
+}
+
+/**
+ * Keeps cancellation observable for the complete unresolved settlement await.
+ * The DB parent-row lock decides whether cancellation or finalization won.
+ * Only a durable cancellation receipt permits a new canceled assertion; an
+ * ALREADY_FINALIZED receipt permits an exact immutable readback replay.
+ */
+async function settleWithCancellationV2(
+  deps: PolishRouteDepsV2,
+  params: PolishFinalizeRequestV2,
+  signal: AbortSignal,
+  cancellationAlreadyRequested = false,
+): Promise<CancellationAwareSettlementObservationV2> {
+  let cancellationPromise:
+    | Promise<CancellationAuthorityObservationV2>
+    | undefined;
+  let resolveCancellationStarted!: () => void;
+  const cancellationStarted = new Promise<void>((resolve) => {
+    resolveCancellationStarted = resolve;
+  });
+  const startCancellation = () => {
+    if (cancellationPromise === undefined) {
+      cancellationPromise = observeCancellationAuthorityV2(
+        deps,
+        params.reservationId,
+      );
+      resolveCancellationStarted();
+    }
+  };
+  const onAbort = () => startCancellation();
+  signal.addEventListener("abort", onAbort, { once: true });
+  // Re-read after listener registration so an already-aborted signal and an
+  // abort concurrent with setup both start the same durable observation.
+  if (cancellationAlreadyRequested || signal.aborted) startCancellation();
+
+  const resolveCancellationRace = async (
+    cancellation: CancellationAuthorityObservationV2,
+    original?: SettlementObservationV2,
+  ): Promise<CancellationAwareSettlementObservationV2> => {
+    if (cancellation === "observed") {
+      const canceledParams = cancellationSettlementParamsV2(params);
+      if (
+        original?.disposition === "confirmed" &&
+        original.result !== undefined &&
+        settlementResultMatchesParamsV2(original.result, canceledParams)
+      ) {
+        return Object.freeze({
+          ...original,
+          cancellationRequested: true,
+        });
+      }
+      const canceled = await observeSettlementV2(deps, canceledParams);
+      return Object.freeze({
+        ...canceled,
+        cancellationRequested: true,
+      });
+    }
+
+    if (cancellation === "finalized_first") {
+      const finalized =
+        original?.disposition === "confirmed"
+          ? original
+          : await observeSettlementV2(deps, params);
+      return Object.freeze({
+        ...finalized,
+        cancellationRequested: true,
+      });
+    }
+
+    return Object.freeze({
+      ...(original?.disposition === "confirmed"
+        ? original
+        : { disposition: "unknown" as const }),
+      cancellationRequested: true,
+    });
+  };
+
+  try {
+    if (cancellationPromise !== undefined) {
+      return resolveCancellationRace(await cancellationPromise);
+    }
+
+    let originalObservation: SettlementObservationV2 | undefined;
+    const originalPromise = observeSettlementV2(deps, params, { signal }).then(
+      (observation) => {
+        originalObservation = observation;
+        return observation;
+      },
+    );
+    const first = await Promise.race([
+      originalPromise.then((observation) =>
+        Object.freeze({ kind: "settlement" as const, observation }),
+      ),
+      cancellationStarted.then(() =>
+        Object.freeze({ kind: "cancellation" as const }),
+      ),
+    ]);
+
+    if (first.kind === "settlement" && cancellationPromise === undefined) {
+      return Object.freeze({
+        ...first.observation,
+        cancellationRequested: false,
+      });
+    }
+
+    return resolveCancellationRace(
+      await cancellationPromise!,
+      first.kind === "settlement" ? first.observation : originalObservation,
+    );
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 async function releaseZeroChildV2(
   deps: PolishRouteDepsV2,
   reservationId: string,
   request: PolishRequest,
-): Promise<SettlementObservationV2> {
-  return observeSettlementV2(deps, {
-    settlementKind: "zero_child_release",
-    reservationId,
-    metadata: requestMetadataV2(request),
-  });
+  signal: AbortSignal,
+  cancellationAlreadyRequested = false,
+): Promise<CancellationAwareSettlementObservationV2> {
+  return settleWithCancellationV2(
+    deps,
+    {
+      settlementKind: "zero_child_release",
+      reservationId,
+      metadata: requestMetadataV2(request),
+    },
+    signal,
+    cancellationAlreadyRequested,
+  );
 }
 
 async function settleAttemptFactsV2(
@@ -345,17 +519,24 @@ async function settleAttemptFactsV2(
   status: "succeeded" | "canceled" | "failed_upstream" | "invalid_output",
   attemptFacts: readonly PolishAttemptCompletedFactV2[],
   aggregate: RequestUsageAggregateV2,
-): Promise<SettlementObservationV2> {
+  signal: AbortSignal,
+  cancellationAlreadyRequested = false,
+): Promise<CancellationAwareSettlementObservationV2> {
   // This any-transmitted value is only a consistency assertion. Durable
   // attempt rows are the settlement authority inside the DB transaction.
-  return observeSettlementV2(deps, {
-    settlementKind: "attempt_v2",
-    reservationId,
-    status,
-    transmitted: attemptFacts.some((fact) => fact.transmitted),
-    providerBillable: aggregate.providerBillable,
-    metadata: requestMetadataV2(request),
-  });
+  return settleWithCancellationV2(
+    deps,
+    {
+      settlementKind: "attempt_v2",
+      reservationId,
+      status,
+      transmitted: attemptFacts.some((fact) => fact.transmitted),
+      providerBillable: aggregate.providerBillable,
+      metadata: requestMetadataV2(request),
+    },
+    signal,
+    cancellationAlreadyRequested,
+  );
 }
 
 function snapshotFailureCodeV2(error: PolishLifecycleV2RpcError): PolishLifecycleV2FailureCode {
@@ -460,6 +641,16 @@ export async function executePolishLifecycleV2(
     return reserveFailureV2(deps.logger, input.requestId, error);
   }
 
+  const observeUnsettledCancellation = async (): Promise<
+    "not_attempted" | "unknown"
+  > =>
+    (await observeCancellationAuthorityV2(
+      deps,
+      reservation.reservationId,
+    )) === "unknown"
+      ? "unknown"
+      : "not_attempted";
+
   const failAfterZeroChild = async (
     code: PolishLifecycleV2FailureCode,
     stage: PolishLifecycleV2Stage,
@@ -468,33 +659,32 @@ export async function executePolishLifecycleV2(
       deps,
       reservation.reservationId,
       input.request,
+      input.signal,
     );
     return failureV2(deps.logger, {
       requestId: input.requestId,
-      code,
-      stage,
+      code: settlement.cancellationRequested ? "CANCELED" : code,
+      stage: settlement.cancellationRequested ? "canceled" : stage,
       attemptCount: 0,
       settlement: outcomeSettlementV2(settlement),
     });
   };
 
   const cancelAfterReservation = async (): Promise<PolishLifecycleV2Failure> => {
-    try {
-      await deps.recordCancellation({ reservationId: reservation.reservationId });
-    } catch (error) {
-      return failureV2(deps.logger, {
-        requestId: input.requestId,
-        code: "CANCELED",
-        stage: "canceled",
-        attemptCount: 0,
-        settlement:
-          error instanceof PolishLifecycleV2RpcError &&
-          error.kind === "CANCELLATION_UNKNOWN"
-            ? "unknown"
-            : "not_attempted",
-      });
-    }
-    return failAfterZeroChild("CANCELED", "canceled");
+    const settlement = await releaseZeroChildV2(
+      deps,
+      reservation.reservationId,
+      input.request,
+      input.signal,
+      true,
+    );
+    return failureV2(deps.logger, {
+      requestId: input.requestId,
+      code: "CANCELED",
+      stage: "canceled",
+      attemptCount: 0,
+      settlement: outcomeSettlementV2(settlement),
+    });
   };
 
   if (input.signal.aborted) {
@@ -607,7 +797,17 @@ export async function executePolishLifecycleV2(
       "succeeded",
       persistedFacts,
       result.aggregate,
+      input.signal,
     );
+    if (settlement.cancellationRequested) {
+      return failureV2(deps.logger, {
+        requestId: input.requestId,
+        code: "CANCELED",
+        stage: "canceled",
+        attemptCount: persistedFacts.length,
+        settlement: outcomeSettlementV2(settlement),
+      });
+    }
     if (settlement.disposition === "conflict") {
       return failureV2(deps.logger, {
         requestId: input.requestId,
@@ -657,23 +857,6 @@ export async function executePolishLifecycleV2(
     return success;
   } catch (error) {
     const cancellationRequested = input.signal.aborted || isAbortError(error);
-    if (cancellationRequested) {
-      try {
-        await deps.recordCancellation({ reservationId: reservation.reservationId });
-      } catch (cancellationError) {
-        return failureV2(deps.logger, {
-          requestId: input.requestId,
-          code: "CANCELED",
-          stage: "canceled",
-          attemptCount: persistedFacts.length,
-          settlement:
-            cancellationError instanceof PolishLifecycleV2RpcError &&
-            cancellationError.kind === "CANCELLATION_UNKNOWN"
-              ? "unknown"
-              : "not_attempted",
-        });
-      }
-    }
     if (error instanceof PolishAttemptPersistenceErrorV2 && !cancellationRequested) {
       return failureV2(deps.logger, {
         requestId: input.requestId,
@@ -691,6 +874,7 @@ export async function executePolishLifecycleV2(
         error.kind === "ATTEMPT_START_UNKNOWN")
     ) {
       if (cancellationRequested) {
+        await observeUnsettledCancellation();
         return failureV2(deps.logger, {
           requestId: input.requestId,
           code: "CANCELED",
@@ -724,6 +908,7 @@ export async function executePolishLifecycleV2(
 
     if (uncompletedAdmission) {
       if (cancellationRequested) {
+        await observeUnsettledCancellation();
         return failureV2(deps.logger, {
           requestId: input.requestId,
           code: "CANCELED",
@@ -776,12 +961,14 @@ export async function executePolishLifecycleV2(
       aggregate = aggregatePersistedFactsV2(persistedFacts);
     }
 
-    let settlement: SettlementObservationV2;
+    let settlement: CancellationAwareSettlementObservationV2;
     if (persistedFacts.length === 0) {
       settlement = await releaseZeroChildV2(
         deps,
         reservation.reservationId,
         input.request,
+        input.signal,
+        cancellationRequested,
       );
     } else if (aggregate !== null) {
       settlement = await settleAttemptFactsV2(
@@ -791,9 +978,25 @@ export async function executePolishLifecycleV2(
         requestStatus,
         persistedFacts,
         aggregate,
+        input.signal,
+        cancellationRequested,
       );
     } else {
-      settlement = Object.freeze({ disposition: "rejected" as const });
+      const cancellationDisposition = cancellationRequested
+        ? await observeUnsettledCancellation()
+        : null;
+      settlement = Object.freeze({
+        disposition:
+          cancellationDisposition === "unknown"
+            ? ("unknown" as const)
+            : ("rejected" as const),
+        cancellationRequested,
+      });
+    }
+
+    if (settlement.cancellationRequested) {
+      primaryCode = "CANCELED";
+      primaryStage = "canceled";
     }
 
     return failureV2(deps.logger, {

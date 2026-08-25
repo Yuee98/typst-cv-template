@@ -604,6 +604,55 @@ function finalizeAttemptSql(
   `;
 }
 
+function finalizeCanceledAttemptSql(
+  reservationId: string,
+  options: { markerBefore?: string; markerAfter?: string; commit?: boolean } = {},
+): string {
+  return String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin;
+    set local statement_timeout = '10s';
+    set local role service_role;
+    ${options.markerBefore ? `\\echo ${options.markerBefore}` : ""}
+    select public.finalize_ai_polish_request(
+      '${reservationId}'::uuid,
+      'canceled',
+      true,
+      null,
+      null,
+      '{"usage_schema_version":"attempt_v2"}'::jsonb,
+      'durable_cancellation_sequence_v1'
+    );
+    reset role;
+    ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
+    ${options.commit === false ? "" : "commit;"}
+  `;
+}
+
+function observeCancellationSql(
+  reservationId: string,
+  options: { markerBefore?: string; markerAfter?: string; commit?: boolean } = {},
+): string {
+  return String.raw`
+    \set ON_ERROR_STOP on
+    \pset format unaligned
+    \pset tuples_only on
+    begin;
+    set local statement_timeout = '10s';
+    set local role service_role;
+    ${options.markerBefore ? `\\echo ${options.markerBefore}` : ""}
+    select public.record_ai_polish_request_cancellation(
+      '${reservationId}'::uuid,
+      'observed'
+    );
+    reset role;
+    ${options.markerAfter ? `\\echo ${options.markerAfter}` : ""}
+    ${options.commit === false ? "" : "commit;"}
+  `;
+}
+
 function startAttemptSql(
   reservationId: string,
   attemptNo: 1 | 2,
@@ -3611,6 +3660,175 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       input_total_tokens: 100,
       known_estimated_cost_nanos: 1234,
     });
+  });
+
+  it("linearizes cancellation-first settlement and keeps charged counters exact on replay", async () => {
+    await harness.activateFreshRouteFixture();
+    const value = await completed("race-cancellation-before-finalize", {
+      p_status: "failed_upstream",
+      p_transmitted: true,
+      p_retry_eligible: false,
+      p_provider_billable: null,
+      p_usage: null,
+      p_cost: costObservation({
+        estimated_currency: null,
+        estimated_cost_nanos: null,
+        reconciliation_status: "incomplete_usage",
+      }),
+      p_metadata: attemptMetadata({
+        finish_reason: null,
+        failure_stage: "provider_http",
+      }),
+    });
+    const beforeUser = await getUsageRow(service, value.user.id);
+    const beforeGlobal = await getGlobalUsageRow(service);
+
+    const race = await runObservedBlockedRace(
+      observeCancellationSql(value.reservation.reservationId, {
+        markerAfter: "DB010_CANCELLATION_FIRST_READY",
+        commit: false,
+      }),
+      "DB010_CANCELLATION_FIRST_READY",
+      finalizeCanceledAttemptSql(value.reservation.reservationId, {
+        markerBefore: "DB010_CANCELED_FINALIZER_READY",
+      }),
+      "DB010_CANCELED_FINALIZER_READY",
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.holder.stdout).toContain('"state": "observed"');
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain('"alreadyFinalized": false');
+    expect(race.contender.stdout).toContain('"status": "canceled"');
+
+    const terminal = await settlementSnapshot(
+      value.user.id,
+      value.reservation.reservationId,
+    );
+    expect(terminal.request).toMatchObject({
+      state: "finalized",
+      status: "canceled",
+      quota_charged: true,
+      cancellation_state: "observed",
+      attempt_count: 1,
+    });
+    expect(terminal.user).toMatchObject({
+      request_count: beforeUser!.request_count,
+      input_cached_tokens: beforeUser!.input_cached_tokens,
+      input_uncached_tokens: beforeUser!.input_uncached_tokens,
+      output_tokens: beforeUser!.output_tokens,
+    });
+    expect(terminal.global).toMatchObject({
+      provider_started_count: beforeGlobal!.provider_started_count,
+      input_cached_tokens: beforeGlobal!.input_cached_tokens,
+      input_uncached_tokens: beforeGlobal!.input_uncached_tokens,
+      output_tokens: beforeGlobal!.output_tokens,
+    });
+    expect(await getProfileDaily()).toMatchObject({
+      request_count: 1,
+      input_total_tokens: 0,
+      output_tokens: 0,
+    });
+
+    expect(
+      await harness.finalize(value.reservation.reservationId, {
+        status: "canceled",
+        quotaCharged: true,
+        providerBillable: null,
+      }),
+    ).toMatchObject({ ok: true, alreadyFinalized: true, status: "canceled" });
+    const cancellationReplay = await service.rpc(
+      "record_ai_polish_request_cancellation",
+      {
+        p_reservation_id: value.reservation.reservationId,
+        p_observation: "observed",
+      },
+    );
+    expect(cancellationReplay.error).toBeNull();
+    expect(cancellationReplay.data).toEqual({
+      ok: false,
+      reason: "ALREADY_FINALIZED",
+    });
+    expect(
+      await settlementSnapshot(value.user.id, value.reservation.reservationId),
+    ).toEqual(terminal);
+  });
+
+  it("linearizes finalize-first cancellation and preserves exact terminal replay", async () => {
+    await harness.activateFreshRouteFixture();
+    const value = await completed("race-finalize-before-cancellation");
+    const beforeGlobal = await getGlobalUsageRow(service);
+
+    const race = await runObservedBlockedRace(
+      finalizeAttemptSql(value.reservation.reservationId, {
+        markerAfter: "DB010_FINALIZE_BEFORE_CANCELLATION_READY",
+        commit: false,
+      }),
+      "DB010_FINALIZE_BEFORE_CANCELLATION_READY",
+      observeCancellationSql(value.reservation.reservationId, {
+        markerBefore: "DB010_LATE_CANCELLATION_READY",
+      }),
+      "DB010_LATE_CANCELLATION_READY",
+    );
+
+    expect(race.holder.status, race.holder.stderr).toBe(0);
+    expect(race.holder.stdout).toContain('"alreadyFinalized": false');
+    expect(race.holder.stdout).toContain('"status": "succeeded"');
+    expect(race.contender.status, race.contender.stderr).toBe(0);
+    expect(race.contender.stdout).toContain('"reason": "ALREADY_FINALIZED"');
+
+    const terminal = await settlementSnapshot(
+      value.user.id,
+      value.reservation.reservationId,
+    );
+    expect(terminal.request).toMatchObject({
+      state: "finalized",
+      status: "succeeded",
+      quota_charged: true,
+      cancellation_state: null,
+      attempt_count: 1,
+      input_total_tokens: 100,
+      output_tokens: 20,
+    });
+    expect(terminal.user).toMatchObject({
+      request_count: 1,
+      input_cached_tokens: 60,
+      input_uncached_tokens: 40,
+      output_tokens: 20,
+    });
+    expect(terminal.global).toMatchObject({
+      provider_started_count: beforeGlobal!.provider_started_count,
+      input_cached_tokens: beforeGlobal!.input_cached_tokens + 60,
+      input_uncached_tokens: beforeGlobal!.input_uncached_tokens + 40,
+      output_tokens: beforeGlobal!.output_tokens + 20,
+    });
+    expect(await getProfileDaily()).toMatchObject({
+      request_count: 1,
+      input_total_tokens: 100,
+      input_cache_read_tokens: 60,
+      input_standard_tokens: 30,
+      output_tokens: 20,
+      known_estimated_cost_nanos: 1234,
+    });
+
+    expect(
+      await harness.finalize(value.reservation.reservationId),
+    ).toMatchObject({ ok: true, alreadyFinalized: true, status: "succeeded" });
+    const cancellationReplay = await service.rpc(
+      "record_ai_polish_request_cancellation",
+      {
+        p_reservation_id: value.reservation.reservationId,
+        p_observation: "observed",
+      },
+    );
+    expect(cancellationReplay.error).toBeNull();
+    expect(cancellationReplay.data).toEqual({
+      ok: false,
+      reason: "ALREADY_FINALIZED",
+    });
+    expect(
+      await settlementSnapshot(value.user.id, value.reservation.reservationId),
+    ).toEqual(terminal);
   });
 
   it("linearizes complete versus finalize in both request-lock orders without losing a fact", async () => {

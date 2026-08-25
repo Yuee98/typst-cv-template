@@ -205,7 +205,8 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
     completeAttempt: (params) => completePolishProviderAttemptV2(adminClient, params),
     recordCancellation: (params) =>
       recordPolishRequestCancellationV2(adminClient, params),
-    finalize: (params) => finalizePolishRequestV2(adminClient, params),
+    finalize: (params, options) =>
+      finalizePolishRequestV2(adminClient, params, options),
     ...runtimeAuthority,
     providerSubjectSecret: hmacSecret,
     routeObservationSecret: hmacSecret,

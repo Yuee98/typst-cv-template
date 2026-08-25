@@ -1368,6 +1368,15 @@ export type PolishFinalizeRequestV2 =
       metadata?: PolishFinalizeMetadataV2;
     }>;
 
+export interface PolishFinalizeCallOptionsV2 {
+  /**
+   * Cancellation does not abort an in-flight DB RPC. It prevents an
+   * ambiguous first observation from launching a second settlement write
+   * while request cancellation is racing for the same parent-row lock.
+   */
+  readonly signal?: AbortSignal;
+}
+
 export interface PolishFinalizeRpcPayloadV2 {
   readonly p_reservation_id: string;
   readonly p_status:
@@ -1485,6 +1494,7 @@ function finalizeReadbackMatchesV2(
 export async function finalizePolishRequestV2(
   client: SupabaseClient,
   params: PolishFinalizeRequestV2,
+  options: PolishFinalizeCallOptionsV2 = {},
 ): Promise<PolishFinalizeResultV2> {
   const payload = serializePolishFinalizeV2(params);
   const first = await observeRpcV2(client, "finalize_ai_polish_request", payload);
@@ -1509,6 +1519,13 @@ export async function finalizePolishRequestV2(
     }
   } else {
     firstAmbiguity = first.cause;
+  }
+
+  if (options.signal?.aborted) {
+    throw new PolishLifecycleV2RpcError("FINALIZE_UNKNOWN", {
+      reason: "CANCELED_BEFORE_RETRY",
+      cause: firstAmbiguity,
+    });
   }
 
   const second = await observeRpcV2(client, "finalize_ai_polish_request", payload);
