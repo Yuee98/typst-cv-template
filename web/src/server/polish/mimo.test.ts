@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PolishRequest } from "@/lib/polish/contract";
 import contentFilterFixture from "../../../test/fixtures/mimo-responses/content-filter.json";
 import incompleteFixture from "../../../test/fixtures/mimo-responses/incomplete-max-output.json";
 import successFixture from "../../../test/fixtures/mimo-responses/success.json";
@@ -9,6 +10,12 @@ import {
   MIMO_RESPONSES_V1_ADAPTER_KIND,
   MimoResponsesV1AdapterError,
 } from "./mimo";
+import {
+  orchestratePolishV2,
+  PolishOrchestrationErrorV2,
+  type PolishAttemptCompletedEventV2,
+} from "./orchestrator";
+import type { FrozenPriceSnapshotV1 } from "./pricing";
 import { classifyProviderRetry, MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
 import { buildPolishPromptBlocks, POLISH_PROMPT_VERSION } from "./prompt";
 
@@ -16,7 +23,21 @@ const TEST_ENV = { MIMO_API_KEY: "test-mimo-api-key" };
 const SUBJECT_SENTINEL = "subject-must-not-cross-mimo-boundary";
 const TARGET_ONLY_SENTINEL = "target-only-metadata-must-not-cross-mimo-boundary";
 const SCHEMA_SENTINEL = "schema-must-not-cross-prompt-only-boundary";
+const MALFORMED_SENTINEL = "malformed-value-must-not-cross-mimo-boundary";
 const OFFICIAL_ENDPOINT = "https://api.xiaomimimo.com/v1/responses";
+const MIMO_PRICE: FrozenPriceSnapshotV1 = {
+  schemaVersion: "price_snapshot_v1",
+  priceVersionId: "mimo-price-test",
+  currency: "CNY",
+  calculatorKind: "linear_token_v1",
+  components: {
+    input_standard: "1000000000",
+    input_cache_read: "500000000",
+    input_cache_write: "0",
+    output: "2000000000",
+  },
+  parameters: {},
+};
 
 function makeRequest(maxOutputTokens = 1024): PolishInferenceRequestV2 {
   const items = [
@@ -60,6 +81,31 @@ function makeAdapter(fetchImpl: typeof fetch) {
 
 function callOptions(timeoutMs = 1000): { signal: AbortSignal; timeoutMs: number } {
   return { signal: new AbortController().signal, timeoutMs };
+}
+
+function unsafeRecord(value: unknown): Record<string, unknown> {
+  return value as Record<string, unknown>;
+}
+
+async function expectRejectedBeforeTransmission(
+  mutate: (request: PolishInferenceRequestV2) => void,
+): Promise<void> {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse(successFixture));
+  const request = makeRequest();
+  mutate(request);
+
+  const error = await makeAdapter(fetchMock)
+    .complete(request, callOptions())
+    .catch((caught: unknown) => caught);
+
+  expect(error).toBeInstanceOf(MimoResponsesV1AdapterError);
+  expect(error).toMatchObject({
+    code: "UPSTREAM_ERROR",
+    message: "MiMo request violates the canonical prompt-only contract",
+    retryable: false,
+  });
+  expect(JSON.stringify(error)).not.toContain(MALFORMED_SENTINEL);
+  expect(fetchMock).not.toHaveBeenCalled();
 }
 
 function pendingUntilAbortFetch() {
@@ -160,18 +206,111 @@ describe("createMimoResponsesV1Adapter — request authority", () => {
     ["wrong cache boundary", (request: PolishInferenceRequestV2) => {
       request.prompt.explicitCacheBoundaryAfter = request.prompt.blocks[1].id;
     }],
+    ["missing blocks", (request: PolishInferenceRequestV2) => {
+      delete unsafeRecord(request.prompt).blocks;
+    }],
+    ["non-array blocks", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request.prompt).blocks = { length: 2 };
+    }],
+    ["null prompt", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request).prompt = null;
+    }],
+    ["sparse blocks", (request: PolishInferenceRequestV2) => {
+      const sparse: unknown[] = [];
+      sparse.length = 2;
+      unsafeRecord(request.prompt).blocks = sparse;
+    }],
+    ["overlong blocks", (request: PolishInferenceRequestV2) => {
+      request.prompt.blocks.push({
+        ...request.prompt.blocks[1],
+        id: "unexpected-third-block",
+      });
+    }],
+    ["null block", (request: PolishInferenceRequestV2) => {
+      (request.prompt.blocks as unknown[])[0] = null;
+    }],
+    ["array block", (request: PolishInferenceRequestV2) => {
+      (request.prompt.blocks as unknown[])[0] = [];
+    }],
+    ["missing stable id", (request: PolishInferenceRequestV2) => {
+      delete unsafeRecord(request.prompt.blocks[0]).id;
+    }],
+    ["numeric stable id", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request.prompt.blocks[0]).id = 7;
+    }],
+    ["empty stable id", (request: PolishInferenceRequestV2) => {
+      request.prompt.blocks[0].id = "";
+    }],
+    ["duplicate ids", (request: PolishInferenceRequestV2) => {
+      request.prompt.blocks[1].id = request.prompt.blocks[0].id;
+    }],
+    ["missing cache boundary", (request: PolishInferenceRequestV2) => {
+      delete unsafeRecord(request.prompt).explicitCacheBoundaryAfter;
+    }],
+    ["non-string cache boundary", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request.prompt).explicitCacheBoundaryAfter = { length: 1 };
+    }],
+    ["null output contract", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request).outputContract = null;
+    }],
+    ["numeric output contract", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request).outputContract = 7;
+    }],
+    ["array output contract", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request).outputContract = [];
+    }],
+    ["missing output kind", (request: PolishInferenceRequestV2) => {
+      delete unsafeRecord(request.outputContract).kind;
+    }],
+    ["missing schema name", (request: PolishInferenceRequestV2) => {
+      delete unsafeRecord(request.outputContract).schemaName;
+    }],
+    ["non-string schema name", (request: PolishInferenceRequestV2) => {
+      unsafeRecord(request.outputContract).schemaName = 7;
+    }],
+    ["empty schema name", (request: PolishInferenceRequestV2) => {
+      request.outputContract.schemaName = "";
+    }],
+    ["unsupported schema name", (request: PolishInferenceRequestV2) => {
+      request.outputContract.schemaName = "other_contract";
+    }],
+    ["missing output schema", (request: PolishInferenceRequestV2) => {
+      delete unsafeRecord(request.outputContract).schema;
+    }],
+    ["array output schema", (request: PolishInferenceRequestV2) => {
+      request.outputContract.schema = [];
+    }],
   ])("rejects %s before transmission", async (_label, mutate) => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(successFixture));
-    const request = makeRequest();
-    mutate(request);
+    await expectRejectedBeforeTransmission(mutate);
+  });
 
-    const error = await makeAdapter(fetchMock)
-      .complete(request, callOptions())
-      .catch((caught: unknown) => caught);
+  it.each([
+    ["number", 7],
+    ["boolean", true],
+    ["array with length", [MALFORMED_SENTINEL]],
+    ["object with length", { length: 1, value: MALFORMED_SENTINEL }],
+    ["object with toJSON", { toJSON: () => MALFORMED_SENTINEL }],
+    ["function", () => MALFORMED_SENTINEL],
+    ["symbol", Symbol(MALFORMED_SENTINEL)],
+  ])("rejects %s prompt content before transmission", async (_label, value) => {
+    await expectRejectedBeforeTransmission((request) => {
+      unsafeRecord(request.prompt.blocks[0]).content = value;
+    });
+  });
 
-    expect(error).toBeInstanceOf(MimoResponsesV1AdapterError);
-    expect(error).toMatchObject({ code: "UPSTREAM_ERROR", retryable: false });
-    expect(fetchMock).not.toHaveBeenCalled();
+  it("rejects accessor-backed prompt content without invoking the getter", async () => {
+    let getterCalls = 0;
+    await expectRejectedBeforeTransmission((request) => {
+      Object.defineProperty(request.prompt.blocks[0], "content", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return MALFORMED_SENTINEL;
+        },
+      });
+    });
+    expect(getterCalls).toBe(0);
   });
 });
 
@@ -243,12 +382,173 @@ describe("createMimoResponsesV1Adapter — response and usage mapping", () => {
     });
   });
 
+  it("concatenates multiple valid messages around a documented reasoning item", async () => {
+    const payload = {
+      ...structuredClone(successFixture),
+      output: [
+        { type: "reasoning", content: [] },
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: '{"items":[' }],
+        },
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "]}" }],
+        },
+      ],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await makeAdapter(fetchMock).complete(makeRequest(), callOptions());
+
+    expect(result.text).toBe('{"items":[]}');
+    expect(result.finishReason).toBe("stop");
+    expect(result.usage.usageComplete).toBe(true);
+  });
+
+  it.each([
+    ["valid message before malformed message", () => [
+      structuredClone(successFixture.output[1]),
+      {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: null,
+      },
+    ]],
+    ["malformed message before valid message", () => [
+      {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: null,
+      },
+      structuredClone(successFixture.output[1]),
+    ]],
+    ["valid messages separated by a malformed message", () => [
+      structuredClone(successFixture.output[1]),
+      {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: null,
+      },
+      structuredClone(successFixture.output[1]),
+    ]],
+    ["valid text mixed with malformed output_text", () => [{
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [
+        structuredClone(successFixture.output[1].content[0]),
+        {
+          type: "output_text",
+          text: { value: MALFORMED_SENTINEL },
+        },
+      ],
+    }]],
+    ["valid text mixed with numeric output_text", () => [{
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [
+        structuredClone(successFixture.output[1].content[0]),
+        { type: "output_text", text: 7 },
+      ],
+    }]],
+    ["valid text mixed with null output_text", () => [{
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [
+        structuredClone(successFixture.output[1].content[0]),
+        { type: "output_text", text: null },
+      ],
+    }]],
+    ["primitive output entry", () => [
+      structuredClone(successFixture.output[1]),
+      MALFORMED_SENTINEL,
+    ]],
+    ["invalid message role", () => [
+      structuredClone(successFixture.output[1]),
+      {
+        type: "message",
+        role: "user",
+        status: "completed",
+        content: [],
+      },
+    ]],
+    ["invalid message status", () => [
+      structuredClone(successFixture.output[1]),
+      {
+        type: "message",
+        role: "assistant",
+        status: "unknown-status",
+        content: [],
+      },
+    ]],
+  ])("suppresses all partial text for %s", async (_label, buildOutput) => {
+    const payload: Record<string, unknown> = structuredClone(successFixture);
+    payload.output = buildOutput();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await makeAdapter(fetchMock).complete(makeRequest(), callOptions());
+
+    expect(result.text).toBe("");
+    expect(result.finishReason).toBe("unknown");
+    expect(result.usage).toMatchObject({
+      inputTotalTokens: 100,
+      inputCacheReadTokens: 40,
+      outputTokens: 30,
+      reasoningTokens: 5,
+      usageComplete: true,
+    });
+    expect(JSON.stringify(result)).not.toContain(MALFORMED_SENTINEL);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses malformed partial text on an incomplete response without losing usage", async () => {
+    const payload: Record<string, unknown> = structuredClone(incompleteFixture);
+    payload.output = [
+      ...structuredClone(incompleteFixture.output),
+      {
+        type: "message",
+        role: "assistant",
+        status: "in_progress",
+        content: [{ type: "output_text", text: 7 }],
+      },
+    ];
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await makeAdapter(fetchMock).complete(makeRequest(), callOptions());
+
+    expect(result).toMatchObject({
+      text: "",
+      finishReason: "unknown",
+      usage: {
+        inputTotalTokens: 12,
+        outputTokens: 4,
+        usageComplete: true,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["missing output", undefined, "unknown"],
     ["malformed message content", [{ type: "message", content: null }], "unknown"],
     [
       "empty output text",
-      [{ type: "message", content: [{ type: "output_text", text: "" }] }],
+      [{
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: "" }],
+      }],
       "stop",
     ],
   ])("preserves billable usage when the model output is %s", async (_label, output, finish) => {
@@ -381,6 +681,71 @@ describe("createMimoResponsesV1Adapter — response and usage mapping", () => {
       providerRequestId: "resp_mimo_success_001",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps mixed malformed output billable but prevents orchestrator success", async () => {
+    const payload: Record<string, unknown> = structuredClone(successFixture);
+    payload.output = [
+      structuredClone(successFixture.output[1]),
+      {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: { value: MALFORMED_SENTINEL } }],
+      },
+    ];
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+    const completed: PolishAttemptCompletedEventV2<unknown>[] = [];
+    let nowMs = 0;
+    const request: PolishRequest = {
+      clientRequestId: "123e4567-e89b-42d3-a456-426614174000",
+      granularity: "item",
+      sectionId: "experience",
+      language: "en",
+      items: [
+        {
+          id: "i0",
+          kind: "experience_bullet",
+          text: "Led the migration.",
+        },
+      ],
+      context: { level: 0, references: [] },
+    };
+
+    const error = await orchestratePolishV2(makeAdapter(fetchMock), request, {
+      signal: new AbortController().signal,
+      providerSubjectId: "a".repeat(64),
+      frozenPrice: MIMO_PRICE,
+      now: () => nowMs,
+      onAttemptCompleted: (event) => {
+        completed.push(event);
+        nowMs = 60_000;
+      },
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PolishOrchestrationErrorV2);
+    expect(error).toMatchObject({
+      code: "INVALID_MODEL_OUTPUT",
+      failureStage: "finish_reason",
+    });
+    expect(completed).toHaveLength(1);
+    expect(completed[0].completed).toMatchObject({
+      status: "invalid_output",
+      transmitted: true,
+      providerBillable: true,
+      usageObservation: {
+        kind: "observed",
+        usage: {
+          inputTotalTokens: 100,
+          inputCacheReadTokens: 40,
+          outputTokens: 30,
+          reasoningTokens: 5,
+          usageComplete: true,
+        },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(error)).not.toContain(MALFORMED_SENTINEL);
   });
 });
 
