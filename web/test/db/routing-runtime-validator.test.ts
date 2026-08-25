@@ -102,7 +102,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     displayDisclosureKey?: string | null;
     legalManifestId?: string;
     validFrom?: string;
-    extraComponent?: boolean;
+    includeCacheWrite?: boolean;
   }): Promise<RouteFixture> {
     const suffix = crypto.randomUUID();
     const profileKey = `test.validator.${options.label}.${suffix}`;
@@ -167,7 +167,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
       "input_standard",
       "input_cache_read",
       "output",
-      ...(options.extraComponent ? ["input_cache_write"] : []),
+      ...(options.includeCacheWrite ? ["input_cache_write"] : []),
     ].map((component) => ({
       price_version_id: price!.id,
       component,
@@ -832,20 +832,27 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     expect(sealed.data?.components_sealed_at).toBeTruthy();
   });
 
-  it("rejects incomplete or extra linear-token component sets before sealing", async () => {
+  it("accepts the single optional linear cache-write component when sealing", async () => {
     const route = await createRouteFixture({
-      label: "extra-component",
-      extraComponent: true,
+      label: "cache-write-component",
+      includeCacheWrite: true,
     });
-    expect(() => sealPriceAsDatabaseOwner(route.priceVersionId)).toThrow(
-      /exactly input_standard, input_cache_read, and output/i,
-    );
+    sealPriceAsDatabaseOwner(route.priceVersionId);
 
-    const { data: price } = await service
+    const { data: price, error: priceError } = await service
       .from("ai_price_versions")
       .select("components_sealed_at")
       .eq("id", route.priceVersionId)
       .single();
-    expect(price?.components_sealed_at).toBeNull();
+    expect(priceError).toBeNull();
+    expect(price?.components_sealed_at).toBeTruthy();
+    const { data: cacheWrite, error: componentError } = await service
+      .from("ai_price_components")
+      .select("nanos_per_million")
+      .eq("price_version_id", route.priceVersionId)
+      .eq("component", "input_cache_write")
+      .single();
+    expect(componentError).toBeNull();
+    expect(cacheWrite?.nanos_per_million).toBe(1);
   });
 });
