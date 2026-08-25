@@ -3,9 +3,9 @@ import {
   type PolishAdapterResolverV2,
 } from "./lifecycle-v2";
 import {
-  EMPTY_RUNTIME_TARGET_RESOLVER_V1,
   type RuntimeTargetResolverV1,
 } from "./lifecycle-v2-contract";
+import { DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1 } from "./service-runtime-contract-v1";
 
 type ServerEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -15,7 +15,7 @@ export interface RealPolishRuntimeAuthorityV2 {
 }
 
 /**
- * Real Supabase composition before RT-009A.
+ * Real Supabase composition after RT-009A.
  *
  * A deterministic provider is authority only inside the separate two-flag
  * fake-backend composition. Mixing it into a real accounting backend would
@@ -32,10 +32,7 @@ export function createRealPolishRuntimeAuthorityV2(
   }
 
   return Object.freeze({
-    // RT-009A replaces this with the exact reviewed runtime evidence registry.
-    // Until then, an accidentally active DB route releases before attempt
-    // admission or provider resolution.
-    runtimeTargetResolver: EMPTY_RUNTIME_TARGET_RESOLVER_V1,
+    runtimeTargetResolver: DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
     resolveProvider: createCodeOwnedPolishAdapterResolverV2({ env }),
   });
 }

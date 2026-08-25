@@ -12,11 +12,11 @@ import {
 } from "../../lifecycle-v2";
 import { createFakePolishV2RouteDeps } from "../../backend-fake";
 import {
-  EMPTY_RUNTIME_TARGET_RESOLVER_V1,
   parseExecutionSnapshotV1,
   parseRouteSnapshotV1,
   type ExpectedRouteV1,
 } from "../../lifecycle-v2-contract";
+import { DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1 } from "../../service-runtime-contract-v1";
 import type { PolishInferenceRequestV2, PolishInferenceResultV2 } from "../../inference-v2";
 import type { PolishInferenceProviderV2 } from "../../orchestrator";
 import { resolveProfile } from "../../profile-registry";
@@ -473,9 +473,9 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
     });
   });
 
-  it("zero-child releases an active route under the production-empty runtime authority", async () => {
+  it("zero-child releases a route that mismatches the reviewed runtime authority", async () => {
     const harness = createHarness({
-      runtimeTargetResolver: EMPTY_RUNTIME_TARGET_RESOLVER_V1,
+      runtimeTargetResolver: DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
     });
 
     const result = await executePolishLifecycleV2(input(harness.controller), harness.deps);

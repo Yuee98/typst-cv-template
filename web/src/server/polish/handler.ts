@@ -190,7 +190,7 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
 
   // Real backend: auth/accounting against Supabase. The authority factory
   // rejects the unsupported single fake-LLM flag and structurally pins this
-  // branch to empty runtime attestation plus code-owned adapters.
+  // branch to reviewed DeepSeek runtime attestation plus code-owned adapters.
   const runtimeAuthority = createRealPolishRuntimeAuthorityV2(env);
   const authDeps = createPolishAuthDeps();
   const adminClient = createServerAdminClient();
