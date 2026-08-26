@@ -42,6 +42,9 @@ function parseWorkflowSteps(workflow) {
 
     const properties = new Map();
     for (const line of block.slice(1)) {
+      if (/^        env:/.test(line)) {
+        throw new Error(`DB workflow step ${name} must not override job env`);
+      }
       const property = /^        (uses|run|if|continue-on-error):(?:\s*(.*))?$/.exec(line);
       if (!property) continue;
 
@@ -121,6 +124,26 @@ it("required mode fails partial explicit credentials", async () => {
   expect(subject.calls).toHaveLength(0);
 });
 
+it("rejects whitespace and partially present explicit credentials in every mode", async () => {
+  for (const env of [
+    { SUPABASE_TEST_URL: "   ", SUPABASE_TEST_PUBLISHABLE_KEY: " ", SUPABASE_TEST_SECRET_KEY: " " },
+    { SUPABASE_TEST_URL: " http://127.0.0.1:54321 ", SUPABASE_TEST_PUBLISHABLE_KEY: " key ", SUPABASE_TEST_SECRET_KEY: "" },
+  ]) {
+    const subject = harness({ env });
+    expect(await subject.run()).toBe(1);
+    expect(subject.calls).toHaveLength(0);
+  }
+});
+
+it("rejects malformed CLI status even in optional mode", async () => {
+  for (const stdout of ["", `${GOOD_STATUS}\nAPI_URL=duplicate`]) {
+    const subject = harness({ results: [{ status: 0, stdout }] });
+    expect(await subject.run()).toBe(1);
+    expect(subject.calls).toHaveLength(1);
+    expect(subject.logs.join("\n")).toMatch(/ERROR/);
+  }
+});
+
 it("required mode fails an unreachable local API before Vitest", async () => {
   const subject = harness({
     env: { DB_TESTS_REQUIRED: "1" },
@@ -173,6 +196,7 @@ it("Vitest spawn errors, signals, and exit failures always propagate", async () 
   ]) {
     const subject = harness({ results: [{ status: 0, stdout: GOOD_STATUS }, result] });
     expect(await subject.run()).toBe(result.status === 7 ? 7 : 1);
+    expect(subject.calls[1].options.timeout).toBeLessThan(20 * 60 * 1000);
   }
 });
 
@@ -194,6 +218,15 @@ it("DB workflow structural parser rejects nameless and multiline-run steps", () 
       workflow(["      - name: Start local Supabase", "        run: |-", "          pnpm exec supabase start"].join("\n")),
     ),
   ).toThrow(/multiline run scalar/);
+  expect(() =>
+    parseWorkflowSteps(workflow("      - name: Bad\n        run: one\n        run: two")),
+  ).toThrow(/ambiguous run/);
+  expect(() =>
+    parseWorkflowSteps(workflow("      - name: Bad\n        uses:")),
+  ).toThrow(/ambiguous uses/);
+  expect(() =>
+    parseWorkflowSteps(workflow("      - name: Bad\n        run: one\n        uses: actions/checkout@v7")),
+  ).toThrow(/exactly one/);
 });
 
 it("DB workflow runs the credential-free runner contract before real-DB mutation", async () => {
@@ -211,6 +244,8 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
   // The normal unit-test config must continue discovering this file, while
   // the dedicated workflow must run it before any Docker-backed mutation.
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
+  expect(workflow).toMatch(/env:\s*\n\s+NEXT_TELEMETRY_DISABLED: "1"\s+\n\s+DB_TESTS_REQUIRED: "1"/);
+  expect(workflow).not.toMatch(/DB_TESTS_REQUIRED:\s*"1"[\s\S]*?\n\s{8,}env:/);
 
   const steps = parseWorkflowSteps(workflow);
 
@@ -226,6 +261,10 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
   expect(runnerStep.uses).toBeUndefined();
   expect(runnerStep.run).toBe(runnerCommand);
   expect(runnerStep.hasCondition).toBe(false);
+
+  for (const mutation of steps.slice(runnerIndex + 1)) {
+    expect(mutation.hasCondition).toBe(false);
+  }
 
   const allowedPreflightSteps = [
     { name: "Checkout", uses: "actions/checkout@v7" },
@@ -271,4 +310,16 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     expect(matches).toHaveLength(1);
     expect(matches[0].index).toBeGreaterThan(runnerIndex);
   }
+
+  const duplicateRunner = parseWorkflowSteps(
+    workflow.replace(runnerCommand, `${runnerCommand}\n      - name: Duplicate runner\n        run: ${runnerCommand}`),
+  );
+  expect(duplicateRunner.filter((step) => step.run === runnerCommand)).toHaveLength(2);
+  expect(workflow.replace("DB_TESTS_REQUIRED: \"1\"", "DB_TESTS_REQUIRED: \"0\""))
+    .not.toMatch(/DB_TESTS_REQUIRED:\s*"1"/);
+  expect(parseWorkflowSteps(workflow.replace("Run CFG-001 fresh-reset gate", "Run unexpected gate"))
+    .map((step) => step.name)).not.toContain("Run CFG-001 fresh-reset gate");
+  const reordered = parseWorkflowSteps(workflow.replace("Run CFG-001 fresh-reset gate", "Run real-DB suite"));
+  expect(reordered.findIndex((step) => step.name === "Run real-DB suite"))
+    .toBeGreaterThanOrEqual(reordered.findIndex((step) => step.name === "Run CFG-001 fresh-reset gate"));
 });
