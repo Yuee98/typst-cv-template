@@ -313,12 +313,13 @@ it("waits for an exact Auth health success and bounds retries", async () => {
   ]);
   expect(sleeps).toBe(2);
 
+  const nonSuccessStatuses = [204, 401, 404, 503];
   expect(
     await waitForAuthReady("http://127.0.0.1:54321", {
-      attempts: 2,
+      attempts: nonSuccessStatuses.length,
       intervalMs: 0,
       sleepImpl: async () => {},
-      fetchImpl: async () => ({ status: 502 }),
+      fetchImpl: async () => ({ status: nonSuccessStatuses.shift() }),
     }),
   ).toBe(false);
 });
@@ -332,23 +333,48 @@ it("fails closed before reset for ambiguous project authority", async () => {
   expect(subject.errors.join("\n")).toMatch(/invalid or ambiguous project_id/);
 });
 
+it("fails closed before reset for malformed, duplicate, or blank status", async () => {
+  const malformedStatuses = [
+    `${GOOD_STATUS}\nAPI_URL="http://127.0.0.1:54321"`,
+    `${GOOD_STATUS}\nMALFORMED`,
+    GOOD_STATUS.replace(
+      'PUBLISHABLE_KEY="publishable-test-key"',
+      'PUBLISHABLE_KEY="   "',
+    ),
+    GOOD_STATUS.replace('SECRET_KEY="secret-test-key"', ""),
+  ];
+  for (const stdout of malformedStatuses) {
+    const subject = freshHarness({ results: [{ status: 0, stdout }] });
+    expect(await subject.run(), stdout).toBe(1);
+    expect(subject.calls).toHaveLength(1);
+    expect(subject.errors.join("\n")).toMatch(/safe loopback credentials/);
+    expect(subject.errors.join("\n")).not.toContain("secret-test-key");
+  }
+});
+
 it("does not run Vitest after gateway restart failure", async () => {
-  const subject = freshHarness({
-    results: [
-      { status: 0, stdout: GOOD_STATUS },
-      { status: 0 },
-      { status: 0, stdout: GOOD_STATUS },
-      {
-        status: null,
-        signal: "SIGTERM",
-        error: new Error("secret-test-key must stay redacted"),
-      },
-    ],
-  });
-  expect(await subject.run()).toBe(1);
-  expect(subject.calls).toHaveLength(4);
-  expect(subject.errors.join("\n")).toMatch(/gateway restart failed/);
-  expect(subject.errors.join("\n")).not.toContain("secret-test-key");
+  for (const restartResult of [
+    { status: 1 },
+    { status: null },
+    { status: null, signal: "SIGTERM" },
+    {
+      status: null,
+      error: new Error("secret-test-key must stay redacted"),
+    },
+  ]) {
+    const subject = freshHarness({
+      results: [
+        { status: 0, stdout: GOOD_STATUS },
+        { status: 0 },
+        { status: 0, stdout: GOOD_STATUS },
+        restartResult,
+      ],
+    });
+    expect(await subject.run()).toBe(1);
+    expect(subject.calls).toHaveLength(4);
+    expect(subject.errors.join("\n")).toMatch(/gateway restart failed/);
+    expect(subject.errors.join("\n")).not.toContain("secret-test-key");
+  }
 });
 
 it("does not run Vitest when Auth never becomes ready", async () => {

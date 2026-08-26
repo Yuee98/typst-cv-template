@@ -11,7 +11,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateLocalDatabaseUrl } from "./run-db-tests.mjs";
+import {
+  parseSupabaseStatus,
+  validateLocalDatabaseUrl,
+} from "./run-db-tests.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
@@ -42,25 +45,19 @@ function failedChild(result) {
 }
 
 function parseLocalStatus(stdout) {
-  const values = {};
-  for (const line of String(stdout ?? "").split(/\r?\n/)) {
-    const match = /^([A-Z_]+)="([^"]*)"$/.exec(line.trim());
-    if (match) {
-      values[match[1]] = match[2];
-    }
-  }
-  if (!values.API_URL || !values.PUBLISHABLE_KEY || !values.SECRET_KEY) {
+  const values = parseSupabaseStatus(String(stdout ?? ""));
+  if (!values) {
     return null;
   }
 
-  const validated = validateLocalDatabaseUrl(values.API_URL);
+  const validated = validateLocalDatabaseUrl(values.url);
   if (!validated.ok) {
     return null;
   }
   return {
     url: validated.url,
-    publishableKey: values.PUBLISHABLE_KEY,
-    secretKey: values.SECRET_KEY,
+    publishableKey: values.publishableKey,
+    secretKey: values.secretKey,
   };
 }
 
