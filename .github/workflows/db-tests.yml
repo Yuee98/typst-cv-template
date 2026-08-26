@@ -21,6 +21,7 @@ on:
       - "web/package.json"
       - "web/scripts/run-cfg001-fresh-reset.mjs"
       - "web/scripts/run-db-tests.mjs"
+      - "web/scripts/run-db-tests.test.mjs"
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
       - "web/src/server/polish/auth.ts"
@@ -65,6 +66,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # This is deliberately credential-free and must run before Docker-backed
+      # tests. It proves the required/optional behavior, loopback-only target
+      # guard, isolated-selector clearing, and child-process failure handling
+      # that make the real-DB gate safe to invoke.
+      - name: Verify DB test runner contract (credential-free)
+        run: pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs
 
       # The suite only needs postgres + PostgREST + GoTrue (+kong); excluding
       # the heavyweight extras keeps the manual run fast.

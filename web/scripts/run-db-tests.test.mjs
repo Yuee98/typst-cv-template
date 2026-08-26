@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 import { runDbTests, validateLocalDatabaseUrl } from "./run-db-tests.mjs";
@@ -119,4 +121,23 @@ it("URL guard accepts only HTTP loopback endpoints", () => {
   expect(validateLocalDatabaseUrl("http://[::1]:54321").ok).toBe(true);
   expect(validateLocalDatabaseUrl("ftp://127.0.0.1").ok).toBe(false);
   expect(validateLocalDatabaseUrl("http://10.0.0.2").ok).toBe(false);
+});
+
+it("DB workflow runs the credential-free runner contract before real-DB mutation", async () => {
+  // This test is part of the ordinary `pnpm test` suite as well as the
+  // dedicated workflow step. Keeping the workflow assertion here means a
+  // future removal of that step is caught by the normal CI gate rather than
+  // silently dropping nine runner-level safety checks.
+  const workflowPath = fileURLToPath(new URL("../../.github/workflows/db-tests.yml", import.meta.url));
+  const workflow = await readFile(workflowPath, "utf8");
+  expect(workflow).toContain('      - "web/scripts/run-db-tests.test.mjs"');
+  const runnerStep = [
+    "      - name: Verify DB test runner contract (credential-free)",
+    "        run: pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs",
+  ].join("\n");
+
+  const runnerStepIndex = workflow.indexOf(runnerStep);
+  const supabaseStartIndex = workflow.indexOf("      - name: Start local Supabase");
+  expect(runnerStepIndex).toBeGreaterThan(-1);
+  expect(supabaseStartIndex).toBeGreaterThan(runnerStepIndex);
 });
