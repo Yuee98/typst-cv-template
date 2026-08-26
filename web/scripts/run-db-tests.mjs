@@ -11,7 +11,7 @@ const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
-const DB_CHILD_TIMEOUT_MS = 10 * 60 * 1_000;
+const DB_CHILD_TIMEOUT_MS = 600_000;
 
 function isRequired(env) {
   return env.DB_TESTS_REQUIRED === "1" || env.DB_TESTS_REQUIRED === "true";
@@ -54,6 +54,7 @@ export function validateLocalDatabaseUrl(rawUrl) {
 function parseSupabaseStatus(stdout) {
   const values = {};
   for (const line of (stdout ?? "").split(/\r?\n/)) {
+    if (line.trim() && !/^[A-Z_]+="[^"]*"$/.test(line.trim())) return null;
     const match = /^([A-Z_]+)="([^"]*)"$/.exec(line.trim());
     if (match) {
       if (match[1] in values) return null;

@@ -93,6 +93,35 @@ function harness({ env = {}, results = [], fetchImpl = async () => new Response(
   };
 }
 
+function assertWorkflowContract(workflow, normalConfig) {
+  expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
+  expect(workflow.match(/DB_TESTS_REQUIRED:\s*"1"/g)).toHaveLength(1);
+  expect(workflow).not.toMatch(/DB_TESTS_REQUIRED:\s*"0"/);
+  const steps = parseWorkflowSteps(workflow);
+  expect(steps.map((step) => step.name)).toEqual([
+    "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
+    "Install dependencies", "Verify DB test runner contract (credential-free)",
+    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run real-DB suite",
+  ]);
+  const commands = {
+    runner: "pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs",
+    start: "pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler",
+    fresh: "pnpm --filter web test:db:cfg001-fresh",
+    full: "pnpm --filter web test:db",
+  };
+  const find = (command) => steps.map((step, index) => ({ step, index })).filter(({ step }) => step.run === command);
+  for (const command of Object.values(commands)) expect(find(command)).toHaveLength(1);
+  const indexes = Object.fromEntries(Object.entries(commands).map(([key, command]) => [key, find(command)[0].index]));
+  expect(indexes.runner).toBeLessThan(indexes.start);
+  expect(indexes.start).toBeLessThan(indexes.fresh);
+  expect(indexes.fresh).toBeLessThan(indexes.full);
+  for (const step of steps) expect(step.hasCondition).toBe(false);
+  expect(workflow).not.toMatch(/^        env:/m);
+  for (const path of [".github/workflows/db-tests.yml", "supabase/migrations/**", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/test/db/**", "web/vitest.db.config.mts"]) {
+    expect(workflow).toContain(`      - "${path}"`);
+  }
+}
+
 it("required mode fails status, spawn, and timeout errors", async () => {
   for (const result of [
     { status: 1 },
@@ -240,6 +269,7 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     readFile(workflowPath, "utf8"),
     readFile(normalConfigPath, "utf8"),
   ]);
+  assertWorkflowContract(workflow, normalConfig);
 
   // The normal unit-test config must continue discovering this file, while
   // the dedicated workflow must run it before any Docker-backed mutation.
@@ -311,15 +341,15 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     expect(matches[0].index).toBeGreaterThan(runnerIndex);
   }
 
-  const duplicateRunner = parseWorkflowSteps(
+  const mutations = [
     workflow.replace(runnerCommand, `${runnerCommand}\n      - name: Duplicate runner\n        run: ${runnerCommand}`),
-  );
-  expect(duplicateRunner.filter((step) => step.run === runnerCommand)).toHaveLength(2);
-  expect(workflow.replace("DB_TESTS_REQUIRED: \"1\"", "DB_TESTS_REQUIRED: \"0\""))
-    .not.toMatch(/DB_TESTS_REQUIRED:\s*"1"/);
-  expect(parseWorkflowSteps(workflow.replace("Run CFG-001 fresh-reset gate", "Run unexpected gate"))
-    .map((step) => step.name)).not.toContain("Run CFG-001 fresh-reset gate");
-  const reordered = parseWorkflowSteps(workflow.replace("Run CFG-001 fresh-reset gate", "Run real-DB suite"));
-  expect(reordered.findIndex((step) => step.name === "Run real-DB suite"))
-    .toBeGreaterThanOrEqual(reordered.findIndex((step) => step.name === "Run CFG-001 fresh-reset gate"));
+    workflow.replace("DB_TESTS_REQUIRED: \"1\"", "DB_TESTS_REQUIRED: \"0\""),
+    workflow.replace("Run CFG-001 fresh-reset gate", "Run unexpected gate"),
+    workflow.replace("Run CFG-001 fresh-reset gate", "Run real-DB suite"),
+    workflow.replace('      - "web/test/db/**"', ""),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        if: always()\r\n        run: pnpm --filter web test:db\r\n"),
+  ];
+  for (const [mutationIndex, mutated] of mutations.entries()) {
+    expect(() => assertWorkflowContract(mutated, normalConfig), `mutation ${mutationIndex}`).toThrow();
+  }
 });
