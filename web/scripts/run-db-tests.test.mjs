@@ -43,6 +43,9 @@ function parseWorkflowSteps(workflow) {
     const properties = new Map();
     const withValues = new Map();
     for (const line of block.slice(1)) {
+      if (/^        \S/.test(line) && !/^        (?:uses|run|if|continue-on-error|with):/.test(line) && !/^        #/.test(line)) {
+        throw new Error(`DB workflow step ${name} has unknown or quoted property`);
+      }
       if (/^        env:/.test(line)) {
         throw new Error(`DB workflow step ${name} must not override job env`);
       }
@@ -109,7 +112,7 @@ function harness({ env = {}, results = [], fetchImpl = async () => new Response(
   };
 }
 
-const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/vitest.db.config.mts", "web/test/db/**", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts"];
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
@@ -120,6 +123,9 @@ function assertWorkflowContract(workflow, normalConfig) {
   const jobLines = lines.slice(jobsAt + 1, jobEnd < 0 ? lines.length : jobEnd);
   const jobIds = jobLines.filter((line) => /^  [^\s][^:]*:$/.test(line)).map((line) => line.trim().slice(0, -1));
   expect(jobIds).toEqual(["db-tests"]);
+  const directJob = jobLines.filter((line) => /^    [^\s#][^:]*:/.test(line));
+  expect(directJob.map((line) => line.trim().split(":")[0])).toEqual(["name", "runs-on", "timeout-minutes", "env", "steps"]);
+  expect(directJob).toEqual(expect.arrayContaining(["    name: Web (real-DB tests)", "    runs-on: ubuntu-latest", "    timeout-minutes: 20"]));
   const envAt = jobLines.findIndex((line) => line === "    env:");
   if (envAt < 0) throw new Error("missing db-tests job env");
   const envLines = jobLines.slice(envAt + 1).filter((line) => /^      [A-Z_]+:/.test(line));
@@ -148,6 +154,12 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(steps[2].withValues).toEqual(new Map([["node-version", "24"], ["package-manager-cache", "false"]]));
   for (const step of steps.filter((step) => step.run)) expect(step.withValues.size).toBe(0);
   expect(workflow).not.toMatch(/^        env:/m);
+  const pathStart = lines.findIndex((line) => line === "    paths:");
+  const pathEnd = lines.findIndex((line, index) => index > pathStart && /^    \S/.test(line));
+  if (pathStart < 0 || pathEnd < 0) throw new Error("missing pull_request.paths block");
+  if (lines.some((line) => line.trim().startsWith("paths-ignore:"))) throw new Error("paths-ignore is forbidden");
+  const parsedPaths = lines.slice(pathStart + 1, pathEnd).filter((line) => /^      - ".*"$/.test(line)).map((line) => line.trim().slice(3, -1));
+  expect(parsedPaths).toEqual(REQUIRED_WORKFLOW_PATHS);
   const requiredPaths = REQUIRED_WORKFLOW_PATHS;
   for (const path of requiredPaths) {
     expect(workflow).toContain(`      - "${path}"`);
@@ -386,6 +398,11 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
       .replace(`      - "${path}"\n`, "")),
     workflow.replace("        run: pnpm --filter web test:db\r\n", "        if: always()\r\n        run: pnpm --filter web test:db\r\n"),
     workflow.replace("        run: pnpm --filter web test:db\r\n", "        shell: bash\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        \"if\": false\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        \"env\": { DB_TESTS_REQUIRED: \"0\" }\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("    env:\r\n", "    if: false\r\n    env:\r\n"),
+    workflow.replace("    paths:\r\n", "    paths-ignore:\r\n"),
+    workflow.replace("      DB_TESTS_REQUIRED: \"1\"\r\n", "      DB_TESTS_REQUIRED: \"1\"\r\n      DB_TESTS_REQUIRED: \"1\"\r\n"),
   ];
   for (const [mutationIndex, mutated] of mutations.entries()) {
     expect(() => assertWorkflowContract(mutated, normalConfig), `mutation ${mutationIndex}`).toThrow();
