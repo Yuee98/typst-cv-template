@@ -491,7 +491,7 @@ function expectHistoricalCoverage(snapshot: string, caseName: string, userId: st
   expect(rows("user_terms_acceptances")).toContainEqual(
     expect.objectContaining({
       user_id: userId,
-      document_key: "ai_legal_bundle",
+      document_key: "ai_terms",
       version: "2026-08-23-multi-provider-v1",
     }),
   );
@@ -577,7 +577,7 @@ function historicalFixtureSql(userId: string): string {
       'history-runtime-contract.cfg001.v1', repeat('8', 64)
     );
     insert into public.user_terms_acceptances (user_id, document_key, version)
-    values ('${userId}'::uuid, 'ai_legal_bundle', '2026-08-23-multi-provider-v1');
+    values ('${userId}'::uuid, 'ai_terms', '2026-08-23-multi-provider-v1');
     insert into public.ai_usage_daily (user_id, day, request_count)
     values ('${userId}'::uuid, current_date, 7);
     insert into public.ai_global_usage_daily (day, provider_started_count)
