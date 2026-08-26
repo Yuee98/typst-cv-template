@@ -42,6 +42,7 @@ function parseWorkflowSteps(workflow) {
 
     const properties = new Map();
     const withValues = new Map();
+    let withMap = false;
     for (const line of block.slice(1)) {
       if (/^        \S/.test(line) && !/^        (?:uses|run|if|continue-on-error|with):/.test(line) && !/^        #/.test(line)) {
         throw new Error(`DB workflow step ${name} has unknown or quoted property`);
@@ -57,7 +58,12 @@ function parseWorkflowSteps(workflow) {
         throw new Error(`DB workflow step ${name} has unknown property ${direct[1]}`);
       }
       const nested = /^          ([a-z][a-z0-9-]*):\s*(.*)$/.exec(line);
+      if (/^          \S/.test(line) && !nested && !/^          #/.test(line)) {
+        throw new Error(`DB workflow step ${name} has unknown or quoted with input`);
+      }
       if (nested) {
+        if (!withMap) throw new Error(`DB workflow step ${name} has relocated with input`);
+        withMap = true;
         if (withValues.has(nested[1]) || !nested[2]) throw new Error(`DB workflow step ${name} has ambiguous with input`);
         withValues.set(nested[1], nested[2]);
         continue;
@@ -73,6 +79,7 @@ function parseWorkflowSteps(workflow) {
         throw new Error(`DB workflow step ${name} must not use a multiline run scalar`);
       }
       properties.set(key, value);
+      if (key === "with") withMap = true;
     }
     if (withValues.size > 0 && !properties.has("with")) throw new Error(`DB workflow step ${name} has relocated with inputs`);
 
@@ -88,6 +95,7 @@ function parseWorkflowSteps(workflow) {
       run,
       hasCondition: properties.has("if") || properties.has("continue-on-error"),
       withValues,
+      hasWith: withMap,
     };
   });
 }
@@ -117,6 +125,8 @@ const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
   const lines = workflow.replace(/\r\n/g, "\n").split("\n");
+  expect(lines.filter((line) => /^[^\s#][^:]*:/.test(line)).map((line) => line.split(":")[0]))
+    .toEqual(["name", "on", "permissions", "jobs"]);
   expect(lines.filter((line) => line === "on:")).toHaveLength(1);
   expect(lines.filter((line) => line === "jobs:")).toHaveLength(1);
   const onAt = lines.indexOf("on:");
@@ -145,6 +155,12 @@ function assertWorkflowContract(workflow, normalConfig) {
   if (envAt < 0) throw new Error("missing db-tests job env");
   const envLines = jobLines.slice(envAt + 1).filter((line) => /^      [A-Z_]+:/.test(line));
   expect(envLines).toEqual(["      NEXT_TELEMETRY_DISABLED: \"1\"", "      DB_TESTS_REQUIRED: \"1\""]);
+  const envBlockEnd = jobLines.findIndex((line, index) => index > envAt && /^    \S/.test(line));
+  for (const line of jobLines.slice(envAt + 1, envBlockEnd < 0 ? jobLines.length : envBlockEnd)) {
+    if (line.trim() && !/^      [A-Z_]+:\s*"[^"]*"$/.test(line) && !/^      #/.test(line)) {
+      throw new Error("db-tests job env contains unknown or quoted key");
+    }
+  }
   const steps = parseWorkflowSteps(workflow);
   expect(steps.map((step) => step.name)).toEqual([
     "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
@@ -164,10 +180,12 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(indexes.start).toBeLessThan(indexes.fresh);
   expect(indexes.fresh).toBeLessThan(indexes.full);
   for (const step of steps) expect(step.hasCondition).toBe(false);
+  expect(steps[0].hasWith).toBe(false);
   expect(steps[0].withValues.size).toBe(0);
+  expect(steps[1].hasWith).toBe(true);
   expect(steps[1].withValues).toEqual(new Map([["version", "2.109.0"]]));
   expect(steps[2].withValues).toEqual(new Map([["node-version", "24"], ["package-manager-cache", "false"]]));
-  for (const step of steps.filter((step) => step.run)) expect(step.withValues.size).toBe(0);
+  for (const step of steps.filter((step) => step.run)) expect(step.hasWith).toBe(false);
   expect(workflow).not.toMatch(/^        env:/m);
   const parsedPaths = prLines.filter((line) => /^      - ".*"$/.test(line)).map((line) => line.trim().slice(3, -1));
   expect(parsedPaths).toEqual(REQUIRED_WORKFLOW_PATHS);
@@ -414,6 +432,8 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     workflow.replace("    env:\r\n", "    if: false\r\n    env:\r\n"),
     workflow.replace("    paths:\r\n", "    paths-ignore:\r\n"),
     workflow.replace("      DB_TESTS_REQUIRED: \"1\"\r\n", "      DB_TESTS_REQUIRED: \"1\"\r\n      DB_TESTS_REQUIRED: \"1\"\r\n"),
+    workflow.replace("          node-version: 24", "          \"node-version\": 24"),
+    workflow.replace("      - name: Checkout", "      - name: Checkout\r\n        with:\r\n          \"ref\": main"),
     workflow.replace("  pull_request:", "  other:").replace("  workflow_dispatch:", "  pull_request:") ,
     workflow.replace("  pull_request:", "  other:") ,
     `${workflow.replace("on:\r\n", "on:\r\n  pull_request:\r\n    paths:\r\n      - \"decoy\"\r\n")}`,
