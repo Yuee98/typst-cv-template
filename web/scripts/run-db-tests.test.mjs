@@ -10,6 +10,66 @@ const GOOD_STATUS = [
   'SECRET_KEY="secret-test-key"',
 ].join("\n");
 
+function parseWorkflowSteps(workflow) {
+  const lines = workflow.replace(/\r\n/g, "\n").split("\n");
+  const stepsDeclarations = lines
+    .map((line, index) => (line === "    steps:" ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (stepsDeclarations.length !== 1) {
+    throw new Error("DB workflow must contain exactly one job steps declaration");
+  }
+
+  const stepsStart = stepsDeclarations[0] + 1;
+  const stepsEnd = lines.findIndex(
+    (line, index) => index >= stepsStart && /^    \S/.test(line),
+  );
+  const stepLines = lines.slice(stepsStart, stepsEnd === -1 ? lines.length : stepsEnd);
+  const stepStarts = stepLines
+    .map((line, index) => (/^      - /.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (stepStarts.length === 0) {
+    throw new Error("DB workflow must contain at least one step");
+  }
+
+  return stepStarts.map((start, index) => {
+    const block = stepLines.slice(start, stepStarts[index + 1] ?? stepLines.length);
+    const name = /^      - name: (.+)$/.exec(block[0])?.[1];
+    if (!name) {
+      throw new Error("Every DB workflow step must begin with an explicit name");
+    }
+
+    const properties = new Map();
+    for (const line of block.slice(1)) {
+      const property = /^        (uses|run|if|continue-on-error):(?:\s*(.*))?$/.exec(line);
+      if (!property) continue;
+
+      const [, key, value = ""] = property;
+      if (properties.has(key) || !value) {
+        throw new Error(`DB workflow step ${name} has an ambiguous ${key} field`);
+      }
+      if (key === "run" && /^[>|]/.test(value)) {
+        throw new Error(`DB workflow step ${name} must not use a multiline run scalar`);
+      }
+      properties.set(key, value);
+    }
+
+    const uses = properties.get("uses");
+    const run = properties.get("run");
+    if ((uses === undefined) === (run === undefined)) {
+      throw new Error(`DB workflow step ${name} must have exactly one of uses or run`);
+    }
+
+    return {
+      name,
+      uses,
+      run,
+      hasCondition: properties.has("if") || properties.has("continue-on-error"),
+    };
+  });
+}
+
 function harness({ env = {}, results = [], fetchImpl = async () => new Response() } = {}) {
   const calls = [];
   const logs = [];
@@ -123,6 +183,19 @@ it("URL guard accepts only HTTP loopback endpoints", () => {
   expect(validateLocalDatabaseUrl("http://10.0.0.2").ok).toBe(false);
 });
 
+it("DB workflow structural parser rejects nameless and multiline-run steps", () => {
+  const workflow = (step) => ["jobs:", "  db-tests:", "    steps:", step].join("\n");
+
+  expect(() =>
+    parseWorkflowSteps(workflow("      - run: pnpm exec supabase start")),
+  ).toThrow(/explicit name/);
+  expect(() =>
+    parseWorkflowSteps(
+      workflow(["      - name: Start local Supabase", "        run: |-", "          pnpm exec supabase start"].join("\n")),
+    ),
+  ).toThrow(/multiline run scalar/);
+});
+
 it("DB workflow runs the credential-free runner contract before real-DB mutation", async () => {
   // This test is part of the ordinary `pnpm test` suite as well as the
   // dedicated workflow step. Keeping the workflow assertion here means a
@@ -139,22 +212,7 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
   // the dedicated workflow must run it before any Docker-backed mutation.
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
 
-  const stepsStart = workflow.search(/^    steps:\r?$/m);
-  expect(stepsStart).toBeGreaterThanOrEqual(0);
-  const stepBlocks = workflow
-    .slice(stepsStart)
-    .replace(/^    steps:\r?\n/, "")
-    .split(/(?=^      - name: )/m)
-    .filter((block) => block.startsWith("      - name: "));
-  expect(stepBlocks).not.toHaveLength(0);
-
-  const steps = stepBlocks.map((block) => {
-    const lines = block.split(/\r?\n/);
-    const name = /^      - name: (.+)$/.exec(lines[0])?.[1];
-    const uses = lines.find((line) => /^        uses: /.test(line))?.slice("        uses: ".length);
-    const run = lines.find((line) => /^        run: /.test(line))?.slice("        run: ".length);
-    return { name, uses, run, block };
-  });
+  const steps = parseWorkflowSteps(workflow);
 
   const runnerName = "Verify DB test runner contract (credential-free)";
   const runnerCommand = "pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs";
@@ -167,7 +225,7 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
   const runnerStep = steps[runnerIndex];
   expect(runnerStep.uses).toBeUndefined();
   expect(runnerStep.run).toBe(runnerCommand);
-  expect(runnerStep.block).not.toMatch(/^\s*(?:if|continue-on-error):/m);
+  expect(runnerStep.hasCondition).toBe(false);
 
   const allowedPreflightSteps = [
     { name: "Checkout", uses: "actions/checkout@v7" },
@@ -182,7 +240,7 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     expect(actual.name).toBe(expected.name);
     expect(actual.uses).toBe(expected.uses);
     expect(actual.run).toBe(expected.run);
-    expect(actual.block).not.toMatch(/^\s*(?:if|continue-on-error):/m);
+    expect(actual.hasCondition).toBe(false);
   }
 
   const requiredMutationSteps = [
