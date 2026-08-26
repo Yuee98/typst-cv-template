@@ -15,6 +15,34 @@ const GOOD_STATUS = [
   'SECRET_KEY="secret-test-key"',
 ].join("\n");
 
+const INVALID_SUPABASE_PROJECT_CONFIGS = [
+  ["missing project id", ""],
+  ["literal-string project id", "project_id = 'typst-cv-template'"],
+  ["indented project id", "  project_id = \"nested\""],
+  ["unsafe project id", 'project_id = "unsafe/project"'],
+  ["empty project id", 'project_id = ""'],
+  ["duplicate root project id", 'project_id = "first"\nproject_id = "second"'],
+  ["numeric project id", "project_id = 1"],
+  ["boolean project id", "project_id = true"],
+  ["array project id", 'project_id = ["typst-cv-template"]'],
+  ["inline-table project id", 'project_id = { value = "typst-cv-template" }'],
+  ["missing project id value", "project_id ="],
+  ["unterminated project id string", 'project_id = "unterminated'],
+  ["quoted project id key", '"project_id" = "typst-cv-template"'],
+  ["project id table", '[project_id]\nvalue = "typst-cv-template"'],
+  ["project id array table", '[[project_id]]\nvalue = "typst-cv-template"'],
+  ["project id dotted table", '[project_id.nested]\nvalue = "typst-cv-template"'],
+  ["project id quoted table", '["project_id"]\nvalue = "typst-cv-template"'],
+  ["dotted project id", 'project_id.value = "typst-cv-template"'],
+  ["multiline basic string decoy", 'note = """\nproject_id = "decoy"\n"""'],
+  ["multiline literal string decoy", "note = '''\nproject_id = \"decoy\"\n'''"],
+  ["nested project id decoy", 'project_id = "typst-cv-template"\n[api]\nproject_id = "decoy"'],
+  ["string project id decoy", 'project_id = "typst-cv-template"\nnote = "project_id = \\"decoy\\""'],
+  ["malformed table header", 'project_id = "ok"\n[api'],
+  ["unterminated double-quoted line", 'project_id = "ok"\nnote = "oops'],
+  ["unterminated literal-quoted line", "project_id = \"ok\"\nnote = 'oops"],
+];
+
 function parseWorkflowSteps(workflow) {
   const lines = workflow.replace(/\r\n/g, "\n").split("\n");
   const stepsDeclarations = lines
@@ -132,16 +160,21 @@ function freshHarness({
   fetchImpl = async () => ({ status: 200 }),
 } = {}) {
   const calls = [];
+  const fetchCalls = [];
   const logs = [];
   const errors = [];
   return {
     calls,
+    fetchCalls,
     logs,
     errors,
     run() {
       return runCfg001FreshReset({
         env,
-        fetchImpl,
+        fetchImpl(...args) {
+          fetchCalls.push(args);
+          return fetchImpl(...args);
+        },
         sleepImpl: async () => {},
         existsSyncImpl: () => true,
         readFileSyncImpl: () => config,
@@ -279,47 +312,18 @@ it("accepts exactly one safe top-level Supabase project id", () => {
   expect(parseSupabaseProjectId('project_id="cv.test_1" # local')).toBe(
     "cv.test_1",
   );
-  for (const invalid of [
-    "",
-    "project_id = 'typst-cv-template'",
-    "  project_id = \"nested\"",
-    'project_id = "unsafe/project"',
-    'project_id = ""',
-    'project_id = "first"\nproject_id = "second"',
-    'project_id = 1',
-    'project_id = true',
-    'project_id = ["typst-cv-template"]',
-    'project_id = { value = "typst-cv-template" }',
-    'project_id = "unterminated',
-    '"project_id" = "typst-cv-template"',
-    '[project_id]\nvalue = "typst-cv-template"',
-    '[[project_id]]\nvalue = "typst-cv-template"',
-    '[project_id.nested]\nvalue = "typst-cv-template"',
-    '["project_id"]\nvalue = "typst-cv-template"',
-    'project_id.value = "typst-cv-template"',
-    'note = """\nproject_id = "decoy"\n"""',
-    "note = '''\nproject_id = \"decoy\"\n'''",
-    'project_id = "typst-cv-template"\n[api]\nproject_id = "decoy"',
-    'project_id = "typst-cv-template"\nnote = "project_id = \\"decoy\\""',
-  ]) {
-    expect(parseSupabaseProjectId(invalid), invalid).toBeNull();
+  for (const [label, config] of INVALID_SUPABASE_PROJECT_CONFIGS) {
+    expect(parseSupabaseProjectId(config), label).toBeNull();
   }
 });
 
-it("rejects every ambiguous project authority before status, reset, Docker, or Vitest", async () => {
-  const hostileConfigs = [
-    '[project_id]\nvalue = "typst-cv-template"',
-    'note = """\nproject_id = "decoy"\n"""',
-    "note = '''\nproject_id = \"decoy\"\n'''",
-    'project_id = "typst-cv-template"\n[api]\nproject_id = "decoy"',
-    'project_id = "first"\nproject_id = "second"',
-    'project_id = false',
-  ];
-  for (const config of hostileConfigs) {
+it("rejects every invalid project authority before status, reset, Docker, Vitest, or fetch", async () => {
+  for (const [label, config] of INVALID_SUPABASE_PROJECT_CONFIGS) {
     const subject = freshHarness({ config });
-    expect(await subject.run(), config).toBe(1);
-    expect(subject.calls, config).toHaveLength(0);
-    expect(subject.errors.join("\n"), config).toMatch(/invalid or ambiguous project_id/);
+    expect(await subject.run(), label).toBe(1);
+    expect(subject.calls, label).toHaveLength(0);
+    expect(subject.fetchCalls, label).toHaveLength(0);
+    expect(subject.errors.join("\n"), label).toMatch(/invalid or ambiguous project_id/);
   }
 });
 

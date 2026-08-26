@@ -86,11 +86,16 @@ function stripTomlComment(line) {
       return line.slice(0, index);
     }
   }
-  return line;
+  return quote === null ? line : null;
 }
 
 function containsProjectIdToken(line) {
   return /(?:^|[^A-Za-z0-9_-])project_id(?:$|[^A-Za-z0-9_-])/.test(line);
+}
+
+function isSafeTomlTableHeader(line) {
+  const dottedBareKey = "[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*";
+  return new RegExp(`^\\[${dottedBareKey}\\]$|^\\[\\[${dottedBareKey}\\]\\]$`).test(line);
 }
 
 export function parseSupabaseProjectId(config) {
@@ -103,11 +108,12 @@ export function parseSupabaseProjectId(config) {
       return null;
     }
     const line = stripTomlComment(originalLine);
+    if (line === null) return null;
     const trimmed = line.trim();
     if (!trimmed) continue;
 
     if (trimmed.startsWith("[")) {
-      if (containsProjectIdToken(line)) return null;
+      if (!isSafeTomlTableHeader(trimmed) || containsProjectIdToken(line)) return null;
       rootTable = false;
       continue;
     }
