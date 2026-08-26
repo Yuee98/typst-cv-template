@@ -1119,7 +1119,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           where id = '${SEED.policy.id}'::uuid;
         `,
       ),
-      expectedError: "duplicate key value violates unique constraint",
+      expectedError: "DeepSeek G2 draft routing policy mismatch",
     },
   ];
 
@@ -1130,11 +1130,209 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
     },
   );
 
-  it("rolls back a full empty-seed bootstrap after a late policy natural-key conflict", async () => {
+  const PARTIAL_CFG001_IDENTITY_CASES: readonly HostileSeedCase[] = [
+    {
+      name: "profile-only CFG001 identity graph",
+      precondition: withUserTriggersDisabled(
+        [
+          "ai_routing_policy_versions",
+          "ai_service_runtime_contract_targets",
+          "ai_service_runtime_contract_versions",
+          "ai_service_runtime_target_versions",
+          "ai_price_components",
+          "ai_price_versions",
+          "ai_provider_profile_versions",
+        ],
+        String.raw`
+          delete from public.ai_routing_policy_versions
+          where id = '${SEED.policy.id}'::uuid;
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_contract_versions
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_target_versions
+          where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}';
+          delete from public.ai_price_components
+          where price_version_id in (
+            '${SEED.pricing.rows[0].id}'::uuid,
+            '${SEED.pricing.rows[1].id}'::uuid
+          );
+          delete from public.ai_price_versions
+          where id in (
+            '${SEED.pricing.rows[0].id}'::uuid,
+            '${SEED.pricing.rows[1].id}'::uuid
+          );
+          delete from public.ai_provider_profile_versions
+          where id = '${SEED.profile.profileVersionId}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 profile version mismatch",
+    },
+    {
+      name: "profile-and-version-only CFG001 identity graph",
+      precondition: withUserTriggersDisabled(
+        [
+          "ai_routing_policy_versions",
+          "ai_service_runtime_contract_targets",
+          "ai_service_runtime_contract_versions",
+          "ai_service_runtime_target_versions",
+          "ai_price_components",
+          "ai_price_versions",
+        ],
+        String.raw`
+          delete from public.ai_routing_policy_versions
+          where id = '${SEED.policy.id}'::uuid;
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_contract_versions
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_target_versions
+          where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}';
+          delete from public.ai_price_components
+          where price_version_id in (
+            '${SEED.pricing.rows[0].id}'::uuid,
+            '${SEED.pricing.rows[1].id}'::uuid
+          );
+          delete from public.ai_price_versions
+          where id in (
+            '${SEED.pricing.rows[0].id}'::uuid,
+            '${SEED.pricing.rows[1].id}'::uuid
+          );
+        `,
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "CFG001 profile graph with no price identities",
+      precondition: withUserTriggersDisabled(
+        [
+          "ai_routing_policy_versions",
+          "ai_service_runtime_contract_targets",
+          "ai_service_runtime_contract_versions",
+          "ai_service_runtime_target_versions",
+          "ai_price_components",
+          "ai_price_versions",
+        ],
+        String.raw`
+          delete from public.ai_routing_policy_versions
+          where id = '${SEED.policy.id}'::uuid;
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_contract_versions
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_target_versions
+          where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}';
+          delete from public.ai_price_components
+          where price_version_id in (
+            '${SEED.pricing.rows[0].id}'::uuid,
+            '${SEED.pricing.rows[1].id}'::uuid
+          );
+          delete from public.ai_price_versions
+          where id in (
+            '${SEED.pricing.rows[0].id}'::uuid,
+            '${SEED.pricing.rows[1].id}'::uuid
+          );
+        `,
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "one canonical CFG001 price identity",
+      precondition: withUserTriggersDisabled(
+        [
+          "ai_routing_policy_versions",
+          "ai_service_runtime_contract_targets",
+          "ai_service_runtime_contract_versions",
+          "ai_service_runtime_target_versions",
+          "ai_price_components",
+          "ai_price_versions",
+        ],
+        String.raw`
+          delete from public.ai_routing_policy_versions
+          where id = '${SEED.policy.id}'::uuid;
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_contract_versions
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_target_versions
+          where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}';
+          delete from public.ai_price_components
+          where price_version_id = '${SEED.pricing.rows[1].id}'::uuid;
+          delete from public.ai_price_versions
+          where id = '${SEED.pricing.rows[1].id}'::uuid;
+        `,
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "runtime target without the CFG001 root",
+      precondition: withUserTriggersDisabled(
+        [
+          "ai_routing_policy_versions",
+          "ai_service_runtime_contract_targets",
+          "ai_service_runtime_contract_versions",
+        ],
+        String.raw`
+          delete from public.ai_routing_policy_versions
+          where id = '${SEED.policy.id}'::uuid;
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_contract_versions
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+        `,
+      ),
+      expectedError: "DeepSeek V2 runtime contract mismatch",
+    },
+    {
+      name: "runtime root without the CFG001 target",
+      precondition: withUserTriggersDisabled(
+        [
+          "ai_routing_policy_versions",
+          "ai_service_runtime_contract_targets",
+          "ai_service_runtime_target_versions",
+        ],
+        String.raw`
+          delete from public.ai_routing_policy_versions
+          where id = '${SEED.policy.id}'::uuid;
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_target_versions
+          where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}';
+        `,
+      ),
+      expectedError: "DeepSeek V2 runtime target mismatch",
+    },
+    {
+      name: "runtime root and target without CFG001 membership",
+      precondition: withUserTriggersDisabled(
+        [
+          "ai_service_runtime_contract_targets",
+          "ai_service_runtime_contract_versions",
+        ],
+        String.raw`
+          update public.ai_service_runtime_contract_versions
+          set sealed_at = null
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+          delete from public.ai_service_runtime_contract_targets
+          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
+        `,
+      ),
+      expectedError: "DeepSeek V2 runtime membership mismatch",
+    },
+  ];
+
+  it.each(PARTIAL_CFG001_IDENTITY_CASES)(
+    "fails closed before repairing partial CFG001 identities: $name",
+    (seedCase) => {
+      expectHostileSeedRollback(seedCase);
+    },
+  );
+
+  it("fails closed on a policy natural-key occupant before bootstrap DML", async () => {
     const userId = await createHistoricalFixture(service);
     try {
       expectHostileSeedRollback({
-        name: "late policy natural-key conflict after bootstrap",
+        name: "policy natural-key occupant",
         precondition: withUserTriggersDisabled(
           [
             "ai_routing_policy_versions",
@@ -1239,7 +1437,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             );
           `,
         ),
-        expectedError: "duplicate key value violates unique constraint",
+        expectedError: "DeepSeek V2 profile identity mismatch",
       });
     } finally {
       await deleteTestUser(service, userId);

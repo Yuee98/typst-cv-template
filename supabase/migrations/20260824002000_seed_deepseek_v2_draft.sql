@@ -7,6 +7,194 @@
 
 begin;
 
+-- Bootstrap is permitted only when every CFG001-owned identity is absent.  A
+-- row at any canonical ID/natural key means this migration may be a reapply,
+-- never a repair: require the entire identity graph before any INSERT/UPDATE
+-- below can change the catalog.  Projection validation remains below so an
+-- identity-complete reapply still receives its existing exact diagnostics.
+do $$
+declare
+  v_any_owned_identity boolean;
+  v_count bigint;
+begin
+  select
+    exists (
+      select 1
+      from public.ai_provider_profiles
+      where id = '11111111-1111-4111-8111-111111111110'::uuid
+         or profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+    )
+    or exists (
+      select 1
+      from public.ai_provider_profile_versions
+      where id = '11111111-1111-4111-8111-111111111111'::uuid
+         or (
+           profile_id = '11111111-1111-4111-8111-111111111110'::uuid
+           and version = 1
+         )
+    )
+    or exists (
+      select 1
+      from public.ai_price_versions
+      where id in (
+        '11111111-1111-4111-8111-111111111112'::uuid,
+        '11111111-1111-4111-8111-111111111113'::uuid
+      ) or (
+        profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
+        and pricing_lane in ('offpeak', 'peak')
+        and version = 1
+      )
+    )
+    or exists (
+      select 1
+      from public.ai_price_components
+      where price_version_id in (
+        '11111111-1111-4111-8111-111111111112'::uuid,
+        '11111111-1111-4111-8111-111111111113'::uuid
+      )
+    )
+    or exists (
+      select 1
+      from public.ai_service_runtime_target_versions
+      where runtime_target_id =
+        'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'
+    )
+    or exists (
+      select 1
+      from public.ai_service_runtime_contract_versions
+      where runtime_contract_id = 'runtime.deepseek-v2.v1'
+    )
+    or exists (
+      select 1
+      from public.ai_service_runtime_contract_targets
+      where runtime_contract_id = 'runtime.deepseek-v2.v1'
+         or runtime_target_id =
+           'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'
+    )
+    or exists (
+      select 1
+      from public.ai_routing_policy_versions
+      where id = '33333333-3333-4333-8333-333333333332'::uuid
+         or (policy_key = 'polish.deepseek-only.g2.v1' and version = 1)
+    ) into v_any_owned_identity;
+
+  if not v_any_owned_identity then
+    return;
+  end if;
+
+  select count(*) into v_count
+  from public.ai_provider_profiles
+  where id = '11111111-1111-4111-8111-111111111110'::uuid
+     or profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1';
+
+  if v_count <> 1 or not exists (
+    select 1
+    from public.ai_provider_profiles
+    where id = '11111111-1111-4111-8111-111111111110'::uuid
+      and profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+  ) then
+    raise exception 'DeepSeek V2 profile identity mismatch'
+      using errcode = '23514';
+  end if;
+
+  select count(*) into v_count
+  from public.ai_provider_profile_versions
+  where id = '11111111-1111-4111-8111-111111111111'::uuid
+     or (
+       profile_id = '11111111-1111-4111-8111-111111111110'::uuid
+       and version = 1
+     );
+
+  if v_count <> 1 or not exists (
+    select 1
+    from public.ai_provider_profile_versions
+    where id = '11111111-1111-4111-8111-111111111111'::uuid
+      and profile_id = '11111111-1111-4111-8111-111111111110'::uuid
+      and version = 1
+  ) then
+    raise exception 'DeepSeek V2 profile version mismatch'
+      using errcode = '23514';
+  end if;
+
+  select count(*) into v_count
+  from public.ai_price_versions
+  where id in (
+    '11111111-1111-4111-8111-111111111112'::uuid,
+    '11111111-1111-4111-8111-111111111113'::uuid
+  ) or (
+    profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
+    and pricing_lane in ('offpeak', 'peak')
+    and version = 1
+  );
+
+  if v_count <> 2 or (
+    select count(*)
+    from public.ai_price_versions
+    where (id, pricing_lane) in (
+      ('11111111-1111-4111-8111-111111111112'::uuid, 'offpeak'::text),
+      ('11111111-1111-4111-8111-111111111113'::uuid, 'peak'::text)
+    )
+      and profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
+      and version = 1
+  ) <> 2 then
+    raise exception 'DeepSeek V2 price version mismatch'
+      using errcode = '23514';
+  end if;
+
+  select count(*) into v_count
+  from public.ai_service_runtime_target_versions
+  where runtime_target_id =
+    'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1';
+
+  if v_count <> 1 then
+    raise exception 'DeepSeek V2 runtime target mismatch'
+      using errcode = '23514';
+  end if;
+
+  select count(*) into v_count
+  from public.ai_service_runtime_contract_versions
+  where runtime_contract_id = 'runtime.deepseek-v2.v1';
+
+  if v_count <> 1 then
+    raise exception 'DeepSeek V2 runtime contract mismatch'
+      using errcode = '23514';
+  end if;
+
+  select count(*) into v_count
+  from public.ai_service_runtime_contract_targets
+  where runtime_contract_id = 'runtime.deepseek-v2.v1'
+     or runtime_target_id =
+       'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1';
+
+  if v_count <> 1 or not exists (
+    select 1
+    from public.ai_service_runtime_contract_targets
+    where runtime_contract_id = 'runtime.deepseek-v2.v1'
+      and runtime_target_id =
+        'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'
+  ) then
+    raise exception 'DeepSeek V2 runtime membership mismatch'
+      using errcode = '23514';
+  end if;
+
+  select count(*) into v_count
+  from public.ai_routing_policy_versions
+  where id = '33333333-3333-4333-8333-333333333332'::uuid
+     or (policy_key = 'polish.deepseek-only.g2.v1' and version = 1);
+
+  if v_count <> 1 or not exists (
+    select 1
+    from public.ai_routing_policy_versions
+    where id = '33333333-3333-4333-8333-333333333332'::uuid
+      and policy_key = 'polish.deepseek-only.g2.v1'
+      and version = 1
+  ) then
+    raise exception 'DeepSeek G2 draft routing policy mismatch'
+      using errcode = '23514';
+  end if;
+end;
+$$;
+
 -- A fresh database has no DeepSeek price identities, so the canonical six
 -- components may be bootstrapped below.  Once either canonical price identity
 -- exists, however, a partial/substituted/extended component set is evidence of
