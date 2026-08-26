@@ -11,6 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateLocalDatabaseUrl } from "./run-db-tests.mjs";
+
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
@@ -22,95 +24,200 @@ const supabaseCli = path.join(
   "supabase.js",
 );
 const vitestCli = path.join(webRoot, "node_modules", "vitest", "vitest.mjs");
+const supabaseConfig = path.join(repoRoot, "supabase", "config.toml");
+const CHILD_TIMEOUT_MS = 300_000;
+const KONG_RESTART_TIMEOUT_MS = 120_000;
 
-function fail(message) {
-  console.error(`[test:db:cfg001-fresh] ERROR: ${message}`);
-  process.exit(1);
+function logTo(logger, message) {
+  logger(`[test:db:cfg001-fresh] ${message}`);
 }
 
-function runNode(script, args, options = {}) {
-  const result = spawnSync(process.execPath, [script, ...args], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    timeout: 300_000,
-    ...options,
-  });
-  if (result.error) {
-    fail(result.error.message);
-  }
-  return result;
+function failedChild(result) {
+  return Boolean(
+    result.error ||
+      result.signal ||
+      result.status === null ||
+      result.status !== 0,
+  );
 }
 
-function readLocalStatus() {
-  const result = runNode(supabaseCli, ["status", "-o", "env"]);
-  if (result.status !== 0) {
-    fail("local Supabase is not running or its status could not be read.");
-  }
-
+function parseLocalStatus(stdout) {
   const values = {};
-  for (const line of result.stdout.split(/\r?\n/)) {
+  for (const line of String(stdout ?? "").split(/\r?\n/)) {
     const match = /^([A-Z_]+)="([^"]*)"$/.exec(line.trim());
     if (match) {
       values[match[1]] = match[2];
     }
   }
   if (!values.API_URL || !values.PUBLISHABLE_KEY || !values.SECRET_KEY) {
-    fail("Supabase status did not return the required local credentials.");
+    return null;
   }
 
-  let apiUrl;
-  try {
-    apiUrl = new URL(values.API_URL);
-  } catch {
-    fail("Supabase status returned an invalid API_URL.");
+  const validated = validateLocalDatabaseUrl(values.API_URL);
+  if (!validated.ok) {
+    return null;
   }
-  if (
-    apiUrl.protocol !== "http:" ||
-    !["127.0.0.1", "localhost", "::1", "[::1]"].includes(apiUrl.hostname)
-  ) {
-    fail(`refusing to reset non-loopback Supabase URL ${apiUrl.origin}.`);
-  }
-
   return {
-    url: values.API_URL,
+    url: validated.url,
     publishableKey: values.PUBLISHABLE_KEY,
     secretKey: values.SECRET_KEY,
   };
 }
 
-if (!fs.existsSync(supabaseCli)) {
-  fail("the workspace Supabase CLI is not installed.");
-}
-if (!fs.existsSync(vitestCli)) {
-  fail("the web Vitest dependency is not installed.");
-}
-
-readLocalStatus();
-console.log("[test:db:cfg001-fresh] resetting verified loopback Supabase");
-const reset = runNode(supabaseCli, ["db", "reset"], {
-  stdio: "inherit",
-  encoding: undefined,
-});
-if (reset.status !== 0) {
-  fail(`Supabase reset failed with exit code ${reset.status ?? "unknown"}.`);
+export function parseSupabaseProjectId(config) {
+  const matches = [
+    ...String(config).matchAll(
+      /^project_id\s*=\s*"([^"]*)"\s*(?:#.*)?$/gm,
+    ),
+  ];
+  if (matches.length !== 1) {
+    return null;
+  }
+  const projectId = matches[0][1];
+  return /^[A-Za-z0-9._-]+$/.test(projectId) ? projectId : null;
 }
 
-const local = readLocalStatus();
-console.log(`[test:db:cfg001-fresh] running against ${local.url}`);
-const test = runNode(
-  vitestCli,
-  ["run", "--config", "vitest.db.config.mts"],
+export async function waitForAuthReady(
+  apiUrl,
   {
-    cwd: webRoot,
+    fetchImpl = fetch,
+    sleepImpl = (milliseconds) =>
+      new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    attempts = 30,
+    intervalMs = 1_000,
+    requestTimeoutMs = 3_000,
+  } = {},
+) {
+  const healthUrl = new URL("/auth/v1/health", apiUrl).toString();
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(healthUrl, {
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+      if (response.status === 200) {
+        return true;
+      }
+    } catch {
+      // A reset can briefly make Kong/Auth unreachable; retry within the bound.
+    }
+    if (attempt + 1 < attempts) {
+      await sleepImpl(intervalMs);
+    }
+  }
+  return false;
+}
+
+/** Injectable runner; returns an exit code instead of calling process.exit. */
+export async function runCfg001FreshReset({
+  env = process.env,
+  spawnSyncImpl = spawnSync,
+  fetchImpl = fetch,
+  sleepImpl,
+  existsSyncImpl = fs.existsSync,
+  readFileSyncImpl = fs.readFileSync,
+  logger = console.log,
+  errorLogger = console.error,
+} = {}) {
+  const fail = (message) => {
+    logTo(errorLogger, `ERROR: ${message}`);
+    return 1;
+  };
+  const runNode = (script, args, options = {}) =>
+    spawnSyncImpl(process.execPath, [script, ...args], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: CHILD_TIMEOUT_MS,
+      ...options,
+    });
+  const readLocalStatus = () => {
+    const result = runNode(supabaseCli, ["status", "-o", "env"]);
+    if (failedChild(result)) {
+      return null;
+    }
+    return parseLocalStatus(result.stdout);
+  };
+
+  if (!existsSyncImpl(supabaseCli)) {
+    return fail("the workspace Supabase CLI is not installed.");
+  }
+  if (!existsSyncImpl(vitestCli)) {
+    return fail("the web Vitest dependency is not installed.");
+  }
+  if (!existsSyncImpl(supabaseConfig)) {
+    return fail("supabase/config.toml is missing.");
+  }
+
+  let config;
+  try {
+    config = readFileSyncImpl(supabaseConfig, "utf8");
+  } catch {
+    return fail("supabase/config.toml could not be read.");
+  }
+  const projectId = parseSupabaseProjectId(config);
+  if (!projectId) {
+    return fail("supabase/config.toml has an invalid or ambiguous project_id.");
+  }
+
+  if (!readLocalStatus()) {
+    return fail("local Supabase is unavailable or did not report safe loopback credentials.");
+  }
+  logTo(logger, "resetting verified loopback Supabase");
+  const reset = runNode(supabaseCli, ["db", "reset"], {
     stdio: "inherit",
     encoding: undefined,
-    env: {
-      ...process.env,
-      CFG001_FRESH_RESET: "1",
-      SUPABASE_TEST_URL: local.url,
-      SUPABASE_TEST_PUBLISHABLE_KEY: local.publishableKey,
-      SUPABASE_TEST_SECRET_KEY: local.secretKey,
+  });
+  if (failedChild(reset)) {
+    return fail("Supabase reset failed.");
+  }
+
+  const local = readLocalStatus();
+  if (!local) {
+    return fail("reset Supabase did not report safe loopback credentials.");
+  }
+
+  // `supabase db reset` can recreate Auth with a new container address while a
+  // long-lived Kong process still holds the old upstream. Restart only this
+  // verified local project's gateway so the fresh gate cannot false-fail 502.
+  const kongContainer = `supabase_kong_${projectId}`;
+  const restart = spawnSyncImpl("docker", ["restart", kongContainer], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: KONG_RESTART_TIMEOUT_MS,
+  });
+  if (failedChild(restart)) {
+    return fail("local Supabase gateway restart failed.");
+  }
+  const authReady = await waitForAuthReady(local.url, {
+    fetchImpl,
+    ...(sleepImpl ? { sleepImpl } : {}),
+  });
+  if (!authReady) {
+    return fail("local Supabase Auth did not become ready after gateway restart.");
+  }
+
+  logTo(logger, `running against ${local.url}`);
+  const test = runNode(
+    vitestCli,
+    ["run", "--config", "vitest.db.config.mts"],
+    {
+      cwd: webRoot,
+      stdio: "inherit",
+      encoding: undefined,
+      env: {
+        ...env,
+        CFG001_FRESH_RESET: "1",
+        SUPABASE_TEST_URL: local.url,
+        SUPABASE_TEST_PUBLISHABLE_KEY: local.publishableKey,
+        SUPABASE_TEST_SECRET_KEY: local.secretKey,
+      },
     },
-  },
-);
-process.exit(test.status ?? 1);
+  );
+  if (failedChild(test)) {
+    return typeof test.status === "number" && test.status !== 0 ? test.status : 1;
+  }
+  return 0;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = await runCfg001FreshReset();
+}

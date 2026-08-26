@@ -2,6 +2,11 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
+import {
+  parseSupabaseProjectId,
+  runCfg001FreshReset,
+  waitForAuthReady,
+} from "./run-cfg001-fresh-reset.mjs";
 import { runDbTests, validateLocalDatabaseUrl } from "./run-db-tests.mjs";
 
 const GOOD_STATUS = [
@@ -120,6 +125,40 @@ function harness({ env = {}, results = [], fetchImpl = async () => new Response(
   };
 }
 
+function freshHarness({
+  config = 'project_id = "typst-cv-template"',
+  env = {},
+  results = [],
+  fetchImpl = async () => ({ status: 200 }),
+} = {}) {
+  const calls = [];
+  const logs = [];
+  const errors = [];
+  return {
+    calls,
+    logs,
+    errors,
+    run() {
+      return runCfg001FreshReset({
+        env,
+        fetchImpl,
+        sleepImpl: async () => {},
+        existsSyncImpl: () => true,
+        readFileSyncImpl: () => config,
+        logger: (message) => logs.push(message),
+        errorLogger: (message) => errors.push(message),
+        spawnSyncImpl(command, args, options) {
+          calls.push({ command, args, options });
+          return results.shift() ?? {
+            status: 0,
+            stdout: args.includes("status") ? GOOD_STATUS : "",
+          };
+        },
+      });
+    },
+  };
+}
+
 const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
@@ -195,6 +234,131 @@ function assertWorkflowContract(workflow, normalConfig) {
   }
   expect(workflow.match(/^      - "[^"]+"$/gm)).toEqual(expect.arrayContaining(requiredPaths.map((path) => `      - "${path}"`)));
 }
+
+it("accepts exactly one safe top-level Supabase project id", () => {
+  expect(parseSupabaseProjectId('project_id = "typst-cv-template"')).toBe(
+    "typst-cv-template",
+  );
+  expect(parseSupabaseProjectId('project_id="cv.test_1" # local')).toBe(
+    "cv.test_1",
+  );
+  for (const invalid of [
+    "",
+    "project_id = 'typst-cv-template'",
+    "  project_id = \"nested\"",
+    'project_id = "unsafe/project"',
+    'project_id = ""',
+    'project_id = "first"\nproject_id = "second"',
+  ]) {
+    expect(parseSupabaseProjectId(invalid), invalid).toBeNull();
+  }
+});
+
+it("restarts only the configured local gateway before the fresh CFG suite", async () => {
+  const subject = freshHarness({ env: { PARENT_MARKER: "preserved" } });
+  expect(await subject.run()).toBe(0);
+  expect(subject.calls).toHaveLength(5);
+
+  const [beforeStatus, reset, afterStatus, restart, test] = subject.calls;
+  expect(beforeStatus.command).toBe(process.execPath);
+  expect(beforeStatus.args.slice(-3)).toEqual(["status", "-o", "env"]);
+  expect(reset.command).toBe(process.execPath);
+  expect(reset.args.slice(-2)).toEqual(["db", "reset"]);
+  expect(afterStatus.args.slice(-3)).toEqual(["status", "-o", "env"]);
+  expect(restart.command).toBe("docker");
+  expect(restart.args).toEqual([
+    "restart",
+    "supabase_kong_typst-cv-template",
+  ]);
+  expect(restart.options.timeout).toBe(120_000);
+  expect(test.command).toBe(process.execPath);
+  expect(test.args.slice(-3)).toEqual([
+    "run",
+    "--config",
+    "vitest.db.config.mts",
+  ]);
+  expect(test.options.env).toMatchObject({
+    PARENT_MARKER: "preserved",
+    CFG001_FRESH_RESET: "1",
+    SUPABASE_TEST_URL: "http://127.0.0.1:54321/",
+    SUPABASE_TEST_PUBLISHABLE_KEY: "publishable-test-key",
+    SUPABASE_TEST_SECRET_KEY: "secret-test-key",
+  });
+  expect([...subject.logs, ...subject.errors].join("\n")).not.toContain(
+    "secret-test-key",
+  );
+});
+
+it("waits for an exact Auth health success and bounds retries", async () => {
+  const statuses = [502, 503, 200];
+  const urls = [];
+  let sleeps = 0;
+  expect(
+    await waitForAuthReady("http://127.0.0.1:54321", {
+      attempts: 3,
+      intervalMs: 0,
+      sleepImpl: async () => {
+        sleeps += 1;
+      },
+      fetchImpl: async (url) => {
+        urls.push(url);
+        return { status: statuses.shift() };
+      },
+    }),
+  ).toBe(true);
+  expect(urls).toEqual([
+    "http://127.0.0.1:54321/auth/v1/health",
+    "http://127.0.0.1:54321/auth/v1/health",
+    "http://127.0.0.1:54321/auth/v1/health",
+  ]);
+  expect(sleeps).toBe(2);
+
+  expect(
+    await waitForAuthReady("http://127.0.0.1:54321", {
+      attempts: 2,
+      intervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: async () => ({ status: 502 }),
+    }),
+  ).toBe(false);
+});
+
+it("fails closed before reset for ambiguous project authority", async () => {
+  const subject = freshHarness({
+    config: 'project_id = "first"\nproject_id = "second"',
+  });
+  expect(await subject.run()).toBe(1);
+  expect(subject.calls).toHaveLength(0);
+  expect(subject.errors.join("\n")).toMatch(/invalid or ambiguous project_id/);
+});
+
+it("does not run Vitest after gateway restart failure", async () => {
+  const subject = freshHarness({
+    results: [
+      { status: 0, stdout: GOOD_STATUS },
+      { status: 0 },
+      { status: 0, stdout: GOOD_STATUS },
+      {
+        status: null,
+        signal: "SIGTERM",
+        error: new Error("secret-test-key must stay redacted"),
+      },
+    ],
+  });
+  expect(await subject.run()).toBe(1);
+  expect(subject.calls).toHaveLength(4);
+  expect(subject.errors.join("\n")).toMatch(/gateway restart failed/);
+  expect(subject.errors.join("\n")).not.toContain("secret-test-key");
+});
+
+it("does not run Vitest when Auth never becomes ready", async () => {
+  const subject = freshHarness({
+    fetchImpl: async () => ({ status: 502 }),
+  });
+  expect(await subject.run()).toBe(1);
+  expect(subject.calls).toHaveLength(4);
+  expect(subject.errors.join("\n")).toMatch(/Auth did not become ready/);
+});
 
 it("required mode fails status, spawn, and timeout errors", async () => {
   for (const result of [
