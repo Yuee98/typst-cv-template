@@ -1048,7 +1048,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
         `,
       ),
-      expectedError: "sealed runtime contract target sets are immutable",
+      expectedError: "DeepSeek V2 runtime membership mismatch",
     },
     {
       name: "sealed runtime root has an additional membership",
