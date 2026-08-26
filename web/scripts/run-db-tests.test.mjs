@@ -235,6 +235,43 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(workflow.match(/^      - "[^"]+"$/gm)).toEqual(expect.arrayContaining(requiredPaths.map((path) => `      - "${path}"`)));
 }
 
+function replaceExactlyOnce(value, search, replacement, label) {
+  if (!search) throw new Error(`workflow mutation ${label} has an empty target`);
+  const first = value.indexOf(search);
+  if (first < 0 || value.indexOf(search, first + search.length) >= 0) {
+    throw new Error(`workflow mutation ${label} did not match exactly once`);
+  }
+  return `${value.slice(0, first)}${replacement}${value.slice(first + search.length)}`;
+}
+
+function moveNamedWorkflowStepBefore(workflow, lineEnding, movingName, targetName) {
+  const lines = workflow.split(lineEnding);
+  const findUniqueStep = (name) => {
+    const matches = lines
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => line === `      - name: ${name}`);
+    if (matches.length !== 1) {
+      throw new Error(`workflow mutation move ${name} did not find exactly one named step`);
+    }
+    return matches[0].index;
+  };
+  const movingStart = findUniqueStep(movingName);
+  const movingEnd = lines.findIndex((line, index) => index > movingStart && line.startsWith("      - "));
+  const movingStep = lines.splice(movingStart, movingEnd < 0 ? lines.length - movingStart : movingEnd - movingStart);
+  const targetStart = findUniqueStep(targetName);
+  lines.splice(targetStart, 0, ...movingStep);
+  return lines.join(lineEnding);
+}
+
+function assertWorkflowMutationRejected(workflow, normalConfig, label, mutate) {
+  for (const [lineEndingName, lineEnding] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
+    const source = workflow.replace(/\r\n|\n/g, lineEnding);
+    const mutated = mutate(source, lineEnding);
+    expect(mutated, `${label} ${lineEndingName} must change the workflow`).not.toBe(source);
+    expect(() => assertWorkflowContract(mutated, normalConfig), `${label} ${lineEndingName}`).toThrow();
+  }
+}
+
 it("accepts exactly one safe top-level Supabase project id", () => {
   expect(parseSupabaseProjectId('project_id = "typst-cv-template"')).toBe(
     "typst-cv-template",
@@ -249,9 +286,54 @@ it("accepts exactly one safe top-level Supabase project id", () => {
     'project_id = "unsafe/project"',
     'project_id = ""',
     'project_id = "first"\nproject_id = "second"',
+    'project_id = 1',
+    'project_id = true',
+    'project_id = ["typst-cv-template"]',
+    'project_id = { value = "typst-cv-template" }',
+    'project_id = "unterminated',
+    '"project_id" = "typst-cv-template"',
+    '[project_id]\nvalue = "typst-cv-template"',
+    '[[project_id]]\nvalue = "typst-cv-template"',
+    '[project_id.nested]\nvalue = "typst-cv-template"',
+    '["project_id"]\nvalue = "typst-cv-template"',
+    'project_id.value = "typst-cv-template"',
+    'note = """\nproject_id = "decoy"\n"""',
+    "note = '''\nproject_id = \"decoy\"\n'''",
+    'project_id = "typst-cv-template"\n[api]\nproject_id = "decoy"',
+    'project_id = "typst-cv-template"\nnote = "project_id = \\"decoy\\""',
   ]) {
     expect(parseSupabaseProjectId(invalid), invalid).toBeNull();
   }
+});
+
+it("rejects every ambiguous project authority before status, reset, Docker, or Vitest", async () => {
+  const hostileConfigs = [
+    '[project_id]\nvalue = "typst-cv-template"',
+    'note = """\nproject_id = "decoy"\n"""',
+    "note = '''\nproject_id = \"decoy\"\n'''",
+    'project_id = "typst-cv-template"\n[api]\nproject_id = "decoy"',
+    'project_id = "first"\nproject_id = "second"',
+    'project_id = false',
+  ];
+  for (const config of hostileConfigs) {
+    const subject = freshHarness({ config });
+    expect(await subject.run(), config).toBe(1);
+    expect(subject.calls, config).toHaveLength(0);
+    expect(subject.errors.join("\n"), config).toMatch(/invalid or ambiguous project_id/);
+  }
+});
+
+it("derives the checked-in gateway name from its only root project authority", async () => {
+  const configPath = fileURLToPath(new URL("../../supabase/config.toml", import.meta.url));
+  const config = await readFile(configPath, "utf8");
+  expect(parseSupabaseProjectId(config)).toBe("typst-cv-template");
+
+  const subject = freshHarness({ config });
+  expect(await subject.run()).toBe(0);
+  expect(subject.calls[3]).toMatchObject({
+    command: "docker",
+    args: ["restart", "supabase_kong_typst-cv-template"],
+  });
 });
 
 it("restarts only the configured local gateway before the fresh CFG suite", async () => {
@@ -524,6 +606,10 @@ it("DB workflow structural parser rejects nameless and multiline-run steps", () 
   ).toThrow(/exactly one/);
 });
 
+it("workflow mutation replacement rejects a missing target", () => {
+  expect(() => replaceExactlyOnce("on:\n", "jobs:\n", "", "missing root")).toThrow(/did not match exactly once/);
+});
+
 it("DB workflow runs the credential-free runner contract before real-DB mutation", async () => {
   // This test is part of the ordinary `pnpm test` suite as well as the
   // dedicated workflow step. Keeping the workflow assertion here means a
@@ -608,30 +694,153 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
   }
 
   const mutations = [
-    workflow.replace(runnerCommand, `${runnerCommand}\n      - name: Duplicate runner\n        run: ${runnerCommand}`),
-    workflow.replace("DB_TESTS_REQUIRED: \"1\"", "DB_TESTS_REQUIRED: \"0\""),
-    workflow.replace("Run CFG-001 fresh-reset gate", "Run unexpected gate"),
-    workflow.replace("Run CFG-001 fresh-reset gate", "Run real-DB suite"),
-    ...REQUIRED_WORKFLOW_PATHS.map((path) => workflow
-      .replace(`      - "${path}"\r\n`, "")
-      .replace(`      - "${path}"\n`, "")),
-    workflow.replace("        run: pnpm --filter web test:db\r\n", "        if: always()\r\n        run: pnpm --filter web test:db\r\n"),
-    workflow.replace("        run: pnpm --filter web test:db\r\n", "        shell: bash\r\n        run: pnpm --filter web test:db\r\n"),
-    workflow.replace("        run: pnpm --filter web test:db\r\n", "        \"if\": false\r\n        run: pnpm --filter web test:db\r\n"),
-    workflow.replace("        run: pnpm --filter web test:db\r\n", "        \"env\": { DB_TESTS_REQUIRED: \"0\" }\r\n        run: pnpm --filter web test:db\r\n"),
-    workflow.replace("    env:\r\n", "    if: false\r\n    env:\r\n"),
-    workflow.replace("    paths:\r\n", "    paths-ignore:\r\n"),
-    workflow.replace("      DB_TESTS_REQUIRED: \"1\"\r\n", "      DB_TESTS_REQUIRED: \"1\"\r\n      DB_TESTS_REQUIRED: \"1\"\r\n"),
-    workflow.replace("          node-version: 24", "          \"node-version\": 24"),
-    workflow.replace("      - name: Checkout", "      - name: Checkout\r\n        with:\r\n          \"ref\": main"),
-    workflow.replace("  pull_request:", "  other:").replace("  workflow_dispatch:", "  pull_request:") ,
-    workflow.replace("  pull_request:", "  other:") ,
-    `${workflow.replace("on:\r\n", "on:\r\n  pull_request:\r\n    paths:\r\n      - \"decoy\"\r\n")}`,
-    workflow.replace("jobs:\r\n", "jobs:\r\n  decoy:\r\n    steps:\r\n      - name: noop\r\n        run: true\r\n"),
-    workflow.replace("jobs:\r\n", "jobs:\r\njobs:\r\n"),
-    workflow.replace("on:\r\n", "on:\r\non:\r\n"),
+    ["duplicate runner", (source, eol) => replaceExactlyOnce(
+      source,
+      `      - name: ${runnerName}${eol}        run: ${runnerCommand}${eol}`,
+      `      - name: ${runnerName}${eol}        run: ${runnerCommand}${eol}      - name: Duplicate runner${eol}        run: ${runnerCommand}${eol}`,
+      "duplicate runner",
+    )],
+    ["required job environment value", (source) => replaceExactlyOnce(
+      source,
+      'DB_TESTS_REQUIRED: "1"',
+      'DB_TESTS_REQUIRED: "0"',
+      "required job environment value",
+    )],
+    ["duplicate job environment key", (source, eol) => replaceExactlyOnce(
+      source,
+      `      DB_TESTS_REQUIRED: "1"${eol}`,
+      `      DB_TESTS_REQUIRED: "1"${eol}      DB_TESTS_REQUIRED: "1"${eol}`,
+      "duplicate job environment key",
+    )],
+    ["quoted job environment key", (source) => replaceExactlyOnce(
+      source,
+      'DB_TESTS_REQUIRED: "1"',
+      '"DB_TESTS_REQUIRED": "1"',
+      "quoted job environment key",
+    )],
+    ["job condition", (source, eol) => replaceExactlyOnce(
+      source,
+      `    env:${eol}`,
+      `    if: false${eol}    env:${eol}`,
+      "job condition",
+    )],
+    ["renamed required mutation", (source) => replaceExactlyOnce(
+      source,
+      "Run CFG-001 fresh-reset gate",
+      "Run unexpected gate",
+      "renamed required mutation",
+    )],
+    ["duplicate required mutation name", (source) => replaceExactlyOnce(
+      source,
+      "Run CFG-001 fresh-reset gate",
+      "Run real-DB suite",
+      "duplicate required mutation name",
+    )],
+    ...REQUIRED_WORKFLOW_PATHS.map((path) => [
+      `omitted required path ${path}`,
+      (source, eol) => replaceExactlyOnce(source, `      - "${path}"${eol}`, "", `required path ${path}`),
+    ]),
+    ["paths-ignore", (source, eol) => replaceExactlyOnce(
+      source,
+      `    paths:${eol}`,
+      `    paths-ignore:${eol}`,
+      "paths-ignore",
+    )],
+    ["post-mutation condition", (source, eol) => replaceExactlyOnce(
+      source,
+      `        run: pnpm --filter web test:db${eol}`,
+      `        if: always()${eol}        run: pnpm --filter web test:db${eol}`,
+      "post-mutation condition",
+    )],
+    ["post-mutation continue-on-error", (source, eol) => replaceExactlyOnce(
+      source,
+      `        run: pnpm --filter web test:db${eol}`,
+      `        continue-on-error: true${eol}        run: pnpm --filter web test:db${eol}`,
+      "post-mutation continue-on-error",
+    )],
+    ["post-mutation shell", (source, eol) => replaceExactlyOnce(
+      source,
+      `        run: pnpm --filter web test:db${eol}`,
+      `        shell: bash${eol}        run: pnpm --filter web test:db${eol}`,
+      "post-mutation shell",
+    )],
+    ["quoted step condition", (source, eol) => replaceExactlyOnce(
+      source,
+      `        run: pnpm --filter web test:db${eol}`,
+      `        "if": false${eol}        run: pnpm --filter web test:db${eol}`,
+      "quoted step condition",
+    )],
+    ["quoted step environment", (source, eol) => replaceExactlyOnce(
+      source,
+      `        run: pnpm --filter web test:db${eol}`,
+      `        "env": { DB_TESTS_REQUIRED: "0" }${eol}        run: pnpm --filter web test:db${eol}`,
+      "quoted step environment",
+    )],
+    ["quoted node input", (source) => replaceExactlyOnce(
+      source,
+      "          node-version: 24",
+      "          \"node-version\": 24",
+      "quoted node input",
+    )],
+    ["quoted checkout input", (source, eol) => replaceExactlyOnce(
+      source,
+      `        uses: actions/checkout@v7${eol}`,
+      `        uses: actions/checkout@v7${eol}        with:${eol}          "ref": main${eol}`,
+      "quoted checkout input",
+    )],
+    ["relocated pull request trigger", (source, eol) => replaceExactlyOnce(
+      replaceExactlyOnce(source, `  pull_request:${eol}`, `  other:${eol}`, "remove root pull request"),
+      `  workflow_dispatch:${eol}`,
+      `  pull_request:${eol}`,
+      "relocate pull request trigger",
+    )],
+    ["missing pull request trigger", (source, eol) => replaceExactlyOnce(
+      source,
+      `  pull_request:${eol}`,
+      `  other:${eol}`,
+      "missing pull request trigger",
+    )],
+    ["decoy duplicate pull request trigger", (source, eol) => replaceExactlyOnce(
+      source,
+      `on:${eol}`,
+      `on:${eol}  pull_request:${eol}    paths:${eol}      - "decoy"${eol}`,
+      "decoy duplicate pull request trigger",
+    )],
+    ["decoy job", (source, eol) => replaceExactlyOnce(
+      source,
+      `jobs:${eol}`,
+      `jobs:${eol}  decoy:${eol}    steps:${eol}      - name: noop${eol}        run: true${eol}`,
+      "decoy job",
+    )],
+    ["duplicate jobs root", (source, eol) => replaceExactlyOnce(
+      source,
+      `jobs:${eol}`,
+      `jobs:${eol}jobs:${eol}`,
+      "duplicate jobs root",
+    )],
+    ["duplicate on root", (source, eol) => replaceExactlyOnce(
+      source,
+      `on:${eol}`,
+      `on:${eol}on:${eol}`,
+      "duplicate on root",
+    )],
+    ...["|", ">", "|-", ">-", "|+", ">+"].map((style) => [
+      `multiline run scalar ${style}`,
+      (source, eol) => replaceExactlyOnce(
+        source,
+        `        run: pnpm --filter web test:db${eol}`,
+        `        run: ${style}${eol}          pnpm --filter web test:db${eol}`,
+        `multiline run scalar ${style}`,
+      ),
+    ]),
+    ["runner order", (source, eol) => moveNamedWorkflowStepBefore(
+      source,
+      eol,
+      "Start local Supabase",
+      runnerName,
+    )],
   ];
-  for (const [mutationIndex, mutated] of mutations.entries()) {
-    expect(() => assertWorkflowContract(mutated, normalConfig), `mutation ${mutationIndex}`).toThrow();
+  for (const [label, mutate] of mutations) {
+    assertWorkflowMutationRejected(workflow, normalConfig, label, mutate);
   }
 });

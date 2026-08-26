@@ -61,17 +61,63 @@ function parseLocalStatus(stdout) {
   };
 }
 
-export function parseSupabaseProjectId(config) {
-  const matches = [
-    ...String(config).matchAll(
-      /^project_id\s*=\s*"([^"]*)"\s*(?:#.*)?$/gm,
-    ),
-  ];
-  if (matches.length !== 1) {
-    return null;
+function stripTomlComment(line) {
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        quote = null;
+      }
+      continue;
+    }
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "#") {
+      return line.slice(0, index);
+    }
   }
-  const projectId = matches[0][1];
-  return /^[A-Za-z0-9._-]+$/.test(projectId) ? projectId : null;
+  return line;
+}
+
+function containsProjectIdToken(line) {
+  return /(?:^|[^A-Za-z0-9_-])project_id(?:$|[^A-Za-z0-9_-])/.test(line);
+}
+
+export function parseSupabaseProjectId(config) {
+  let projectId = null;
+  let rootTable = true;
+  for (const originalLine of String(config).replace(/\r\n?/g, "\n").split("\n")) {
+    // The runner does not need a general TOML parser, but a project authority
+    // decoy in either TOML multiline string form must never be accepted.
+    if (originalLine.includes('"""') || originalLine.includes("'''")) {
+      return null;
+    }
+    const line = stripTomlComment(originalLine);
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith("[")) {
+      if (containsProjectIdToken(line)) return null;
+      rootTable = false;
+      continue;
+    }
+
+    if (!containsProjectIdToken(line)) continue;
+    const match = /^project_id[ \t]*=[ \t]*"([A-Za-z0-9._-]+)"[ \t]*$/.exec(line);
+    if (!rootTable || projectId !== null || !match) return null;
+    projectId = match[1];
+  }
+  return projectId;
 }
 
 export async function waitForAuthReady(
