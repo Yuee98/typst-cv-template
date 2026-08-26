@@ -117,6 +117,19 @@ const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
   const lines = workflow.replace(/\r\n/g, "\n").split("\n");
+  expect(lines.filter((line) => line === "on:")).toHaveLength(1);
+  expect(lines.filter((line) => line === "jobs:")).toHaveLength(1);
+  const onAt = lines.indexOf("on:");
+  const onEnd = lines.findIndex((line, index) => index > onAt && /^\S/.test(line));
+  const onLines = lines.slice(onAt + 1, onEnd < 0 ? lines.length : onEnd);
+  expect(onLines.filter((line) => /^  [^\s#][^:]*:/.test(line)).map((line) => line.trim().split(":")[0]))
+    .toEqual(["pull_request", "workflow_dispatch"]);
+  const prAt = onLines.findIndex((line) => line === "  pull_request:");
+  const prEnd = onLines.findIndex((line, index) => index > prAt && /^  \S/.test(line));
+  if (prAt < 0 || prEnd < 0) throw new Error("missing pull_request block");
+  const prLines = onLines.slice(prAt + 1, prEnd);
+  expect(prLines.filter((line) => /^    [^\s#][^:]*:/.test(line)).map((line) => line.trim().split(":")[0]))
+    .toEqual(["paths"]);
   const jobsAt = lines.indexOf("jobs:");
   if (jobsAt < 0) throw new Error("missing jobs root");
   const jobEnd = lines.findIndex((line, index) => index > jobsAt && /^\S/.test(line));
@@ -126,7 +139,9 @@ function assertWorkflowContract(workflow, normalConfig) {
   const directJob = jobLines.filter((line) => /^    [^\s#][^:]*:/.test(line));
   expect(directJob.map((line) => line.trim().split(":")[0])).toEqual(["name", "runs-on", "timeout-minutes", "env", "steps"]);
   expect(directJob).toEqual(expect.arrayContaining(["    name: Web (real-DB tests)", "    runs-on: ubuntu-latest", "    timeout-minutes: 20"]));
-  const envAt = jobLines.findIndex((line) => line === "    env:");
+  const envDeclarations = jobLines.filter((line) => line === "    env:");
+  expect(envDeclarations).toHaveLength(1);
+  const envAt = jobLines.indexOf("    env:");
   if (envAt < 0) throw new Error("missing db-tests job env");
   const envLines = jobLines.slice(envAt + 1).filter((line) => /^      [A-Z_]+:/.test(line));
   expect(envLines).toEqual(["      NEXT_TELEMETRY_DISABLED: \"1\"", "      DB_TESTS_REQUIRED: \"1\""]);
@@ -154,11 +169,7 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(steps[2].withValues).toEqual(new Map([["node-version", "24"], ["package-manager-cache", "false"]]));
   for (const step of steps.filter((step) => step.run)) expect(step.withValues.size).toBe(0);
   expect(workflow).not.toMatch(/^        env:/m);
-  const pathStart = lines.findIndex((line) => line === "    paths:");
-  const pathEnd = lines.findIndex((line, index) => index > pathStart && /^    \S/.test(line));
-  if (pathStart < 0 || pathEnd < 0) throw new Error("missing pull_request.paths block");
-  if (lines.some((line) => line.trim().startsWith("paths-ignore:"))) throw new Error("paths-ignore is forbidden");
-  const parsedPaths = lines.slice(pathStart + 1, pathEnd).filter((line) => /^      - ".*"$/.test(line)).map((line) => line.trim().slice(3, -1));
+  const parsedPaths = prLines.filter((line) => /^      - ".*"$/.test(line)).map((line) => line.trim().slice(3, -1));
   expect(parsedPaths).toEqual(REQUIRED_WORKFLOW_PATHS);
   const requiredPaths = REQUIRED_WORKFLOW_PATHS;
   for (const path of requiredPaths) {
@@ -403,6 +414,12 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     workflow.replace("    env:\r\n", "    if: false\r\n    env:\r\n"),
     workflow.replace("    paths:\r\n", "    paths-ignore:\r\n"),
     workflow.replace("      DB_TESTS_REQUIRED: \"1\"\r\n", "      DB_TESTS_REQUIRED: \"1\"\r\n      DB_TESTS_REQUIRED: \"1\"\r\n"),
+    workflow.replace("  pull_request:", "  other:").replace("  workflow_dispatch:", "  pull_request:") ,
+    workflow.replace("  pull_request:", "  other:") ,
+    `${workflow.replace("on:\r\n", "on:\r\n  pull_request:\r\n    paths:\r\n      - \"decoy\"\r\n")}`,
+    workflow.replace("jobs:\r\n", "jobs:\r\n  decoy:\r\n    steps:\r\n      - name: noop\r\n        run: true\r\n"),
+    workflow.replace("jobs:\r\n", "jobs:\r\njobs:\r\n"),
+    workflow.replace("on:\r\n", "on:\r\non:\r\n"),
   ];
   for (const [mutationIndex, mutated] of mutations.entries()) {
     expect(() => assertWorkflowContract(mutated, normalConfig), `mutation ${mutationIndex}`).toThrow();
