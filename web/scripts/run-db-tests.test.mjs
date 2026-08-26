@@ -45,6 +45,9 @@ function parseWorkflowSteps(workflow) {
       if (/^        env:/.test(line)) {
         throw new Error(`DB workflow step ${name} must not override job env`);
       }
+      if (/^        (?:shell|timeout-minutes|working-directory):/.test(line)) {
+        throw new Error(`DB workflow step ${name} has a mutable execution override`);
+      }
       const property = /^        (uses|run|if|continue-on-error):(?:\s*(.*))?$/.exec(line);
       if (!property) continue;
 
@@ -95,8 +98,17 @@ function harness({ env = {}, results = [], fetchImpl = async () => new Response(
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
-  expect(workflow.match(/DB_TESTS_REQUIRED:\s*"1"/g)).toHaveLength(1);
-  expect(workflow).not.toMatch(/DB_TESTS_REQUIRED:\s*"0"/);
+  const lines = workflow.replace(/\r\n/g, "\n").split("\n");
+  const jobsAt = lines.indexOf("jobs:");
+  if (jobsAt < 0) throw new Error("missing jobs root");
+  const jobEnd = lines.findIndex((line, index) => index > jobsAt && /^\S/.test(line));
+  const jobLines = lines.slice(jobsAt + 1, jobEnd < 0 ? lines.length : jobEnd);
+  const jobIds = jobLines.filter((line) => /^  [^\s][^:]*:$/.test(line)).map((line) => line.trim().slice(0, -1));
+  expect(jobIds).toEqual(["db-tests"]);
+  const envAt = jobLines.findIndex((line) => line === "    env:");
+  if (envAt < 0) throw new Error("missing db-tests job env");
+  const envLines = jobLines.slice(envAt + 1).filter((line) => /^      [A-Z_]+:/.test(line));
+  expect(envLines).toEqual(["      NEXT_TELEMETRY_DISABLED: \"1\"", "      DB_TESTS_REQUIRED: \"1\""]);
   const steps = parseWorkflowSteps(workflow);
   expect(steps.map((step) => step.name)).toEqual([
     "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
@@ -117,9 +129,11 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(indexes.fresh).toBeLessThan(indexes.full);
   for (const step of steps) expect(step.hasCondition).toBe(false);
   expect(workflow).not.toMatch(/^        env:/m);
-  for (const path of [".github/workflows/db-tests.yml", "supabase/migrations/**", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/test/db/**", "web/vitest.db.config.mts"]) {
+  const requiredPaths = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/vitest.db.config.mts", "web/test/db/**"];
+  for (const path of requiredPaths) {
     expect(workflow).toContain(`      - "${path}"`);
   }
+  expect(workflow.match(/^      - "[^"]+"$/gm)).toEqual(expect.arrayContaining(requiredPaths.map((path) => `      - "${path}"`)));
 }
 
 it("required mode fails status, spawn, and timeout errors", async () => {
@@ -157,6 +171,7 @@ it("rejects whitespace and partially present explicit credentials in every mode"
   for (const env of [
     { SUPABASE_TEST_URL: "   ", SUPABASE_TEST_PUBLISHABLE_KEY: " ", SUPABASE_TEST_SECRET_KEY: " " },
     { SUPABASE_TEST_URL: " http://127.0.0.1:54321 ", SUPABASE_TEST_PUBLISHABLE_KEY: " key ", SUPABASE_TEST_SECRET_KEY: "" },
+    { SUPABASE_TEST_URL: 123, SUPABASE_TEST_PUBLISHABLE_KEY: "key", SUPABASE_TEST_SECRET_KEY: "secret" },
   ]) {
     const subject = harness({ env });
     expect(await subject.run()).toBe(1);
@@ -165,7 +180,7 @@ it("rejects whitespace and partially present explicit credentials in every mode"
 });
 
 it("rejects malformed CLI status even in optional mode", async () => {
-  for (const stdout of ["", `${GOOD_STATUS}\nAPI_URL=duplicate`]) {
+  for (const stdout of ["", `${GOOD_STATUS}\nAPI_URL=duplicate`, GOOD_STATUS.replace('SECRET_KEY="secret-test-key"', 'SECRET_KEY="   "'), GOOD_STATUS.replace(/\n/g, "\r\n") + "\r\nAPI_URL=\"duplicate\""]) {
     const subject = harness({ results: [{ status: 0, stdout }] });
     expect(await subject.run()).toBe(1);
     expect(subject.calls).toHaveLength(1);
@@ -221,11 +236,12 @@ it("Vitest spawn errors, signals, and exit failures always propagate", async () 
   for (const result of [
     { error: new Error("spawn failed"), status: null },
     { signal: "SIGTERM", status: null },
+    { status: null },
     { status: 7 },
   ]) {
     const subject = harness({ results: [{ status: 0, stdout: GOOD_STATUS }, result] });
     expect(await subject.run()).toBe(result.status === 7 ? 7 : 1);
-    expect(subject.calls[1].options.timeout).toBeLessThan(20 * 60 * 1000);
+    expect(subject.calls[1].options.timeout).toBe(600_000);
   }
 });
 
@@ -348,6 +364,7 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     workflow.replace("Run CFG-001 fresh-reset gate", "Run real-DB suite"),
     workflow.replace('      - "web/test/db/**"', ""),
     workflow.replace("        run: pnpm --filter web test:db\r\n", "        if: always()\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        shell: bash\r\n        run: pnpm --filter web test:db\r\n"),
   ];
   for (const [mutationIndex, mutated] of mutations.entries()) {
     expect(() => assertWorkflowContract(mutated, normalConfig), `mutation ${mutationIndex}`).toThrow();
