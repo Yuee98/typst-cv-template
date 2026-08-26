@@ -41,6 +41,7 @@ function parseWorkflowSteps(workflow) {
     }
 
     const properties = new Map();
+    const withValues = new Map();
     for (const line of block.slice(1)) {
       if (/^        env:/.test(line)) {
         throw new Error(`DB workflow step ${name} must not override job env`);
@@ -48,11 +49,21 @@ function parseWorkflowSteps(workflow) {
       if (/^        (?:shell|timeout-minutes|working-directory):/.test(line)) {
         throw new Error(`DB workflow step ${name} has a mutable execution override`);
       }
-      const property = /^        (uses|run|if|continue-on-error):(?:\s*(.*))?$/.exec(line);
+      const direct = /^        ([a-z][a-z0-9-]*):(?:\s*(.*))?$/.exec(line);
+      if (direct && !["uses", "run", "if", "continue-on-error", "with"].includes(direct[1])) {
+        throw new Error(`DB workflow step ${name} has unknown property ${direct[1]}`);
+      }
+      const nested = /^          ([a-z][a-z0-9-]*):\s*(.*)$/.exec(line);
+      if (nested) {
+        if (withValues.has(nested[1]) || !nested[2]) throw new Error(`DB workflow step ${name} has ambiguous with input`);
+        withValues.set(nested[1], nested[2]);
+        continue;
+      }
+      const property = /^        (uses|run|if|continue-on-error|with):(?:\s*(.*))?$/.exec(line);
       if (!property) continue;
 
       const [, key, value = ""] = property;
-      if (properties.has(key) || !value) {
+      if (properties.has(key) || (key !== "with" && !value)) {
         throw new Error(`DB workflow step ${name} has an ambiguous ${key} field`);
       }
       if (key === "run" && /^[>|]/.test(value)) {
@@ -60,6 +71,7 @@ function parseWorkflowSteps(workflow) {
       }
       properties.set(key, value);
     }
+    if (withValues.size > 0 && !properties.has("with")) throw new Error(`DB workflow step ${name} has relocated with inputs`);
 
     const uses = properties.get("uses");
     const run = properties.get("run");
@@ -72,6 +84,7 @@ function parseWorkflowSteps(workflow) {
       uses,
       run,
       hasCondition: properties.has("if") || properties.has("continue-on-error"),
+      withValues,
     };
   });
 }
@@ -95,6 +108,8 @@ function harness({ env = {}, results = [], fetchImpl = async () => new Response(
     },
   };
 }
+
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/vitest.db.config.mts", "web/test/db/**", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
@@ -128,8 +143,12 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(indexes.start).toBeLessThan(indexes.fresh);
   expect(indexes.fresh).toBeLessThan(indexes.full);
   for (const step of steps) expect(step.hasCondition).toBe(false);
+  expect(steps[0].withValues.size).toBe(0);
+  expect(steps[1].withValues).toEqual(new Map([["version", "2.109.0"]]));
+  expect(steps[2].withValues).toEqual(new Map([["node-version", "24"], ["package-manager-cache", "false"]]));
+  for (const step of steps.filter((step) => step.run)) expect(step.withValues.size).toBe(0);
   expect(workflow).not.toMatch(/^        env:/m);
-  const requiredPaths = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/vitest.db.config.mts", "web/test/db/**"];
+  const requiredPaths = REQUIRED_WORKFLOW_PATHS;
   for (const path of requiredPaths) {
     expect(workflow).toContain(`      - "${path}"`);
   }
@@ -362,7 +381,9 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     workflow.replace("DB_TESTS_REQUIRED: \"1\"", "DB_TESTS_REQUIRED: \"0\""),
     workflow.replace("Run CFG-001 fresh-reset gate", "Run unexpected gate"),
     workflow.replace("Run CFG-001 fresh-reset gate", "Run real-DB suite"),
-    workflow.replace('      - "web/test/db/**"', ""),
+    ...REQUIRED_WORKFLOW_PATHS.map((path) => workflow
+      .replace(`      - "${path}"\r\n`, "")
+      .replace(`      - "${path}"\n`, "")),
     workflow.replace("        run: pnpm --filter web test:db\r\n", "        if: always()\r\n        run: pnpm --filter web test:db\r\n"),
     workflow.replace("        run: pnpm --filter web test:db\r\n", "        shell: bash\r\n        run: pnpm --filter web test:db\r\n"),
   ];
