@@ -1032,8 +1032,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     overrides: Parameters<typeof completePayload>[1] = {},
   ) {
     const value = await started(label);
+    const result = await harness.complete(
+      completePayload(value.attempt.attemptId, overrides),
+    );
     expect(
-      await harness.complete(completePayload(value.attempt.attemptId, overrides)),
+      result,
+      `completion ${label}: ${JSON.stringify(result)}`,
     ).toMatchObject({ ok: true, alreadyCompleted: false });
     return value;
   }
