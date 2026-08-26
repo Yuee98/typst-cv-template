@@ -481,6 +481,9 @@ function expectHistoricalCoverage(snapshot: string, caseName: string, userId: st
       profile_version_id: profileVersionId,
       billing_currency: "CNY",
       request_count: 2,
+      cost_incomplete_count: 2,
+      known_estimated_cost_nanos: 0,
+      estimated_cost_nanos: null,
     }),
   );
   expect(rows("ai_rate_minutes")).toContainEqual(
@@ -584,9 +587,11 @@ function historicalFixtureSql(userId: string): string {
     values (current_date, 3)
     on conflict (day) do update set provider_started_count = excluded.provider_started_count;
     insert into public.ai_profile_usage_daily (
-      day, profile_version_id, billing_currency, request_count
+      day, profile_version_id, billing_currency, request_count,
+      cost_incomplete_count, known_estimated_cost_nanos, estimated_cost_nanos
     ) values (
-      current_date, '44444444-4444-4444-8444-444444444411'::uuid, 'CNY', 2
+      current_date, '44444444-4444-4444-8444-444444444411'::uuid, 'CNY', 2,
+      2, 0, null
     );
     insert into public.ai_rate_minutes (user_id, minute_bucket, count)
     values ('${userId}'::uuid, date_trunc('minute', clock_timestamp()), 5);
