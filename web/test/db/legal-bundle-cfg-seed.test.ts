@@ -11,6 +11,7 @@ import {
   LEGAL_FINGERPRINT_V1_PROFILE_MAPPING,
   MIMO_LEGAL_MANIFEST_ID,
 } from "@/server/polish/legal-fingerprint-v1-descriptors";
+import { DEEPSEEK_V2_SEED_V1 } from "@/server/polish/deepseek-v2-seed-v1";
 
 import { createServiceClient, RUN_DB_TESTS } from "./helpers";
 
@@ -107,16 +108,25 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", ()
     );
   });
 
-  it("does not register a production profile or activate routing", async () => {
-    const { count: profileCount, error: profileError } = await service
+  it("admits only the later reviewed DeepSeek draft while routing stays inactive", async () => {
+    const { data: profiles, error: profileError } = await service
       .from("ai_provider_profiles")
-      .select("*", { count: "exact", head: true })
+      .select("id,profile_key,display_name,gateway_kind,model_vendor,retired_at")
       .in(
         "profile_key",
         LEGAL_FINGERPRINT_V1_PROFILE_MAPPING.map((profile) => profile.profileKey),
       );
     expect(profileError).toBeNull();
-    expect(profileCount).toBe(0);
+    expect(profiles).toEqual([
+      {
+        id: DEEPSEEK_V2_SEED_V1.profile.id,
+        profile_key: DEEPSEEK_V2_SEED_V1.profile.profileKey,
+        display_name: DEEPSEEK_V2_SEED_V1.profile.displayName,
+        gateway_kind: DEEPSEEK_V2_SEED_V1.profile.gatewayKind,
+        model_vendor: DEEPSEEK_V2_SEED_V1.profile.modelVendor,
+        retired_at: null,
+      },
+    ]);
 
     const { data: featureConfig, error } = await service
       .from("ai_feature_config")
@@ -142,7 +152,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", ()
     expect(migration).not.toMatch(/\bcreate\s+(?:or\s+replace\s+)?function\b/);
     expect(migration).not.toMatch(/\bgrant\b/);
     expect(migration).not.toMatch(
-      /\b(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?ai_(?:provider_profiles|provider_profile_versions|price_versions|price_components|routing_policy_versions|feature_config|request_ledger|provider_attempts|user_terms_acceptances)\b/,
+      /\b(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?(?:ai_(?:provider_profiles|provider_profile_versions|price_versions|price_components|routing_policy_versions|service_runtime_contract_versions|service_runtime_target_versions|service_runtime_contract_targets|feature_config|request_ledger|provider_attempt_ledger|usage_daily|global_usage_daily|profile_usage_daily|rate_minutes|price_component_seal_intents|routing_policy_transition_intents)|user_terms_acceptances)\b/,
     );
   });
 });

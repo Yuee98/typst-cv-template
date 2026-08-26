@@ -15,6 +15,7 @@
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "test:db": "node scripts/run-db-tests.mjs",
+    "test:db:cfg001-fresh": "node scripts/run-cfg001-fresh-reset.mjs",
     "test:integration": "node scripts/run-integration-tests.mjs",
     "metrics:ai": "node scripts/ai-metrics.mjs",
     "smoke:api": "node scripts/smoke-polish-api.mjs",

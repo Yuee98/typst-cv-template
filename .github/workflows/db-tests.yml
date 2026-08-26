@@ -8,18 +8,28 @@ name: DB integration tests
 # workflow runs automatically only when migrations or their production/test
 # adapters change. workflow_dispatch remains available for release checkpoints.
 # Local equivalent:
-#   pnpm supabase:start && pnpm supabase:reset && pnpm --filter web test:db
+#   pnpm supabase:start
+#   pnpm --filter web test:db:cfg001-fresh
+#   pnpm --filter web test:db
 on:
   pull_request:
     paths:
       - ".github/workflows/db-tests.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "supabase/config.toml"
       - "supabase/migrations/**"
       - "supabase/seed.sql"
+      - "web/package.json"
+      - "web/scripts/run-cfg001-fresh-reset.mjs"
       - "web/scripts/run-db-tests.mjs"
+      - "web/scripts/run-db-tests.test.mjs"
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
       - "web/src/server/polish/auth.ts"
+      - "web/src/server/polish/deepseek-v2-seed-v1.ts"
+      - "web/src/server/polish/deepseek-v2-seed-v1.test.ts"
       - "web/src/server/polish/lifecycle*.ts"
       - "web/src/server/polish/quota.ts"
       - "web/test/db/**"
@@ -37,6 +47,7 @@ jobs:
 
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      DB_TESTS_REQUIRED: "1"
 
     steps:
       - name: Checkout
@@ -59,15 +70,26 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # This is deliberately credential-free and must run before Docker-backed
+      # tests. It proves the required/optional behavior, loopback-only target
+      # guard, isolated-selector clearing, and child-process failure handling
+      # that make the real-DB gate safe to invoke.
+      - name: Verify DB test runner contract (credential-free)
+        run: pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs
+
       # The suite only needs postgres + PostgREST + GoTrue (+kong); excluding
       # the heavyweight extras keeps the manual run fast.
       - name: Start local Supabase
         run: pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler
 
-      - name: Apply migrations from scratch
-        run: pnpm exec supabase db reset
+      # Hard-fail proof of the exact post-migration seed cardinality and dark
+      # feature state. The runner verifies loopback and resets before running
+      # only the order-sensitive CFG-001 suite.
+      - name: Run CFG-001 fresh-reset gate
+        run: pnpm --filter web test:db:cfg001-fresh
 
-      # scripts/run-db-tests.mjs auto-detects the instance via
-      # `supabase status -o env` and streams SUPABASE_TEST_* to vitest.
+      # Required mode makes status, local-API, and child-process failures hard
+      # CI errors. The runner accepts only HTTP loopback endpoints and clears
+      # the isolated selector before the ordinary full DB suite.
       - name: Run real-DB suite
         run: pnpm --filter web test:db

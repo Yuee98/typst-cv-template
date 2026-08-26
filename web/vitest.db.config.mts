@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const isCfg001FreshReset = process.env.CFG001_FRESH_RESET === "1";
+
 // Real-DB integration suite (unit 1.4): runs against a LOCAL Supabase
 // instance, completely separate from the mocked unit suite
 // (`vitest.config.mts`, `pnpm test`). Never pointed at a hosted project —
@@ -16,7 +18,12 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["test/db/**/*.test.ts"],
+    include: isCfg001FreshReset
+      ? ["test/db/deepseek-v2-cfg-seed.test.ts"]
+      : ["test/db/**/*.test.ts"],
+    exclude: isCfg001FreshReset
+      ? []
+      : ["test/db/deepseek-v2-cfg-seed.test.ts"],
     // All files share one local Supabase (singleton feature config, global
     // daily counters, UTC-day rows), so files must run strictly in sequence.
     fileParallelism: false,
