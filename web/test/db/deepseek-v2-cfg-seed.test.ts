@@ -367,6 +367,24 @@ function withUserTriggersDisabled(tables: readonly string[], body: string): stri
   ].join("\n");
 }
 
+function moveCanonicalFixedId(
+  table:
+    | "ai_provider_profiles"
+    | "ai_provider_profile_versions"
+    | "ai_price_versions"
+    | "ai_routing_policy_versions",
+  canonicalId: string,
+  alternateId: string,
+): string {
+  return String.raw`
+    set local session_replication_role = replica;
+    update public.${table}
+    set id = '${alternateId}'::uuid
+    where id = '${canonicalId}'::uuid;
+    set local session_replication_role = origin;
+  `;
+}
+
 interface HostileSeedCase {
   name: string;
   precondition: string;
@@ -383,6 +401,8 @@ const HISTORICAL_COVERAGE_TABLES = [
   "ai_rate_minutes",
   "user_terms_acceptances",
   "ai_legal_bundle_versions",
+  "ai_legal_manifest_versions",
+  "ai_legal_bundle_manifests",
   "ai_provider_profiles",
   "ai_provider_profile_versions",
   "ai_price_versions",
@@ -401,7 +421,7 @@ function parseMarkedSnapshot(stdout: string, marker: string): string {
   return snapshot.slice(marker.length);
 }
 
-function expectHistoricalCoverage(snapshot: string, caseName: string): void {
+function expectHistoricalCoverage(snapshot: string, caseName: string, userId: string): void {
   const catalog = JSON.parse(snapshot) as Record<string, unknown>;
   for (const table of HISTORICAL_COVERAGE_TABLES) {
     expect(Array.isArray(catalog[table]), `${caseName}: ${table} must be an array`).toBe(
@@ -411,6 +431,70 @@ function expectHistoricalCoverage(snapshot: string, caseName: string): void {
       0,
     );
   }
+
+  const rows = (table: (typeof HISTORICAL_COVERAGE_TABLES)[number]): Record<string, unknown>[] =>
+    catalog[table] as Record<string, unknown>[];
+  const profileId = "44444444-4444-4444-8444-444444444410";
+  const profileVersionId = "44444444-4444-4444-8444-444444444411";
+  const priceVersionId = "44444444-4444-4444-8444-444444444412";
+  const policyId = "44444444-4444-4444-8444-444444444413";
+
+  expect(rows("ai_provider_profiles")).toContainEqual(
+    expect.objectContaining({ id: profileId, profile_key: "history.cfg001.rollback.v1" }),
+  );
+  expect(rows("ai_provider_profile_versions")).toContainEqual(
+    expect.objectContaining({ id: profileVersionId, profile_id: profileId }),
+  );
+  expect(rows("ai_price_versions")).toContainEqual(
+    expect.objectContaining({ id: priceVersionId, profile_version_id: profileVersionId }),
+  );
+  expect(rows("ai_routing_policy_versions")).toContainEqual(
+    expect.objectContaining({ id: policyId, default_profile_version_id: profileVersionId }),
+  );
+  expect(rows("ai_service_runtime_target_versions")).toContainEqual(
+    expect.objectContaining({ runtime_target_id: "history-runtime-target.cfg001.v1" }),
+  );
+  expect(rows("ai_service_runtime_contract_versions")).toContainEqual(
+    expect.objectContaining({ runtime_contract_id: "history-runtime-contract.cfg001.v1" }),
+  );
+  expect(rows("ai_service_runtime_contract_targets")).toContainEqual(
+    expect.objectContaining({
+      runtime_contract_id: "history-runtime-contract.cfg001.v1",
+      runtime_target_id: "history-runtime-target.cfg001.v1",
+    }),
+  );
+
+  const requests = rows("ai_request_ledger");
+  const request = requests.find((row) => row.user_id === userId);
+  expect(request, `${caseName}: historical request must belong to the current fixture user`).toBeDefined();
+  expect(rows("ai_provider_attempt_ledger")).toContainEqual(
+    expect.objectContaining({ reservation_id: request?.reservation_id, attempt_no: 1 }),
+  );
+  expect(rows("ai_usage_daily")).toContainEqual(
+    expect.objectContaining({ user_id: userId, request_count: 7 }),
+  );
+  expect(rows("ai_global_usage_daily")).toContainEqual(
+    expect.objectContaining({ provider_started_count: 3 }),
+  );
+  expect(rows("ai_profile_usage_daily")).toContainEqual(
+    expect.objectContaining({
+      profile_version_id: profileVersionId,
+      billing_currency: "CNY",
+      request_count: 2,
+    }),
+  );
+  expect(rows("ai_rate_minutes")).toContainEqual(
+    expect.objectContaining({ user_id: userId, count: 5 }),
+  );
+  // Legal manifest/bundle rows are CFG-000 global legal authority, not CFG-001
+  // identity. The current fixture's historical legal row is its user acceptance.
+  expect(rows("user_terms_acceptances")).toContainEqual(
+    expect.objectContaining({
+      user_id: userId,
+      document_key: "ai_legal_bundle",
+      version: "2026-08-23-multi-provider-v1",
+    }),
+  );
 }
 
 function historicalFixtureSql(userId: string): string {
@@ -562,7 +646,7 @@ async function expectHostileSeedRollback(service: SupabaseClient, {
 
     const before = parseMarkedSnapshot(result.stdout, "CFG001_HOSTILE_BEFORE=");
     const after = parseMarkedSnapshot(result.stdout, "CFG001_HOSTILE_AFTER=");
-    expectHistoricalCoverage(before, expectedError);
+    expectHistoricalCoverage(before, expectedError, user.id);
     expect(after).toBe(before);
   } finally {
     await deleteTestUser(service, user.id);
@@ -1075,6 +1159,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       expectedError: "DeepSeek V2 profile identity mismatch",
     },
     {
+      name: "alternate fixed profile ID occupies the canonical natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_provider_profiles",
+        SEED.profile.id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      ),
+      expectedError: "DeepSeek V2 profile identity mismatch",
+    },
+    {
       name: "fixed profile-version ID has a wrong projection",
       precondition: withUserTriggersDisabled(
         ["ai_provider_profile_versions"],
@@ -1108,6 +1201,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       expectedError: "DeepSeek V2 profile version mismatch",
     },
     {
+      name: "alternate fixed profile-version ID occupies the canonical natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_provider_profile_versions",
+        SEED.profile.profileVersionId,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
+      ),
+      expectedError: "DeepSeek V2 profile version mismatch",
+    },
+    {
       name: "fixed price ID has a wrong projection",
       precondition: withUserTriggersDisabled(
         ["ai_price_versions"],
@@ -1128,6 +1230,24 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           set version = 2
           where id = '${SEED.pricing.rows[0].id}'::uuid;
         `,
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "alternate fixed price ID occupies the canonical offpeak natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_price_versions",
+        SEED.pricing.rows[0].id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "alternate fixed price ID occupies the canonical peak natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_price_versions",
+        SEED.pricing.rows[1].id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
       ),
       expectedError: "DeepSeek V2 price version mismatch",
     },
@@ -1298,6 +1418,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           set id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'
           where id = '${SEED.policy.id}'::uuid;
         `,
+      ),
+      expectedError: "DeepSeek G2 draft routing policy mismatch",
+    },
+    {
+      name: "alternate fixed policy ID occupies the canonical natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_routing_policy_versions",
+        SEED.policy.id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6",
       ),
       expectedError: "DeepSeek G2 draft routing policy mismatch",
     },
