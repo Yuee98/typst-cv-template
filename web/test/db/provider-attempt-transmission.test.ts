@@ -149,15 +149,21 @@ describe.skipIf(!RUN_DB_TESTS)(
 
     it("derives any-transmitted cancellation and rejects hostile quota assertions", async () => {
       const first = await reserveAndStart("durable-any-transmitted");
-      await harness.complete(
-        completePayload(first.attempt.attemptId, {
-          ...unavailableCompletion,
-          p_status: "failed_upstream",
-          p_transmitted: true,
-          p_retry_eligible: true,
-          p_provider_billable: null,
-        }),
-      );
+      expect(
+        await harness.complete(
+          completePayload(first.attempt.attemptId, {
+            ...unavailableCompletion,
+            p_status: "failed_upstream",
+            p_transmitted: true,
+            p_retry_eligible: true,
+            p_provider_billable: null,
+          }),
+        ),
+      ).toMatchObject({
+        ok: true,
+        alreadyCompleted: false,
+        status: "failed_upstream",
+      });
       const second = await harness.startAttempt(first.reservation.reservationId, 2);
       const secondReplay = await service.rpc("start_ai_polish_provider_attempt", {
         p_reservation_id: first.reservation.reservationId,
@@ -170,14 +176,20 @@ describe.skipIf(!RUN_DB_TESTS)(
         attemptNo: 2,
         alreadyStarted: true,
       });
-      await harness.complete(
-        completePayload(second.attemptId, {
-          ...unavailableCompletion,
-          p_status: "canceled",
-          p_transmitted: false,
-          p_provider_billable: false,
-        }),
-      );
+      expect(
+        await harness.complete(
+          completePayload(second.attemptId, {
+            ...unavailableCompletion,
+            p_status: "canceled",
+            p_transmitted: false,
+            p_provider_billable: false,
+          }),
+        ),
+      ).toMatchObject({
+        ok: true,
+        alreadyCompleted: false,
+        status: "canceled",
+      });
 
       expect(
         await harness.finalize(first.reservation.reservationId, {
