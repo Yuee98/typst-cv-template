@@ -11,6 +11,7 @@ const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
+const DB_CHILD_TIMEOUT_MS = 600_000;
 
 function isRequired(env) {
   return env.DB_TESTS_REQUIRED === "1" || env.DB_TESTS_REQUIRED === "true";
@@ -50,11 +51,15 @@ export function validateLocalDatabaseUrl(rawUrl) {
   return { ok: true, url: url.toString() };
 }
 
-function parseSupabaseStatus(stdout) {
+export function parseSupabaseStatus(stdout) {
   const values = {};
   for (const line of (stdout ?? "").split(/\r?\n/)) {
+    if (line.trim() && !/^[A-Z_]+="[^"]*"$/.test(line.trim())) return null;
     const match = /^([A-Z_]+)="([^"]*)"$/.exec(line.trim());
-    if (match) values[match[1]] = match[2];
+    if (match) {
+      if (match[1] in values) return null;
+      values[match[1]] = match[2].trim();
+    }
   }
   if (!values.API_URL || !values.PUBLISHABLE_KEY || !values.SECRET_KEY) return null;
   return {
@@ -65,14 +70,17 @@ function parseSupabaseStatus(stdout) {
 }
 
 function explicitCredentials(env) {
+  const present = ["SUPABASE_TEST_URL", "SUPABASE_TEST_PUBLISHABLE_KEY", "SUPABASE_TEST_SECRET_KEY"]
+    .map((key) => Object.prototype.hasOwnProperty.call(env, key));
+  if (!present.some(Boolean)) return { kind: "absent" };
   const values = {
-    url: env.SUPABASE_TEST_URL,
-    publishableKey: env.SUPABASE_TEST_PUBLISHABLE_KEY,
-    secretKey: env.SUPABASE_TEST_SECRET_KEY,
+    url: typeof env.SUPABASE_TEST_URL === "string" ? env.SUPABASE_TEST_URL.trim() : "",
+    publishableKey: typeof env.SUPABASE_TEST_PUBLISHABLE_KEY === "string" ? env.SUPABASE_TEST_PUBLISHABLE_KEY.trim() : "",
+    secretKey: typeof env.SUPABASE_TEST_SECRET_KEY === "string" ? env.SUPABASE_TEST_SECRET_KEY.trim() : "",
   };
-  const count = Object.values(values).filter(Boolean).length;
-  if (count === 0) return { kind: "absent" };
-  return count === 3 ? { kind: "complete", values } : { kind: "partial" };
+  return Object.values(values).every(Boolean)
+    ? { kind: "complete", values }
+    : { kind: "invalid" };
 }
 
 function runSupabaseStatus(spawnSyncImpl) {
@@ -107,8 +115,9 @@ export async function runDbTests({
   const explicit = explicitCredentials(env);
   let detected;
 
-  if (explicit.kind === "partial") {
-    return unavailable(context, "SUPABASE_TEST_* credentials are incomplete.");
+  if (explicit.kind === "invalid") {
+    logTo(logger, "ERROR: SUPABASE_TEST_* credentials are incomplete or blank.");
+    return 1;
   }
   if (explicit.kind === "complete") {
     detected = explicit.values;
@@ -119,7 +128,8 @@ export async function runDbTests({
     }
     detected = parseSupabaseStatus(status.stdout);
     if (!detected) {
-      return unavailable(context, "local Supabase status output is malformed or incomplete.");
+      logTo(logger, "ERROR: local Supabase status output is malformed or incomplete.");
+      return 1;
     }
   }
 
@@ -147,6 +157,7 @@ export async function runDbTests({
     cwd: webRoot,
     shell: process.platform === "win32",
     stdio: "inherit",
+    timeout: DB_CHILD_TIMEOUT_MS,
     env: fullSuiteEnv,
   });
   if (run.error || run.signal || run.status === null || run.status !== 0) {

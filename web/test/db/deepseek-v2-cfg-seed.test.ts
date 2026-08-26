@@ -316,7 +316,7 @@ function parseOwnerJson(sql: string): unknown {
   return JSON.parse(encoded) as unknown;
 }
 
-function snapshotSeedRows(): string {
+function seedSnapshotSql(marker = ""): string {
   const catalogPairs = SNAPSHOT_TABLES.map(
     (table) => String.raw`
       '${table}', (
@@ -330,12 +330,16 @@ function snapshotSeedRows(): string {
         from public.${table} as row_value
       )`,
   ).join(",");
-  const result = runOwnerSql(String.raw`
+  return String.raw`
     \set ON_ERROR_STOP on
     \pset format unaligned
     \pset tuples_only on
-    select pg_catalog.jsonb_build_object(${catalogPairs})::text;
-  `);
+    select '${marker}' || pg_catalog.jsonb_build_object(${catalogPairs})::text;
+  `;
+}
+
+function snapshotSeedRows(): string {
+  const result = runOwnerSql(seedSnapshotSql());
   const snapshot = result.stdout
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -365,30 +369,295 @@ function withUserTriggersDisabled(tables: readonly string[], body: string): stri
   ].join("\n");
 }
 
+function moveCanonicalFixedId(
+  table:
+    | "ai_provider_profiles"
+    | "ai_provider_profile_versions"
+    | "ai_price_versions"
+    | "ai_routing_policy_versions",
+  canonicalId: string,
+  alternateId: string,
+): string {
+  return String.raw`
+    set local session_replication_role = replica;
+    update public.${table}
+    set id = '${alternateId}'::uuid
+    where id = '${canonicalId}'::uuid;
+    set local session_replication_role = origin;
+  `;
+}
+
 interface HostileSeedCase {
   name: string;
   precondition: string;
   expectedError: string;
+  expectedNotice?: string;
 }
 
-function expectHostileSeedRollback({
-  precondition,
-  expectedError,
-}: HostileSeedCase): void {
-  const before = snapshotSeedRows();
-  const result = runOwnerSql(
-    String.raw`
-      \set ON_ERROR_STOP on
-      begin;
-      ${precondition}
-      ${migrationBody()}
-      commit;
-    `,
-    { expectFailure: true },
+const HISTORICAL_COVERAGE_TABLES = [
+  "ai_request_ledger",
+  "ai_provider_attempt_ledger",
+  "ai_usage_daily",
+  "ai_global_usage_daily",
+  "ai_profile_usage_daily",
+  "ai_rate_minutes",
+  "user_terms_acceptances",
+  "ai_legal_bundle_versions",
+  "ai_legal_manifest_versions",
+  "ai_legal_bundle_manifests",
+  "ai_provider_profiles",
+  "ai_provider_profile_versions",
+  "ai_price_versions",
+  "ai_routing_policy_versions",
+  "ai_service_runtime_contract_versions",
+  "ai_service_runtime_target_versions",
+  "ai_service_runtime_contract_targets",
+] as const;
+
+function parseMarkedSnapshot(stdout: string, marker: string): string {
+  const snapshot = stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(marker));
+  if (!snapshot) throw new Error(`seed snapshot marker ${marker} was not emitted`);
+  return snapshot.slice(marker.length);
+}
+
+function expectHistoricalCoverage(snapshot: string, caseName: string, userId: string): void {
+  const catalog = JSON.parse(snapshot) as Record<string, unknown>;
+  for (const table of HISTORICAL_COVERAGE_TABLES) {
+    expect(Array.isArray(catalog[table]), `${caseName}: ${table} must be an array`).toBe(
+      true,
+    );
+    expect(catalog[table], `${caseName}: ${table} must retain historical coverage`).not.toHaveLength(
+      0,
+    );
+  }
+
+  const rows = (table: (typeof HISTORICAL_COVERAGE_TABLES)[number]): Record<string, unknown>[] =>
+    catalog[table] as Record<string, unknown>[];
+  const profileId = "44444444-4444-4444-8444-444444444410";
+  const profileVersionId = "44444444-4444-4444-8444-444444444411";
+  const priceVersionId = "44444444-4444-4444-8444-444444444412";
+  const policyId = "44444444-4444-4444-8444-444444444413";
+
+  expect(rows("ai_provider_profiles")).toContainEqual(
+    expect.objectContaining({ id: profileId, profile_key: "history.cfg001.rollback.v1" }),
+  );
+  expect(rows("ai_provider_profile_versions")).toContainEqual(
+    expect.objectContaining({ id: profileVersionId, profile_id: profileId }),
+  );
+  expect(rows("ai_price_versions")).toContainEqual(
+    expect.objectContaining({ id: priceVersionId, profile_version_id: profileVersionId }),
+  );
+  expect(rows("ai_routing_policy_versions")).toContainEqual(
+    expect.objectContaining({ id: policyId, default_profile_version_id: profileVersionId }),
+  );
+  expect(rows("ai_service_runtime_target_versions")).toContainEqual(
+    expect.objectContaining({ runtime_target_id: "history-runtime-target.cfg001.v1" }),
+  );
+  expect(rows("ai_service_runtime_contract_versions")).toContainEqual(
+    expect.objectContaining({ runtime_contract_id: "history-runtime-contract.cfg001.v1" }),
+  );
+  expect(rows("ai_service_runtime_contract_targets")).toContainEqual(
+    expect.objectContaining({
+      runtime_contract_id: "history-runtime-contract.cfg001.v1",
+      runtime_target_id: "history-runtime-target.cfg001.v1",
+    }),
   );
 
-  expect(result.stderr).toContain(expectedError);
-  expect(snapshotSeedRows()).toBe(before);
+  const requests = rows("ai_request_ledger");
+  const request = requests.find((row) => row.user_id === userId);
+  expect(request, `${caseName}: historical request must belong to the current fixture user`).toBeDefined();
+  expect(rows("ai_provider_attempt_ledger")).toContainEqual(
+    expect.objectContaining({ reservation_id: request?.reservation_id, attempt_no: 1 }),
+  );
+  expect(rows("ai_usage_daily")).toContainEqual(
+    expect.objectContaining({ user_id: userId, request_count: 7 }),
+  );
+  expect(rows("ai_global_usage_daily")).toContainEqual(
+    expect.objectContaining({ provider_started_count: 3 }),
+  );
+  expect(rows("ai_profile_usage_daily")).toContainEqual(
+    expect.objectContaining({
+      profile_version_id: profileVersionId,
+      billing_currency: "CNY",
+      request_count: 2,
+      cost_incomplete_count: 2,
+      known_estimated_cost_nanos: 0,
+      estimated_cost_nanos: null,
+    }),
+  );
+  expect(rows("ai_rate_minutes")).toContainEqual(
+    expect.objectContaining({ user_id: userId, count: 5 }),
+  );
+  // Legal manifest/bundle rows are CFG-000 global legal authority, not CFG-001
+  // identity. The current fixture's historical legal row is its user acceptance.
+  expect(rows("user_terms_acceptances")).toContainEqual(
+    expect.objectContaining({
+      user_id: userId,
+      document_key: "ai_terms",
+      version: "2026-08-23-multi-provider-v1",
+    }),
+  );
+}
+
+function historicalFixtureSql(userId: string): string {
+  return String.raw`
+    -- The synthetic history catalog deliberately uses no CFG001 identity, so
+    -- its request/attempt/profile-daily foreign keys survive CFG graph deletion.
+    set local session_replication_role = replica;
+    insert into public.ai_provider_profiles (
+      id, profile_key, display_name, gateway_kind, model_vendor
+    ) values (
+      '44444444-4444-4444-8444-444444444410'::uuid,
+      'history.cfg001.rollback.v1',
+      'Historical rollback fixture',
+      'direct_deepseek',
+      'history'
+    );
+    insert into public.ai_provider_profile_versions (
+      id, profile_id, version, status, adapter_kind, wire_api_kind,
+      credential_alias, endpoint_alias, model_id, upstream_route,
+      capability_contract_id, cache_policy_id, legal_manifest_id,
+      display_disclosure_key, config, config_sha256
+    ) values (
+      '44444444-4444-4444-8444-444444444411'::uuid,
+      '44444444-4444-4444-8444-444444444410'::uuid,
+      1, 'draft', 'deepseek_chat_v1', 'chat_completions_v1',
+      'history_credential', 'history_endpoint', 'history-model', '{}'::jsonb,
+      'history_capability', 'history_cache', 'deepseek-official-2026-08-23-v1',
+      'history-disclosure', '{}'::jsonb, repeat('4', 64)
+    );
+    insert into public.ai_price_versions (
+      id, profile_version_id, version, currency, calculator_kind, valid_from,
+      source_url, source_checked_at, source_snapshot_sha256, pricing_lane
+    ) values (
+      '44444444-4444-4444-8444-444444444412'::uuid,
+      '44444444-4444-4444-8444-444444444411'::uuid,
+      1, 'CNY', 'linear_token_v1', '2020-01-01T00:00:00Z'::timestamptz,
+      'https://history.invalid/price', '2020-01-01T00:00:00Z'::timestamptz,
+      repeat('5', 64), 'default'
+    );
+    insert into public.ai_service_runtime_target_versions (
+      runtime_target_id, runtime_target_sha256, profile_key, legal_manifest_id,
+      manifest_sha256, route_descriptor_id, route_descriptor_sha256
+    ) values (
+      'history-runtime-target.cfg001.v1', repeat('6', 64),
+      'history.cfg001.rollback.v1', 'deepseek-official-2026-08-23-v1',
+      '0fa6702d0785a8ce959b0bd4cc31984578143ef269bf7b4df4d1672e6d1fa09b',
+      'history-route.cfg001.v1', repeat('7', 64)
+    );
+    insert into public.ai_service_runtime_contract_versions (
+      runtime_contract_id, runtime_contract_sha256, reviewed_source_commit_oid,
+      legal_bundle_version, bundle_contract_sha256, runtime_target_set_sha256,
+      sealed_at
+    ) values (
+      'history-runtime-contract.cfg001.v1', repeat('8', 64),
+      'sha1:0123456789abcdef0123456789abcdef01234567',
+      '2026-08-23-multi-provider-v1',
+      'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18',
+      repeat('9', 64), clock_timestamp()
+    );
+    insert into public.ai_service_runtime_contract_targets (
+      runtime_contract_id, runtime_contract_sha256, runtime_target_id,
+      runtime_target_sha256, profile_key, legal_manifest_id, manifest_sha256,
+      route_descriptor_id, route_descriptor_sha256
+    ) values (
+      'history-runtime-contract.cfg001.v1', repeat('8', 64),
+      'history-runtime-target.cfg001.v1', repeat('6', 64),
+      'history.cfg001.rollback.v1', 'deepseek-official-2026-08-23-v1',
+      '0fa6702d0785a8ce959b0bd4cc31984578143ef269bf7b4df4d1672e6d1fa09b',
+      'history-route.cfg001.v1', repeat('7', 64)
+    );
+    insert into public.ai_routing_policy_versions (
+      id, policy_key, version, status, timezone, rules,
+      default_profile_version_id, legal_bundle_version, config_sha256,
+      runtime_contract_id, runtime_contract_sha256
+    ) values (
+      '44444444-4444-4444-8444-444444444413'::uuid,
+      'history.cfg001.rollback.v1', 1, 'draft', 'Asia/Shanghai',
+      '{}'::jsonb, '44444444-4444-4444-8444-444444444411'::uuid,
+      '2026-08-23-multi-provider-v1', repeat('a', 64),
+      'history-runtime-contract.cfg001.v1', repeat('8', 64)
+    );
+    insert into public.user_terms_acceptances (user_id, document_key, version)
+    values ('${userId}'::uuid, 'ai_terms', '2026-08-23-multi-provider-v1');
+    insert into public.ai_usage_daily (user_id, day, request_count)
+    values ('${userId}'::uuid, current_date, 7);
+    insert into public.ai_global_usage_daily (day, provider_started_count)
+    values (current_date, 3)
+    on conflict (day) do update set provider_started_count = excluded.provider_started_count;
+    insert into public.ai_profile_usage_daily (
+      day, profile_version_id, billing_currency, request_count,
+      cost_incomplete_count, known_estimated_cost_nanos, estimated_cost_nanos
+    ) values (
+      current_date, '44444444-4444-4444-8444-444444444411'::uuid, 'CNY', 2,
+      2, 0, null
+    );
+    insert into public.ai_rate_minutes (user_id, minute_bucket, count)
+    values ('${userId}'::uuid, date_trunc('minute', clock_timestamp()), 5);
+    insert into public.ai_request_ledger (request_id, client_request_id, user_id)
+    values (extensions.gen_random_uuid(), extensions.gen_random_uuid(), '${userId}'::uuid)
+    returning reservation_id \gset history_request_
+    insert into public.ai_provider_attempt_ledger (
+      reservation_id, attempt_no, route_schema_version, config_generation,
+      routing_policy_version_id, profile_version_id, price_version_id,
+      legal_bundle_version, runtime_contract_id, runtime_contract_sha256,
+      gateway_kind, model_id, wire_api_kind, display_disclosure_key,
+      adapter_kind, credential_alias, endpoint_alias, capability_contract_id,
+      cache_policy_id, legal_manifest_id, calculator_kind, billing_currency
+    ) values (
+      :'history_request_reservation_id'::uuid, 1, 'route_snapshot_v1', 1,
+      '44444444-4444-4444-8444-444444444413'::uuid,
+      '44444444-4444-4444-8444-444444444411'::uuid,
+      '44444444-4444-4444-8444-444444444412'::uuid,
+      '2026-08-23-multi-provider-v1', 'history-runtime-contract.cfg001.v1',
+      repeat('8', 64), 'direct_deepseek', 'history-model',
+      'chat_completions_v1', 'history-disclosure', 'deepseek_chat_v1',
+      'history_credential', 'history_endpoint', 'history_capability',
+      'history_cache', 'deepseek-official-2026-08-23-v1', 'linear_token_v1', 'CNY'
+    );
+    set local session_replication_role = origin;
+  `;
+}
+
+async function expectHostileSeedRollback(service: SupabaseClient, {
+  precondition,
+  expectedError,
+  expectedNotice,
+}: HostileSeedCase): Promise<void> {
+  const user = await createTestUser(service, "cfg001-hostile-history");
+  try {
+    const result = runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      \set VERBOSITY verbose
+      \pset format unaligned
+      \pset tuples_only on
+      begin;
+      ${historicalFixtureSql(user.id)}
+      ${precondition}
+      ${seedSnapshotSql("CFG001_HOSTILE_BEFORE=")}
+      savepoint cfg001_migration_body;
+      \set ON_ERROR_STOP off
+      ${migrationBody()}
+      \set ON_ERROR_STOP on
+      rollback to savepoint cfg001_migration_body;
+      ${seedSnapshotSql("CFG001_HOSTILE_AFTER=")}
+      rollback;
+    `);
+
+    expect(result.stderr).toContain(expectedError);
+    expect(result.stderr).toMatch(/ERROR:\s+23514:/u);
+    if (expectedNotice) expect(result.stderr).toContain(expectedNotice);
+
+    const before = parseMarkedSnapshot(result.stdout, "CFG001_HOSTILE_BEFORE=");
+    const after = parseMarkedSnapshot(result.stdout, "CFG001_HOSTILE_AFTER=");
+    expectHistoricalCoverage(before, expectedError, user.id);
+    expect(after).toBe(before);
+  } finally {
+    await deleteTestUser(service, user.id);
+  }
 }
 
 async function createHistoricalFixture(service: SupabaseClient): Promise<string> {
@@ -897,6 +1166,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       expectedError: "DeepSeek V2 profile identity mismatch",
     },
     {
+      name: "alternate fixed profile ID occupies the canonical natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_provider_profiles",
+        SEED.profile.id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      ),
+      expectedError: "DeepSeek V2 profile identity mismatch",
+    },
+    {
       name: "fixed profile-version ID has a wrong projection",
       precondition: withUserTriggersDisabled(
         ["ai_provider_profile_versions"],
@@ -930,6 +1208,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       expectedError: "DeepSeek V2 profile version mismatch",
     },
     {
+      name: "alternate fixed profile-version ID occupies the canonical natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_provider_profile_versions",
+        SEED.profile.profileVersionId,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
+      ),
+      expectedError: "DeepSeek V2 profile version mismatch",
+    },
+    {
       name: "fixed price ID has a wrong projection",
       precondition: withUserTriggersDisabled(
         ["ai_price_versions"],
@@ -950,6 +1237,24 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           set version = 2
           where id = '${SEED.pricing.rows[0].id}'::uuid;
         `,
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "alternate fixed price ID occupies the canonical offpeak natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_price_versions",
+        SEED.pricing.rows[0].id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+      ),
+      expectedError: "DeepSeek V2 price version mismatch",
+    },
+    {
+      name: "alternate fixed price ID occupies the canonical peak natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_price_versions",
+        SEED.pricing.rows[1].id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
       ),
       expectedError: "DeepSeek V2 price version mismatch",
     },
@@ -1123,12 +1428,21 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       ),
       expectedError: "DeepSeek G2 draft routing policy mismatch",
     },
+    {
+      name: "alternate fixed policy ID occupies the canonical natural key",
+      precondition: moveCanonicalFixedId(
+        "ai_routing_policy_versions",
+        SEED.policy.id,
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6",
+      ),
+      expectedError: "DeepSeek G2 draft routing policy mismatch",
+    },
   ];
 
   it.each(HOSTILE_SEED_CASES)(
     "rejects hostile seed state: $name, then restores every CFG table byte-for-byte",
-    (seedCase) => {
-      expectHostileSeedRollback(seedCase);
+    async (seedCase) => {
+      await expectHostileSeedRollback(service, seedCase);
     },
   );
 
@@ -1325,17 +1639,16 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
 
   it.each(PARTIAL_CFG001_IDENTITY_CASES)(
     "fails closed before repairing partial CFG001 identities: $name",
-    (seedCase) => {
-      expectHostileSeedRollback(seedCase);
+    async (seedCase) => {
+      await expectHostileSeedRollback(service, seedCase);
     },
   );
 
-  it("fails closed on a policy natural-key occupant before bootstrap DML", async () => {
-    const userId = await createHistoricalFixture(service);
-    try {
-      expectHostileSeedRollback({
-        name: "policy natural-key occupant",
-        precondition: withUserTriggersDisabled(
+  it("rolls back a late canonical policy conflict after the CFG runtime is sealed", async () => {
+    await expectHostileSeedRollback(service, {
+      name: "late canonical policy natural-key conflict",
+      precondition: String.raw`
+        ${withUserTriggersDisabled(
           [
             "ai_routing_policy_versions",
             "ai_service_runtime_contract_targets",
@@ -1369,81 +1682,51 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             where id = '${SEED.profile.profileVersionId}'::uuid;
             delete from public.ai_provider_profiles
             where id = '${SEED.profile.id}'::uuid;
-
-            insert into public.ai_provider_profiles (
-              id, profile_key, display_name, gateway_kind, model_vendor
-            ) values (
-              'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'::uuid,
-              'hostile.bootstrap.policy-owner.v1',
-              'Hostile bootstrap policy owner',
-              'direct_deepseek',
-              'deepseek'
-            );
-            insert into public.ai_provider_profile_versions (
-              id,
-              profile_id,
-              version,
-              status,
-              adapter_kind,
-              wire_api_kind,
-              credential_alias,
-              endpoint_alias,
-              model_id,
-              model_snapshot,
-              upstream_route,
-              capability_contract_id,
-              cache_policy_id,
-              legal_manifest_id,
-              display_disclosure_key,
-              config,
-              config_sha256
-            ) values (
-              'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'::uuid,
-              'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'::uuid,
-              1,
-              'draft',
-              'deepseek_chat_v1',
-              'chat_completions_v1',
-              'hostile_bootstrap_credential',
-              'hostile_bootstrap_endpoint',
-              'hostile-bootstrap-model',
-              'hostile-bootstrap-snapshot',
-              '{}'::jsonb,
-              'hostile_bootstrap_capability',
-              'hostile_bootstrap_cache',
-              '${SEED.runtime.targets[0].legalManifestId}',
-              'hostile-bootstrap-disclosure',
-              '{}'::jsonb,
-              repeat('3', 64)
-            );
-            insert into public.ai_routing_policy_versions (
-              id,
-              policy_key,
-              version,
-              status,
-              timezone,
-              rules,
-              default_profile_version_id,
-              legal_bundle_version,
-              config_sha256
-            ) values (
-              'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
-              '${SEED.policy.policyKey}',
-              ${SEED.policy.version},
-              'draft',
-              'Asia/Shanghai',
-              '{}'::jsonb,
-              'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'::uuid,
-              '${SEED.legalBundle.version}',
-              repeat('4', 64)
-            );
           `,
-        ),
-        expectedError: "DeepSeek V2 profile identity mismatch",
-      });
-    } finally {
-      await deleteTestUser(service, userId);
-    }
+        )}
+        alter table public.ai_routing_policy_versions disable trigger user;
+        create function pg_temp.cfg001_late_policy_conflict()
+        returns trigger
+        language plpgsql
+        as $$
+        begin
+          if not exists (
+            select 1
+            from public.ai_provider_profile_versions
+            where id = '${SEED.profile.profileVersionId}'::uuid
+          ) or not exists (
+            select 1
+            from public.ai_service_runtime_contract_targets
+            where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}'
+              and runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}'
+          ) or not exists (
+            select 1
+            from public.ai_service_runtime_contract_versions
+            where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}'
+              and sealed_at is not null
+          ) then
+            raise exception 'CFG001 late conflict fired before runtime seal'
+              using errcode = 'P0001';
+          end if;
+
+          raise notice 'CFG001_LATE_POLICY_CONFLICT_AFTER_RUNTIME_SEAL';
+          update public.ai_routing_policy_versions
+          set id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'::uuid
+          where id = new.id;
+          return new;
+        end;
+        $$;
+        create trigger cfg001_late_policy_conflict
+        after insert on public.ai_routing_policy_versions
+        for each row
+        when (new.id = '${SEED.policy.id}'::uuid)
+        execute function pg_temp.cfg001_late_policy_conflict();
+        alter table public.ai_routing_policy_versions
+          enable trigger cfg001_late_policy_conflict;
+      `,
+      expectedError: "DeepSeek G2 draft routing policy mismatch",
+      expectedNotice: "CFG001_LATE_POLICY_CONFLICT_AFTER_RUNTIME_SEAL",
+    });
   });
 
   it("keeps the feature dark and availability on the exact disabled shape", async () => {

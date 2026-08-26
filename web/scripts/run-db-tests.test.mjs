@@ -2,6 +2,11 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
+import {
+  parseSupabaseProjectId,
+  runCfg001FreshReset,
+  waitForAuthReady,
+} from "./run-cfg001-fresh-reset.mjs";
 import { runDbTests, validateLocalDatabaseUrl } from "./run-db-tests.mjs";
 
 const GOOD_STATUS = [
@@ -41,19 +46,47 @@ function parseWorkflowSteps(workflow) {
     }
 
     const properties = new Map();
+    const withValues = new Map();
+    let withMap = false;
     for (const line of block.slice(1)) {
-      const property = /^        (uses|run|if|continue-on-error):(?:\s*(.*))?$/.exec(line);
+      if (/^        \S/.test(line) && !/^        (?:uses|run|if|continue-on-error|with):/.test(line) && !/^        #/.test(line)) {
+        throw new Error(`DB workflow step ${name} has unknown or quoted property`);
+      }
+      if (/^        env:/.test(line)) {
+        throw new Error(`DB workflow step ${name} must not override job env`);
+      }
+      if (/^        (?:shell|timeout-minutes|working-directory):/.test(line)) {
+        throw new Error(`DB workflow step ${name} has a mutable execution override`);
+      }
+      const direct = /^        ([a-z][a-z0-9-]*):(?:\s*(.*))?$/.exec(line);
+      if (direct && !["uses", "run", "if", "continue-on-error", "with"].includes(direct[1])) {
+        throw new Error(`DB workflow step ${name} has unknown property ${direct[1]}`);
+      }
+      const nested = /^          ([a-z][a-z0-9-]*):\s*(.*)$/.exec(line);
+      if (/^          \S/.test(line) && !nested && !/^          #/.test(line)) {
+        throw new Error(`DB workflow step ${name} has unknown or quoted with input`);
+      }
+      if (nested) {
+        if (!withMap) throw new Error(`DB workflow step ${name} has relocated with input`);
+        withMap = true;
+        if (withValues.has(nested[1]) || !nested[2]) throw new Error(`DB workflow step ${name} has ambiguous with input`);
+        withValues.set(nested[1], nested[2]);
+        continue;
+      }
+      const property = /^        (uses|run|if|continue-on-error|with):(?:\s*(.*))?$/.exec(line);
       if (!property) continue;
 
       const [, key, value = ""] = property;
-      if (properties.has(key) || !value) {
+      if (properties.has(key) || (key !== "with" && !value)) {
         throw new Error(`DB workflow step ${name} has an ambiguous ${key} field`);
       }
       if (key === "run" && /^[>|]/.test(value)) {
         throw new Error(`DB workflow step ${name} must not use a multiline run scalar`);
       }
       properties.set(key, value);
+      if (key === "with") withMap = true;
     }
+    if (withValues.size > 0 && !properties.has("with")) throw new Error(`DB workflow step ${name} has relocated with inputs`);
 
     const uses = properties.get("uses");
     const run = properties.get("run");
@@ -66,6 +99,8 @@ function parseWorkflowSteps(workflow) {
       uses,
       run,
       hasCondition: properties.has("if") || properties.has("continue-on-error"),
+      withValues,
+      hasWith: withMap,
     };
   });
 }
@@ -89,6 +124,267 @@ function harness({ env = {}, results = [], fetchImpl = async () => new Response(
     },
   };
 }
+
+function freshHarness({
+  config = 'project_id = "typst-cv-template"',
+  env = {},
+  results = [],
+  fetchImpl = async () => ({ status: 200 }),
+} = {}) {
+  const calls = [];
+  const logs = [];
+  const errors = [];
+  return {
+    calls,
+    logs,
+    errors,
+    run() {
+      return runCfg001FreshReset({
+        env,
+        fetchImpl,
+        sleepImpl: async () => {},
+        existsSyncImpl: () => true,
+        readFileSyncImpl: () => config,
+        logger: (message) => logs.push(message),
+        errorLogger: (message) => errors.push(message),
+        spawnSyncImpl(command, args, options) {
+          calls.push({ command, args, options });
+          return results.shift() ?? {
+            status: 0,
+            stdout: args.includes("status") ? GOOD_STATUS : "",
+          };
+        },
+      });
+    },
+  };
+}
+
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
+
+function assertWorkflowContract(workflow, normalConfig) {
+  expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
+  const lines = workflow.replace(/\r\n/g, "\n").split("\n");
+  expect(lines.filter((line) => /^[^\s#][^:]*:/.test(line)).map((line) => line.split(":")[0]))
+    .toEqual(["name", "on", "permissions", "jobs"]);
+  expect(lines.filter((line) => line === "on:")).toHaveLength(1);
+  expect(lines.filter((line) => line === "jobs:")).toHaveLength(1);
+  const onAt = lines.indexOf("on:");
+  const onEnd = lines.findIndex((line, index) => index > onAt && /^\S/.test(line));
+  const onLines = lines.slice(onAt + 1, onEnd < 0 ? lines.length : onEnd);
+  expect(onLines.filter((line) => /^  [^\s#][^:]*:/.test(line)).map((line) => line.trim().split(":")[0]))
+    .toEqual(["pull_request", "workflow_dispatch"]);
+  const prAt = onLines.findIndex((line) => line === "  pull_request:");
+  const prEnd = onLines.findIndex((line, index) => index > prAt && /^  \S/.test(line));
+  if (prAt < 0 || prEnd < 0) throw new Error("missing pull_request block");
+  const prLines = onLines.slice(prAt + 1, prEnd);
+  expect(prLines.filter((line) => /^    [^\s#][^:]*:/.test(line)).map((line) => line.trim().split(":")[0]))
+    .toEqual(["paths"]);
+  const jobsAt = lines.indexOf("jobs:");
+  if (jobsAt < 0) throw new Error("missing jobs root");
+  const jobEnd = lines.findIndex((line, index) => index > jobsAt && /^\S/.test(line));
+  const jobLines = lines.slice(jobsAt + 1, jobEnd < 0 ? lines.length : jobEnd);
+  const jobIds = jobLines.filter((line) => /^  [^\s][^:]*:$/.test(line)).map((line) => line.trim().slice(0, -1));
+  expect(jobIds).toEqual(["db-tests"]);
+  const directJob = jobLines.filter((line) => /^    [^\s#][^:]*:/.test(line));
+  expect(directJob.map((line) => line.trim().split(":")[0])).toEqual(["name", "runs-on", "timeout-minutes", "env", "steps"]);
+  expect(directJob).toEqual(expect.arrayContaining(["    name: Web (real-DB tests)", "    runs-on: ubuntu-latest", "    timeout-minutes: 20"]));
+  const envDeclarations = jobLines.filter((line) => line === "    env:");
+  expect(envDeclarations).toHaveLength(1);
+  const envAt = jobLines.indexOf("    env:");
+  if (envAt < 0) throw new Error("missing db-tests job env");
+  const envLines = jobLines.slice(envAt + 1).filter((line) => /^      [A-Z_]+:/.test(line));
+  expect(envLines).toEqual(["      NEXT_TELEMETRY_DISABLED: \"1\"", "      DB_TESTS_REQUIRED: \"1\""]);
+  const envBlockEnd = jobLines.findIndex((line, index) => index > envAt && /^    \S/.test(line));
+  for (const line of jobLines.slice(envAt + 1, envBlockEnd < 0 ? jobLines.length : envBlockEnd)) {
+    if (line.trim() && !/^      [A-Z_]+:\s*"[^"]*"$/.test(line) && !/^      #/.test(line)) {
+      throw new Error("db-tests job env contains unknown or quoted key");
+    }
+  }
+  const steps = parseWorkflowSteps(workflow);
+  expect(steps.map((step) => step.name)).toEqual([
+    "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
+    "Install dependencies", "Verify DB test runner contract (credential-free)",
+    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run real-DB suite",
+  ]);
+  const commands = {
+    runner: "pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs",
+    start: "pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler",
+    fresh: "pnpm --filter web test:db:cfg001-fresh",
+    full: "pnpm --filter web test:db",
+  };
+  const find = (command) => steps.map((step, index) => ({ step, index })).filter(({ step }) => step.run === command);
+  for (const command of Object.values(commands)) expect(find(command)).toHaveLength(1);
+  const indexes = Object.fromEntries(Object.entries(commands).map(([key, command]) => [key, find(command)[0].index]));
+  expect(indexes.runner).toBeLessThan(indexes.start);
+  expect(indexes.start).toBeLessThan(indexes.fresh);
+  expect(indexes.fresh).toBeLessThan(indexes.full);
+  for (const step of steps) expect(step.hasCondition).toBe(false);
+  expect(steps[0].hasWith).toBe(false);
+  expect(steps[0].withValues.size).toBe(0);
+  expect(steps[1].hasWith).toBe(true);
+  expect(steps[1].withValues).toEqual(new Map([["version", "2.109.0"]]));
+  expect(steps[2].withValues).toEqual(new Map([["node-version", "24"], ["package-manager-cache", "false"]]));
+  for (const step of steps.filter((step) => step.run)) expect(step.hasWith).toBe(false);
+  expect(workflow).not.toMatch(/^        env:/m);
+  const parsedPaths = prLines.filter((line) => /^      - ".*"$/.test(line)).map((line) => line.trim().slice(3, -1));
+  expect(parsedPaths).toEqual(REQUIRED_WORKFLOW_PATHS);
+  const requiredPaths = REQUIRED_WORKFLOW_PATHS;
+  for (const path of requiredPaths) {
+    expect(workflow).toContain(`      - "${path}"`);
+  }
+  expect(workflow.match(/^      - "[^"]+"$/gm)).toEqual(expect.arrayContaining(requiredPaths.map((path) => `      - "${path}"`)));
+}
+
+it("accepts exactly one safe top-level Supabase project id", () => {
+  expect(parseSupabaseProjectId('project_id = "typst-cv-template"')).toBe(
+    "typst-cv-template",
+  );
+  expect(parseSupabaseProjectId('project_id="cv.test_1" # local')).toBe(
+    "cv.test_1",
+  );
+  for (const invalid of [
+    "",
+    "project_id = 'typst-cv-template'",
+    "  project_id = \"nested\"",
+    'project_id = "unsafe/project"',
+    'project_id = ""',
+    'project_id = "first"\nproject_id = "second"',
+  ]) {
+    expect(parseSupabaseProjectId(invalid), invalid).toBeNull();
+  }
+});
+
+it("restarts only the configured local gateway before the fresh CFG suite", async () => {
+  const subject = freshHarness({ env: { PARENT_MARKER: "preserved" } });
+  expect(await subject.run()).toBe(0);
+  expect(subject.calls).toHaveLength(5);
+
+  const [beforeStatus, reset, afterStatus, restart, test] = subject.calls;
+  expect(beforeStatus.command).toBe(process.execPath);
+  expect(beforeStatus.args.slice(-3)).toEqual(["status", "-o", "env"]);
+  expect(reset.command).toBe(process.execPath);
+  expect(reset.args.slice(-2)).toEqual(["db", "reset"]);
+  expect(afterStatus.args.slice(-3)).toEqual(["status", "-o", "env"]);
+  expect(restart.command).toBe("docker");
+  expect(restart.args).toEqual([
+    "restart",
+    "supabase_kong_typst-cv-template",
+  ]);
+  expect(restart.options.timeout).toBe(120_000);
+  expect(test.command).toBe(process.execPath);
+  expect(test.args.slice(-3)).toEqual([
+    "run",
+    "--config",
+    "vitest.db.config.mts",
+  ]);
+  expect(test.options.env).toMatchObject({
+    PARENT_MARKER: "preserved",
+    CFG001_FRESH_RESET: "1",
+    SUPABASE_TEST_URL: "http://127.0.0.1:54321/",
+    SUPABASE_TEST_PUBLISHABLE_KEY: "publishable-test-key",
+    SUPABASE_TEST_SECRET_KEY: "secret-test-key",
+  });
+  expect([...subject.logs, ...subject.errors].join("\n")).not.toContain(
+    "secret-test-key",
+  );
+});
+
+it("waits for an exact Auth health success and bounds retries", async () => {
+  const statuses = [502, 503, 200];
+  const urls = [];
+  let sleeps = 0;
+  expect(
+    await waitForAuthReady("http://127.0.0.1:54321", {
+      attempts: 3,
+      intervalMs: 0,
+      sleepImpl: async () => {
+        sleeps += 1;
+      },
+      fetchImpl: async (url) => {
+        urls.push(url);
+        return { status: statuses.shift() };
+      },
+    }),
+  ).toBe(true);
+  expect(urls).toEqual([
+    "http://127.0.0.1:54321/auth/v1/health",
+    "http://127.0.0.1:54321/auth/v1/health",
+    "http://127.0.0.1:54321/auth/v1/health",
+  ]);
+  expect(sleeps).toBe(2);
+
+  const nonSuccessStatuses = [204, 401, 404, 503];
+  expect(
+    await waitForAuthReady("http://127.0.0.1:54321", {
+      attempts: nonSuccessStatuses.length,
+      intervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: async () => ({ status: nonSuccessStatuses.shift() }),
+    }),
+  ).toBe(false);
+});
+
+it("fails closed before reset for ambiguous project authority", async () => {
+  const subject = freshHarness({
+    config: 'project_id = "first"\nproject_id = "second"',
+  });
+  expect(await subject.run()).toBe(1);
+  expect(subject.calls).toHaveLength(0);
+  expect(subject.errors.join("\n")).toMatch(/invalid or ambiguous project_id/);
+});
+
+it("fails closed before reset for malformed, duplicate, or blank status", async () => {
+  const malformedStatuses = [
+    `${GOOD_STATUS}\nAPI_URL="http://127.0.0.1:54321"`,
+    `${GOOD_STATUS}\nMALFORMED`,
+    GOOD_STATUS.replace(
+      'PUBLISHABLE_KEY="publishable-test-key"',
+      'PUBLISHABLE_KEY="   "',
+    ),
+    GOOD_STATUS.replace('SECRET_KEY="secret-test-key"', ""),
+  ];
+  for (const stdout of malformedStatuses) {
+    const subject = freshHarness({ results: [{ status: 0, stdout }] });
+    expect(await subject.run(), stdout).toBe(1);
+    expect(subject.calls).toHaveLength(1);
+    expect(subject.errors.join("\n")).toMatch(/safe loopback credentials/);
+    expect(subject.errors.join("\n")).not.toContain("secret-test-key");
+  }
+});
+
+it("does not run Vitest after gateway restart failure", async () => {
+  for (const restartResult of [
+    { status: 1 },
+    { status: null },
+    { status: null, signal: "SIGTERM" },
+    {
+      status: null,
+      error: new Error("secret-test-key must stay redacted"),
+    },
+  ]) {
+    const subject = freshHarness({
+      results: [
+        { status: 0, stdout: GOOD_STATUS },
+        { status: 0 },
+        { status: 0, stdout: GOOD_STATUS },
+        restartResult,
+      ],
+    });
+    expect(await subject.run()).toBe(1);
+    expect(subject.calls).toHaveLength(4);
+    expect(subject.errors.join("\n")).toMatch(/gateway restart failed/);
+    expect(subject.errors.join("\n")).not.toContain("secret-test-key");
+  }
+});
+
+it("does not run Vitest when Auth never becomes ready", async () => {
+  const subject = freshHarness({
+    fetchImpl: async () => ({ status: 502 }),
+  });
+  expect(await subject.run()).toBe(1);
+  expect(subject.calls).toHaveLength(4);
+  expect(subject.errors.join("\n")).toMatch(/Auth did not become ready/);
+});
 
 it("required mode fails status, spawn, and timeout errors", async () => {
   for (const result of [
@@ -119,6 +415,27 @@ it("required mode fails partial explicit credentials", async () => {
   });
   expect(await subject.run()).toBe(1);
   expect(subject.calls).toHaveLength(0);
+});
+
+it("rejects whitespace and partially present explicit credentials in every mode", async () => {
+  for (const env of [
+    { SUPABASE_TEST_URL: "   ", SUPABASE_TEST_PUBLISHABLE_KEY: " ", SUPABASE_TEST_SECRET_KEY: " " },
+    { SUPABASE_TEST_URL: " http://127.0.0.1:54321 ", SUPABASE_TEST_PUBLISHABLE_KEY: " key ", SUPABASE_TEST_SECRET_KEY: "" },
+    { SUPABASE_TEST_URL: 123, SUPABASE_TEST_PUBLISHABLE_KEY: "key", SUPABASE_TEST_SECRET_KEY: "secret" },
+  ]) {
+    const subject = harness({ env });
+    expect(await subject.run()).toBe(1);
+    expect(subject.calls).toHaveLength(0);
+  }
+});
+
+it("rejects malformed CLI status even in optional mode", async () => {
+  for (const stdout of ["", `${GOOD_STATUS}\nAPI_URL=duplicate`, GOOD_STATUS.replace('SECRET_KEY="secret-test-key"', 'SECRET_KEY="   "'), GOOD_STATUS.replace(/\n/g, "\r\n") + "\r\nAPI_URL=\"duplicate\""]) {
+    const subject = harness({ results: [{ status: 0, stdout }] });
+    expect(await subject.run()).toBe(1);
+    expect(subject.calls).toHaveLength(1);
+    expect(subject.logs.join("\n")).toMatch(/ERROR/);
+  }
 });
 
 it("required mode fails an unreachable local API before Vitest", async () => {
@@ -169,10 +486,12 @@ it("Vitest spawn errors, signals, and exit failures always propagate", async () 
   for (const result of [
     { error: new Error("spawn failed"), status: null },
     { signal: "SIGTERM", status: null },
+    { status: null },
     { status: 7 },
   ]) {
     const subject = harness({ results: [{ status: 0, stdout: GOOD_STATUS }, result] });
     expect(await subject.run()).toBe(result.status === 7 ? 7 : 1);
+    expect(subject.calls[1].options.timeout).toBe(600_000);
   }
 });
 
@@ -194,6 +513,15 @@ it("DB workflow structural parser rejects nameless and multiline-run steps", () 
       workflow(["      - name: Start local Supabase", "        run: |-", "          pnpm exec supabase start"].join("\n")),
     ),
   ).toThrow(/multiline run scalar/);
+  expect(() =>
+    parseWorkflowSteps(workflow("      - name: Bad\n        run: one\n        run: two")),
+  ).toThrow(/ambiguous run/);
+  expect(() =>
+    parseWorkflowSteps(workflow("      - name: Bad\n        uses:")),
+  ).toThrow(/ambiguous uses/);
+  expect(() =>
+    parseWorkflowSteps(workflow("      - name: Bad\n        run: one\n        uses: actions/checkout@v7")),
+  ).toThrow(/exactly one/);
 });
 
 it("DB workflow runs the credential-free runner contract before real-DB mutation", async () => {
@@ -207,10 +535,13 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     readFile(workflowPath, "utf8"),
     readFile(normalConfigPath, "utf8"),
   ]);
+  assertWorkflowContract(workflow, normalConfig);
 
   // The normal unit-test config must continue discovering this file, while
   // the dedicated workflow must run it before any Docker-backed mutation.
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
+  expect(workflow).toMatch(/env:\s*\n\s+NEXT_TELEMETRY_DISABLED: "1"\s+\n\s+DB_TESTS_REQUIRED: "1"/);
+  expect(workflow).not.toMatch(/DB_TESTS_REQUIRED:\s*"1"[\s\S]*?\n\s{8,}env:/);
 
   const steps = parseWorkflowSteps(workflow);
 
@@ -226,6 +557,10 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
   expect(runnerStep.uses).toBeUndefined();
   expect(runnerStep.run).toBe(runnerCommand);
   expect(runnerStep.hasCondition).toBe(false);
+
+  for (const mutation of steps.slice(runnerIndex + 1)) {
+    expect(mutation.hasCondition).toBe(false);
+  }
 
   const allowedPreflightSteps = [
     { name: "Checkout", uses: "actions/checkout@v7" },
@@ -270,5 +605,33 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
       .filter(({ step }) => step.name === expected.name && step.run === expected.run);
     expect(matches).toHaveLength(1);
     expect(matches[0].index).toBeGreaterThan(runnerIndex);
+  }
+
+  const mutations = [
+    workflow.replace(runnerCommand, `${runnerCommand}\n      - name: Duplicate runner\n        run: ${runnerCommand}`),
+    workflow.replace("DB_TESTS_REQUIRED: \"1\"", "DB_TESTS_REQUIRED: \"0\""),
+    workflow.replace("Run CFG-001 fresh-reset gate", "Run unexpected gate"),
+    workflow.replace("Run CFG-001 fresh-reset gate", "Run real-DB suite"),
+    ...REQUIRED_WORKFLOW_PATHS.map((path) => workflow
+      .replace(`      - "${path}"\r\n`, "")
+      .replace(`      - "${path}"\n`, "")),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        if: always()\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        shell: bash\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        \"if\": false\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("        run: pnpm --filter web test:db\r\n", "        \"env\": { DB_TESTS_REQUIRED: \"0\" }\r\n        run: pnpm --filter web test:db\r\n"),
+    workflow.replace("    env:\r\n", "    if: false\r\n    env:\r\n"),
+    workflow.replace("    paths:\r\n", "    paths-ignore:\r\n"),
+    workflow.replace("      DB_TESTS_REQUIRED: \"1\"\r\n", "      DB_TESTS_REQUIRED: \"1\"\r\n      DB_TESTS_REQUIRED: \"1\"\r\n"),
+    workflow.replace("          node-version: 24", "          \"node-version\": 24"),
+    workflow.replace("      - name: Checkout", "      - name: Checkout\r\n        with:\r\n          \"ref\": main"),
+    workflow.replace("  pull_request:", "  other:").replace("  workflow_dispatch:", "  pull_request:") ,
+    workflow.replace("  pull_request:", "  other:") ,
+    `${workflow.replace("on:\r\n", "on:\r\n  pull_request:\r\n    paths:\r\n      - \"decoy\"\r\n")}`,
+    workflow.replace("jobs:\r\n", "jobs:\r\n  decoy:\r\n    steps:\r\n      - name: noop\r\n        run: true\r\n"),
+    workflow.replace("jobs:\r\n", "jobs:\r\njobs:\r\n"),
+    workflow.replace("on:\r\n", "on:\r\non:\r\n"),
+  ];
+  for (const [mutationIndex, mutated] of mutations.entries()) {
+    expect(() => assertWorkflowContract(mutated, normalConfig), `mutation ${mutationIndex}`).toThrow();
   }
 });

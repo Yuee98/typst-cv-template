@@ -32,6 +32,8 @@ import {
 const DB_CONTAINER = "supabase_db_typst-cv-template";
 const AVAILABILITY_READY = "DB011A_AVAILABILITY_READY";
 const POINTER_READY = "DB011A_POINTER_READY";
+const V2_RESERVE_READY = "DB011A_V2_RESERVE_READY";
+const V2_POINTER_READY = "DB011A_V2_POINTER_READY";
 const SNAPSHOT_READY = "DB011A_SNAPSHOT_READY";
 const FINALIZE_READY = "DB011A_FINALIZE_READY";
 const CHILD_LOCK_READY = "DB011A_CHILD_LOCK_READY";
@@ -338,6 +340,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     userId: string,
     holdSeconds: number,
     lockTimeoutMs?: number,
+    options: {
+      applicationName?: string;
+      barrierMarker?: string;
+      deferCommit?: boolean;
+    } = {},
   ) {
     if (route.configGeneration === null) {
       throw new Error("V2 concurrency route must be active");
@@ -360,22 +367,27 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
         '${userId}'::uuid, 'ai_terms', '${INITIAL_LEGAL_BUNDLE_VERSION}'
       ) on conflict (user_id, document_key, version) do nothing;
       begin;
-      set local statement_timeout = '10s';
-      ${
-        lockTimeoutMs === undefined
-          ? ""
-          : `set local lock_timeout = '${lockTimeoutMs}ms';`
-      }
-      set local role service_role;
+       set local statement_timeout = '10s';
+       ${
+         lockTimeoutMs === undefined
+           ? ""
+           : `set local lock_timeout = '${lockTimeoutMs}ms';`
+       }
+       ${
+         options.applicationName === undefined
+           ? ""
+           : `set local application_name = '${options.applicationName}';`
+       }
+       set local role service_role;
       select public.reserve_ai_polish_request_v2(
         '${userId}'::uuid,
         '${crypto.randomUUID()}'::uuid,
         '${crypto.randomUUID()}'::uuid,
         '${expectedRoute}'::jsonb
-      );
-      reset role;
-      select pg_sleep(${holdSeconds});
-      commit;
+       );
+       reset role;
+       ${options.barrierMarker === undefined ? "" : `\\echo ${options.barrierMarker}`}
+       ${options.deferCommit ? "" : `select pg_sleep(${holdSeconds});\n       commit;`}
     `;
   }
 
@@ -430,22 +442,27 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     `;
   }
 
-  function switchPointerSql(
-    replacement: LiveRoute,
-    label: string,
-    holdSeconds: number,
-  ) {
+  function switchPointerUpdateSql(replacement: LiveRoute, label: string) {
     return String.raw`
-      \set ON_ERROR_STOP on
-      begin;
-      set local statement_timeout = '10s';
       update public.ai_feature_config
       set active_routing_policy_version_id = '${replacement.policyVersionId}'::uuid,
           routing_updated_by = 'runtime-concurrency',
           routing_change_reason = '${label}.${crypto.randomUUID()}'
       where id = true;
-      select pg_sleep(${holdSeconds});
-      commit;
+    `;
+  }
+
+  function heldPointerSwitchSql(
+    replacement: LiveRoute,
+    label: string,
+    marker: string,
+  ) {
+    return String.raw`
+      \set ON_ERROR_STOP on
+      begin;
+      set local statement_timeout = '10s';
+      ${switchPointerUpdateSql(replacement, label)}
+      \echo ${marker}
     `;
   }
 
@@ -689,40 +706,89 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     const reserveFirst = await createPointerRacePair("v2-pointer-reserve-first");
     await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
     const firstUser = await createTestUser(service, "v2-pointer-reserve-first");
+    const reserveHolder = startOwnerSqlWithBarrier(
+      reserveV2Sql(reserveFirst.current, firstUser.id, 0, undefined, {
+        barrierMarker: V2_RESERVE_READY,
+        deferCommit: true,
+      }),
+      V2_RESERVE_READY,
+      "commit;",
+    );
+    let pointerContender: BarrierSqlProcess | undefined;
     try {
-      const [reserved, switched] = await interleave(
-        reserveV2Sql(reserveFirst.current, firstUser.id, 0.6),
-        switchPointerSql(
+      await reserveHolder.ready;
+      const pointerApplication = `db011a-v2-pointer-${crypto.randomUUID()}`;
+      pointerContender = startBlockingContender(
+        switchPointerUpdateSql(
           reserveFirst.replacement,
           "v2-pointer-after-reserve",
-          0,
         ),
+        V2_POINTER_READY,
+        pointerApplication,
       );
+      await pointerContender.ready;
+      try {
+        await waitForDatabaseLock(pointerApplication);
+      } finally {
+        reserveHolder.release();
+      }
+      const [reserved, switched] = await Promise.all([
+        reserveHolder.result,
+        pointerContender.result,
+      ]);
       expect(reserved.status, reserved.stderr).toBe(0);
       expect(reserved.stdout).toContain('"allowed": true');
       expect(switched.status, switched.stderr).toBe(0);
       await expectCoherentV2Snapshot(reserveFirst.current, firstUser.id);
     } finally {
+      reserveHolder.release();
+      await Promise.allSettled([
+        reserveHolder.result,
+        ...(pointerContender ? [pointerContender.result] : []),
+      ]);
       await deleteTestUser(service, firstUser.id);
     }
 
     const switchFirst = await createPointerRacePair("v2-pointer-switch-first");
     await configureFeature(service, { enabled: true, globalDailyLimit: 2000 });
     const secondUser = await createTestUser(service, "v2-pointer-switch-first");
+    const pointerHolder = startOwnerSqlWithBarrier(
+      heldPointerSwitchSql(
+        switchFirst.replacement,
+        "v2-pointer-before-reserve",
+        V2_POINTER_READY,
+      ),
+      V2_POINTER_READY,
+      "commit;",
+    );
+    let denied: Promise<OwnerSqlResult> | undefined;
     try {
-      const [switched, denied] = await interleave(
-        switchPointerSql(
-          switchFirst.replacement,
-          "v2-pointer-before-reserve",
-          0.6,
-        ),
-        reserveV2Sql(switchFirst.current, secondUser.id, 0),
+      await pointerHolder.ready;
+      const reserveApplication = `db011a-v2-reserve-${crypto.randomUUID()}`;
+      denied = startOwnerSql(
+        reserveV2Sql(switchFirst.current, secondUser.id, 0, undefined, {
+          applicationName: reserveApplication,
+        }),
       );
+      try {
+        await waitForDatabaseLock(reserveApplication);
+      } finally {
+        pointerHolder.release();
+      }
+      const [switched, deniedResult] = await Promise.all([
+        pointerHolder.result,
+        denied,
+      ]);
       expect(switched.status, switched.stderr).toBe(0);
-      expect(denied.status, denied.stderr).toBe(0);
-      expect(denied.stdout).toContain('"reason": "AI_ROUTE_CHANGED"');
+      expect(deniedResult.status, deniedResult.stderr).toBe(0);
+      expect(deniedResult.stdout).toContain('"reason": "AI_ROUTE_CHANGED"');
       await expectNoV2Admission(secondUser.id);
     } finally {
+      pointerHolder.release();
+      await Promise.allSettled([
+        pointerHolder.result,
+        ...(denied ? [denied] : []),
+      ]);
       await deleteTestUser(service, secondUser.id);
       await configureFeature(service, { enabled: false });
     }

@@ -25,6 +25,7 @@ on:
       - "web/scripts/run-cfg001-fresh-reset.mjs"
       - "web/scripts/run-db-tests.mjs"
       - "web/scripts/run-db-tests.test.mjs"
+      - "web/vitest.config.mts"
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
       - "web/src/server/polish/auth.ts"
