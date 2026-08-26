@@ -293,10 +293,12 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
   },
 ] as const;
 
+// G3 includes DB003C migration 20260824005000's authorized replacement of the
+// sole assert_ai_price_structure_v1(uuid) body.
 const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
   routineCount: 358,
   authorityRootSha256:
-    "05c976caac3503f1c029748cbadda3ea42d420f4701d28563269f48db0470cca",
+    "bfccc877f387f050f4ab9d7a7294c81285603fa62cf2e7c8d75cc019dc37d149",
 } as const;
 
 function parseOwnerJson(sql: string): unknown {
