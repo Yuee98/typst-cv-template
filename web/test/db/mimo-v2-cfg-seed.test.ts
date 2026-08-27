@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
@@ -6,8 +7,12 @@ import { describe, expect, it } from "vitest";
 import { MIMO_V2_SEED_IDENTITY_V1 } from "@/server/polish/mimo-v2-seed-identity-v1";
 import { DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1 } from "@/server/polish/service-runtime-contract-v1";
 
-import { RUN_DB_TESTS } from "./helpers";
-import { runOwnerSql } from "./runtime-contract-fixtures";
+import { RUN_DB_TESTS, sleep } from "./helpers";
+import {
+  runOwnerSql,
+  startOwnerSql,
+  type OwnerSqlResult,
+} from "./runtime-contract-fixtures";
 
 const RUN_CFG002_FRESH_RESET = process.env.CFG002_FRESH_RESET === "1";
 const MIGRATION_URL = new URL(
@@ -18,6 +23,46 @@ const PROFILE_ID = MIMO_V2_SEED_IDENTITY_V1.profile.id;
 const PROFILE_VERSION_ID = MIMO_V2_SEED_IDENTITY_V1.profile.profileVersionId;
 const PRICE_ID = MIMO_V2_SEED_IDENTITY_V1.pricing.reservedDefaultPriceVersionId;
 const CONTRACT = DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.contract;
+const TARGETS = DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets;
+const DB_CONTAINER = "supabase_db_typst-cv-template";
+const OLD_CONTRACT_ID = "runtime.deepseek-v2.v1";
+const OLD_CONTRACT_SHA256 =
+  "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9";
+const SNAPSHOT_TABLES = [
+  "ai_provider_profiles",
+  "ai_provider_profile_versions",
+  "ai_price_versions",
+  "ai_price_components",
+  "ai_service_runtime_contract_versions",
+  "ai_service_runtime_target_versions",
+  "ai_service_runtime_contract_targets",
+  "ai_legal_bundle_versions",
+  "ai_legal_bundle_manifests",
+  "ai_legal_manifest_versions",
+  "ai_feature_config",
+  "ai_routing_policy_versions",
+  "ai_routing_lifecycle_audit",
+  "ai_price_component_seal_intents",
+  "ai_routing_policy_transition_intents",
+  "user_terms_acceptances",
+  "ai_request_ledger",
+  "ai_provider_attempt_ledger",
+  "ai_usage_daily",
+  "ai_global_usage_daily",
+  "ai_profile_usage_daily",
+  "ai_rate_minutes",
+] as const;
+
+interface BarrierSqlProcess {
+  ready: Promise<void>;
+  result: Promise<OwnerSqlResult>;
+  release: () => void;
+}
+
+interface CatalogSnapshot {
+  availability: unknown;
+  tables: Record<string, Array<Record<string, unknown>>>;
+}
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -45,26 +90,338 @@ function migrationBody(): string {
     .replace(/^commit;\s*$/mu, "");
 }
 
+function stableSnapshotSql(marker = ""): string {
+  const tables = SNAPSHOT_TABLES.map(
+    (table) => String.raw`
+      '${table}', (
+        select coalesce(
+          pg_catalog.jsonb_agg(
+            pg_catalog.to_jsonb(row_value)
+            order by pg_catalog.to_jsonb(row_value)::text collate "C"
+          ),
+          '[]'::jsonb
+        )
+        from public.${table} as row_value
+      )`,
+  ).join(",\n");
+  return String.raw`
+    select '${marker}' || pg_catalog.jsonb_build_object(
+      'availability', public.get_ai_polish_availability_v1(null),
+      'tables', pg_catalog.jsonb_build_object(${tables})
+    )::text;
+  `;
+}
+
+function parseMarkedSnapshot(stdout: string, marker: string): string {
+  const line = stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .find((value) => value.startsWith(marker));
+  if (!line) throw new Error(`CFG-002 snapshot marker ${marker} is missing`);
+  return line.slice(marker.length);
+}
+
 function snapshot(): string {
   const result = runOwnerSql(String.raw`
     \set ON_ERROR_STOP on
     \pset format unaligned
     \pset tuples_only on
-    select pg_catalog.jsonb_build_object(
-      'profile', (select pg_catalog.to_jsonb(row_value) from public.ai_provider_profiles row_value where id='${PROFILE_ID}'::uuid),
-      'version', (select pg_catalog.to_jsonb(row_value) from public.ai_provider_profile_versions row_value where id='${PROFILE_VERSION_ID}'::uuid),
-      'price', (select pg_catalog.to_jsonb(row_value) from public.ai_price_versions row_value where id='${PRICE_ID}'::uuid),
-      'components', (select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value) order by component collate "C") from public.ai_price_components row_value where price_version_id='${PRICE_ID}'::uuid),
-      'root', (select pg_catalog.to_jsonb(row_value) from public.ai_service_runtime_contract_versions row_value where runtime_contract_id='${CONTRACT.runtimeContractId}'),
-      'memberships', (select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value) order by runtime_target_id collate "C") from public.ai_service_runtime_contract_targets row_value where runtime_contract_id='${CONTRACT.runtimeContractId}'),
-      'feature', (select pg_catalog.to_jsonb(row_value) from public.ai_feature_config row_value where id=true),
-      'auditCount', (select count(*) from public.ai_routing_lifecycle_audit),
-      'sealIntentCount', (select count(*) from public.ai_price_component_seal_intents)
-    )::text;
+    ${stableSnapshotSql("CFG002_SNAPSHOT=")}
   `);
-  const line = result.stdout.split(/\r?\n/u).map((value) => value.trim()).findLast((value) => value.startsWith("{"));
-  if (!line) throw new Error("CFG-002 snapshot is missing");
-  return line;
+  return parseMarkedSnapshot(result.stdout, "CFG002_SNAPSHOT=");
+}
+
+function parsedSnapshot(): CatalogSnapshot {
+  return JSON.parse(snapshot()) as CatalogSnapshot;
+}
+
+function targetSetHash(
+  targets: ReadonlyArray<(typeof TARGETS)[number]>,
+): string {
+  return createHash("sha256")
+    .update(
+      [...targets]
+        .sort((left, right) =>
+          Buffer.from(left.runtimeTargetId, "utf8").compare(
+            Buffer.from(right.runtimeTargetId, "utf8"),
+          ),
+        )
+        .map(
+          (target) =>
+            `${Buffer.byteLength(target.runtimeTargetId, "utf8")}:${target.runtimeTargetId}:${target.runtimeTargetSha256}`,
+        )
+        .join("\n"),
+      "utf8",
+    )
+    .digest("hex");
+}
+
+function startOwnerSqlWithBarrier(
+  sql: string,
+  marker: string,
+  releaseSql?: string,
+): BarrierSqlProcess {
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  let released = releaseSql === undefined;
+  let release: () => void = () => undefined;
+  const result = new Promise<OwnerSqlResult>((resolve, reject) => {
+    const child = spawn(
+      "docker",
+      [
+        "exec", "-i", DB_CONTAINER, "psql", "-U", "postgres", "-d", "postgres",
+        "--set", "ON_ERROR_STOP=1", "--no-psqlrc",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    const onOutput = (chunk: string, isError: boolean) => {
+      if (isError) stderr += chunk;
+      else stdout += chunk;
+      if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) {
+        readySettled = true;
+        resolveReady();
+      }
+    };
+    child.stdout.on("data", (chunk: string) => onOutput(chunk, false));
+    child.stderr.on("data", (chunk: string) => onOutput(chunk, true));
+    child.on("error", (error) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(error);
+      }
+      reject(error);
+    });
+    child.on("close", (status) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(new Error(`owner SQL exited before ${marker}: ${stderr || stdout}`));
+      }
+      resolve({ status: status ?? -1, stdout, stderr });
+    });
+    release = () => {
+      if (released) return;
+      released = true;
+      child.stdin.end(releaseSql);
+    };
+    if (releaseSql === undefined) child.stdin.end(sql);
+    else child.stdin.write(sql);
+  });
+  return { ready, result, release: () => release() };
+}
+
+async function waitForActivity(applicationName: string, prefix: string): Promise<void> {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const state = runOwnerSql(String.raw`
+      \pset format unaligned
+      \pset tuples_only on
+      select coalesce(wait_event_type, '') || ':' || coalesce(wait_event, '')
+      from pg_catalog.pg_stat_activity
+      where application_name = '${applicationName}';
+    `).stdout;
+    if (state.split(/\r?\n/u).some((line) => line.trim().startsWith(prefix))) return;
+    await sleep(25);
+  }
+  throw new Error(`${applicationName} never reached ${prefix}`);
+}
+
+async function waitForDatabaseLock(applicationName: string): Promise<void> {
+  await waitForActivity(applicationName, "Lock:");
+}
+
+function assertNoDeadlockOrLockTimeout(result: OwnerSqlResult): void {
+  expect(result.stderr).not.toMatch(/(?:40P01|55P03|deadlock detected|lock timeout)/iu);
+}
+
+function seedGraphCounts(): Record<string, number> {
+  return ownerJson(String.raw`
+    select pg_catalog.jsonb_build_object(
+      'profile', (select count(*) from public.ai_provider_profiles where id='${PROFILE_ID}'::uuid),
+      'version', (select count(*) from public.ai_provider_profile_versions where id='${PROFILE_VERSION_ID}'::uuid),
+      'price', (select count(*) from public.ai_price_versions where id='${PRICE_ID}'::uuid),
+      'components', (select count(*) from public.ai_price_components where price_version_id='${PRICE_ID}'::uuid),
+      'root', (select count(*) from public.ai_service_runtime_contract_versions where runtime_contract_id='${CONTRACT.runtimeContractId}'),
+      'mimoTarget', (select count(*) from public.ai_service_runtime_target_versions where runtime_target_id='${TARGETS[1].runtimeTargetId}'),
+      'memberships', (select count(*) from public.ai_service_runtime_contract_targets where runtime_contract_id='${CONTRACT.runtimeContractId}')
+    )::text;
+  `) as Record<string, number>;
+}
+
+function makeSeedAbsent(): void {
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    begin;
+    set local session_replication_role = replica;
+    delete from public.ai_service_runtime_contract_targets
+    where runtime_contract_id='${CONTRACT.runtimeContractId}';
+    delete from public.ai_service_runtime_contract_versions
+    where runtime_contract_id='${CONTRACT.runtimeContractId}';
+    delete from public.ai_service_runtime_target_versions
+    where runtime_target_id='${TARGETS[1].runtimeTargetId}';
+    delete from public.ai_price_components where price_version_id='${PRICE_ID}'::uuid;
+    delete from public.ai_price_versions where id='${PRICE_ID}'::uuid;
+    delete from public.ai_provider_profile_versions where id='${PROFILE_VERSION_ID}'::uuid;
+    delete from public.ai_provider_profiles where id='${PROFILE_ID}'::uuid;
+    set local session_replication_role = origin;
+    commit;
+  `);
+  expect(result.status, result.stderr).toBe(0);
+  expect(seedGraphCounts()).toEqual({
+    profile: 0, version: 0, price: 0, components: 0, root: 0, mimoTarget: 0, memberships: 0,
+  });
+}
+
+function restoreSeed(): void {
+  const result = runOwnerSql(readFileSync(MIGRATION_URL, "utf8"));
+  expect(result.status, result.stderr).toBe(0);
+}
+
+function removeProfileGate(): void {
+  runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    drop trigger if exists cfg002_profile_gate on public.ai_provider_profiles;
+    drop function if exists public.cfg002_profile_gate();
+  `);
+}
+
+function installProfileGate(): void {
+  removeProfileGate();
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    create function public.cfg002_profile_gate() returns trigger
+    language plpgsql set search_path = '' as $$
+    begin
+      if new.id='${PROFILE_ID}'::uuid then
+        perform pg_catalog.pg_advisory_xact_lock(702002);
+      end if;
+      return new;
+    end;
+    $$;
+    create trigger cfg002_profile_gate before insert on public.ai_provider_profiles
+    for each row execute function public.cfg002_profile_gate();
+  `);
+  expect(result.status, result.stderr).toBe(0);
+}
+
+function removeReapplyPause(): void {
+  runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    drop trigger if exists cfg002_reapply_pause on public.ai_provider_profiles;
+    drop function if exists public.cfg002_reapply_pause();
+  `);
+}
+
+function installReapplyPause(): void {
+  removeReapplyPause();
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    create function public.cfg002_reapply_pause() returns trigger
+    language plpgsql set search_path = '' as $$
+    begin
+      if new.id='${PROFILE_ID}'::uuid then perform pg_catalog.pg_sleep(0.75); end if;
+      return new;
+    end;
+    $$;
+    create trigger cfg002_reapply_pause after insert on public.ai_provider_profiles
+    for each row execute function public.cfg002_reapply_pause();
+  `);
+  expect(result.status, result.stderr).toBe(0);
+}
+
+function membershipValues(
+  rootId: string,
+  rootHash: string,
+  target: (typeof TARGETS)[number],
+): string {
+  return String.raw`(
+    '${rootId}', '${rootHash}',
+    '${target.runtimeTargetId}', '${target.runtimeTargetSha256}',
+    '${target.profileKey}', '${target.legalManifestId}', '${target.manifestSha256}',
+    '${target.routeDescriptorId}', '${target.routeDescriptorSha256}'
+  )`;
+}
+
+function createUnsealedRaceRoot(
+  label: string,
+  initialTargets: ReadonlyArray<(typeof TARGETS)[number]>,
+): { id: string; hash: string } {
+  const id = `cfg002.race.${label}.${randomUUID()}`;
+  const hash = createHash("sha256").update(id, "utf8").digest("hex");
+  const initialMemberships = initialTargets.length === 0
+    ? ""
+    : String.raw`
+      insert into public.ai_service_runtime_contract_targets (
+        runtime_contract_id, runtime_contract_sha256,
+        runtime_target_id, runtime_target_sha256, profile_key,
+        legal_manifest_id, manifest_sha256, route_descriptor_id, route_descriptor_sha256
+      ) values ${initialTargets.map((target) => membershipValues(id, hash, target)).join(",")};`;
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    begin;
+    insert into public.ai_service_runtime_contract_versions (
+      runtime_contract_id, runtime_contract_sha256, reviewed_source_commit_oid,
+      legal_bundle_version, bundle_contract_sha256, runtime_target_set_sha256
+    ) values (
+      '${id}', '${hash}', '${CONTRACT.reviewedSourceCommitOid}',
+      '${CONTRACT.legalBundleVersion}', '${CONTRACT.bundleContractSha256}',
+      '${CONTRACT.runtimeTargetSetSha256}'
+    );
+    ${initialMemberships}
+    commit;
+  `);
+  expect(result.status, result.stderr).toBe(0);
+  return { id, hash };
+}
+
+function removeRaceRoot(rootId: string): void {
+  const result = runOwnerSql(String.raw`
+    \set ON_ERROR_STOP on
+    begin;
+    set local session_replication_role = replica;
+    delete from public.ai_service_runtime_contract_targets where runtime_contract_id='${rootId}';
+    delete from public.ai_service_runtime_contract_versions where runtime_contract_id='${rootId}';
+    set local session_replication_role = origin;
+    commit;
+  `);
+  expect(result.status, result.stderr).toBe(0);
+}
+
+function expectExactSealedRaceRoot(rootId: string, rootHash: string): void {
+  const actual = ownerJson(String.raw`
+    select pg_catalog.jsonb_build_object(
+      'root', (
+        select pg_catalog.to_jsonb(row_value)
+        from public.ai_service_runtime_contract_versions as row_value
+        where runtime_contract_id='${rootId}' and runtime_contract_sha256='${rootHash}'
+      ),
+      'memberships', (
+        select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value)
+          order by runtime_target_id collate "C"), '[]'::jsonb)
+        from public.ai_service_runtime_contract_targets as row_value
+        where runtime_contract_id='${rootId}'
+      )
+    )::text;
+  `) as {
+    root: Record<string, unknown>;
+    memberships: Array<Record<string, unknown>>;
+  };
+  expect(actual.root).toMatchObject({
+    runtime_contract_id: rootId,
+    runtime_contract_sha256: rootHash,
+    runtime_target_set_sha256: CONTRACT.runtimeTargetSetSha256,
+  });
+  expect(actual.root.sealed_at).not.toBeNull();
+  expect(actual.memberships.map((row) => [row.runtime_target_id, row.profile_key]))
+    .toEqual(TARGETS.map((target) => [target.runtimeTargetId, target.profileKey]));
 }
 
 describe("CFG-002 MiMo V2 seed static contract", () => {
@@ -86,8 +443,9 @@ describe("CFG-002 MiMo V2 seed static contract", () => {
     expect(Buffer.from(jcs, "utf8").toString("hex")).toBe(profile.configJcsUtf8Hex);
     expect(createHash("sha256").update(jcs, "utf8").digest("hex")).toBe(profile.configSha256);
     expect(CONTRACT.runtimeContractId).toBe(MIMO_V2_SEED_IDENTITY_V1.runtime.runtimeContractId);
-    expect(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets).toHaveLength(2);
-    expect(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets.map((target) => target.profileKey).sort())
+    expect(TARGETS).toHaveLength(2);
+    expect(targetSetHash(TARGETS)).toBe(CONTRACT.runtimeTargetSetSha256);
+    expect(TARGETS.map((target) => target.profileKey).sort())
       .toEqual(["deepseek.official.deepseek-v4-flash.chat.v1", profile.profileKey]);
   });
 });
@@ -134,12 +492,359 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     expect(actual.root.sealed_at).not.toBeNull();
     expect(actual.counts).toEqual({ profiles: 2, profileVersions: 2, prices: 4, components: 13, policies: 1, runtimeRoots: 2, runtimeTargets: 2, runtimeMemberships: 3, audit: 0, sealIntents: 1 });
     expect(actual.feature).toEqual({ enabled: false, pointer: null, generation: 0 });
+
+    const catalog = parsedSnapshot();
+    expect(catalog.availability).toMatchObject({ allowed: false, reason: "AI_DISABLED" });
+    const targets = catalog.tables.ai_service_runtime_target_versions;
+    expect(targets.filter((row) => TARGETS.some((target) => target.runtimeTargetId === row.runtime_target_id)))
+      .toEqual(expect.arrayContaining(TARGETS.map((target) => expect.objectContaining({
+        runtime_target_id: target.runtimeTargetId,
+        runtime_target_sha256: target.runtimeTargetSha256,
+        profile_key: target.profileKey,
+        legal_manifest_id: target.legalManifestId,
+        manifest_sha256: target.manifestSha256,
+        route_descriptor_id: target.routeDescriptorId,
+        route_descriptor_sha256: target.routeDescriptorSha256,
+      }))));
+    expect(catalog.tables.ai_service_runtime_contract_targets
+      .filter((row) => row.runtime_contract_id === CONTRACT.runtimeContractId)
+      .map((row) => [row.runtime_target_id, row.profile_key]))
+      .toEqual(TARGETS.map((target) => [target.runtimeTargetId, target.profileKey]));
+    expect(catalog.tables.ai_service_runtime_contract_versions)
+      .toEqual(expect.arrayContaining([expect.objectContaining({
+        runtime_contract_id: OLD_CONTRACT_ID,
+        runtime_contract_sha256: OLD_CONTRACT_SHA256,
+        sealed_at: expect.any(String),
+      })]));
+    for (const table of [
+      "ai_routing_lifecycle_audit", "ai_routing_policy_transition_intents",
+      "ai_request_ledger", "ai_provider_attempt_ledger", "ai_usage_daily",
+      "ai_global_usage_daily", "ai_profile_usage_daily", "ai_rate_minutes",
+      "user_terms_acceptances",
+    ]) expect(catalog.tables[table]).toEqual([]);
   });
 
   it("is serially idempotent without sealing the price or adding audit history", () => {
     const before = snapshot();
     runOwnerSql(readFileSync(MIGRATION_URL, "utf8"));
     expect(snapshot()).toBe(before);
+  });
+
+  it("observes a real unique-key lock for identical concurrent reapplication, then retries unchanged", async () => {
+    makeSeedAbsent();
+    installReapplyPause();
+    try {
+      const firstApplication = `cfg002-identical-first-${randomUUID()}`;
+      const secondApplication = `cfg002-identical-second-${randomUUID()}`;
+      const first = startOwnerSql(String.raw`
+        set application_name='${firstApplication}';
+        ${readFileSync(MIGRATION_URL, "utf8")}
+      `);
+      await waitForActivity(firstApplication, "Timeout:PgSleep");
+      const second = startOwnerSql(String.raw`
+        set application_name='${secondApplication}';
+        ${readFileSync(MIGRATION_URL, "utf8")}
+      `);
+      await waitForDatabaseLock(secondApplication);
+      const results = await Promise.all([first, second]);
+      for (const result of results) assertNoDeadlockOrLockTimeout(result);
+      const successes = results.filter((result) => result.status === 0);
+      const losers = results.filter((result) => result.status !== 0);
+      expect(successes.length).toBeGreaterThanOrEqual(1);
+      expect(successes.length + losers.length).toBe(2);
+      for (const loser of losers) expect(loser.stderr).toMatch(/ERROR:\s+23505:/u);
+      expect(seedGraphCounts()).toEqual({
+        profile: 1, version: 1, price: 1, components: 4, root: 1, mimoTarget: 1, memberships: 2,
+      });
+      const afterRace = snapshot();
+      restoreSeed();
+      expect(snapshot()).toBe(afterRace);
+    } finally {
+      removeReapplyPause();
+      if (seedGraphCounts().profile !== 1) restoreSeed();
+    }
+  });
+
+  it("rolls back a late fixed-ID and natural-key profile collision after the migration observed absence", async () => {
+    const collisions = [
+      {
+        name: "fixed id",
+        id: PROFILE_ID,
+        profileKey: `cfg002.collision.fixed.${randomUUID()}`,
+      },
+      {
+        name: "natural key",
+        id: randomUUID(),
+        profileKey: MIMO_V2_SEED_IDENTITY_V1.profile.profileKey,
+      },
+    ] as const;
+    installProfileGate();
+    try {
+      for (const collision of collisions) {
+        makeSeedAbsent();
+        const marker = `CFG002_LATE_COLLISION_${randomUUID()}`;
+        const holder = startOwnerSqlWithBarrier(
+          String.raw`
+            \set ON_ERROR_STOP on
+            begin;
+            select pg_catalog.pg_advisory_lock(702002);
+            \echo ${marker}
+          `,
+          marker,
+          String.raw`
+            insert into public.ai_provider_profiles (
+              id, profile_key, display_name, gateway_kind, model_vendor
+            ) values (
+              '${collision.id}'::uuid, '${collision.profileKey}',
+              'late ${collision.name}', 'direct_mimo', 'xiaomi-mimo'
+            );
+            commit;
+          `,
+        );
+        const contenderApplication = `cfg002-late-${randomUUID()}`;
+        try {
+          await holder.ready;
+          const contender = startOwnerSql(String.raw`
+            set application_name='${contenderApplication}';
+            ${readFileSync(MIGRATION_URL, "utf8")}
+          `);
+          await waitForDatabaseLock(contenderApplication);
+          holder.release();
+          const [winner, loser] = await Promise.all([holder.result, contender]);
+          expect(winner.status, winner.stderr).toBe(0);
+          expect(loser.status).not.toBe(0);
+          assertNoDeadlockOrLockTimeout(loser);
+          expect(loser.stderr).toMatch(/ERROR:\s+23505:/u);
+          // The collision writer is the sole surviving profile.  Every row the
+          // migration would have authored after its observed absence is absent.
+          expect(seedGraphCounts()).toEqual({
+            profile: 1, version: 0, price: 0, components: 0, root: 0, mimoTarget: 0, memberships: 0,
+          });
+        } finally {
+          holder.release();
+          await holder.result.catch(() => undefined);
+          const cleanup = runOwnerSql(String.raw`
+            \set ON_ERROR_STOP on
+            begin;
+            set local session_replication_role = replica;
+            delete from public.ai_provider_profiles where id='${collision.id}'::uuid;
+            set local session_replication_role = origin;
+            commit;
+          `);
+          expect(cleanup.status, cleanup.stderr).toBe(0);
+          restoreSeed();
+        }
+      }
+    } finally {
+      removeProfileGate();
+    }
+  });
+
+  it("serializes membership authoring before root sealing on the real root lock", async () => {
+    const before = snapshot();
+    const root = createUnsealedRaceRoot("membership-first", [TARGETS[0]]);
+    const marker = `CFG002_MEMBERSHIP_HELD_${randomUUID()}`;
+    const contenderApplication = `cfg002-seal-after-membership-${randomUUID()}`;
+    const holder = startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        set local statement_timeout='10s';
+        insert into public.ai_service_runtime_contract_targets (
+          runtime_contract_id, runtime_contract_sha256,
+          runtime_target_id, runtime_target_sha256, profile_key,
+          legal_manifest_id, manifest_sha256, route_descriptor_id, route_descriptor_sha256
+        ) values ${membershipValues(root.id, root.hash, TARGETS[1])};
+        \echo ${marker}
+      `,
+      marker,
+      "commit;",
+    );
+    try {
+      await holder.ready;
+      const contender = startOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        set local application_name='${contenderApplication}';
+        set local statement_timeout='10s';
+        update public.ai_service_runtime_contract_versions
+        set sealed_at=greatest(pg_catalog.clock_timestamp(), created_at)
+        where runtime_contract_id='${root.id}' and runtime_contract_sha256='${root.hash}';
+        commit;
+      `);
+      await waitForDatabaseLock(contenderApplication);
+      holder.release();
+      const [authored, sealed] = await Promise.all([holder.result, contender]);
+      expect(authored.status, authored.stderr).toBe(0);
+      expect(sealed.status, sealed.stderr).toBe(0);
+      assertNoDeadlockOrLockTimeout(sealed);
+      expectExactSealedRaceRoot(root.id, root.hash);
+    } finally {
+      holder.release();
+      await holder.result.catch(() => undefined);
+      removeRaceRoot(root.id);
+      expect(snapshot()).toBe(before);
+    }
+  });
+
+  it("rejects a membership mutation after seal-first serialization and preserves exact members", async () => {
+    const before = snapshot();
+    const root = createUnsealedRaceRoot("seal-first", TARGETS);
+    const marker = `CFG002_SEAL_HELD_${randomUUID()}`;
+    const contenderApplication = `cfg002-mutation-after-seal-${randomUUID()}`;
+    const holder = startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        set local statement_timeout='10s';
+        update public.ai_service_runtime_contract_versions
+        set sealed_at=greatest(pg_catalog.clock_timestamp(), created_at)
+        where runtime_contract_id='${root.id}' and runtime_contract_sha256='${root.hash}';
+        \echo ${marker}
+      `,
+      marker,
+      "commit;",
+    );
+    try {
+      await holder.ready;
+      const contender = startOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        set local application_name='${contenderApplication}';
+        set local statement_timeout='10s';
+        delete from public.ai_service_runtime_contract_targets
+        where runtime_contract_id='${root.id}'
+          and runtime_target_id='${TARGETS[1].runtimeTargetId}';
+        commit;
+      `);
+      await waitForDatabaseLock(contenderApplication);
+      holder.release();
+      const [sealed, rejected] = await Promise.all([holder.result, contender]);
+      expect(sealed.status, sealed.stderr).toBe(0);
+      expect(rejected.status).not.toBe(0);
+      assertNoDeadlockOrLockTimeout(rejected);
+      expect(rejected.stderr).toMatch(/ERROR:\s+23514:.*sealed runtime contract target sets are immutable/i);
+      expectExactSealedRaceRoot(root.id, root.hash);
+    } finally {
+      holder.release();
+      await holder.result.catch(() => undefined);
+      removeRaceRoot(root.id);
+      expect(snapshot()).toBe(before);
+    }
+  });
+
+  it("rolls back every authored row when a trigger-disabled immutable old-root corruption fails late", () => {
+    const original = snapshot();
+    const result = runOwnerSql(String.raw`
+      \set ON_ERROR_STOP on
+      \pset format unaligned
+      \pset tuples_only on
+      begin;
+      set local session_replication_role = replica;
+      delete from public.ai_service_runtime_contract_targets
+      where runtime_contract_id='${CONTRACT.runtimeContractId}';
+      delete from public.ai_service_runtime_contract_versions
+      where runtime_contract_id='${CONTRACT.runtimeContractId}';
+      delete from public.ai_service_runtime_target_versions
+      where runtime_target_id='${TARGETS[1].runtimeTargetId}';
+      delete from public.ai_price_components where price_version_id='${PRICE_ID}'::uuid;
+      delete from public.ai_price_versions where id='${PRICE_ID}'::uuid;
+      delete from public.ai_provider_profile_versions where id='${PROFILE_VERSION_ID}'::uuid;
+      delete from public.ai_provider_profiles where id='${PROFILE_ID}'::uuid;
+      update public.ai_service_runtime_contract_versions
+      set runtime_target_set_sha256=repeat('0',64)
+      where runtime_contract_id='${OLD_CONTRACT_ID}'
+        and runtime_contract_sha256='${OLD_CONTRACT_SHA256}';
+      set local session_replication_role = origin;
+      ${stableSnapshotSql("CFG002_ROLLBACK_BEFORE=")}
+      savepoint cfg002_seed_body;
+      \set ON_ERROR_STOP off
+      ${migrationBody()}
+      \set ON_ERROR_STOP on
+      rollback to savepoint cfg002_seed_body;
+      ${stableSnapshotSql("CFG002_ROLLBACK_AFTER=")}
+      rollback;
+    `, { expectFailure: false });
+    expect(result.stderr).toContain("MiMo V2 final runtime assertion failed");
+    expect(result.stderr).toMatch(/ERROR:\s+23514:/u);
+    expect(parseMarkedSnapshot(result.stdout, "CFG002_ROLLBACK_AFTER="))
+      .toBe(parseMarkedSnapshot(result.stdout, "CFG002_ROLLBACK_BEFORE="));
+    expect(snapshot()).toBe(original);
+  });
+
+  it("keeps every direct catalog mutation and the discovered private price seal dark to API roles", () => {
+    const protectedTables = [
+      "ai_provider_profiles",
+      "ai_provider_profile_versions",
+      "ai_price_versions",
+      "ai_price_components",
+      "ai_service_runtime_contract_versions",
+      "ai_service_runtime_target_versions",
+      "ai_service_runtime_contract_targets",
+    ] as const;
+    const roles = ["anon", "authenticated", "service_role"] as const;
+    const directAttempts = roles.flatMap((role) => protectedTables.flatMap((table) => [
+      String.raw`
+        begin;
+        set local role ${role};
+        insert into public.${table} default values;
+        rollback;`,
+      String.raw`
+        begin;
+        set local role ${role};
+        do $$
+        declare v_column text;
+        begin
+          select attribute.attname into v_column
+          from pg_catalog.pg_attribute as attribute
+          where attribute.attrelid='public.${table}'::regclass
+            and attribute.attnum > 0 and not attribute.attisdropped
+          order by attribute.attnum limit 1;
+          execute pg_catalog.format(
+            'update public.%I set %I=%I where false', '${table}', v_column, v_column
+          );
+        end;
+        $$;
+        rollback;`,
+      String.raw`
+        begin;
+        set local role ${role};
+        delete from public.${table} where false;
+        rollback;`,
+    ])).join("\n");
+    const denied = runOwnerSql(String.raw`
+      \set ON_ERROR_STOP off
+      \set VERBOSITY verbose
+      ${directAttempts}
+    `, { expectFailure: false });
+    expect(denied.status, denied.stderr).toBe(0);
+    expect(denied.stderr.match(/ERROR:\s+42501:/g)).toHaveLength(
+      protectedTables.length * roles.length * 3,
+    );
+
+    const privateSeals = ownerJson(String.raw`
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'identity', procedure.oid::regprocedure::text,
+        'arguments', pg_catalog.pg_get_function_identity_arguments(procedure.oid),
+        'grants', pg_catalog.jsonb_build_object(
+          'anon', has_function_privilege('anon', procedure.oid, 'EXECUTE'),
+          'authenticated', has_function_privilege('authenticated', procedure.oid, 'EXECUTE'),
+          'service_role', has_function_privilege('service_role', procedure.oid, 'EXECUTE')
+        )
+      ) order by procedure.oid::regprocedure::text), '[]'::jsonb)::text
+      from pg_catalog.pg_proc as procedure
+      join pg_catalog.pg_namespace as namespace on namespace.oid=procedure.pronamespace
+      where namespace.nspname='public'
+        and procedure.proname='seal_ai_price_components_v1';
+    `) as Array<{ identity: string; arguments: string; grants: Record<string, boolean> }>;
+    expect(privateSeals).toHaveLength(1);
+    expect(privateSeals[0].identity).toContain("seal_ai_price_components_v1");
+    expect(privateSeals[0].arguments).not.toBe("");
+    expect(privateSeals[0].grants).toEqual({
+      anon: false,
+      authenticated: false,
+      service_role: false,
+    });
   });
 
   it("fails closed and rolls back hostile immutable identities", () => {
