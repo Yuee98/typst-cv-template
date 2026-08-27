@@ -25,6 +25,7 @@ const PRICE_ID = MIMO_V2_SEED_IDENTITY_V1.pricing.reservedDefaultPriceVersionId;
 const CONTRACT = DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.contract;
 const TARGETS = DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets;
 const DB_CONTAINER = "supabase_db_typst-cv-template";
+const PG_APPLICATION_NAME_MAX_BYTES = 63;
 const OLD_CONTRACT_ID = "runtime.deepseek-v2.v1";
 const OLD_CONTRACT_SHA256 =
   "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9";
@@ -62,6 +63,14 @@ interface BarrierSqlProcess {
 interface CatalogSnapshot {
   availability: unknown;
   tables: Record<string, Array<Record<string, unknown>>>;
+}
+
+function pgApplicationName(label: string): string {
+  const value = `cfg2-${label}-${randomUUID().replace(/-/g, "")}`;
+  if (Buffer.byteLength(value, "utf8") > PG_APPLICATION_NAME_MAX_BYTES) {
+    throw new Error(`PostgreSQL application_name exceeds ${PG_APPLICATION_NAME_MAX_BYTES} bytes`);
+  }
+  return value;
 }
 
 function canonicalize(value: unknown): string {
@@ -567,8 +576,8 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     makeSeedAbsent();
     installReapplyPause();
     try {
-      const firstApplication = `cfg002-identical-first-${randomUUID()}`;
-      const secondApplication = `cfg002-identical-second-${randomUUID()}`;
+      const firstApplication = pgApplicationName("identical-a");
+      const secondApplication = pgApplicationName("identical-b");
       const first = startOwnerSql(String.raw`
         \set VERBOSITY verbose
         set application_name='${firstApplication}';
@@ -636,7 +645,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
             commit;
           `,
         );
-        const contenderApplication = `cfg002-late-${randomUUID()}`;
+        const contenderApplication = pgApplicationName("late");
         try {
           await holder.ready;
           const contender = startOwnerSql(String.raw`
@@ -695,8 +704,8 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
   it("serializes membership authoring before root sealing on the real root lock", async () => {
     const before = snapshot();
     const root = createUnsealedRaceRoot("membership-first", [TARGETS[0]]);
-    const holderApplication = `cfg002-membership-holder-${randomUUID()}`;
-    const contenderApplication = `cfg002-seal-after-membership-${randomUUID()}`;
+    const holderApplication = pgApplicationName("member-holder");
+    const contenderApplication = pgApplicationName("member-seal");
     // This mirrors the established DB007 mutation-first schedule: the real
     // membership trigger takes root FOR UPDATE, then pg_sleep only keeps that
     // already-acquired transaction lock observable while the seal is sent.
@@ -746,7 +755,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     const root = createUnsealedRaceRoot("seal-first", TARGETS);
     const marker = `CFG002_SEAL_HELD_${randomUUID()}`;
     const contenderMarker = `CFG002_MUTATION_CONTENDER_READY_${randomUUID()}`;
-    const contenderApplication = `cfg002-mutation-after-seal-${randomUUID()}`;
+    const contenderApplication = pgApplicationName("seal-mutation");
     const holder = startOwnerSqlWithBarrier(
       String.raw`
         \set ON_ERROR_STOP on
