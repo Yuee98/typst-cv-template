@@ -178,8 +178,18 @@ begin
   for v_policy in select * from public.ai_routing_policy_versions where status<>'retired' order by id for share loop
     v_candidate:=v_policy;
     v_phase:=case v_policy.status when 'draft' then 'validated' else v_policy.status end;
-    if v_policy.status='draft' then v_candidate.status:='validated'; end if;
-    perform public.validate_ai_routing_policy_row_v1(v_candidate,v_phase,p_at,true);
+    if v_policy.status='draft' then
+      v_candidate.status:='validated';
+      begin
+        perform public.validate_ai_routing_policy_row_v1(v_candidate,v_phase,p_at,true);
+      exception when check_violation then
+        -- An ineligible draft is inert immutable history and can never become a
+        -- current route.  It must not block retirement of an unrelated target.
+        continue;
+      end;
+    else
+      perform public.validate_ai_routing_policy_row_v1(v_candidate,v_phase,p_at,true);
+    end if;
     v_value:=case when p_reference_kind='profile_version' then v_policy.rules->'defaultRoute'->>'profileVersionId' else v_policy.rules->'defaultRoute'->>'priceVersionId' end;
     if v_value=p_reference_id::text or exists(
       select 1 from pg_catalog.jsonb_array_elements(v_policy.rules->'windows') as window_entry(value)
@@ -367,7 +377,7 @@ declare v public.ai_provider_profiles%rowtype; v_updated public.ai_provider_prof
 begin
  perform pg_catalog.set_config('lock_timeout','5s',true); perform 1 from public.ai_feature_config where id=true for update; if not found then raise exception 'ai feature config singleton is missing' using errcode='23514'; end if;
  select id into v.id from public.ai_provider_profiles where id=p_profile_id; if not found then raise exception 'invalid profile retirement' using errcode='23514'; end if;
- for v_child in select id from public.ai_provider_profile_versions where profile_id=v.id order by id loop
+ for v_child in select * from public.ai_provider_profile_versions where profile_id=v.id order by id loop
    perform public.assert_ai_routing_lifecycle_no_policy_reference_v1('profile_version',v_child.id,v_at);
  end loop;
  perform public.assert_ai_routing_lifecycle_evidence_v1(p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at);
@@ -381,7 +391,7 @@ begin
  perform public.lock_ai_routing_lifecycle_profile_prices_v1(v.id,null,p_rechecked_at);
  update public.ai_provider_profiles set retired_at=v_at where id=v.id returning * into v_updated;
  if not found or v_updated.retired_at is null then raise exception 'profile retirement did not persist' using errcode='23514'; end if;
- select public.insert_ai_routing_lifecycle_audit_v1('profile_retire',null,v.id,null,null,null,null,null,null,null,null,null,v.retired_at,v_updated.retired_at,null,null,p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at) into v_id; return v_id;
+ select public.insert_ai_routing_lifecycle_audit_v1('profile_retire',null,v.id,null,null,null,null,null,null,null,null,v.retired_at,v_updated.retired_at,null,null,p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at) into v_id; return v_id;
 end; $$;
 revoke all on function public.retire_ai_provider_profile_v1(uuid,text,text,text,text,text,text,timestamptz,text) from public,anon,authenticated,service_role;
 grant execute on function public.retire_ai_provider_profile_v1(uuid,text,text,text,text,text,text,timestamptz,text) to service_role;

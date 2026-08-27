@@ -8,6 +8,7 @@ import {
   authorSyntheticRuntimeContract,
   DEEPSEEK_LEGAL_MANIFEST_ID,
   INITIAL_LEGAL_BUNDLE_VERSION,
+  readLifecycleEvidenceRoot,
   runOwnerSql,
   sealPriceAsDatabaseOwner,
 } from "./runtime-contract-fixtures";
@@ -23,6 +24,8 @@ const EVIDENCE = {
   p_rechecked_sha256: "b".repeat(64),
 } as const;
 const CHECK_VIOLATION = "23514";
+const CANONICAL_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 interface Fixture {
   profileId: string;
@@ -88,7 +91,9 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     service = createServiceClient();
   });
 
-  async function fixture(): Promise<Fixture> {
+  async function fixture(
+    options: { malformedRules?: boolean } = {},
+  ): Promise<Fixture> {
     const suffix = crypto.randomUUID();
     const profileId = crypto.randomUUID();
     const profileVersionId = crypto.randomUUID();
@@ -97,6 +102,13 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     const profileKey = `db013.control.${suffix}`;
     const runtime = authorSyntheticRuntimeContract({ profileKey });
 
+    const rulesSql = options.malformedRules
+      ? "pg_catalog.jsonb_build_object('schemaVersion', 'routing_rules_v1', 'windows', '[]'::jsonb)"
+      : `pg_catalog.jsonb_build_object(
+          'schemaVersion', 'routing_rules_v1',
+          'defaultRoute', pg_catalog.jsonb_build_object('profileVersionId', '${profileVersionId}', 'priceVersionId', '${priceVersionId}'),
+          'windows', '[]'::jsonb
+        )`;
     const result = runOwnerSql(`begin;
       insert into public.ai_provider_profiles (id, profile_key, display_name, gateway_kind, model_vendor)
       values ('${profileId}', '${profileKey}', 'DB-013 control', 'direct_deepseek', 'deepseek');
@@ -127,11 +139,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
         legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
       ) values (
         '${policyVersionId}', 'db013.control.${suffix}', 1, 'draft', 'Asia/Shanghai',
-        pg_catalog.jsonb_build_object(
-          'schemaVersion', 'routing_rules_v1',
-          'defaultRoute', pg_catalog.jsonb_build_object('profileVersionId', '${profileVersionId}', 'priceVersionId', '${priceVersionId}'),
-          'windows', '[]'::jsonb
-        ), '${profileVersionId}', '${INITIAL_LEGAL_BUNDLE_VERSION}',
+        ${rulesSql}, '${profileVersionId}', '${INITIAL_LEGAL_BUNDLE_VERSION}',
         '${runtime.runtimeContractId}', '${runtime.runtimeContractSha256}', '${"d".repeat(64)}'
       );
       commit;`);
@@ -151,25 +159,11 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
   }
 
   async function evidence(f: Fixture): Promise<Record<string, string>> {
-    const root = ownerJson(`
-      select pg_catalog.jsonb_build_object(
-        'reviewedSourceCommitOid', root.reviewed_source_commit_oid,
-        'recheckedAt', case
-          when root.created_at >= price.source_checked_at then root.created_at
-          else price.source_checked_at
-        end
-      )::text
-      from public.ai_service_runtime_contract_versions as root
-      join public.ai_price_versions as price on price.id = '${f.priceVersionId}'::uuid
-      where root.runtime_contract_id = '${f.runtimeContractId}'
-        and root.runtime_contract_sha256 = '${f.runtimeContractSha256}';
-    `) as Record<string, unknown>;
-    if (
-      typeof root.reviewedSourceCommitOid !== "string" ||
-      typeof root.recheckedAt !== "string"
-    ) {
-      throw new Error("DB-013 evidence fixture is missing its owner-only facts");
-    }
+    const root = readLifecycleEvidenceRoot({
+      runtimeContractId: f.runtimeContractId,
+      runtimeContractSha256: f.runtimeContractSha256,
+      priceVersionIds: [f.priceVersionId],
+    });
     return {
       p_runtime_contract_id: f.runtimeContractId,
       p_runtime_contract_sha256: f.runtimeContractSha256,
@@ -472,6 +466,232 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     expect(audit).toHaveLength(4);
     expect(audit).toContainEqual(expect.objectContaining({ operation: "pointer_set", actor: EVIDENCE.p_actor }));
     expect(audit).toContainEqual(expect.objectContaining({ operation: "pointer_clear" }));
+  });
+
+  it("ignores inert malformed drafts and audits successful terminal wrappers", async () => {
+    const malformedDraft = await fixture({ malformedRules: true });
+    const profileFixture = await fixture();
+    const profileEvidence = await evidence(profileFixture);
+    const retiredPolicy = await service.rpc("transition_ai_routing_policy_v2", {
+      p_policy_version_id: profileFixture.policyVersionId,
+      p_to_status: "retired",
+      ...profileEvidence,
+    });
+    expect(retiredPolicy.error).toBeNull();
+    expect(retiredPolicy.data).toMatch(CANONICAL_UUID);
+
+    const profileVersionReason =
+      `DB-013 profile-version retirement ${crypto.randomUUID()}`;
+    const retiredVersion = await service.rpc(
+      "retire_ai_provider_profile_version_v1",
+      {
+        p_profile_version_id: profileFixture.profileVersionId,
+        ...profileEvidence,
+        p_reason: profileVersionReason,
+      },
+    );
+    expect(retiredVersion.error).toBeNull();
+    expect(retiredVersion.data).toMatch(CANONICAL_UUID);
+
+    const profileReason = `DB-013 profile retirement ${crypto.randomUUID()}`;
+    const retiredProfile = await service.rpc("retire_ai_provider_profile_v1", {
+      p_profile_id: profileFixture.profileId,
+      ...profileEvidence,
+      p_reason: profileReason,
+    });
+    expect(retiredProfile.error).toBeNull();
+    expect(retiredProfile.data).toMatch(CANONICAL_UUID);
+
+    const profileState = ownerJson(`
+      select pg_catalog.jsonb_build_object(
+        'profileRetired', profile.retired_at is not null,
+        'versionRetired', version.status = 'retired' and version.retired_at is not null,
+        'policyAuditId', (
+          select audit.audit_id::text
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.operation = 'policy_transition'
+            and audit.policy_version_id = '${profileFixture.policyVersionId}'::uuid
+        ),
+        'versionAuditId', (
+          select audit.audit_id::text
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.operation = 'profile_version_retire'
+            and audit.profile_version_id = version.id
+        ),
+        'profileAuditId', (
+          select audit.audit_id::text
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.operation = 'profile_retire'
+            and audit.profile_id = profile.id
+        ),
+        'versionAuditExact', (
+          select count(*) = 1 and pg_catalog.bool_and(
+            audit.policy_version_id is null
+            and audit.profile_id is null
+            and audit.profile_version_id = version.id
+            and audit.price_version_id is null
+            and audit.from_status is null
+            and audit.to_status is null
+            and audit.old_active_policy_version_id is null
+            and audit.new_active_policy_version_id is null
+            and audit.old_config_generation is null
+            and audit.new_config_generation is null
+            and audit.old_retired_at is null
+            and audit.new_retired_at = version.retired_at
+            and audit.old_valid_to is null
+            and audit.new_valid_to is null
+            and audit.runtime_contract_id = '${profileFixture.runtimeContractId}'
+            and audit.runtime_contract_sha256 = '${profileFixture.runtimeContractSha256}'
+            and audit.actor = '${EVIDENCE.p_actor}'
+            and audit.reason = '${profileVersionReason}'
+            and audit.reviewed_source_commit_oid = '${profileEvidence.p_reviewed_source_commit_oid}'
+            and audit.reviewed_source_sha256 = '${profileFixture.runtimeContractSha256}'
+            and audit.rechecked_at = '${profileEvidence.p_rechecked_at}'::timestamptz
+            and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
+            and audit.occurred_at is not null
+            and audit.transaction_id > 0
+          )
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.operation = 'profile_version_retire'
+            and audit.profile_version_id = version.id
+        ),
+        'profileAuditExact', (
+          select count(*) = 1 and pg_catalog.bool_and(
+            audit.policy_version_id is null
+            and audit.profile_id = profile.id
+            and audit.profile_version_id is null
+            and audit.price_version_id is null
+            and audit.from_status is null
+            and audit.to_status is null
+            and audit.old_active_policy_version_id is null
+            and audit.new_active_policy_version_id is null
+            and audit.old_config_generation is null
+            and audit.new_config_generation is null
+            and audit.old_retired_at is null
+            and audit.new_retired_at = profile.retired_at
+            and audit.old_valid_to is null
+            and audit.new_valid_to is null
+            and audit.runtime_contract_id = '${profileFixture.runtimeContractId}'
+            and audit.runtime_contract_sha256 = '${profileFixture.runtimeContractSha256}'
+            and audit.actor = '${EVIDENCE.p_actor}'
+            and audit.reason = '${profileReason}'
+            and audit.reviewed_source_commit_oid = '${profileEvidence.p_reviewed_source_commit_oid}'
+            and audit.reviewed_source_sha256 = '${profileFixture.runtimeContractSha256}'
+            and audit.rechecked_at = '${profileEvidence.p_rechecked_at}'::timestamptz
+            and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
+            and audit.occurred_at is not null
+            and audit.transaction_id > 0
+          )
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.operation = 'profile_retire'
+            and audit.profile_id = profile.id
+        )
+      )::text
+      from public.ai_provider_profiles as profile
+      join public.ai_provider_profile_versions as version
+        on version.profile_id = profile.id
+      where profile.id = '${profileFixture.profileId}'::uuid;
+    `);
+    expect(profileState).toEqual({
+      profileRetired: true,
+      versionRetired: true,
+      policyAuditId: retiredPolicy.data,
+      versionAuditId: retiredVersion.data,
+      profileAuditId: retiredProfile.data,
+      versionAuditExact: true,
+      profileAuditExact: true,
+    });
+
+    const malformedDraftState = ownerJson(`
+      select pg_catalog.jsonb_build_object(
+        'status', policy.status,
+        'rules', policy.rules,
+        'auditCount', (
+          select count(*)
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.policy_version_id = policy.id
+        )
+      )::text
+      from public.ai_routing_policy_versions as policy
+      where policy.id = '${malformedDraft.policyVersionId}'::uuid;
+    `);
+    expect(malformedDraftState).toEqual({
+      status: "draft",
+      rules: { schemaVersion: "routing_rules_v1", windows: [] },
+      auditCount: 0,
+    });
+
+    const priceFixture = await fixture();
+    const priceEvidence = await evidence(priceFixture);
+    expect(
+      (
+        await service.rpc("transition_ai_routing_policy_v2", {
+          p_policy_version_id: priceFixture.policyVersionId,
+          p_to_status: "retired",
+          ...priceEvidence,
+        })
+      ).error,
+    ).toBeNull();
+    const priceReason = `DB-013 price closure ${crypto.randomUUID()}`;
+    const closedPrice = await service.rpc("close_ai_price_version_v1", {
+      p_price_version_id: priceFixture.priceVersionId,
+      p_valid_to: new Date().toISOString(),
+      p_successor_price_version_id: null,
+      ...priceEvidence,
+      p_reason: priceReason,
+    });
+    expect(closedPrice.error).toBeNull();
+    expect(closedPrice.data).toMatch(CANONICAL_UUID);
+
+    const priceState = ownerJson(`
+      select pg_catalog.jsonb_build_object(
+        'closed', price.valid_to is not null,
+        'auditId', (
+          select audit.audit_id::text
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.operation = 'price_close'
+            and audit.price_version_id = price.id
+        ),
+        'auditExact', (
+          select count(*) = 1 and pg_catalog.bool_and(
+            audit.policy_version_id is null
+            and audit.profile_id is null
+            and audit.profile_version_id is null
+            and audit.price_version_id = price.id
+            and audit.from_status is null
+            and audit.to_status is null
+            and audit.old_active_policy_version_id is null
+            and audit.new_active_policy_version_id is null
+            and audit.old_config_generation is null
+            and audit.new_config_generation is null
+            and audit.old_retired_at is null
+            and audit.new_retired_at is null
+            and audit.old_valid_to is null
+            and audit.new_valid_to = price.valid_to
+            and audit.runtime_contract_id = '${priceFixture.runtimeContractId}'
+            and audit.runtime_contract_sha256 = '${priceFixture.runtimeContractSha256}'
+            and audit.actor = '${EVIDENCE.p_actor}'
+            and audit.reason = '${priceReason}'
+            and audit.reviewed_source_commit_oid = '${priceEvidence.p_reviewed_source_commit_oid}'
+            and audit.reviewed_source_sha256 = '${priceFixture.runtimeContractSha256}'
+            and audit.rechecked_at = '${priceEvidence.p_rechecked_at}'::timestamptz
+            and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
+            and audit.occurred_at is not null
+            and audit.transaction_id > 0
+          )
+          from public.ai_routing_lifecycle_audit as audit
+          where audit.operation = 'price_close'
+            and audit.price_version_id = price.id
+        )
+      )::text
+      from public.ai_price_versions as price
+      where price.id = '${priceFixture.priceVersionId}'::uuid;
+    `);
+    expect(priceState).toEqual({
+      closed: true,
+      auditId: closedPrice.data,
+      auditExact: true,
+    });
   });
 
   it("rejects malformed evidence and leaves both state and audit unchanged", async () => {
