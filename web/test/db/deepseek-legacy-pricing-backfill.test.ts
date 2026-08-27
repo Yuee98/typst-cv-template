@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -8,13 +10,111 @@ import {
   RUN_DB_TESTS,
   type TestUser,
 } from "./helpers";
-import { runOwnerSql, startOwnerSql } from "./runtime-contract-fixtures";
+import {
+  runOwnerSql,
+  startOwnerSql,
+  type OwnerSqlResult,
+} from "./runtime-contract-fixtures";
 
 const CUTOFF = "2026-08-16T16:00:00.000Z";
 const BEFORE = "2026-08-16T15:59:59.000Z";
 const LEGACY_PROFILE = "11111111-1111-4111-8111-111111111111";
+const LEGACY_PROFILE_PARENT = "11111111-1111-4111-8111-111111111110";
 const LEGACY_PRICE = "11111111-1111-4111-8111-111111111114";
 const CHECK_VIOLATION = "23514";
+const DB_CONTAINER = "supabase_db_typst-cv-template";
+
+interface BarrierSqlProcess {
+  ready: Promise<void>;
+  release: () => void;
+  result: Promise<OwnerSqlResult>;
+}
+
+function startOwnerSqlWithBarrier(
+  sql: string,
+  marker: string,
+  releaseSql?: string,
+): BarrierSqlProcess {
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  let released = releaseSql === undefined;
+  let release = () => undefined;
+  const result = new Promise<OwnerSqlResult>((resolve, reject) => {
+    const child = spawn(
+      "docker",
+      [
+        "exec",
+        "-i",
+        DB_CONTAINER,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "--set",
+        "ON_ERROR_STOP=1",
+        "--no-psqlrc",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    const observe = () => {
+      if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) {
+        readySettled = true;
+        resolveReady();
+      }
+    };
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      observe();
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      observe();
+    });
+    child.on("error", (error) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(error);
+      }
+      reject(error);
+    });
+    child.on("close", (status) => {
+      if (!readySettled) {
+        readySettled = true;
+        rejectReady(
+          new Error(
+            `owner SQL exited before barrier ${marker}: ${stderr || stdout}`,
+          ),
+        );
+      }
+      resolve({ status: status ?? -1, stdout, stderr });
+    });
+    release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      child.stdin.end(releaseSql);
+    };
+    if (releaseSql === undefined) {
+      child.stdin.end(sql);
+    } else {
+      child.stdin.write(sql);
+    }
+  });
+
+  return { ready, release: () => release(), result };
+}
 
 describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB)", () => {
   let service: SupabaseClient;
@@ -111,6 +211,16 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     const result = runOwnerSql(String.raw`
       copy (
         select pg_catalog.jsonb_build_object(
+          'profileParent', (
+            select pg_catalog.to_jsonb(parent)
+            from public.ai_provider_profiles as parent
+            where parent.id = '${LEGACY_PROFILE_PARENT}'::uuid
+          ),
+          'profileVersion', (
+            select pg_catalog.to_jsonb(profile)
+            from public.ai_provider_profile_versions as profile
+            where profile.id = '${LEGACY_PROFILE}'::uuid
+          ),
           'priceVersions', (
             select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(price) order by price.id)
             from public.ai_price_versions as price where price.id = '${LEGACY_PRICE}'::uuid
@@ -127,6 +237,63 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
       ) to stdout;
     `);
     return JSON.parse(result.stdout.trim()) as unknown;
+  }
+
+  function startHeldOwnerTransaction(
+    body: string,
+    marker: string,
+  ): BarrierSqlProcess {
+    return startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        \pset format unaligned
+        \pset tuples_only on
+        begin;
+        set local statement_timeout = '10s';
+        ${body}
+        \echo ${marker}
+      `,
+      marker,
+      "commit;",
+    );
+  }
+
+  function startBlockingOwnerWriter(
+    body: string,
+    marker: string,
+    applicationName: string,
+  ): BarrierSqlProcess {
+    return startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        \pset format unaligned
+        \pset tuples_only on
+        begin;
+        set local statement_timeout = '10s';
+        set local application_name = '${applicationName}';
+        \echo ${marker}
+        ${body}
+        commit;
+      `,
+      marker,
+    );
+  }
+
+  async function waitForDatabaseLock(applicationName: string): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const state = runOwnerSql(String.raw`
+        \pset format unaligned
+        \pset tuples_only on
+        select coalesce(wait_event_type, '') || ':' || coalesce(wait_event, '')
+        from pg_catalog.pg_stat_activity
+        where application_name = '${applicationName}';
+      `).stdout;
+      if (state.split(/\r?\n/u).some((line) => line.trim().startsWith("Lock:"))) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`contender ${applicationName} never reported a DB lock wait`);
   }
 
   it("writes the approved price evidence and the complete eligible-class truth table", async () => {
@@ -518,19 +685,169 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     }
   });
 
-  it("rolls back atomically when the canonical price/request lock order cannot proceed", async () => {
+  it("fails closed after committed canonical profile lifecycle, display, or identity drift", async () => {
     const reservationId = await insertHistorical();
-    const holder = startOwnerSql(String.raw`
-      begin;
-      select id from public.ai_price_versions
-      where id = '${LEGACY_PRICE}'::uuid for update;
-      select pg_catalog.pg_sleep(1);
-      rollback;
-    `);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const blocked = runBackfill({ expectFailure: true });
-    expect(blocked.stderr + blocked.stdout).toMatch(/lock timeout/i);
-    expect((await holder).status).toBe(0);
-    expect((await read(reservationId)).route_schema_version).toBeNull();
+    const originalRequest = await read(reservationId);
+    const originalCatalog = ownerLegacyCatalogSnapshot();
+    const staleCases = [
+      {
+        name: "parent display",
+        write: String.raw`
+          update public.ai_provider_profiles
+          set display_name = 'Relay DB012 stale display'
+          where id = '${LEGACY_PROFILE_PARENT}'::uuid;
+        `,
+        restore: String.raw`
+          update public.ai_provider_profiles
+          set display_name = 'DeepSeek V4 Flash'
+          where id = '${LEGACY_PROFILE_PARENT}'::uuid;
+        `,
+      },
+      {
+        name: "version identity",
+        write: String.raw`
+          update public.ai_provider_profile_versions
+          set model_snapshot = 'Relay-DB012-stale-model'
+          where id = '${LEGACY_PROFILE}'::uuid;
+        `,
+        restore: String.raw`
+          update public.ai_provider_profile_versions
+          set model_snapshot = 'DeepSeek-V4-Flash-0731'
+          where id = '${LEGACY_PROFILE}'::uuid;
+        `,
+      },
+      {
+        name: "version lifecycle",
+        write: String.raw`
+          update public.ai_provider_profile_versions
+          set status = 'validated', validated_at = pg_catalog.clock_timestamp()
+          where id = '${LEGACY_PROFILE}'::uuid;
+        `,
+        restore: String.raw`
+          update public.ai_provider_profile_versions
+          set status = 'draft', validated_at = null
+          where id = '${LEGACY_PROFILE}'::uuid;
+        `,
+      },
+    ] as const;
+
+    for (const stale of staleCases) {
+      const writerMarker = `db012-stale-writer-${crypto.randomUUID()}`;
+      const backfillApplication = `db012-stale-backfill-${crypto.randomUUID()}`;
+      const writer = startHeldOwnerTransaction(
+        String.raw`
+          set local session_replication_role = replica;
+          ${stale.write}
+        `,
+        writerMarker,
+      );
+      let backfill: Promise<OwnerSqlResult> | undefined;
+      try {
+        await writer.ready;
+        backfill = startOwnerSql(String.raw`
+          \set ON_ERROR_STOP on
+          \set VERBOSITY verbose
+          begin;
+          set local application_name = '${backfillApplication}';
+          select public.backfill_deepseek_legacy_pricing_v1();
+          commit;
+        `);
+        await waitForDatabaseLock(backfillApplication);
+
+        // T1 commits only after T2 is demonstrably waiting for the canonical
+        // parent/version row.  T2 must then re-read the committed mismatch
+        // while it still holds the canonical lock and fail closed.
+        writer.release();
+        expect((await writer.result).status).toBe(0);
+        const committedStaleCatalog = ownerLegacyCatalogSnapshot();
+        const result = await backfill;
+        expect(result.status).not.toBe(0);
+        expect(result.stderr + result.stdout).toContain("23514");
+        expect(result.stderr + result.stdout).toContain(
+          "DB-012 DeepSeek profile identity mismatch",
+        );
+        // The writer has intentionally committed stale CFG facts.  This proves
+        // the DB-012 attempt itself neither repairs them nor changes its row.
+        expect(await read(reservationId)).toEqual(originalRequest);
+        expect(ownerLegacyCatalogSnapshot()).toEqual(committedStaleCatalog);
+      } finally {
+        writer.release();
+        await writer.result;
+        if (backfill) {
+          await backfill;
+        }
+        runOwnerSql(String.raw`
+          begin;
+          set local session_replication_role = replica;
+          ${stale.restore}
+          set local session_replication_role = origin;
+          commit;
+        `);
+      }
+      expect(ownerLegacyCatalogSnapshot()).toEqual(originalCatalog);
+    }
+  });
+
+  it("holds the canonical profile locks while a price wait serializes a profile writer", async () => {
+    const reservationId = await insertHistorical();
+    const baselineCatalog = ownerLegacyCatalogSnapshot();
+    const priceMarker = `db012-price-holder-${crypto.randomUUID()}`;
+    const backfillApplication = `db012-backfill-${crypto.randomUUID()}`;
+    const writerMarker = `db012-profile-writer-${crypto.randomUUID()}`;
+    const writerApplication = `db012-profile-writer-${crypto.randomUUID()}`;
+    const priceHolder = startHeldOwnerTransaction(
+      String.raw`
+        select id from public.ai_price_versions
+        where id = '${LEGACY_PRICE}'::uuid
+        for update;
+      `,
+      priceMarker,
+    );
+    let writer: BarrierSqlProcess | undefined;
+    try {
+      await priceHolder.ready;
+      const backfill = startOwnerSql(String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        set local application_name = '${backfillApplication}';
+        select public.backfill_deepseek_legacy_pricing_v1();
+        commit;
+      `);
+      await waitForDatabaseLock(backfillApplication);
+
+      writer = startBlockingOwnerWriter(
+        String.raw`
+          update public.ai_provider_profiles
+          set display_name = display_name
+          where id = '${LEGACY_PROFILE_PARENT}'::uuid;
+        `,
+        writerMarker,
+        writerApplication,
+      );
+      await writer.ready;
+      await waitForDatabaseLock(writerApplication);
+
+      // Both waits are observed through pg_stat_activity before the holder is
+      // released; this is a DB-lock proof, not a timing/sleep heuristic.
+      priceHolder.release();
+      expect((await priceHolder.result).status).toBe(0);
+      expect((await backfill).status).toBe(0);
+      expect((await writer.result).status).toBe(0);
+    } finally {
+      priceHolder.release();
+      if (writer) {
+        writer.release();
+        await writer.result;
+      }
+      await priceHolder.result;
+    }
+
+    const completed = await read(reservationId);
+    expect(completed).toMatchObject({
+      route_schema_version: "legacy_pricing_v1",
+      profile_version_id: LEGACY_PROFILE,
+      price_version_id: LEGACY_PRICE,
+    });
+    expect(ownerLegacyCatalogSnapshot()).toEqual(baselineCatalog);
   });
 });
