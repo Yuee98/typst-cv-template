@@ -65,15 +65,9 @@ function snapshotProtectedHistory(): string {
         select pg_catalog.jsonb_build_object(
           'rowCount', pg_catalog.count(*),
           'sha256', pg_catalog.encode(
-            extensions.digest(
-              coalesce(
-                pg_catalog.jsonb_agg(
-                  pg_catalog.to_jsonb(history_row)
-                  order by pg_catalog.to_jsonb(history_row)::text
-                ),
-                '[]'::jsonb
-              )::text,
-              'sha256'
+            pg_temp.protected_history_sha256_agg_v1(
+              pg_catalog.to_jsonb(history_row)::text
+              order by pg_catalog.to_jsonb(history_row)::text collate "C"
             ),
             'hex'
           )
@@ -85,6 +79,27 @@ function snapshotProtectedHistory(): string {
     \set ON_ERROR_STOP on
     \pset format unaligned
     \pset tuples_only on
+    create function pg_temp.protected_history_sha256_sfunc_v1(
+      p_state bytea,
+      p_value text
+    ) returns bytea
+    language sql
+    immutable
+    parallel safe
+    set search_path = ''
+    as $sha256_chain$
+      select extensions.digest(
+        p_state || pg_catalog.convert_to(p_value, 'UTF8'),
+        'sha256'
+      );
+    $sha256_chain$;
+
+    create aggregate pg_temp.protected_history_sha256_agg_v1(text) (
+      sfunc = pg_temp.protected_history_sha256_sfunc_v1,
+      stype = bytea,
+      initcond = '\xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    );
+
     select pg_catalog.jsonb_build_object(${catalogPairs})::text;
   `);
   const snapshot = result.stdout
