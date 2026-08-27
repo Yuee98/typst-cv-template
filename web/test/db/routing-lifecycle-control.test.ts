@@ -22,6 +22,7 @@ const EVIDENCE = {
   p_reason: "DB-013 control-plane verification",
   p_rechecked_sha256: "b".repeat(64),
 } as const;
+const CHECK_VIOLATION = "23514";
 
 interface Fixture {
   profileId: string;
@@ -208,31 +209,158 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
   it("proves catalog signatures, ACL boundaries, private helper denial, and audit opacity", () => {
     const actual = ownerJson(`
       select pg_catalog.jsonb_build_object(
-        'operatorFunctions', (select count(*) from pg_catalog.pg_proc as p join pg_catalog.pg_namespace as n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('transition_ai_routing_policy_v2','set_ai_routing_policy_pointer_v1','clear_ai_routing_policy_pointer_v1','retire_ai_provider_profile_version_v1','retire_ai_provider_profile_v1','close_ai_price_version_v1') and p.prosecdef and p.proconfig = array['search_path=""']),
-        'operatorIdentities', (select pg_catalog.jsonb_agg(pg_catalog.pg_get_function_identity_arguments(p.oid) order by p.proname) from pg_catalog.pg_proc as p join pg_catalog.pg_namespace as n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('transition_ai_routing_policy_v2','set_ai_routing_policy_pointer_v1','clear_ai_routing_policy_pointer_v1','retire_ai_provider_profile_version_v1','retire_ai_provider_profile_v1','close_ai_price_version_v1')),
+        'operatorFunctionCount', (
+          select count(*)
+          from pg_catalog.pg_proc as p
+          join pg_catalog.pg_namespace as n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname in (
+              'transition_ai_routing_policy_v2',
+              'set_ai_routing_policy_pointer_v1',
+              'clear_ai_routing_policy_pointer_v1',
+              'retire_ai_provider_profile_version_v1',
+              'retire_ai_provider_profile_v1',
+              'close_ai_price_version_v1'
+            )
+        ),
+        'securedOperatorFunctionCount', (
+          select count(*)
+          from pg_catalog.pg_proc as p
+          join pg_catalog.pg_namespace as n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname in (
+              'transition_ai_routing_policy_v2',
+              'set_ai_routing_policy_pointer_v1',
+              'clear_ai_routing_policy_pointer_v1',
+              'retire_ai_provider_profile_version_v1',
+              'retire_ai_provider_profile_v1',
+              'close_ai_price_version_v1'
+            )
+            and p.prosecdef
+            and p.proconfig = array['search_path=""']
+        ),
+        'operatorIdentities', (
+          select pg_catalog.jsonb_agg(
+            pg_catalog.jsonb_build_object(
+              'name', p.proname,
+              'arguments', pg_catalog.pg_get_function_identity_arguments(p.oid)
+            )
+            order by p.proname
+          )
+          from pg_catalog.pg_proc as p
+          join pg_catalog.pg_namespace as n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname in (
+              'transition_ai_routing_policy_v2',
+              'set_ai_routing_policy_pointer_v1',
+              'clear_ai_routing_policy_pointer_v1',
+              'retire_ai_provider_profile_version_v1',
+              'retire_ai_provider_profile_v1',
+              'close_ai_price_version_v1'
+            )
+        ),
+        'routeSnapshotGuard', (select pg_catalog.jsonb_build_object('prosecdef', p.prosecdef, 'proconfig', p.proconfig) from pg_catalog.pg_proc as p join pg_catalog.pg_namespace as n on n.oid=p.pronamespace where n.nspname='public' and p.proname='guard_ai_request_route_snapshot'),
         'serviceAuditSelect', pg_catalog.has_table_privilege('service_role', 'public.ai_routing_lifecycle_audit', 'select'),
         'servicePolicyUpdate', pg_catalog.has_table_privilege('service_role', 'public.ai_routing_policy_versions', 'update'),
+        'serviceProviderUpdate', pg_catalog.has_table_privilege('service_role', 'public.ai_provider_profiles', 'update'),
         'serviceProfileUpdate', pg_catalog.has_table_privilege('service_role', 'public.ai_provider_profile_versions', 'update'),
         'servicePriceUpdate', pg_catalog.has_table_privilege('service_role', 'public.ai_price_versions', 'update'),
+        'serviceLegalCatalogDml', (
+          select pg_catalog.jsonb_object_agg(
+            legal_table.table_name,
+            pg_catalog.jsonb_build_object(
+              'insert', pg_catalog.has_table_privilege('service_role', legal_table.table_name, 'insert'),
+              'update', pg_catalog.has_table_privilege('service_role', legal_table.table_name, 'update'),
+              'delete', pg_catalog.has_table_privilege('service_role', legal_table.table_name, 'delete')
+            )
+          )
+          from (
+            values
+              ('public.ai_legal_bundle_versions'),
+              ('public.ai_legal_bundle_manifests'),
+              ('public.ai_legal_manifest_versions')
+          ) as legal_table(table_name)
+        ),
+        'serviceCatalogUpdateColumns', (
+          select pg_catalog.jsonb_object_agg(catalog_table.table_name, catalog_table.granted_columns)
+          from (
+            select
+              catalog_column.table_name,
+              coalesce(
+                pg_catalog.jsonb_agg(
+                  catalog_column.column_name order by catalog_column.ordinal_position
+                )
+                  filter (
+                    where pg_catalog.has_column_privilege(
+                      'service_role',
+                      'public.' || catalog_column.table_name,
+                      catalog_column.column_name,
+                      'update'
+                    )
+                  ),
+                '[]'::jsonb
+              ) as granted_columns
+            from information_schema.columns as catalog_column
+            where catalog_column.table_schema = 'public'
+              and catalog_column.table_name in (
+                'ai_provider_profile_versions',
+                'ai_price_versions'
+              )
+            group by catalog_column.table_name
+          ) as catalog_table
+        ),
         'anonPolicyUpdate', pg_catalog.has_table_privilege('anon', 'public.ai_routing_policy_versions', 'update'),
         'authenticatedPolicyUpdate', pg_catalog.has_table_privilege('authenticated', 'public.ai_routing_policy_versions', 'update'),
         'servicePointerUpdate', pg_catalog.has_column_privilege('service_role', 'public.ai_feature_config', 'active_routing_policy_version_id', 'update'),
         'serviceKillSwitchUpdate', pg_catalog.has_column_privilege('service_role', 'public.ai_feature_config', 'ai_polish_enabled', 'update'),
         'serviceHotColumns', (select pg_catalog.jsonb_object_agg(column_name, pg_catalog.has_column_privilege('service_role', 'public.ai_feature_config', column_name, 'update')) from information_schema.columns where table_schema='public' and table_name='ai_feature_config' and column_name in ('ai_polish_enabled','global_daily_limit','enabled_user_allowlist','active_routing_policy_version_id','config_generation','routing_updated_at','routing_updated_by','routing_change_reason','updated_at','id')),
-        'serviceHelperExecute', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_evidence_v1(text,text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute')
+        'servicePrivateExecute', pg_catalog.jsonb_build_object(
+          'guard_ai_routing_lifecycle_audit', pg_catalog.has_function_privilege('service_role', 'public.guard_ai_routing_lifecycle_audit()'::regprocedure, 'execute'),
+          'assert_ai_routing_lifecycle_evidence_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_evidence_v1(text,text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute'),
+          'assert_ai_routing_lifecycle_no_policy_reference_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_no_policy_reference_v1(text,uuid,timestamptz)'::regprocedure, 'execute'),
+          'assert_ai_routing_lifecycle_selected_price_evidence_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_selected_price_evidence_v1(public.ai_routing_policy_versions,timestamptz)'::regprocedure, 'execute'),
+          'lock_ai_routing_lifecycle_profile_prices_v1', pg_catalog.has_function_privilege('service_role', 'public.lock_ai_routing_lifecycle_profile_prices_v1(uuid,uuid,timestamptz)'::regprocedure, 'execute'),
+          'insert_ai_routing_lifecycle_audit_v1', pg_catalog.has_function_privilege('service_role', 'public.insert_ai_routing_lifecycle_audit_v1(text,uuid,uuid,uuid,uuid,text,text,uuid,uuid,bigint,bigint,timestamptz,timestamptz,timestamptz,timestamptz,text,text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute')
+        )
       )::text;
     `) as Record<string, unknown>;
     expect(actual).toMatchObject({
-      operatorFunctions: 6,
+      operatorFunctionCount: 6,
+      securedOperatorFunctionCount: 6,
+      routeSnapshotGuard: {
+        prosecdef: false,
+        proconfig: ['search_path=""'],
+      },
       serviceAuditSelect: false,
       servicePolicyUpdate: false,
+      serviceProviderUpdate: false,
       serviceProfileUpdate: false,
       servicePriceUpdate: false,
       anonPolicyUpdate: false,
       authenticatedPolicyUpdate: false,
       servicePointerUpdate: false,
       serviceKillSwitchUpdate: true,
-      serviceHelperExecute: false,
+    });
+    expect(actual.serviceLegalCatalogDml).toEqual({
+      "public.ai_legal_bundle_versions": {
+        insert: false,
+        update: false,
+        delete: false,
+      },
+      "public.ai_legal_bundle_manifests": {
+        insert: false,
+        update: false,
+        delete: false,
+      },
+      "public.ai_legal_manifest_versions": {
+        insert: false,
+        update: false,
+        delete: false,
+      },
+    });
+    expect(actual.serviceCatalogUpdateColumns).toEqual({
+      ai_provider_profile_versions: ["display_disclosure_key"],
+      ai_price_versions: ["components_sealed_at"],
     });
     expect(actual.serviceHotColumns).toEqual({
       ai_polish_enabled: true,
@@ -246,15 +374,89 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       updated_at: false,
       id: false,
     });
-    expect(actual.operatorIdentities).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("p_policy_version_id uuid, p_to_status text"),
-        expect.stringContaining("p_expected_policy_version_id uuid"),
-        expect.stringContaining("p_profile_version_id uuid"),
-        expect.stringContaining("p_profile_id uuid"),
-        expect.stringContaining("p_price_version_id uuid, p_valid_to timestamp with time zone, p_successor_price_version_id uuid"),
-      ]),
-    );
+    expect(actual.operatorIdentities).toEqual([
+      {
+        name: "clear_ai_routing_policy_pointer_v1",
+        arguments:
+          "p_expected_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
+        name: "close_ai_price_version_v1",
+        arguments:
+          "p_price_version_id uuid, p_valid_to timestamp with time zone, p_successor_price_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
+        name: "retire_ai_provider_profile_v1",
+        arguments:
+          "p_profile_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
+        name: "retire_ai_provider_profile_version_v1",
+        arguments:
+          "p_profile_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
+        name: "set_ai_routing_policy_pointer_v1",
+        arguments:
+          "p_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
+        name: "transition_ai_routing_policy_v2",
+        arguments:
+          "p_policy_version_id uuid, p_to_status text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+    ]);
+    expect(actual.servicePrivateExecute).toEqual({
+      guard_ai_routing_lifecycle_audit: false,
+      assert_ai_routing_lifecycle_evidence_v1: false,
+      assert_ai_routing_lifecycle_no_policy_reference_v1: false,
+      assert_ai_routing_lifecycle_selected_price_evidence_v1: false,
+      lock_ai_routing_lifecycle_profile_prices_v1: false,
+      insert_ai_routing_lifecycle_audit_v1: false,
+    });
+  });
+
+  it("keeps row-lock-only catalog columns structurally unforgeable", async () => {
+    const f = await fixture();
+    const profileBefore = await service
+      .from("ai_provider_profile_versions")
+      .select("display_disclosure_key")
+      .eq("id", f.profileVersionId)
+      .single();
+    expect(profileBefore.error).toBeNull();
+    const priceBefore = await service
+      .from("ai_price_versions")
+      .select("components_sealed_at")
+      .eq("id", f.priceVersionId)
+      .single();
+    expect(priceBefore.error).toBeNull();
+
+    const profileMutation = await service
+      .from("ai_provider_profile_versions")
+      .update({ display_disclosure_key: "forbidden.direct.mutation" })
+      .eq("id", f.profileVersionId);
+    expect(profileMutation.error?.code).toBe(CHECK_VIOLATION);
+
+    const priceMutation = await service
+      .from("ai_price_versions")
+      .update({ components_sealed_at: new Date().toISOString() })
+      .eq("id", f.priceVersionId);
+    expect(priceMutation.error?.code).toBe(CHECK_VIOLATION);
+
+    const profileAfter = await service
+      .from("ai_provider_profile_versions")
+      .select("display_disclosure_key")
+      .eq("id", f.profileVersionId)
+      .single();
+    expect(profileAfter.error).toBeNull();
+    expect(profileAfter.data).toEqual(profileBefore.data);
+    const priceAfter = await service
+      .from("ai_price_versions")
+      .select("components_sealed_at")
+      .eq("id", f.priceVersionId)
+      .single();
+    expect(priceAfter.error).toBeNull();
+    expect(priceAfter.data).toEqual(priceBefore.data);
   });
 
   it("writes exactly one owner-readable audit row for each valid policy and pointer operation", async () => {

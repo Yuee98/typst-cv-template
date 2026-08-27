@@ -10,7 +10,7 @@ import {
   RUN_DB_TESTS,
   type TestUser,
 } from "./helpers";
-import { sealPriceAsDatabaseOwner } from "./runtime-contract-fixtures";
+import { runOwnerSql, sealPriceAsDatabaseOwner } from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
 
@@ -25,75 +25,23 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
     service = createServiceClient();
     user = await createTestUser(service, "legacy-pricing-shape");
 
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: `test.legacy-pricing.${crypto.randomUUID()}`,
-        display_name: "Legacy pricing fixture",
-        gateway_kind: "direct_deepseek",
-        model_vendor: "fixture",
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-
-    const { data: profileVersion, error: profileVersionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        adapter_kind: "fixture_adapter_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "fixture_credential_v1",
-        endpoint_alias: "fixture_endpoint_v1",
-        model_id: "fixture-model",
-        capability_contract_id: "fixture_capability_v1",
-        cache_policy_id: "fixture_cache_v1",
-        legal_manifest_id: "fixture_legal_v1",
-        config_sha256: "c".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(profileVersionError).toBeNull();
-    profileVersionId = profileVersion!.id as string;
-
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: profileVersionId,
-        pricing_lane: "legacy",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: "2026-01-01T00:00:00Z",
-        valid_to: "2026-08-24T00:00:00Z",
-        source_url: "https://example.com/legacy-pricing-fixture",
-        source_checked_at: "2026-08-24T00:00:00Z",
-        source_snapshot_sha256: "d".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
-    priceVersionId = price!.id as string;
-
-    const components = await service.from("ai_price_components").insert([
-      {
-        price_version_id: priceVersionId,
-        component: "input_cache_read",
-        nanos_per_million: 20_000_000,
-      },
-      {
-        price_version_id: priceVersionId,
-        component: "input_standard",
-        nanos_per_million: 1_000_000_000,
-      },
-      {
-        price_version_id: priceVersionId,
-        component: "output",
-        nanos_per_million: 2_000_000_000,
-      },
-    ]);
-    expect(components.error).toBeNull();
+    const profileId = crypto.randomUUID();
+    profileVersionId = crypto.randomUUID();
+    priceVersionId = crypto.randomUUID();
+    policyVersionId = crypto.randomUUID();
+    const suffix = crypto.randomUUID();
+    runOwnerSql(`begin;
+      insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor)
+        values ('${profileId}'::uuid,'test.legacy-pricing.${suffix}','Legacy pricing fixture','direct_deepseek','fixture');
+      insert into public.ai_provider_profile_versions(id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,endpoint_alias,model_id,capability_contract_id,cache_policy_id,legal_manifest_id,config_sha256)
+        values ('${profileVersionId}'::uuid,'${profileId}'::uuid,1,'fixture_adapter_v1','chat_completions_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','${"c".repeat(64)}');
+      insert into public.ai_price_versions(id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,valid_to,source_url,source_checked_at,source_snapshot_sha256)
+        values ('${priceVersionId}'::uuid,'${profileVersionId}'::uuid,'legacy',1,'CNY','linear_token_v1','2026-01-01T00:00:00Z','2026-08-24T00:00:00Z','https://example.com/legacy-pricing-fixture','2026-08-24T00:00:00Z','${"d".repeat(64)}');
+      insert into public.ai_price_components(price_version_id,component,nanos_per_million) values
+        ('${priceVersionId}'::uuid,'input_cache_read',20000000),('${priceVersionId}'::uuid,'input_standard',1000000000),('${priceVersionId}'::uuid,'output',2000000000);
+      insert into public.ai_routing_policy_versions(id,policy_key,version,timezone,rules,default_profile_version_id,legal_bundle_version,config_sha256)
+        values ('${policyVersionId}'::uuid,'test.legacy-pricing.${suffix}',1,'Asia/Shanghai','{}'::jsonb,'${profileVersionId}'::uuid,'fixture-v1','${"e".repeat(64)}');
+      commit;`);
 
     sealPriceAsDatabaseOwner(priceVersionId);
 
@@ -104,22 +52,6 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
       .single();
     expect(sealedPriceError).toBeNull();
     expect(sealedPrice?.components_sealed_at).toBeTruthy();
-
-    const { data: policy, error: policyError } = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.legacy-pricing.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: {},
-        default_profile_version_id: profileVersionId,
-        legal_bundle_version: "fixture-v1",
-        config_sha256: "e".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(policyError).toBeNull();
-    policyVersionId = policy!.id as string;
   });
 
   afterAll(async () => {

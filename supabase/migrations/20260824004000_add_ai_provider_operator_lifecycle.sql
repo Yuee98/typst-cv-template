@@ -111,6 +111,7 @@ revoke insert, update, delete on public.ai_feature_config,
   public.ai_price_versions,
   public.ai_price_components,
   public.ai_legal_bundle_versions,
+  public.ai_legal_bundle_manifests,
   public.ai_legal_manifest_versions,
   public.ai_service_runtime_contract_versions,
   public.ai_service_runtime_target_versions,
@@ -118,6 +119,18 @@ revoke insert, update, delete on public.ai_feature_config,
 from service_role;
 grant update (ai_polish_enabled, global_daily_limit, enabled_user_allowlist)
   on public.ai_feature_config to service_role;
+
+-- Runtime ledger DML remains a service-role capability. Its security-invoker
+-- route guard must preserve current_user because DB-012 admits its private
+-- historical backfill only for the exact function owner. PostgreSQL row locks
+-- also require some UPDATE authority after the broad catalog grants above are
+-- revoked, so grant only columns whose table guards make direct changes
+-- structurally unforgeable.
+alter function public.guard_ai_request_route_snapshot() security invoker;
+grant update (display_disclosure_key)
+  on public.ai_provider_profile_versions to service_role;
+grant update (components_sealed_at)
+  on public.ai_price_versions to service_role;
 
 create function public.assert_ai_routing_lifecycle_evidence_v1(
   p_runtime_contract_id text, p_runtime_contract_sha256 text,
