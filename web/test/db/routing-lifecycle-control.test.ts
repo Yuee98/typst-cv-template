@@ -24,8 +24,34 @@ const EVIDENCE = {
   p_rechecked_sha256: "b".repeat(64),
 } as const;
 const CHECK_VIOLATION = "23514";
+const EVIDENCE_RETRY_DELAY_MS = 200;
+const EVIDENCE_RETRY_TIMEOUT_MS = 10_000;
 const CANONICAL_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+type LifecycleRpcName =
+  | "clear_ai_routing_policy_pointer_v1"
+  | "close_ai_price_version_v1"
+  | "create_ai_routing_policy_version_v1"
+  | "retire_ai_provider_profile_v1"
+  | "retire_ai_provider_profile_version_v1"
+  | "seal_ai_price_for_activation_v1"
+  | "set_ai_routing_policy_pointer_v1"
+  | "transition_ai_provider_profile_version_v1"
+  | "transition_ai_routing_policy_v2";
+
+function isLifecycleEvidenceFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  return (
+    candidate.code === CHECK_VIOLATION &&
+    candidate.message === "invalid routing lifecycle evidence"
+  );
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
 
 interface Fixture {
   profileId: string;
@@ -188,6 +214,21 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       p_rechecked_at: root.recheckedAt,
       ...EVIDENCE,
     };
+  }
+
+  async function lifecycleRpc(
+    name: LifecycleRpcName,
+    args: Record<string, unknown>,
+  ) {
+    const deadline = Date.now() + EVIDENCE_RETRY_TIMEOUT_MS;
+    let result = await service.rpc(name, args);
+    // The exact evidence guard runs before lifecycle DML/audit. Retrying only
+    // that transient cross-session clock failure cannot duplicate an operation.
+    while (isLifecycleEvidenceFailure(result.error) && Date.now() < deadline) {
+      await sleep(EVIDENCE_RETRY_DELAY_MS);
+      result = await service.rpc(name, args);
+    }
+    return result;
   }
 
   function cleanup(f: Fixture): void {
@@ -613,7 +654,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     for (const item of cases) {
       const f = await fixture({ profileStatus: "draft", sealPrice: false });
       const ev = await evidence(f);
-      const result = await service.rpc("seal_ai_price_for_activation_v1", {
+      const args = {
         p_price_version_id: f.priceVersionId,
         p_rechecked_source_url: f.sourceUrl,
         p_rechecked_currency: "CNY",
@@ -628,7 +669,11 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
         },
         ...ev,
         ...item.override(ev),
-      });
+      };
+      const result =
+        item.name === "stale recheck"
+          ? await service.rpc("seal_ai_price_for_activation_v1", args)
+          : await lifecycleRpc("seal_ai_price_for_activation_v1", args);
       expect(result.error?.code, item.name).toMatch(/23514|P0001/u);
       expect(
         ownerJson(`select pg_catalog.jsonb_build_object('sealed', (select components_sealed_at is not null from public.ai_price_versions where id='${f.priceVersionId}'::uuid), 'audit', (select count(*) from public.ai_routing_lifecycle_audit where price_version_id='${f.priceVersionId}'::uuid))::text;`),
@@ -651,7 +696,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       ...ev,
     };
 
-    const sealed = await service.rpc("seal_ai_price_for_activation_v1", {
+    const sealed = await lifecycleRpc("seal_ai_price_for_activation_v1", {
       ...priceArguments,
       p_rechecked_components: {
         input_standard: "1",
@@ -662,7 +707,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     expect(sealed.error).toBeNull();
     expect(sealed.data).toMatch(CANONICAL_UUID);
 
-    const promoted = await service.rpc(
+    const promoted = await lifecycleRpc(
       "transition_ai_provider_profile_version_v1",
       { p_profile_version_id: f.profileVersionId, p_to_status: "validated", ...ev },
     );
@@ -670,7 +715,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     expect(promoted.data).toMatch(CANONICAL_UUID);
     expect(
       (
-        await service.rpc("transition_ai_provider_profile_version_v1", {
+        await lifecycleRpc("transition_ai_provider_profile_version_v1", {
           p_profile_version_id: f.profileVersionId,
           p_to_status: "draft",
           ...ev,
@@ -680,7 +725,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
 
     const createdPolicyId = crypto.randomUUID();
     f.createdPolicyIds.push(createdPolicyId);
-    const created = await service.rpc("create_ai_routing_policy_version_v1", {
+    const created = await lifecycleRpc("create_ai_routing_policy_version_v1", {
       p_policy_version_id: createdPolicyId,
       p_policy_key: `db013.created.${crypto.randomUUID()}`,
       p_version: 1,
@@ -827,7 +872,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
         for (const status of preludes[from]!) {
           expect(
             (
-              await service.rpc("transition_ai_provider_profile_version_v1", {
+              await lifecycleRpc("transition_ai_provider_profile_version_v1", {
                 p_profile_version_id: f.profileVersionId,
                 p_to_status: status,
                 ...ev,
@@ -835,7 +880,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
             ).error,
           ).toBeNull();
         }
-        const result = await service.rpc(
+        const result = await lifecycleRpc(
           "transition_ai_provider_profile_version_v1",
           { p_profile_version_id: f.profileVersionId, p_to_status: to, ...ev },
         );
@@ -851,11 +896,11 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
   it("writes exactly one owner-readable audit row for each valid policy and pointer operation", async () => {
     const f = await fixture();
     const ev = await evidence(f);
-    expect((await service.rpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: "validated", ...ev })).error).toBeNull();
+    expect((await lifecycleRpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: "validated", ...ev })).error).toBeNull();
     runOwnerSql(`update public.ai_provider_profile_versions set status='canary' where id='${f.profileVersionId}'::uuid;`);
-    expect((await service.rpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: "canary", ...ev })).error).toBeNull();
-    expect((await service.rpc("set_ai_routing_policy_pointer_v1", { p_policy_version_id: f.policyVersionId, ...ev, p_reason: `DB-013 pointer set ${crypto.randomUUID()}` })).error).toBeNull();
-    expect((await service.rpc("clear_ai_routing_policy_pointer_v1", { p_expected_policy_version_id: f.policyVersionId, ...ev, p_reason: `DB-013 pointer clear ${crypto.randomUUID()}` })).error).toBeNull();
+    expect((await lifecycleRpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: "canary", ...ev })).error).toBeNull();
+    expect((await lifecycleRpc("set_ai_routing_policy_pointer_v1", { p_policy_version_id: f.policyVersionId, ...ev, p_reason: `DB-013 pointer set ${crypto.randomUUID()}` })).error).toBeNull();
+    expect((await lifecycleRpc("clear_ai_routing_policy_pointer_v1", { p_expected_policy_version_id: f.policyVersionId, ...ev, p_reason: `DB-013 pointer clear ${crypto.randomUUID()}` })).error).toBeNull();
 
     const audit = ownerJson(`select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('operation', operation, 'old', old_config_generation, 'new', new_config_generation, 'runtime', runtime_contract_sha256, 'actor', actor) order by occurred_at) from public.ai_routing_lifecycle_audit where policy_version_id='${f.policyVersionId}'::uuid;`) as unknown[];
     expect(audit).toHaveLength(4);
@@ -867,7 +912,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     const malformedDraft = await fixture({ malformedRules: true });
     const profileFixture = await fixture();
     const profileEvidence = await evidence(profileFixture);
-    const retiredPolicy = await service.rpc("transition_ai_routing_policy_v2", {
+    const retiredPolicy = await lifecycleRpc("transition_ai_routing_policy_v2", {
       p_policy_version_id: profileFixture.policyVersionId,
       p_to_status: "retired",
       ...profileEvidence,
@@ -877,7 +922,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
 
     const profileVersionReason =
       `DB-013 profile-version retirement ${crypto.randomUUID()}`;
-    const retiredVersion = await service.rpc(
+    const retiredVersion = await lifecycleRpc(
       "retire_ai_provider_profile_version_v1",
       {
         p_profile_version_id: profileFixture.profileVersionId,
@@ -889,7 +934,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     expect(retiredVersion.data).toMatch(CANONICAL_UUID);
 
     const profileReason = `DB-013 profile retirement ${crypto.randomUUID()}`;
-    const retiredProfile = await service.rpc("retire_ai_provider_profile_v1", {
+    const retiredProfile = await lifecycleRpc("retire_ai_provider_profile_v1", {
       p_profile_id: profileFixture.profileId,
       ...profileEvidence,
       p_reason: profileReason,
@@ -1020,7 +1065,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     const priceEvidence = await evidence(priceFixture);
     expect(
       (
-        await service.rpc("transition_ai_routing_policy_v2", {
+        await lifecycleRpc("transition_ai_routing_policy_v2", {
           p_policy_version_id: priceFixture.policyVersionId,
           p_to_status: "retired",
           ...priceEvidence,
@@ -1028,7 +1073,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       ).error,
     ).toBeNull();
     const priceReason = `DB-013 price closure ${crypto.randomUUID()}`;
-    const closedPrice = await service.rpc("close_ai_price_version_v1", {
+    const closedPrice = await lifecycleRpc("close_ai_price_version_v1", {
       p_price_version_id: priceFixture.priceVersionId,
       p_valid_to: new Date().toISOString(),
       p_successor_price_version_id: null,
@@ -1107,8 +1152,8 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     const f = await fixture();
     const ev = await evidence(f);
     const before = await service.from("ai_feature_config").select("ai_polish_enabled").eq("id", true).single();
-    expect((await service.rpc("retire_ai_provider_profile_version_v1", { p_profile_version_id: f.profileVersionId, ...ev })).error?.code).toMatch(/23514|P0001/u);
-    expect((await service.rpc("close_ai_price_version_v1", { p_price_version_id: f.priceVersionId, p_valid_to: new Date().toISOString(), p_successor_price_version_id: null, ...ev })).error?.code).toMatch(/23514|P0001/u);
+    expect((await lifecycleRpc("retire_ai_provider_profile_version_v1", { p_profile_version_id: f.profileVersionId, ...ev })).error?.code).toMatch(/23514|P0001/u);
+    expect((await lifecycleRpc("close_ai_price_version_v1", { p_price_version_id: f.priceVersionId, p_valid_to: new Date().toISOString(), p_successor_price_version_id: null, ...ev })).error?.code).toMatch(/23514|P0001/u);
     const after = await service.from("ai_feature_config").select("ai_polish_enabled").eq("id", true).single();
     expect(after.data?.ai_polish_enabled).toBe(before.data?.ai_polish_enabled);
   });
@@ -1140,16 +1185,16 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
         runOwnerSql(`update public.ai_provider_profile_versions set status='active' where id='${f.profileVersionId}'::uuid;`);
       }
       for (const status of item.prelude) {
-        expect((await service.rpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: status, ...ev })).error).toBeNull();
+        expect((await lifecycleRpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: status, ...ev })).error).toBeNull();
       }
-      const transition = await service.rpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: item.to, ...ev });
+      const transition = await lifecycleRpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: item.to, ...ev });
       expect(transition.error, `${item.from} -> ${item.to}`).toBeNull();
       const state = ownerJson(`select pg_catalog.jsonb_build_object('status',(select status from public.ai_routing_policy_versions where id='${f.policyVersionId}'::uuid),'intents',(select count(*) from public.ai_routing_policy_transition_intents where policy_version_id='${f.policyVersionId}'::uuid))::text;`);
       expect(state).toEqual({ status: item.to, intents: 0 });
       if (item.to === "retired") {
-        expect((await service.rpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: "active", ...ev })).error?.code).toMatch(/23514|P0001/u);
+        expect((await lifecycleRpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: "active", ...ev })).error?.code).toMatch(/23514|P0001/u);
       } else {
-        expect((await service.rpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: item.to, ...ev })).error?.code).toMatch(/23514|P0001/u);
+        expect((await lifecycleRpc("transition_ai_routing_policy_v2", { p_policy_version_id: f.policyVersionId, p_to_status: item.to, ...ev })).error?.code).toMatch(/23514|P0001/u);
       }
     }
   });
