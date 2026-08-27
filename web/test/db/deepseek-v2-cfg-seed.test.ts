@@ -96,6 +96,14 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
   },
   {
     schema: "public",
+    name: "assert_ai_routing_lifecycle_runtime_profile_coverage_v1",
+    identityArguments:
+      "p_runtime_contract_id text, p_runtime_contract_sha256 text, p_profile_id uuid, p_profile_version_id uuid",
+    prokind: "f",
+    definitionSha256: "4bed4391f10c5ced3133a5ee4247fa5aa1aa5654563ff2e8545f14993dadf270",
+  },
+  {
+    schema: "public",
     name: "assert_ai_routing_lifecycle_selected_price_evidence_v1",
     identityArguments:
       "p_policy ai_routing_policy_versions, p_rechecked_at timestamp with time zone",
@@ -155,6 +163,14 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
       "p_attempt_id uuid, p_status text, p_transmitted boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb",
     prokind: "f",
     definitionSha256: "915ee6c12124aff544de304dcf125af03b49953be8b1476dd7002af0ce3e9e40",
+  },
+  {
+    schema: "public",
+    name: "create_ai_routing_policy_version_v1",
+    identityArguments:
+      "p_policy_version_id uuid, p_policy_key text, p_version integer, p_timezone text, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_config_sha256 text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+    prokind: "f",
+    definitionSha256: "a9cdf7609cd5848b6fd6f616d42c1527adde2ea4b70329bf9f9409063a484989",
   },
   {
     schema: "public",
@@ -306,6 +322,14 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
   },
   {
     schema: "public",
+    name: "seal_ai_price_for_activation_v1",
+    identityArguments:
+      "p_price_version_id uuid, p_rechecked_source_url text, p_rechecked_currency text, p_rechecked_calculator_kind text, p_rechecked_provider_effective_from timestamp with time zone, p_rechecked_provider_effective_to timestamp with time zone, p_rechecked_parameters jsonb, p_rechecked_components jsonb, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+    prokind: "f",
+    definitionSha256: "eec1807a501a4ddd66a1bbaff6d9a08720b4c1fb3bc2a799862e3b5d1b233973",
+  },
+  {
+    schema: "public",
     name: "set_ai_routing_policy_pointer_v1",
     identityArguments:
       "p_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
@@ -325,6 +349,14 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments: "p_reservation_id uuid, p_attempt_no integer",
     prokind: "f",
     definitionSha256: "b85eaf0b99283ac1bbf4a8a32180267c2dc925aa9e6b13c9191546ff69173a63",
+  },
+  {
+    schema: "public",
+    name: "transition_ai_provider_profile_version_v1",
+    identityArguments:
+      "p_profile_version_id uuid, p_to_status text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+    prokind: "f",
+    definitionSha256: "900c1ac63d6903657ba9e555484b56709a74db1c8a0fbdf651331fa579ecf865",
   },
   {
     schema: "public",
@@ -358,6 +390,14 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
       "p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text, p_at timestamp with time zone",
     prokind: "f",
     definitionSha256: "b5b15e28bd2a99cf72d44e83a342e7f0aed90598c03a1d56efa962f5e5e038d5",
+  },
+  {
+    schema: "public",
+    name: "assert_ai_routing_lifecycle_runtime_profile_coverage_v1",
+    identityArguments:
+      "p_runtime_contract_id text, p_runtime_contract_sha256 text, p_profile_id uuid, p_profile_version_id uuid",
+    prokind: "f",
+    definitionSha256: "4bed4391f10c5ced3133a5ee4247fa5aa1aa5654563ff2e8545f14993dadf270",
   },
   {
     schema: "public",
@@ -424,9 +464,9 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
 // routines and DB003C migration 20260824005000's authorized replacement of the
 // sole assert_ai_price_structure_v1(uuid) body.
 const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
-  routineCount: 371,
+  routineCount: 375,
   authorityRootSha256:
-    "2d6a5f1a040940018dec2ad4024aa5dbf56591918f2f058a37a24651148d74ca",
+    "cbb3189183921a35b662869bb2226d8162380022c183115d78c906928c408244",
 } as const;
 
 function parseOwnerJson(sql: string): unknown {
