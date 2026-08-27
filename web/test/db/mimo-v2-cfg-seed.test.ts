@@ -234,8 +234,31 @@ async function waitForActivity(applicationName: string, prefix: string): Promise
   throw new Error(`${applicationName} never reached ${prefix}`);
 }
 
-async function waitForDatabaseLock(applicationName: string): Promise<void> {
-  await waitForActivity(applicationName, "Lock:");
+async function waitForDatabaseLock(
+  applicationName: string,
+  contender?: Promise<OwnerSqlResult>,
+): Promise<void> {
+  let completed: OwnerSqlResult | undefined;
+  void contender?.then((result) => {
+    completed = result;
+  });
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const state = runOwnerSql(String.raw`
+      \pset format unaligned
+      \pset tuples_only on
+      select coalesce(wait_event_type, '') || ':' || coalesce(wait_event, '')
+      from pg_catalog.pg_stat_activity
+      where application_name = '${applicationName}';
+    `).stdout;
+    if (state.split(/\r?\n/u).some((line) => line.trim().startsWith("Lock:"))) return;
+    if (completed) {
+      throw new Error(
+        `contender ${applicationName} exited before a DB lock: ${completed.stderr || completed.stdout}`,
+      );
+    }
+    await sleep(25);
+  }
+  throw new Error(`contender ${applicationName} never reported a DB lock`);
 }
 
 function assertNoDeadlockOrLockTimeout(result: OwnerSqlResult): void {
@@ -557,7 +580,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         set application_name='${secondApplication}';
         ${readFileSync(MIGRATION_URL, "utf8")}
       `);
-      await waitForDatabaseLock(secondApplication);
+      await waitForDatabaseLock(secondApplication, second);
       const results = await Promise.all([first, second]);
       for (const result of results) assertNoDeadlockOrLockTimeout(result);
       const successes = results.filter((result) => result.status === 0);
@@ -621,7 +644,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
             set application_name='${contenderApplication}';
             ${readFileSync(MIGRATION_URL, "utf8")}
           `);
-          await waitForDatabaseLock(contenderApplication);
+          await waitForDatabaseLock(contenderApplication, contender);
           holder.release();
           const [winner, loser] = await Promise.all([holder.result, contender]);
           expect(winner.status, winner.stderr).toBe(0);
@@ -631,7 +654,23 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
           // The collision writer is the sole surviving profile.  Every row the
           // migration would have authored after its observed absence is absent.
           expect(seedGraphCounts()).toEqual({
-            profile: 1, version: 0, price: 0, components: 0, root: 0, mimoTarget: 0, memberships: 0,
+            profile: collision.id === PROFILE_ID ? 1 : 0,
+            version: 0, price: 0, components: 0, root: 0, mimoTarget: 0, memberships: 0,
+          });
+          const profileDomain = ownerJson(String.raw`
+            select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value)
+              order by id::text collate "C"), '[]'::jsonb)::text
+            from public.ai_provider_profiles as row_value
+            where id='${collision.id}'::uuid
+               or profile_key='${collision.profileKey}';
+          `) as Array<Record<string, unknown>>;
+          expect(profileDomain).toHaveLength(1);
+          expect(profileDomain[0]).toMatchObject({
+            id: collision.id,
+            profile_key: collision.profileKey,
+            display_name: `late ${collision.name}`,
+            gateway_kind: "direct_mimo",
+            model_vendor: "xiaomi-mimo",
           });
         } finally {
           holder.release();
@@ -656,12 +695,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
   it("serializes membership authoring before root sealing on the real root lock", async () => {
     const before = snapshot();
     const root = createUnsealedRaceRoot("membership-first", [TARGETS[0]]);
-    const marker = `CFG002_MEMBERSHIP_HELD_${randomUUID()}`;
-    const contenderMarker = `CFG002_SEAL_CONTENDER_READY_${randomUUID()}`;
+    const holderApplication = `cfg002-membership-holder-${randomUUID()}`;
     const contenderApplication = `cfg002-seal-after-membership-${randomUUID()}`;
-    const holder = startOwnerSqlWithBarrier(
+    // This mirrors the established DB007 mutation-first schedule: the real
+    // membership trigger takes root FOR UPDATE, then pg_sleep only keeps that
+    // already-acquired transaction lock observable while the seal is sent.
+    const holder = startOwnerSql(
       String.raw`
         \set ON_ERROR_STOP on
+        set application_name='${holderApplication}';
         begin;
         set local statement_timeout='10s';
         insert into public.ai_service_runtime_contract_targets (
@@ -669,36 +711,31 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
           runtime_target_id, runtime_target_sha256, profile_key,
           legal_manifest_id, manifest_sha256, route_descriptor_id, route_descriptor_sha256
         ) values ${membershipValues(root.id, root.hash, TARGETS[1])};
-        \echo ${marker}
+        select pg_catalog.pg_sleep(0.75);
+        commit;
       `,
-      marker,
-      "commit;",
     );
     try {
-      await holder.ready;
-      const contender = startOwnerSqlWithBarrier(String.raw`
+      await waitForActivity(holderApplication, "Timeout:PgSleep");
+      const contender = startOwnerSql(String.raw`
         \set ON_ERROR_STOP on
         \set VERBOSITY verbose
         begin;
         set local application_name='${contenderApplication}';
         set local statement_timeout='10s';
-        \echo ${contenderMarker}
         update public.ai_service_runtime_contract_versions
         set sealed_at=greatest(pg_catalog.clock_timestamp(), created_at)
         where runtime_contract_id='${root.id}' and runtime_contract_sha256='${root.hash}';
         commit;
-      `, contenderMarker);
-      await contender.ready;
-      await waitForDatabaseLock(contenderApplication);
-      holder.release();
-      const [authored, sealed] = await Promise.all([holder.result, contender.result]);
+      `);
+      await waitForDatabaseLock(contenderApplication, contender);
+      const [authored, sealed] = await Promise.all([holder, contender]);
       expect(authored.status, authored.stderr).toBe(0);
       expect(sealed.status, sealed.stderr).toBe(0);
       assertNoDeadlockOrLockTimeout(sealed);
       expectExactSealedRaceRoot(root.id, root.hash);
     } finally {
-      holder.release();
-      await holder.result.catch(() => undefined);
+      await holder.catch(() => undefined);
       removeRaceRoot(root.id);
       expect(snapshot()).toBe(before);
     }
@@ -738,7 +775,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         commit;
       `, contenderMarker);
       await contender.ready;
-      await waitForDatabaseLock(contenderApplication);
+      await waitForDatabaseLock(contenderApplication, contender.result);
       holder.release();
       const [sealed, rejected] = await Promise.all([holder.result, contender.result]);
       expect(sealed.status, sealed.stderr).toBe(0);
