@@ -29,7 +29,10 @@ function heldOwnerSql(sql: string, marker: string, releaseSql = "commit;"): Barr
     const check = () => { if (!readySettled && `${stdout}\n${stderr}`.includes(marker)) { readySettled = true; readyResolve(); } };
     child.stdout.on("data", (chunk: string) => { stdout += chunk; check(); });
     child.stderr.on("data", (chunk: string) => { stderr += chunk; check(); });
-    child.on("error", (error) => { readyReject(error); reject(error); });
+    child.on("error", (error) => {
+      if (!readySettled) { readySettled = true; readyReject(error); }
+      reject(error);
+    });
     child.on("close", (status) => { if (!readySettled) { readySettled = true; readyReject(new Error(`barrier ${marker} exited: ${stderr || stdout}`)); } resolve({ status: status ?? -1, stdout, stderr }); });
     release = () => { if (!released) { released = true; child.stdin.end(releaseSql); } };
     child.stdin.write(sql);
@@ -106,6 +109,35 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
     const match = result.stdout.match(/^\s*(\d+)\s*$/mu);
     if (!match) throw new Error(`owner SQL did not return a canonical count: ${result.stdout}`);
     return Number(match[1]);
+  }
+
+  async function runObservedBlockedRace(
+    holderSql: string,
+    marker: string,
+    contenderName: string,
+    contenderSql: string,
+    releaseSql = "commit;",
+  ): Promise<{ holder: OwnerSqlResult; contender: OwnerSqlResult }> {
+    const holder = heldOwnerSql(holderSql, marker, releaseSql);
+    let contender: Promise<OwnerSqlResult> | undefined;
+    try {
+      await holder.ready;
+      contender = startOwnerSql(contenderSql);
+      await sleep(100);
+      await waitForLock(contenderName);
+      holder.release();
+      const [holderResult, contenderResult] = await Promise.all([
+        holder.result,
+        contender,
+      ]);
+      return { holder: holderResult, contender: contenderResult };
+    } finally {
+      holder.release();
+      await Promise.allSettled([
+        holder.result,
+        ...(contender ? [contender] : []),
+      ]);
+    }
   }
 
   it("serializes two real policy transitions and revalidates after the winner", async () => {
@@ -189,10 +221,59 @@ select count(*) from public.ai_routing_lifecycle_audit where policy_version_id='
     expect(close.error?.code).toMatch(/23514|P0001/); expect(version.data?.profile_id).toBeTruthy();
   });
 
+  it("serializes profile retirement against policy transition and revalidates the loser", async () => {
+    const candidate = await fixture();
+    const ev = await evidence(candidate);
+    const sqlEvidence = Object.entries(ev).map(([key, value]) => `${key}=>'${value}'`).join(", ");
+    const contenderName = `db013-retire-${crypto.randomUUID()}`;
+    const race = await runObservedBlockedRace(
+      `begin; set local role service_role; select public.transition_ai_routing_policy_v2(p_policy_version_id=>'${candidate.policyVersionId}',p_to_status=>'validated',${sqlEvidence}); reset role; \\echo DB013_RETIRE_TRANSITION_HELD\n`,
+      "DB013_RETIRE_TRANSITION_HELD",
+      contenderName,
+      `begin; set local application_name='${contenderName}'; set local role service_role; select public.retire_ai_provider_profile_version_v1(p_profile_version_id=>'${candidate.profileVersionId}',${sqlEvidence}); reset role; commit;`,
+    );
+    expect(race.holder.status).toBe(0);
+    expect(race.contender.status).not.toBe(0);
+    const policy = await service.from("ai_routing_policy_versions").select("status").eq("id", candidate.policyVersionId).single();
+    const profile = await service.from("ai_provider_profile_versions").select("status").eq("id", candidate.profileVersionId).single();
+    expect(policy.data?.status).toBe("validated");
+    expect(profile.data?.status).toBe("validated");
+    const audit = runOwnerSql(String.raw`\pset tuples_only on
+select count(*) from public.ai_routing_lifecycle_audit
+where (operation='policy_transition' and policy_version_id='${candidate.policyVersionId}')
+   or (operation='profile_version_retire' and profile_version_id='${candidate.profileVersionId}');`);
+    expect(audit.status).toBe(0); expect(parseOwnerCount(audit)).toBe(1);
+  });
+
+  it("serializes price closure against policy transition and revalidates the loser", async () => {
+    const candidate = await fixture();
+    const ev = await evidence(candidate);
+    const sqlEvidence = Object.entries(ev).map(([key, value]) => `${key}=>'${value}'`).join(", ");
+    const contenderName = `db013-close-price-${crypto.randomUUID()}`;
+    const race = await runObservedBlockedRace(
+      `begin; set local role service_role; select public.transition_ai_routing_policy_v2(p_policy_version_id=>'${candidate.policyVersionId}',p_to_status=>'validated',${sqlEvidence}); reset role; \\echo DB013_CLOSE_TRANSITION_HELD\n`,
+      "DB013_CLOSE_TRANSITION_HELD",
+      contenderName,
+      `begin; set local application_name='${contenderName}'; set local role service_role; select public.close_ai_price_version_v1(p_price_version_id=>'${candidate.priceVersionId}',p_valid_to=>clock_timestamp(),p_successor_price_version_id=>null,${sqlEvidence}); reset role; commit;`,
+    );
+    expect(race.holder.status).toBe(0);
+    expect(race.contender.status).not.toBe(0);
+    const policy = await service.from("ai_routing_policy_versions").select("status").eq("id", candidate.policyVersionId).single();
+    const price = await service.from("ai_price_versions").select("valid_to").eq("id", candidate.priceVersionId).single();
+    expect(policy.data?.status).toBe("validated");
+    expect(price.data?.valid_to).toBeNull();
+    const audit = runOwnerSql(String.raw`\pset tuples_only on
+select count(*) from public.ai_routing_lifecycle_audit
+where (operation='policy_transition' and policy_version_id='${candidate.policyVersionId}')
+   or (operation='price_close' and price_version_id='${candidate.priceVersionId}');`);
+    expect(audit.status).toBe(0); expect(parseOwnerCount(audit)).toBe(1);
+  });
+
   it("observes the lock wait and leaves state/audit unchanged after timeout/rollback", async () => {
     const candidate = await fixture();
     const ev = await evidence(candidate);
     const before = await service.from("ai_routing_policy_versions").select("status").eq("id", candidate.policyVersionId).single();
+    const pointerBefore = await service.from("ai_feature_config").select("active_routing_policy_version_id,config_generation").eq("id", true).single();
     const auditBefore = runOwnerSql(String.raw`\pset tuples_only on
 select count(*) from public.ai_routing_lifecycle_audit where policy_version_id='${candidate.policyVersionId}';`);
     const holderName = `db013-lock-holder-${crypto.randomUUID()}`; const contenderName = `db013-lock-contender-${crypto.randomUUID()}`;
@@ -207,8 +288,12 @@ select count(*) from public.ai_routing_lifecycle_audit where policy_version_id='
     } finally { holder.release(); holderResult = await holder.result; }
     expect(holderResult?.status).toBe(0);
     const after = await service.from("ai_routing_policy_versions").select("status").eq("id", candidate.policyVersionId).single();
+    const pointerAfter = await service.from("ai_feature_config").select("active_routing_policy_version_id,config_generation").eq("id", true).single();
     const auditAfter = runOwnerSql(String.raw`\pset tuples_only on
 select count(*) from public.ai_routing_lifecycle_audit where policy_version_id='${candidate.policyVersionId}';`);
     expect(after.data?.status).toBe(before.data?.status); expect(parseOwnerCount(auditAfter)).toBe(parseOwnerCount(auditBefore));
+    expect(pointerBefore.error).toBeNull(); expect(pointerAfter.error).toBeNull();
+    expect(pointerAfter.data?.active_routing_policy_version_id).toBe(pointerBefore.data?.active_routing_policy_version_id);
+    expect(Number(pointerAfter.data?.config_generation)).toBe(Number(pointerBefore.data?.config_generation));
   });
 });
