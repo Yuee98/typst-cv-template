@@ -1207,8 +1207,10 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         runtimeContractId: fixture.runtime.runtimeContractId,
         runtimeContractSha256: fixture.runtime.runtimeContractSha256,
         priceVersionIds: [
-          fixture.defaultNode.priceVersionId,
-          fixture.selectedNode.priceVersionId,
+          ...new Set([
+            fixture.defaultNode.priceVersionId,
+            fixture.selectedNode.priceVersionId,
+          ]),
         ],
       });
       const lifecycleEvidence = {
