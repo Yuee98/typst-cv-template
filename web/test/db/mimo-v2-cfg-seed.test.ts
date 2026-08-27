@@ -26,6 +26,8 @@ const CONTRACT = DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.contract;
 const TARGETS = DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets;
 const DB_CONTAINER = "supabase_db_typst-cv-template";
 const PG_APPLICATION_NAME_MAX_BYTES = 63;
+const LATE_COLLISION_ADVISORY_LOCK_KEY = 702002;
+const IDENTICAL_REAPPLY_ADVISORY_LOCK_KEY = 702003;
 const OLD_CONTRACT_ID = "runtime.deepseek-v2.v1";
 const OLD_CONTRACT_SHA256 =
   "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9";
@@ -246,8 +248,10 @@ async function waitForActivity(applicationName: string, prefix: string): Promise
 async function waitForDatabaseLock(
   applicationName: string,
   contender?: Promise<OwnerSqlResult>,
+  event = "",
 ): Promise<void> {
   let completed: OwnerSqlResult | undefined;
+  const expectedPrefix = `Lock:${event}`;
   void contender?.then((result) => {
     completed = result;
   });
@@ -259,15 +263,15 @@ async function waitForDatabaseLock(
       from pg_catalog.pg_stat_activity
       where application_name = '${applicationName}';
     `).stdout;
-    if (state.split(/\r?\n/u).some((line) => line.trim().startsWith("Lock:"))) return;
+    if (state.split(/\r?\n/u).some((line) => line.trim().startsWith(expectedPrefix))) return;
     if (completed) {
       throw new Error(
-        `contender ${applicationName} exited before a DB lock: ${completed.stderr || completed.stdout}`,
+        `contender ${applicationName} exited before ${expectedPrefix}: ${completed.stderr || completed.stdout}`,
       );
     }
     await sleep(25);
   }
-  throw new Error(`contender ${applicationName} never reported a DB lock`);
+  throw new Error(`contender ${applicationName} never reported ${expectedPrefix}`);
 }
 
 function assertNoDeadlockOrLockTimeout(result: OwnerSqlResult): void {
@@ -333,7 +337,7 @@ function installProfileGate(): void {
     language plpgsql set search_path = '' as $$
     begin
       if new.id='${PROFILE_ID}'::uuid then
-        perform pg_catalog.pg_advisory_xact_lock(702002);
+        perform pg_catalog.pg_advisory_xact_lock(${LATE_COLLISION_ADVISORY_LOCK_KEY});
       end if;
       return new;
     end;
@@ -344,27 +348,31 @@ function installProfileGate(): void {
   expect(result.status, result.stderr).toBe(0);
 }
 
-function removeReapplyPause(): void {
+function removeReapplyBarrier(): void {
   runOwnerSql(String.raw`
     \set ON_ERROR_STOP on
     drop trigger if exists cfg002_reapply_pause on public.ai_provider_profiles;
     drop function if exists public.cfg002_reapply_pause();
+    drop trigger if exists cfg002_reapply_barrier on public.ai_provider_profiles;
+    drop function if exists public.cfg002_reapply_barrier();
   `);
 }
 
-function installReapplyPause(): void {
-  removeReapplyPause();
+function installReapplyBarrier(): void {
+  removeReapplyBarrier();
   const result = runOwnerSql(String.raw`
     \set ON_ERROR_STOP on
-    create function public.cfg002_reapply_pause() returns trigger
+    create function public.cfg002_reapply_barrier() returns trigger
     language plpgsql set search_path = '' as $$
     begin
-      if new.id='${PROFILE_ID}'::uuid then perform pg_catalog.pg_sleep(0.75); end if;
+      if new.id='${PROFILE_ID}'::uuid then
+        perform pg_catalog.pg_advisory_xact_lock(${IDENTICAL_REAPPLY_ADVISORY_LOCK_KEY});
+      end if;
       return new;
     end;
     $$;
-    create trigger cfg002_reapply_pause after insert on public.ai_provider_profiles
-    for each row execute function public.cfg002_reapply_pause();
+    create trigger cfg002_reapply_barrier after insert on public.ai_provider_profiles
+    for each row execute function public.cfg002_reapply_barrier();
   `);
   expect(result.status, result.stderr).toBe(0);
 }
@@ -574,29 +582,48 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
 
   it("observes a real unique-key lock for identical concurrent reapplication, then retries unchanged", async () => {
     makeSeedAbsent();
-    installReapplyPause();
+    installReapplyBarrier();
+    const marker = `CFG002_IDENTICAL_REAPPLY_HELD_${randomUUID()}`;
+    const holder = startOwnerSqlWithBarrier(
+      String.raw`
+        \set ON_ERROR_STOP on
+        begin;
+        select pg_catalog.pg_advisory_xact_lock(${IDENTICAL_REAPPLY_ADVISORY_LOCK_KEY});
+        \echo ${marker}
+      `,
+      marker,
+      "commit;",
+    );
     try {
       const firstApplication = pgApplicationName("identical-a");
       const secondApplication = pgApplicationName("identical-b");
+      await holder.ready;
       const first = startOwnerSql(String.raw`
         \set VERBOSITY verbose
         set application_name='${firstApplication}';
         ${readFileSync(MIGRATION_URL, "utf8")}
       `);
-      await waitForActivity(firstApplication, "Timeout:PgSleep");
+      // AFTER INSERT runs only after the fixed UUID has passed the real unique
+      // index check.  The trigger now waits on the holder instead of sleeping.
+      await waitForDatabaseLock(firstApplication, first, "advisory");
       const second = startOwnerSql(String.raw`
         \set VERBOSITY verbose
         set application_name='${secondApplication}';
         ${readFileSync(MIGRATION_URL, "utf8")}
       `);
-      await waitForDatabaseLock(secondApplication, second);
-      const results = await Promise.all([first, second]);
-      for (const result of results) assertNoDeadlockOrLockTimeout(result);
-      const successes = results.filter((result) => result.status === 0);
-      const losers = results.filter((result) => result.status !== 0);
-      expect(successes.length).toBeGreaterThanOrEqual(1);
-      expect(successes.length + losers.length).toBe(2);
-      for (const loser of losers) expect(loser.stderr).toMatch(/ERROR:\s+23505:/u);
+      await waitForDatabaseLock(secondApplication, second, "transactionid");
+      holder.release();
+      const [holderResult, firstResult, secondResult] = await Promise.all([
+        holder.result,
+        first,
+        second,
+      ]);
+      expect(holderResult.status, holderResult.stderr).toBe(0);
+      expect(firstResult.status, firstResult.stderr).toBe(0);
+      expect(secondResult.status).not.toBe(0);
+      assertNoDeadlockOrLockTimeout(firstResult);
+      assertNoDeadlockOrLockTimeout(secondResult);
+      expect(secondResult.stderr).toMatch(/ERROR:\s+23505:/u);
       expect(seedGraphCounts()).toEqual({
         profile: 1, version: 1, price: 1, components: 4, root: 1, mimoTarget: 1, memberships: 2,
       });
@@ -604,7 +631,9 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       restoreSeed();
       expect(snapshot()).toBe(afterRace);
     } finally {
-      removeReapplyPause();
+      holder.release();
+      await holder.result.catch(() => undefined);
+      removeReapplyBarrier();
       if (seedGraphCounts().profile !== 1) restoreSeed();
     }
   });
@@ -631,7 +660,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
           String.raw`
             \set ON_ERROR_STOP on
             begin;
-            select pg_catalog.pg_advisory_lock(702002);
+            select pg_catalog.pg_advisory_lock(${LATE_COLLISION_ADVISORY_LOCK_KEY});
             \echo ${marker}
           `,
           marker,
