@@ -476,8 +476,6 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal manifest catalog (real DB)", () 
 
   it("keeps catalog rows immutable and allows exact-pair reuse across bundles", () => {
     const output = runRollbackFixture(String.raw`
-      set local role service_role;
-
       insert into public.ai_legal_manifest_versions (
         legal_manifest_id,
         manifest_sha256
@@ -531,8 +529,9 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal manifest catalog (real DB)", () 
       set sealed_at = greatest(clock_timestamp(), created_at)
       where legal_bundle_version = 'shared-bundle-a-v1';
 
+      set local role service_role;
       select pg_temp.expect_sqlstate(
-        '23514',
+        '42501',
         $statement$
           update public.ai_legal_manifest_versions
           set manifest_sha256 = repeat('2', 64)
@@ -540,7 +539,7 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal manifest catalog (real DB)", () 
         $statement$
       );
       select pg_temp.expect_sqlstate(
-        '23514',
+        '42501',
         $statement$
           delete from public.ai_legal_manifest_versions
           where legal_manifest_id = 'shared-manifest-v1'
@@ -631,28 +630,20 @@ describe.skipIf(!RUN_DB_TESTS)("immutable legal manifest catalog (real DB)", () 
           'public.ai_legal_bundle_versions',
           'public.ai_legal_bundle_manifests'
         ] loop
-          foreach privilege_name in array array[
-            'SELECT', 'INSERT', 'UPDATE', 'DELETE'
-          ] loop
-            if not has_table_privilege(
-              'service_role',
-              table_name,
-              privilege_name
-            ) then
-              raise exception 'service_role lacks % on % during dark-stack authoring',
-                privilege_name, table_name;
-            end if;
-          end loop;
+          if not has_table_privilege('service_role', table_name, 'SELECT') then
+            raise exception 'service_role lacks read-only catalog access on %',
+              table_name;
+          end if;
 
           foreach privilege_name in array array[
-            'TRUNCATE', 'REFERENCES', 'TRIGGER'
+            'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
           ] loop
             if has_table_privilege(
               'service_role',
               table_name,
               privilege_name
             ) then
-              raise exception 'service_role unexpectedly has % on %',
+              raise exception 'service_role unexpectedly retains % on %',
                 privilege_name, table_name;
             end if;
           end loop;
