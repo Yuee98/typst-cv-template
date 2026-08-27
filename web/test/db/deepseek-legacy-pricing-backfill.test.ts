@@ -107,6 +107,28 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     `;
   }
 
+  function ownerLegacyCatalogSnapshot() {
+    const result = runOwnerSql(String.raw`
+      copy (
+        select pg_catalog.jsonb_build_object(
+          'priceVersions', (
+            select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(price) order by price.id)
+            from public.ai_price_versions as price where price.id = '${LEGACY_PRICE}'::uuid
+          ),
+          'components', (
+            select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(component) order by component.component)
+            from public.ai_price_components as component where component.price_version_id = '${LEGACY_PRICE}'::uuid
+          ),
+          'sealIntents', (
+            select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(intent) order by intent.price_version_id)
+            from public.ai_price_component_seal_intents as intent where intent.price_version_id = '${LEGACY_PRICE}'::uuid
+          )
+        )::text
+      ) to stdout;
+    `);
+    return JSON.parse(result.stdout.trim()) as unknown;
+  }
+
   it("writes the approved price evidence and the complete eligible-class truth table", async () => {
     const billed = await insertHistorical();
     const unbilled = await insertHistorical({
@@ -356,18 +378,19 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
 
   it("rejects hostile legacy price catalog replays atomically and restores the canonical catalog", async () => {
     const good = await insertHistorical();
+    const original = await read(good);
+    const baselineCatalog = ownerLegacyCatalogSnapshot();
     const header = String.raw`insert into public.ai_price_versions (id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,valid_to,provider_effective_from,provider_effective_to,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${LEGACY_PRICE}'::uuid,'${LEGACY_PROFILE}'::uuid,'legacy',1,'CNY','linear_token_v1','-infinity','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z','https://web.archive.org/web/20260814163114id_/https://api-docs.deepseek.com/zh-cn/quick_start/pricing/','2026-08-25T16:42:19.348Z','2bab2555968333b6e0a6e9f04c5427880f36fba491d95790c3f44261e00c7d07','{}');`;
     const cases = [
       [header.replace("'CNY'", "'USD'"), "legacy price projection mismatch"],
-      [String.raw`insert into public.ai_price_versions (id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,valid_to,provider_effective_from,provider_effective_to,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${LEGACY_PRICE}'::uuid,'${LEGACY_PROFILE}'::uuid,'legacy',2,'CNY','linear_token_v1','-infinity','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z','https://example.invalid/a',now(),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}'),('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4','${LEGACY_PROFILE}'::uuid,'legacy',1,'CNY','linear_token_v1','-infinity','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z','https://example.invalid/b',now(),'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}');`, "UUID or natural identity collision"],
-      [header + String.raw`insert into public.ai_price_components values ('${LEGACY_PRICE}'::uuid,'input_cache_read',20000000);`, "components or seal mismatch"],
-      [header + String.raw`insert into public.ai_price_components values ('${LEGACY_PRICE}'::uuid,'input_cache_read',20000000),('${LEGACY_PRICE}'::uuid,'input_standard',1000000000),('${LEGACY_PRICE}'::uuid,'input_cache_write',0),('${LEGACY_PRICE}'::uuid,'output',2000000000); select public.seal_ai_price_components_v1(array['${LEGACY_PRICE}'::uuid],clock_timestamp());`, "components or seal mismatch"],
+      [String.raw`insert into public.ai_price_versions (id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,valid_to,provider_effective_from,provider_effective_to,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${LEGACY_PRICE}'::uuid,'${LEGACY_PROFILE}'::uuid,'legacy',2,'CNY','linear_token_v1','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z',null,'https://example.invalid/a',now(),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}'),('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4','${LEGACY_PROFILE}'::uuid,'legacy',1,'CNY','linear_token_v1','-infinity','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z','https://example.invalid/b',now(),'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}');`, "UUID or natural identity collision"],
+      [header + String.raw`insert into public.ai_price_components (price_version_id,component,nanos_per_million) values ('${LEGACY_PRICE}'::uuid,'input_cache_read',20000000);`, "components or seal mismatch"],
+      [header + String.raw`insert into public.ai_price_components (price_version_id,component,nanos_per_million) values ('${LEGACY_PRICE}'::uuid,'input_cache_read',20000000),('${LEGACY_PRICE}'::uuid,'input_standard',1000000000),('${LEGACY_PRICE}'::uuid,'input_cache_write',0),('${LEGACY_PRICE}'::uuid,'output',2000000000); select public.seal_ai_price_components_v1(array['${LEGACY_PRICE}'::uuid],clock_timestamp());`, "components or seal mismatch"],
     ] as const;
     for (const [mutation, message] of cases) {
       expect(runOwnerSql(hostileReplaySql(mutation, message)).status).toBe(0);
-      expect((await read(good)).route_schema_version).toBeNull();
-      const catalog = await service.from("ai_price_versions").select("id").eq("id", LEGACY_PRICE);
-      expect(catalog.data).toHaveLength(1);
+      expect(await read(good)).toEqual(original);
+      expect(ownerLegacyCatalogSnapshot()).toEqual(baselineCatalog);
     }
   });
 
