@@ -111,7 +111,44 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
 
   async function cleanup(f: Fixture) {
     const policyIds = f.policyVersionIds.length > 0 ? f.policyVersionIds.map((id) => `'${id}'::uuid`).join(",") : "null::uuid";
-    runOwnerSql(`begin; set local session_replication_role=replica; update public.ai_feature_config set active_routing_policy_version_id=null,routing_updated_by=null,routing_change_reason=null where active_routing_policy_version_id=any(array[${policyIds}]); update public.ai_feature_config set ai_polish_enabled=false,enabled_user_allowlist='{}' where id=true; delete from public.ai_routing_lifecycle_audit where policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}'; delete from public.ai_request_ledger where routing_policy_version_id=any(array[${policyIds}]); delete from public.ai_routing_policy_versions where id=any(array[${policyIds}]); delete from public.ai_price_components where price_version_id='${f.priceVersionId}'; delete from public.ai_price_versions where id='${f.priceVersionId}'; delete from public.ai_provider_profile_versions where id='${f.profileVersionId}'; delete from public.ai_provider_profiles where id='${f.profileId}'; delete from public.ai_service_runtime_contract_targets where runtime_contract_id='${f.runtimeContractId}' and runtime_target_id='${f.runtimeTargetId}'; delete from public.ai_service_runtime_contract_versions where runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}'; delete from public.ai_service_runtime_target_versions where runtime_target_id='${f.runtimeTargetId}'; commit;`);
+    runOwnerSql(String.raw`begin;
+      set local session_replication_role=replica;
+      update public.ai_feature_config set active_routing_policy_version_id=null,routing_updated_by=null,routing_change_reason=null where active_routing_policy_version_id=any(array[${policyIds}]);
+      update public.ai_feature_config set ai_polish_enabled=false,enabled_user_allowlist='{}' where id=true;
+      delete from public.ai_routing_lifecycle_audit where policy_version_id=any(array[${policyIds}]) or old_active_policy_version_id=any(array[${policyIds}]) or new_active_policy_version_id=any(array[${policyIds}]) or profile_id='${f.profileId}' or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}');
+      delete from public.ai_provider_attempt_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}');
+      delete from public.ai_request_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}');
+      delete from public.ai_routing_policy_transition_intents where policy_version_id=any(array[${policyIds}]);
+      delete from public.ai_routing_policy_versions where id=any(array[${policyIds}]);
+      delete from public.ai_price_component_seal_intents where price_version_id='${f.priceVersionId}';
+      delete from public.ai_price_components where price_version_id='${f.priceVersionId}';
+      delete from public.ai_price_versions where id='${f.priceVersionId}';
+      delete from public.ai_profile_usage_daily where profile_version_id='${f.profileVersionId}';
+      delete from public.ai_provider_profile_versions where id='${f.profileVersionId}';
+      delete from public.ai_provider_profiles where id='${f.profileId}';
+      delete from public.ai_service_runtime_contract_targets where runtime_contract_id='${f.runtimeContractId}' and runtime_target_id='${f.runtimeTargetId}';
+      delete from public.ai_service_runtime_contract_versions where runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}';
+      delete from public.ai_service_runtime_target_versions where runtime_target_id='${f.runtimeTargetId}';
+      commit;`);
+    const residual = runOwnerSql(String.raw`\pset tuples_only on
+select pg_catalog.jsonb_build_object(
+  'activePointers',(select count(*) from public.ai_feature_config where active_routing_policy_version_id=any(array[${policyIds}])),
+  'audit',(select count(*) from public.ai_routing_lifecycle_audit where policy_version_id=any(array[${policyIds}]) or old_active_policy_version_id=any(array[${policyIds}]) or new_active_policy_version_id=any(array[${policyIds}]) or profile_id='${f.profileId}' or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}')),
+  'attempts',(select count(*) from public.ai_provider_attempt_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}')),
+  'requests',(select count(*) from public.ai_request_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}')),
+  'transitionIntents',(select count(*) from public.ai_routing_policy_transition_intents where policy_version_id=any(array[${policyIds}])),
+  'policies',(select count(*) from public.ai_routing_policy_versions where id=any(array[${policyIds}])),
+  'sealIntents',(select count(*) from public.ai_price_component_seal_intents where price_version_id='${f.priceVersionId}'),
+  'components',(select count(*) from public.ai_price_components where price_version_id='${f.priceVersionId}'),
+  'prices',(select count(*) from public.ai_price_versions where id='${f.priceVersionId}'),
+  'dailyUsage',(select count(*) from public.ai_profile_usage_daily where profile_version_id='${f.profileVersionId}'),
+  'profileVersions',(select count(*) from public.ai_provider_profile_versions where id='${f.profileVersionId}'),
+  'profiles',(select count(*) from public.ai_provider_profiles where id='${f.profileId}'),
+  'memberships',(select count(*) from public.ai_service_runtime_contract_targets where runtime_contract_id='${f.runtimeContractId}' and runtime_target_id='${f.runtimeTargetId}'),
+  'roots',(select count(*) from public.ai_service_runtime_contract_versions where runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}'),
+  'targets',(select count(*) from public.ai_service_runtime_target_versions where runtime_target_id='${f.runtimeTargetId}')
+)::text;`);
+    expect(JSON.parse(residual.stdout.trim())).toEqual({ activePointers: 0, audit: 0, attempts: 0, requests: 0, transitionIntents: 0, policies: 0, sealIntents: 0, components: 0, prices: 0, dailyUsage: 0, profileVersions: 0, profiles: 0, memberships: 0, roots: 0, targets: 0 });
   }
   afterEach(async () => { while (ownedFixtures.length) { const current = ownedFixtures[0]; await cleanup(current); ownedFixtures.shift(); } });
 
@@ -175,6 +212,37 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
       sqlEvidence(ev),
     ].join(",");
   }
+
+  it("cleans every sealed fixture graph, including its persisted seal intent", async () => {
+    const defaultSealed = await fixture();
+    const defaultIntent = runOwnerSql(String.raw`\pset tuples_only on
+select count(*) from public.ai_price_component_seal_intents where price_version_id='${defaultSealed.priceVersionId}';`);
+    expect(defaultIntent.status).toBe(0);
+    expect(parseOwnerCount(defaultIntent)).toBe(1);
+    await cleanup(defaultSealed);
+    ownedFixtures.splice(ownedFixtures.indexOf(defaultSealed), 1);
+
+    const activation = await fixture({ sealed: false });
+    const ev = await evidence(activation);
+    const sealed = await lifecycle("seal_ai_price_for_activation_v1", {
+      p_price_version_id: activation.priceVersionId,
+      p_rechecked_source_url: activation.sourceUrl,
+      p_rechecked_currency: "CNY",
+      p_rechecked_calculator_kind: "linear_token_v1",
+      p_rechecked_provider_effective_from: null,
+      p_rechecked_provider_effective_to: null,
+      p_rechecked_parameters: {},
+      p_rechecked_components: { input_standard: "1", input_cache_read: "1", output: "1" },
+      ...ev,
+    });
+    expect(sealed.error).toBeNull();
+    const activationIntent = runOwnerSql(String.raw`\pset tuples_only on
+select count(*) from public.ai_price_component_seal_intents where price_version_id='${activation.priceVersionId}' and applied_at is not null;`);
+    expect(activationIntent.status).toBe(0);
+    expect(parseOwnerCount(activationIntent)).toBe(1);
+    await cleanup(activation);
+    ownedFixtures.splice(ownedFixtures.indexOf(activation), 1);
+  });
 
   function priceCloseArguments(f: Fixture, ev: Record<string, unknown>) {
     return [
