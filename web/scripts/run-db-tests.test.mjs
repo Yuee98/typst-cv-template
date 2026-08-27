@@ -614,6 +614,36 @@ it("workflow mutation replacement rejects a missing target", () => {
   expect(() => replaceExactlyOnce("on:\n", "jobs:\n", "", "missing root")).toThrow(/did not match exactly once/);
 });
 
+it("pins Supabase SQL to LF and canonicalizes every routine authority digest", async () => {
+  const attributesPath = fileURLToPath(new URL("../../.gitattributes", import.meta.url));
+  const authorityTestPath = fileURLToPath(
+    new URL("../test/db/deepseek-v2-cfg-seed.test.ts", import.meta.url),
+  );
+  const [attributes, authorityTest] = await Promise.all([
+    readFile(attributesPath, "utf8"),
+    readFile(authorityTestPath, "utf8"),
+  ]);
+  const normalizedAuthorityTest = authorityTest.replace(/\r\n/g, "\n");
+
+  const attributeRules = attributes
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"));
+  expect(attributeRules).toContain("supabase/**/*.sql text eol=lf");
+
+  expect(normalizedAuthorityTest).toContain(
+    "pg_catalog.chr(13) || pg_catalog.chr(10),\n      pg_catalog.chr(10)",
+  );
+  expect(normalizedAuthorityTest).toContain(
+    "pg_catalog.chr(13),\n    pg_catalog.chr(10)",
+  );
+  expect(normalizedAuthorityTest.match(/\$\{CANONICAL_ROUTINE_DEFINITION_SQL\}/g)).toHaveLength(4);
+  expect(normalizedAuthorityTest).not.toMatch(
+    /extensions\.digest\(\s*pg_catalog\.pg_get_functiondef\(procedure\.oid\)/,
+  );
+});
+
 it("DB workflow runs the credential-free runner contract before real-DB mutation", async () => {
   // This test is part of the ordinary `pnpm test` suite as well as the
   // dedicated workflow step. Keeping the workflow assertion here means a

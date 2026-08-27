@@ -30,6 +30,21 @@ const DISABLED_AVAILABILITY = {
   termsAccepted: false,
 } as const;
 
+// PostgreSQL preserves migration-source line endings inside stored routine
+// bodies. Canonicalize them before hashing so the authority oracle is stable
+// across Windows worktrees and Linux CI checkouts.
+const CANONICAL_ROUTINE_DEFINITION_SQL = String.raw`
+  pg_catalog.replace(
+    pg_catalog.replace(
+      pg_catalog.pg_get_functiondef(procedure.oid),
+      pg_catalog.chr(13) || pg_catalog.chr(10),
+      pg_catalog.chr(10)
+    ),
+    pg_catalog.chr(13),
+    pg_catalog.chr(10)
+  )
+`;
+
 const SNAPSHOT_TABLES = [
   "ai_feature_config",
   "ai_provider_profiles",
@@ -60,14 +75,14 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     name: "apply_ai_price_component_seal_intent",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "60a52cc8fe50c18f5c10e825ed7d22dbc0be6ac268e1f21be134613a28cda113",
+    definitionSha256: "10ca00a60c2ae09b09b41823b81a8cb79cc64fee524a759140ebbc664c81c513",
   },
   {
     schema: "public",
     name: "assert_ai_routing_policy_v1",
     identityArguments: "p_policy_id uuid, p_phase text, p_at timestamp with time zone",
     prokind: "f",
-    definitionSha256: "13c1c97b4adcd9d6fb46485f937ac667c4c92300b854ec4346c87ad1e15895da",
+    definitionSha256: "ef3bd23e0774dc4113c468038ef87632c75fd107e0ea98c36b088589e5adde84",
   },
   {
     schema: "public",
@@ -82,7 +97,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments:
       "p_attempt_id uuid, p_status text, p_transmitted boolean, p_retry_eligible boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb",
     prokind: "f",
-    definitionSha256: "4092c7cda332ea22f1e1cd48ed77847f4ac65fe2314c8ad7d4dae879a16deece",
+    definitionSha256: "c02db99e3f9aaa59709e33f9331353ca223d1282010167117412b374817ed7f2",
   },
   {
     schema: "public",
@@ -90,7 +105,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments:
       "p_attempt_id uuid, p_status text, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb",
     prokind: "f",
-    definitionSha256: "1e8604a5d30cce762152bd2d32755c74f06a42b2b5fec8f7ff6bef6226937a1c",
+    definitionSha256: "5aa682c20a0b3a2ed8d326f513133eaace14b817d48049ff80d0c20df1885aa2",
   },
   {
     schema: "public",
@@ -98,21 +113,21 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments:
       "p_attempt_id uuid, p_status text, p_transmitted boolean, p_provider_billable boolean, p_usage jsonb, p_route jsonb, p_cost jsonb, p_metadata jsonb",
     prokind: "f",
-    definitionSha256: "f738cdc7557323bac276221f1d81326694d8253efd4cf425164c239ef03936b2",
+    definitionSha256: "915ee6c12124aff544de304dcf125af03b49953be8b1476dd7002af0ce3e9e40",
   },
   {
     schema: "public",
     name: "derive_ai_polish_v2_settlement",
     identityArguments: "p_reservation_id uuid",
     prokind: "f",
-    definitionSha256: "96ce52e077730429b8317969d0ad3394aa4710c19ea8b88a98a9f5b4dd4ba37c",
+    definitionSha256: "0b8b0fcd618810600af3cd5ac9df5d936ed88434740f695784499b3abe546f40",
   },
   {
     schema: "public",
     name: "derive_ai_polish_v2_settlement_sequence",
     identityArguments: "p_reservation_id uuid, p_allow_open_retry boolean",
     prokind: "f",
-    definitionSha256: "d2233e6a09079f3b43dd6298e824c6a61d950b9e48c0d5c47e10c14d4d5029ea",
+    definitionSha256: "533bb3d49c8f62331911110d508840d06e6c460306f67d08979fbd1a925d495d",
   },
   {
     schema: "public",
@@ -120,7 +135,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments:
       "p_reservation_id uuid, p_status text, p_quota_charged boolean, p_provider_billable boolean, p_usage jsonb, p_metadata jsonb",
     prokind: "f",
-    definitionSha256: "e3f1d4d5fb32eec8b8aef81001c72dad8463ec61b9792fd9d53d117d1ed56d22",
+    definitionSha256: "81b64314a12b5bd4922c3447d1b1c911720eac873e85f3882c7ff87098e4f69b",
   },
   {
     schema: "public",
@@ -128,49 +143,49 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments:
       "p_reservation_id uuid, p_status text, p_quota_charged boolean, p_provider_billable boolean, p_usage jsonb, p_metadata jsonb, p_settlement_contract text",
     prokind: "f",
-    definitionSha256: "82d7197b568db9420b7f30d4a760fc56cc52f8e1d7caeb32a993985a33956037",
+    definitionSha256: "856254405c81071e2184e95eb269b8146bb8cb35b2400a62364dd9ab49f1e5c5",
   },
   {
     schema: "public",
     name: "get_ai_polish_availability_v1",
     identityArguments: "p_user_id uuid",
     prokind: "f",
-    definitionSha256: "e2ed670a39e88f4df1d81ed423688b89ac490dc9dbdc6062e38096752d3261eb",
+    definitionSha256: "ea512419dfe6b8461d982f5fa860d813f19f6b0f7f5abdfb40e74cb71a803c3a",
   },
   {
     schema: "public",
     name: "get_ai_polish_execution_snapshot_v1",
     identityArguments: "p_reservation_id uuid, p_user_id uuid",
     prokind: "f",
-    definitionSha256: "42b8405c1365e2125a86e00dbb741c737a229c54a1640515f9c0ddeee95331fc",
+    definitionSha256: "8e4437200dd8ca30480823aa9085a95a472f7500da29cdcbed9c7feb92feca4b",
   },
   {
     schema: "public",
     name: "guard_ai_feature_routing_pointer",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "16c33dc5450acde6ddfafae353f379bc8077ee2ece3614dcb52b3f468d5f51ea",
+    definitionSha256: "0bc7eea658d3b45985a62cbeaee224b8fe9bc923302bcec582e8f3da2ce910f0",
   },
   {
     schema: "public",
     name: "guard_ai_price_version",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "aaf09223f0121101d62c3a6fb67a95c8ed167dac286e92b5fc378d219abbbee6",
+    definitionSha256: "ee3cec39edacae62ab7ee09b645bb6eeec38cc1cb545b7b4aa66abb12b05c016",
   },
   {
     schema: "public",
     name: "guard_ai_routing_policy_version",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "7db4cde2ff3a547667facdcf61ae60c47afcf83e5826805f97e5960b7e00b3d3",
+    definitionSha256: "94e7d401da5f6fad9fcc5246b9652be44b5da4463517e33a6daf23cd94226bfe",
   },
   {
     schema: "public",
     name: "has_accepted_ai_legal_bundle",
     identityArguments: "p_user_id uuid, p_legal_bundle_version text",
     prokind: "f",
-    definitionSha256: "38001bae505723bbf893a2717bc7e3d194b31ee6f71ba78f7c620a22a3478f53",
+    definitionSha256: "1597268586acda1baa3c67cd25ae3dd5aad3f1e6a1a426ee3603934583eebe82",
   },
   {
     schema: "public",
@@ -178,21 +193,21 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments:
       "p_policy ai_routing_policy_versions, p_phase text, p_at timestamp with time zone",
     prokind: "f",
-    definitionSha256: "4faaf7dab95e997efe27be9b523e86c69124bec608e2e7fa07a63f031e115a52",
+    definitionSha256: "92617a394ef308accb16df1f9164b6e5293561ca8a8f44aa350aef07bc6aa35c",
   },
   {
     schema: "public",
     name: "reconcile_stale_ai_polish_reservations",
     identityArguments: "p_stale_after interval",
     prokind: "f",
-    definitionSha256: "1640e1b4ee91359891584383205c8482c9de2850467516d515867fea62452b30",
+    definitionSha256: "71c9e2f95b170ef60687f55cc77fdd54a6c53d42a82b3b9d7b463f2fe650668d",
   },
   {
     schema: "public",
     name: "record_ai_polish_request_cancellation",
     identityArguments: "p_reservation_id uuid, p_observation text",
     prokind: "f",
-    definitionSha256: "7df24a481e7ab1e928d86ed8facf7f19dc2f46c6423e64f37ba4384604632300",
+    definitionSha256: "6f3252ead83e935073252e369eb42e9e9bcefe73c64dbfa47f71b6ee16a2d0c1",
   },
   {
     schema: "public",
@@ -200,42 +215,42 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments:
       "p_user_id uuid, p_request_id uuid, p_client_request_id uuid, p_expected_route jsonb",
     prokind: "f",
-    definitionSha256: "b201d838cfdc900951ea8d0c97586b15e4721fdff4de7e1079f713da92c1ee09",
+    definitionSha256: "5169d98f59e2df890327f808729a8f903402abffc68dd0ace11ef16f7f3a03a8",
   },
   {
     schema: "public",
     name: "seal_ai_price_components_v1",
     identityArguments: "p_price_version_ids uuid[], p_sealed_at timestamp with time zone",
     prokind: "f",
-    definitionSha256: "0dd187ddb38e0c6647c3e97f91a3acc8c4649108199fcc3fc2be55e020cd5073",
+    definitionSha256: "de113bdd7774f43788668189a77c7e8a9d0ae35027fca015289858b6e10cd0b8",
   },
   {
     schema: "public",
     name: "start_ai_polish_provider_attempt",
     identityArguments: "p_reservation_id uuid, p_attempt_no integer",
     prokind: "f",
-    definitionSha256: "a43230f5201790f267ceacdd3cdb3d7c85740633458363236d56c4be3d17516e",
+    definitionSha256: "7889dad2f1b2682906b661c1e2c42f2588d052503890741c8b2188c0b0e0c84c",
   },
   {
     schema: "public",
     name: "start_ai_polish_provider_attempt_internal",
     identityArguments: "p_reservation_id uuid, p_attempt_no integer",
     prokind: "f",
-    definitionSha256: "2034752c8152f4450ede122ed5a372510366a2e2af3ee7061362d21b4063a4c7",
+    definitionSha256: "b85eaf0b99283ac1bbf4a8a32180267c2dc925aa9e6b13c9191546ff69173a63",
   },
   {
     schema: "public",
     name: "transition_ai_routing_policy_v1",
     identityArguments: "p_policy_id uuid, p_to_status text",
     prokind: "f",
-    definitionSha256: "345268f4ebcee8b61a2d18d41e5a7dbe48a401fd0ae716a0ccc58ca26bf14f4b",
+    definitionSha256: "568c239938f224dcbcbad1c1494872310bf75868adc7c015eea638c5f5c49f86",
   },
   {
     schema: "public",
     name: "validate_ai_routing_policy_transition_v1",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "ab6afa02691efe383095e14c6eebc85c9debc6828fc8fced6771ac9db4a66530",
+    definitionSha256: "b69ce2f4337deaa9e751104fd71fc099a3e1187dc676565117e7ba554cf19515",
   },
 ] as const;
 
@@ -245,35 +260,35 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
     name: "get_ai_polish_availability_v1",
     identityArguments: "p_user_id uuid",
     prokind: "f",
-    definitionSha256: "e2ed670a39e88f4df1d81ed423688b89ac490dc9dbdc6062e38096752d3261eb",
+    definitionSha256: "ea512419dfe6b8461d982f5fa860d813f19f6b0f7f5abdfb40e74cb71a803c3a",
   },
   {
     schema: "public",
     name: "get_ai_polish_execution_snapshot_v1",
     identityArguments: "p_reservation_id uuid, p_user_id uuid",
     prokind: "f",
-    definitionSha256: "42b8405c1365e2125a86e00dbb741c737a229c54a1640515f9c0ddeee95331fc",
+    definitionSha256: "8e4437200dd8ca30480823aa9085a95a472f7500da29cdcbed9c7feb92feca4b",
   },
   {
     schema: "public",
     name: "guard_ai_service_runtime_contract_target",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "e04c9e4d3c45e07dd210892567646310ddb020f853b58a8b29af38a894fba395",
+    definitionSha256: "604900a91d7c533e5591680102ac3eadc2867e8fb9244470f6f63ffe15c13a90",
   },
   {
     schema: "public",
     name: "guard_ai_service_runtime_contract_version",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "53df10d400bbcf7da9f652ad899b91de4c570e8712c6700cd61443177422ce5c",
+    definitionSha256: "b6f45cdfc018755f7e9967d35c826aefb0a50de624b5abd8dad55bc32205312b",
   },
   {
     schema: "public",
     name: "guard_ai_service_runtime_target_version",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "91a20c5a5cbdd39491171274c0c805f424ae8b3c82970a4124488c0b4c75c128",
+    definitionSha256: "a5651295f8a87bdabc7ca8b98c2f876ebaab48f71e9d0d6890b431246a7bbb99",
   },
   {
     schema: "public",
@@ -281,7 +296,7 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
     identityArguments:
       "p_policy ai_routing_policy_versions, p_phase text, p_at timestamp with time zone",
     prokind: "f",
-    definitionSha256: "4faaf7dab95e997efe27be9b523e86c69124bec608e2e7fa07a63f031e115a52",
+    definitionSha256: "92617a394ef308accb16df1f9164b6e5293561ca8a8f44aa350aef07bc6aa35c",
   },
   {
     schema: "public",
@@ -289,7 +304,7 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
     identityArguments:
       "p_user_id uuid, p_request_id uuid, p_client_request_id uuid, p_expected_route jsonb",
     prokind: "f",
-    definitionSha256: "b201d838cfdc900951ea8d0c97586b15e4721fdff4de7e1079f713da92c1ee09",
+    definitionSha256: "5169d98f59e2df890327f808729a8f903402abffc68dd0ace11ef16f7f3a03a8",
   },
   {
     schema: "public",
@@ -297,7 +312,7 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
     identityArguments:
       "p_policy ai_routing_policy_versions, p_phase text, p_at timestamp with time zone, p_discovery_only boolean",
     prokind: "f",
-    definitionSha256: "82a937c6ba13b6bf8047e064665e594350f232542830d982c0c8e1c3edb3fd01",
+    definitionSha256: "3aae3b2fdfbc99198a77a373d622691aec929d0254a2ac1d318f87bcfaa6f2f3",
   },
 ] as const;
 
@@ -306,7 +321,7 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
 const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
   routineCount: 359,
   authorityRootSha256:
-    "69d47ecc41e2f1b33404e43658b90969df13b6d441aecc95aeff535d170baa1c",
+    "dc6774002c2c0e7c18c2356e8b3dd1a5490bd3bb84a512d8cfd5c06dd57b6ffc",
 } as const;
 
 function parseOwnerJson(sql: string): unknown {
@@ -985,7 +1000,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
               'prokind', procedure.prokind,
               'definitionSha256', pg_catalog.encode(
                 extensions.digest(
-                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  ${CANONICAL_ROUTINE_DEFINITION_SQL},
                   'sha256'
                 ),
                 'hex'
@@ -1013,7 +1028,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
               'prokind', procedure.prokind,
               'definitionSha256', pg_catalog.encode(
                 extensions.digest(
-                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  ${CANONICAL_ROUTINE_DEFINITION_SQL},
                   'sha256'
                 ),
                 'hex'
@@ -1041,7 +1056,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
               'prokind', procedure.prokind,
               'definitionSha256', pg_catalog.encode(
                 extensions.digest(
-                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  ${CANONICAL_ROUTINE_DEFINITION_SQL},
                   'sha256'
                 ),
                 'hex'
@@ -1073,7 +1088,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
               procedure.prosecdef,
               pg_catalog.encode(
                 extensions.digest(
-                  pg_catalog.pg_get_functiondef(procedure.oid),
+                  ${CANONICAL_ROUTINE_DEFINITION_SQL},
                   'sha256'
                 ),
                 'hex'
