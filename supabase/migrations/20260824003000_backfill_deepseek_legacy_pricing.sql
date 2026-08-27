@@ -25,6 +25,7 @@ declare
   v_input_total numeric;
   v_created_price boolean := false;
   v_complete_tokens boolean;
+  v_input_aggregate_known boolean;
   v_zero_or_absent_tokens boolean;
   v_semantic_class text;
 begin
@@ -39,8 +40,22 @@ begin
     select 1
     from public.ai_provider_profile_versions as profile
     where profile.id = c_profile_id
+      and profile.profile_id = '11111111-1111-4111-8111-111111111110'::uuid
+      and profile.version = 1
       and profile.model_id = 'deepseek-v4-flash'
       and profile.status = 'draft'
+      and profile.adapter_kind = 'deepseek_chat_v1'
+      and profile.wire_api_kind = 'chat_completions_v1'
+      and profile.credential_alias = 'deepseek_api_key'
+      and profile.endpoint_alias = 'deepseek_official'
+      and profile.capability_contract_id = 'deepseek_chat_json_object_v1'
+      and profile.cache_policy_id = 'deepseek_automatic_context_cache_v1'
+      and profile.legal_manifest_id = 'deepseek-official-2026-08-23-v1'
+      and profile.display_disclosure_key = 'deepseek-official-v1'
+      and profile.config =
+        '{"thinking":"disabled","structuredOutput":"json_object","providerSubjectField":"user_id"}'::jsonb
+      and profile.config_sha256 =
+        'a79bbbaa5934d7f4890b2e97e13e7768f031e99625fe11446ba437feeffc8fa9'
       and profile.activated_at is null
       and profile.retired_at is null
   ) then
@@ -252,6 +267,8 @@ begin
     v_complete_tokens := v_request.input_cached_tokens is not null
       and v_request.input_uncached_tokens is not null
       and v_request.output_tokens is not null;
+    v_input_aggregate_known := v_request.input_cached_tokens is not null
+      and v_request.input_uncached_tokens is not null;
     v_zero_or_absent_tokens := pg_catalog.num_nonnulls(
       v_request.input_cached_tokens,
       v_request.input_uncached_tokens,
@@ -283,13 +300,11 @@ begin
         v_request.reservation_id using errcode = '23514';
     end if;
 
-    if v_complete_tokens then
+    if v_input_aggregate_known then
       if v_request.input_cached_tokens::numeric < 0
          or v_request.input_uncached_tokens::numeric < 0
-         or v_request.output_tokens::numeric < 0
          or v_request.input_cached_tokens::numeric > c_max_bigint
-         or v_request.input_uncached_tokens::numeric > c_max_bigint
-         or v_request.output_tokens::numeric > c_max_bigint then
+         or v_request.input_uncached_tokens::numeric > c_max_bigint then
         raise exception 'DB-012 legacy token range violation: %', v_request.reservation_id
           using errcode = '22003';
       end if;
@@ -302,12 +317,21 @@ begin
       end if;
     elsif v_request.input_cached_tokens is not null and v_request.input_cached_tokens < 0
        or v_request.input_uncached_tokens is not null and v_request.input_uncached_tokens < 0
-       or v_request.output_tokens is not null and v_request.output_tokens < 0 then
+       then
       raise exception 'DB-012 legacy token range violation: %', v_request.reservation_id
         using errcode = '22003';
     end if;
 
-    if v_semantic_class = 'billable' and v_complete_tokens then
+    if v_request.output_tokens is not null
+       and (v_request.output_tokens::numeric < 0
+         or v_request.output_tokens::numeric > c_max_bigint) then
+      raise exception 'DB-012 legacy token range violation: %', v_request.reservation_id
+        using errcode = '22003';
+    end if;
+
+    if v_semantic_class = 'billable'
+       and v_request.usage_complete is true
+       and v_complete_tokens then
       v_cost := pg_catalog.ceil((
         v_request.input_cached_tokens::numeric * 20000000::numeric
         + v_request.input_uncached_tokens::numeric * 1000000000::numeric
@@ -335,12 +359,15 @@ begin
         profile_version_id = c_profile_id,
         price_version_id = c_price_id,
         usage_schema_version = 'legacy_v1',
-        input_total_tokens = case when v_complete_tokens then v_input_total::bigint else null end,
+        input_total_tokens = case when v_input_aggregate_known then v_input_total::bigint else null end,
         input_cache_read_tokens = v_request.input_cached_tokens,
         input_cache_write_tokens = null,
         input_standard_tokens = v_request.input_uncached_tokens,
         reasoning_tokens = null,
-        cache_usage_reporting = 'unavailable',
+        cache_usage_reporting = case
+          when v_input_aggregate_known then 'unavailable'
+          else null
+        end,
         incomplete_fields = case
           when v_cost is null then array['estimated_cost']::text[]
           else array[]::text[]

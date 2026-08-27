@@ -182,6 +182,81 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     }
   });
 
+  it("preserves the cost and derived-input cross product without inventing missing usage", async () => {
+    const billableUsageIncomplete = await insertHistorical({ usage_complete: false });
+    const billablePartial = await insertHistorical({
+      input_cached_tokens: null,
+      input_uncached_tokens: 3,
+      output_tokens: 5,
+    });
+    const unknownComplete = await insertHistorical({
+      status: "canceled",
+      provider_billable: null,
+      usage_complete: true,
+    });
+    const unknownPartial = await insertHistorical({
+      status: "canceled",
+      provider_billable: null,
+      input_cached_tokens: 2,
+      input_uncached_tokens: null,
+      output_tokens: null,
+    });
+    const unknownAbsent = await insertHistorical({
+      status: "abandoned",
+      provider_billable: null,
+      input_cached_tokens: null,
+      input_uncached_tokens: null,
+      output_tokens: null,
+    });
+    const unbilledAbsent = await insertHistorical({
+      status: "released", quota_charged: false, provider_billable: false,
+      usage_complete: false, attempt_count: 0, provider_started_at: null,
+      input_cached_tokens: null, input_uncached_tokens: null, output_tokens: null,
+    });
+    const unbilledZero = await insertHistorical({
+      status: "released", quota_charged: false, provider_billable: false,
+      usage_complete: false, attempt_count: 0, provider_started_at: null,
+      input_cached_tokens: 0, input_uncached_tokens: 0, output_tokens: 0,
+    });
+    runBackfill();
+
+    for (const reservationId of [
+      billableUsageIncomplete, billablePartial, unknownComplete, unknownPartial,
+      unknownAbsent,
+    ]) {
+      const row = await read(reservationId);
+      expect(row.known_estimated_cost_nanos).toBeNull();
+      expect(row.estimated_cost_nanos).toBeNull();
+      expect(row.incomplete_fields).toEqual(["estimated_cost"]);
+    }
+    expect(await read(billableUsageIncomplete)).toMatchObject({
+      input_total_tokens: 5, cache_usage_reporting: "unavailable",
+    });
+    expect(await read(billablePartial)).toMatchObject({
+      input_total_tokens: null, input_cache_read_tokens: null,
+      input_standard_tokens: 3, cache_usage_reporting: null,
+    });
+    expect(await read(unknownComplete)).toMatchObject({
+      input_total_tokens: 5, cache_usage_reporting: "unavailable",
+    });
+    expect(await read(unknownPartial)).toMatchObject({
+      input_total_tokens: null, input_cache_read_tokens: 2,
+      input_standard_tokens: null, cache_usage_reporting: null,
+    });
+    expect(await read(unknownAbsent)).toMatchObject({
+      input_total_tokens: null, input_cache_read_tokens: null,
+      input_standard_tokens: null, cache_usage_reporting: null,
+    });
+    expect(await read(unbilledAbsent)).toMatchObject({
+      known_estimated_cost_nanos: 0, estimated_cost_nanos: 0,
+      input_total_tokens: null, cache_usage_reporting: null,
+    });
+    expect(await read(unbilledZero)).toMatchObject({
+      known_estimated_cost_nanos: 0, estimated_cost_nanos: 0,
+      input_total_tokens: 0, cache_usage_reporting: "unavailable",
+    });
+  });
+
   it("strictly excludes all three cutoff equalities, straddles, and non-exact model identity", async () => {
     const reservedEquality = await insertHistorical({ reserved_at: CUTOFF });
     const startedEquality = await insertHistorical({ provider_started_at: CUTOFF });
