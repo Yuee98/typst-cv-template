@@ -86,6 +86,27 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     return result.data!;
   }
 
+  function hostileReplaySql(mutation: string, expectedMessage: string) {
+    return String.raw`
+      begin;
+      set local session_replication_role = replica;
+      delete from public.ai_price_component_seal_intents where price_version_id = '${LEGACY_PRICE}'::uuid;
+      delete from public.ai_price_components where price_version_id = '${LEGACY_PRICE}'::uuid;
+      delete from public.ai_price_versions where id = '${LEGACY_PRICE}'::uuid;
+      set local session_replication_role = origin;
+      ${mutation}
+      do $$ begin
+        begin
+          perform public.backfill_deepseek_legacy_pricing_v1();
+          raise exception 'expected hostile replay rejection';
+        exception when others then
+          if sqlstate <> '23514' or sqlerrm not like ${`'%${expectedMessage}%'`} then raise; end if;
+        end;
+      end $$;
+      rollback;
+    `;
+  }
+
   it("writes the approved price evidence and the complete eligible-class truth table", async () => {
     const billed = await insertHistorical();
     const unbilled = await insertHistorical({
@@ -306,7 +327,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     expect((await read(bare)).route_schema_version).toBeNull();
   });
 
-  it("aborts the whole transaction for contradictions, conservation overflow, and pre-existing price collisions", async () => {
+  it("aborts the whole transaction for contradictory semantics and arithmetic overflow", async () => {
     const good = await insertHistorical();
     await insertHistorical({
       status: "released",
@@ -331,6 +352,23 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     });
     runBackfill({ expectFailure: true });
     expect((await read(overflowing)).route_schema_version).toBeNull();
+  });
+
+  it("rejects hostile legacy price catalog replays atomically and restores the canonical catalog", async () => {
+    const good = await insertHistorical();
+    const header = String.raw`insert into public.ai_price_versions (id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,valid_to,provider_effective_from,provider_effective_to,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${LEGACY_PRICE}'::uuid,'${LEGACY_PROFILE}'::uuid,'legacy',1,'CNY','linear_token_v1','-infinity','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z','https://web.archive.org/web/20260814163114id_/https://api-docs.deepseek.com/zh-cn/quick_start/pricing/','2026-08-25T16:42:19.348Z','2bab2555968333b6e0a6e9f04c5427880f36fba491d95790c3f44261e00c7d07','{}');`;
+    const cases = [
+      [header.replace("'CNY'", "'USD'"), "legacy price projection mismatch"],
+      [String.raw`insert into public.ai_price_versions (id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,valid_to,provider_effective_from,provider_effective_to,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${LEGACY_PRICE}'::uuid,'${LEGACY_PROFILE}'::uuid,'legacy',2,'CNY','linear_token_v1','-infinity','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z','https://example.invalid/a',now(),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}'),('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4','${LEGACY_PROFILE}'::uuid,'legacy',1,'CNY','linear_token_v1','-infinity','2026-08-16T16:00:00Z',null,'2026-08-16T16:00:00Z','https://example.invalid/b',now(),'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}');`, "UUID or natural identity collision"],
+      [header + String.raw`insert into public.ai_price_components values ('${LEGACY_PRICE}'::uuid,'input_cache_read',20000000);`, "components or seal mismatch"],
+      [header + String.raw`insert into public.ai_price_components values ('${LEGACY_PRICE}'::uuid,'input_cache_read',20000000),('${LEGACY_PRICE}'::uuid,'input_standard',1000000000),('${LEGACY_PRICE}'::uuid,'input_cache_write',0),('${LEGACY_PRICE}'::uuid,'output',2000000000); select public.seal_ai_price_components_v1(array['${LEGACY_PRICE}'::uuid],clock_timestamp());`, "components or seal mismatch"],
+    ] as const;
+    for (const [mutation, message] of cases) {
+      expect(runOwnerSql(hostileReplaySql(mutation, message)).status).toBe(0);
+      expect((await read(good)).route_schema_version).toBeNull();
+      const catalog = await service.from("ai_price_versions").select("id").eq("id", LEGACY_PRICE);
+      expect(catalog.data).toHaveLength(1);
+    }
   });
 
   it("is an exact replay and keeps the helper private to the database owner", async () => {
