@@ -76,27 +76,56 @@ interface LifecycleEvidenceRoot {
   recheckedAt: string;
 }
 
+interface LifecycleEvidenceReadback extends LifecycleEvidenceRoot {
+  observedAt: string;
+  ready: boolean;
+}
+
 function ownerLifecycleEvidenceRoot(
   fixture: Pick<
     SettlementRouteFixture,
     "runtimeContractId" | "runtimeContractSha256" | "priceVersionId"
   >,
 ): LifecycleEvidenceRoot {
+  // Docker/VM clocks can step backwards between owner sessions. Keep the
+  // catalog-derived evidence time and wait boundedly for the DB clock to catch
+  // up instead of forging an earlier timestamp or weakening the validator.
   const result = runOwnerSql(String.raw`
     \pset format unaligned
     \pset tuples_only on
+    with evidence as materialized (
+      select
+        root.reviewed_source_commit_oid,
+        greatest(root.created_at, price.source_checked_at) as rechecked_at
+      from public.ai_service_runtime_contract_versions as root
+      join public.ai_price_versions as price
+        on price.id = '${fixture.priceVersionId}'::uuid
+      where root.runtime_contract_id = '${fixture.runtimeContractId}'
+        and root.runtime_contract_sha256 = '${fixture.runtimeContractSha256}'
+    ), waited as materialized (
+      select pg_catalog.pg_sleep(
+        case
+          when evidence.rechecked_at > pg_catalog.clock_timestamp() then
+            least(
+              pg_catalog.date_part(
+                'epoch',
+                evidence.rechecked_at - pg_catalog.clock_timestamp()
+              ) + 0.01,
+              2.0
+            )
+          else 0
+        end
+      )
+      from evidence
+    )
     select pg_catalog.jsonb_build_object(
-      'reviewedSourceCommitOid', root.reviewed_source_commit_oid,
-      'recheckedAt', case
-        when root.created_at >= price.source_checked_at then root.created_at
-        else price.source_checked_at
-      end
+      'reviewedSourceCommitOid', evidence.reviewed_source_commit_oid,
+      'recheckedAt', evidence.rechecked_at,
+      'observedAt', pg_catalog.clock_timestamp(),
+      'ready', evidence.rechecked_at <= pg_catalog.clock_timestamp()
     )::text
-    from public.ai_service_runtime_contract_versions as root
-    join public.ai_price_versions as price
-      on price.id = '${fixture.priceVersionId}'::uuid
-    where root.runtime_contract_id = '${fixture.runtimeContractId}'
-      and root.runtime_contract_sha256 = '${fixture.runtimeContractSha256}';
+    from evidence
+    cross join waited;
   `);
   const line = result.stdout
     .split(/\r?\n/u)
@@ -105,14 +134,21 @@ function ownerLifecycleEvidenceRoot(
   if (line === undefined) {
     throw new Error(`settlement lifecycle evidence is missing: ${result.stdout}`);
   }
-  const parsed = JSON.parse(line) as Partial<LifecycleEvidenceRoot>;
+  const parsed = JSON.parse(line) as Partial<LifecycleEvidenceReadback>;
   if (
     typeof parsed.reviewedSourceCommitOid !== "string" ||
-    typeof parsed.recheckedAt !== "string"
+    typeof parsed.recheckedAt !== "string" ||
+    typeof parsed.observedAt !== "string" ||
+    parsed.ready !== true
   ) {
-    throw new Error("settlement lifecycle evidence has an invalid owner readback");
+    throw new Error(
+      `settlement lifecycle evidence has an invalid owner readback: ${line}`,
+    );
   }
-  return parsed as LifecycleEvidenceRoot;
+  return {
+    reviewedSourceCommitOid: parsed.reviewedSourceCommitOid,
+    recheckedAt: parsed.recheckedAt,
+  };
 }
 
 export function observedUsage(
