@@ -939,6 +939,27 @@ feature-config pointer 只能指向 `canary|active` policy，不再接受仅 `va
 
 audited operator RPC 落地后，`service_role` 失去 routing-policy/provider-profile/price/legal lifecycle 与 feature-config pointer 的直接 `UPDATE` 权；只获得 pinned `search_path` 的 `SECURITY DEFINER` operator function `EXECUTE`，每次必须带 actor、reason 与 evidence hashes。所有多对象 lifecycle 操作统一锁序：
 
+DB-013 的 public operator surface 固定为九个、无 overload/default/JSON
+operation-dispatch 的 audited RPC。其中 activation remediation 新增三个窄边界：
+`seal_ai_price_for_activation_v1`、
+`transition_ai_provider_profile_version_v1` 与
+`create_ai_routing_policy_version_v1`。它们均只接受已经注册且 sealed 的 exact
+runtime `(id, sha256)`；不注册 runtime、不选择 latest/default、不创建 price/profile
+事实，也不 enable AI。CFG-003 是 policy 的业务内容 authority：它提供 exact policy
+ID/key/version/timezone/rules/default route/legal bundle/config hash/runtime pair；DB-013
+只在候选行尚未 insert 时 discovery-validate 该内容、锁住依赖并持久化同值 draft。
+
+activation price seal 不以 `rechecked_sha256 = source_snapshot_sha256` 判定事实相等：
+两个 hash 分别标识新的 fetch evidence 与 immutable snapshot，字节相等既非必要也非充分。
+调用者必须交付 source URL、currency、calculator、provider-effective bounds、parameters
+及完整 component object；DB 在 numeric conversion 前拒绝非 string、非 canonical
+non-negative decimal、溢出、unknown/missing component，再与 locked immutable typed facts
+逐项精确比较。差异只能通过新 price version 与后续新 policy target 表达。profile promotion
+仅允许 `draft -> validated`、`validated -> canary|active`、`canary -> active`；retirement
+仍由独立 audited wrapper 处理。price seal、profile transition、policy create 各写一条最后
+insert 的 audit，分别记录新 seal timestamp、from/to status 或新 policy ID，且所有无关
+delta 均为 NULL。
+
 ```text
 ai_feature_config
 -> routing policies by UUID

@@ -22,7 +22,8 @@ create table public.ai_routing_lifecycle_audit (
   audit_id uuid primary key default extensions.gen_random_uuid(),
   operation text not null check (operation in (
     'policy_transition', 'pointer_set', 'pointer_clear',
-    'profile_version_retire', 'profile_retire', 'price_close'
+    'profile_version_retire', 'profile_retire', 'price_close',
+    'price_seal', 'profile_version_transition', 'policy_create'
   )),
   policy_version_id uuid null references public.ai_routing_policy_versions(id),
   profile_id uuid null references public.ai_provider_profiles(id),
@@ -38,6 +39,8 @@ create table public.ai_routing_lifecycle_audit (
   new_retired_at timestamptz null,
   old_valid_to timestamptz null,
   new_valid_to timestamptz null,
+  old_components_sealed_at timestamptz null,
+  new_components_sealed_at timestamptz null,
   runtime_contract_id text not null check (
     runtime_contract_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'
   ),
@@ -56,34 +59,58 @@ create table public.ai_routing_lifecycle_audit (
       and profile_id is null and profile_version_id is null and price_version_id is null
       and old_active_policy_version_id is null and new_active_policy_version_id is null
       and old_config_generation is null and new_config_generation is null
-      and old_retired_at is null and new_retired_at is null and old_valid_to is null and new_valid_to is null)
+      and old_retired_at is null and new_retired_at is null and old_valid_to is null and new_valid_to is null
+      and old_components_sealed_at is null and new_components_sealed_at is null)
     or (operation = 'pointer_set'
       and policy_version_id is not null and from_status is null and to_status is null
       and new_active_policy_version_id = policy_version_id and new_active_policy_version_id is not null
       and old_config_generation is not null and new_config_generation = old_config_generation + 1
       and profile_id is null and profile_version_id is null and price_version_id is null
-      and old_retired_at is null and new_retired_at is null and old_valid_to is null and new_valid_to is null)
+      and old_retired_at is null and new_retired_at is null and old_valid_to is null and new_valid_to is null
+      and old_components_sealed_at is null and new_components_sealed_at is null)
     or (operation = 'pointer_clear'
       and policy_version_id is not null and from_status is null and to_status is null
       and old_active_policy_version_id = policy_version_id and new_active_policy_version_id is null
       and old_config_generation is not null and new_config_generation = old_config_generation + 1
       and profile_id is null and profile_version_id is null and price_version_id is null
-      and old_retired_at is null and new_retired_at is null and old_valid_to is null and new_valid_to is null)
+      and old_retired_at is null and new_retired_at is null and old_valid_to is null and new_valid_to is null
+      and old_components_sealed_at is null and new_components_sealed_at is null)
     or (operation = 'profile_version_retire'
       and profile_version_id is not null and old_retired_at is null and new_retired_at is not null
       and policy_version_id is null and profile_id is null and price_version_id is null
       and from_status is null and to_status is null and old_active_policy_version_id is null and new_active_policy_version_id is null
-      and old_config_generation is null and new_config_generation is null and old_valid_to is null and new_valid_to is null)
+      and old_config_generation is null and new_config_generation is null and old_valid_to is null and new_valid_to is null
+      and old_components_sealed_at is null and new_components_sealed_at is null)
     or (operation = 'profile_retire'
       and profile_id is not null and old_retired_at is null and new_retired_at is not null
       and policy_version_id is null and profile_version_id is null and price_version_id is null
       and from_status is null and to_status is null and old_active_policy_version_id is null and new_active_policy_version_id is null
-      and old_config_generation is null and new_config_generation is null and old_valid_to is null and new_valid_to is null)
+      and old_config_generation is null and new_config_generation is null and old_valid_to is null and new_valid_to is null
+      and old_components_sealed_at is null and new_components_sealed_at is null)
     or (operation = 'price_close'
       and price_version_id is not null and old_valid_to is null and new_valid_to is not null
       and policy_version_id is null and profile_id is null and profile_version_id is null
       and from_status is null and to_status is null and old_active_policy_version_id is null and new_active_policy_version_id is null
-      and old_config_generation is null and new_config_generation is null and old_retired_at is null and new_retired_at is null)
+      and old_config_generation is null and new_config_generation is null and old_retired_at is null and new_retired_at is null
+      and old_components_sealed_at is null and new_components_sealed_at is null)
+    or (operation = 'price_seal'
+      and price_version_id is not null and old_components_sealed_at is null and new_components_sealed_at is not null
+      and policy_version_id is null and profile_id is null and profile_version_id is null
+      and from_status is null and to_status is null and old_active_policy_version_id is null and new_active_policy_version_id is null
+      and old_config_generation is null and new_config_generation is null and old_retired_at is null and new_retired_at is null
+      and old_valid_to is null and new_valid_to is null)
+    or (operation = 'profile_version_transition'
+      and profile_version_id is not null and from_status is not null and to_status is not null
+      and policy_version_id is null and profile_id is null and price_version_id is null
+      and old_active_policy_version_id is null and new_active_policy_version_id is null
+      and old_config_generation is null and new_config_generation is null and old_retired_at is null and new_retired_at is null
+      and old_valid_to is null and new_valid_to is null and old_components_sealed_at is null and new_components_sealed_at is null)
+    or (operation = 'policy_create'
+      and policy_version_id is not null
+      and profile_id is null and profile_version_id is null and price_version_id is null
+      and from_status is null and to_status is null and old_active_policy_version_id is null and new_active_policy_version_id is null
+      and old_config_generation is null and new_config_generation is null and old_retired_at is null and new_retired_at is null
+      and old_valid_to is null and new_valid_to is null and old_components_sealed_at is null and new_components_sealed_at is null)
   )
 );
 
@@ -433,5 +460,224 @@ begin
 end; $$;
 revoke all on function public.close_ai_price_version_v1(uuid,timestamptz,uuid,text,text,text,text,text,text,timestamptz,text) from public,anon,authenticated,service_role;
 grant execute on function public.close_ai_price_version_v1(uuid,timestamptz,uuid,text,text,text,text,text,text,timestamptz,text) to service_role;
+
+-- The new activation edges share one narrow projection check.  This is not a
+-- runtime selector: callers must supply an already sealed exact root, and the
+-- helper only proves that that root covers the locked profile-version's legal
+-- manifest. The common evidence helper already holds that exact root FOR
+-- SHARE; sealed memberships are immutable and their projection FK already
+-- points at the immutable exact runtime target. Therefore this narrow helper
+-- need not repeat a target join. DB-007's policy validator still explicitly
+-- joins the target projection when it validates a full routing policy.
+create function public.assert_ai_routing_lifecycle_runtime_profile_coverage_v1(
+  p_runtime_contract_id text,
+  p_runtime_contract_sha256 text,
+  p_profile_id uuid,
+  p_profile_version_id uuid
+) returns void language plpgsql security definer set search_path='' as $$
+declare v_profile public.ai_provider_profiles%rowtype; v_version public.ai_provider_profile_versions%rowtype; v_manifest_sha256 text;
+begin
+  select * into v_profile from public.ai_provider_profiles where id=p_profile_id;
+  select * into v_version from public.ai_provider_profile_versions where id=p_profile_version_id;
+  select manifest_sha256 into v_manifest_sha256 from public.ai_legal_manifest_versions where legal_manifest_id=v_version.legal_manifest_id;
+  if not found or v_profile.id is null or v_version.id is null or v_version.profile_id is distinct from v_profile.id
+     or not exists (
+       select 1
+       from public.ai_service_runtime_contract_versions as root
+       join public.ai_legal_bundle_versions as bundle
+         on bundle.legal_bundle_version=root.legal_bundle_version
+        and bundle.bundle_contract_sha256=root.bundle_contract_sha256
+       join public.ai_legal_bundle_manifests as bundle_manifest
+         on bundle_manifest.legal_bundle_version=root.legal_bundle_version
+       join public.ai_service_runtime_contract_targets as membership
+         on membership.runtime_contract_id=root.runtime_contract_id
+        and membership.runtime_contract_sha256=root.runtime_contract_sha256
+        and membership.profile_key=v_profile.profile_key
+        and membership.legal_manifest_id=bundle_manifest.legal_manifest_id
+        and membership.manifest_sha256=bundle_manifest.manifest_sha256
+       where root.runtime_contract_id=p_runtime_contract_id
+         and root.runtime_contract_sha256=p_runtime_contract_sha256
+         and root.sealed_at is not null
+         and bundle.sealed_at is not null
+         and bundle_manifest.legal_manifest_id=v_version.legal_manifest_id
+         and bundle_manifest.manifest_sha256=v_manifest_sha256
+     ) then
+    raise exception 'routing lifecycle runtime does not cover the exact profile legal manifest' using errcode='23514';
+  end if;
+end; $$;
+revoke execute on function public.assert_ai_routing_lifecycle_runtime_profile_coverage_v1(text,text,uuid,uuid)
+  from public, anon, authenticated, service_role;
+
+create function public.seal_ai_price_for_activation_v1(
+  p_price_version_id uuid,
+  p_rechecked_source_url text,
+  p_rechecked_currency text,
+  p_rechecked_calculator_kind text,
+  p_rechecked_provider_effective_from timestamptz,
+  p_rechecked_provider_effective_to timestamptz,
+  p_rechecked_parameters jsonb,
+  p_rechecked_components jsonb,
+  p_runtime_contract_id text,
+  p_runtime_contract_sha256 text,
+  p_actor text,
+  p_reason text,
+  p_reviewed_source_commit_oid text,
+  p_reviewed_source_sha256 text,
+  p_rechecked_at timestamptz,
+  p_rechecked_sha256 text
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare
+  v_price public.ai_price_versions%rowtype;
+  v_version public.ai_provider_profile_versions%rowtype;
+  v_profile public.ai_provider_profiles%rowtype;
+  v_component record;
+  v_component_count bigint;
+  v_rechecked_component_count bigint;
+  v_sealed_at timestamptz;
+  v_at timestamptz:=pg_catalog.clock_timestamp();
+  v_id uuid;
+begin
+  perform pg_catalog.set_config('lock_timeout','5s',true);
+  perform 1 from public.ai_feature_config where id=true for update;
+  if not found then raise exception 'ai feature config singleton is missing' using errcode='23514'; end if;
+  if p_price_version_id is null or p_rechecked_components is null or pg_catalog.jsonb_typeof(p_rechecked_components)<>'object' then
+    raise exception 'price activation requires an exact component object' using errcode='23514';
+  end if;
+  perform public.assert_ai_routing_lifecycle_evidence_v1(p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at);
+  select profile_version_id into v_version.id from public.ai_price_versions where id=p_price_version_id;
+  if not found then raise exception 'activation price does not exist' using errcode='23503'; end if;
+  select profile_id into v_profile.id from public.ai_provider_profile_versions where id=v_version.id;
+  if not found then raise exception 'activation price profile version does not exist' using errcode='23503'; end if;
+  select * into v_profile from public.ai_provider_profiles where id=v_profile.id for share;
+  select * into v_version from public.ai_provider_profile_versions where id=v_version.id for share;
+  if not found or v_profile.retired_at is not null or v_version.profile_id is distinct from v_profile.id
+     or v_version.retired_at is not null or v_version.status='retired' then
+    raise exception 'activation price profile is retired or inconsistent' using errcode='23514';
+  end if;
+  perform public.assert_ai_routing_lifecycle_runtime_profile_coverage_v1(p_runtime_contract_id,p_runtime_contract_sha256,v_profile.id,v_version.id);
+  select * into v_price from public.ai_price_versions where id=p_price_version_id for update;
+  if not found or v_price.profile_version_id is distinct from v_version.id or v_price.pricing_lane='legacy'
+     or v_price.valid_to is not null or v_price.components_sealed_at is not null
+     or v_price.source_checked_at is null or p_rechecked_at<v_price.source_checked_at
+     or p_rechecked_source_url is distinct from v_price.source_url
+     or p_rechecked_currency is distinct from v_price.currency
+     or p_rechecked_calculator_kind is distinct from v_price.calculator_kind
+     or p_rechecked_provider_effective_from is distinct from v_price.provider_effective_from
+     or p_rechecked_provider_effective_to is distinct from v_price.provider_effective_to
+     or p_rechecked_parameters is distinct from v_price.parameters then
+    raise exception 'activation price facts do not exactly match the immutable price version' using errcode='23514';
+  end if;
+  select count(*) into v_component_count from public.ai_price_components where price_version_id=v_price.id;
+  select count(*) into v_rechecked_component_count from pg_catalog.jsonb_each(p_rechecked_components);
+  if v_rechecked_component_count<>v_component_count then
+    raise exception 'activation price components are missing or extra' using errcode='23514';
+  end if;
+  for v_component in select key,value from pg_catalog.jsonb_each(p_rechecked_components) loop
+    if pg_catalog.jsonb_typeof(v_component.value)<>'string'
+       or (v_component.value #>> '{}') !~ '^(0|[1-9][0-9]*)$'
+       or pg_catalog.length(v_component.value #>> '{}')>19
+       or (pg_catalog.length(v_component.value #>> '{}')=19 and (v_component.value #>> '{}')>'9223372036854775807')
+       or not exists (
+         select 1 from public.ai_price_components as component
+         where component.price_version_id=v_price.id and component.component=v_component.key
+           and component.nanos_per_million::text=(v_component.value #>> '{}')
+       ) then
+      raise exception 'activation price components do not exactly match the locked component set' using errcode='23514';
+    end if;
+  end loop;
+  perform public.assert_ai_price_structure_v1(v_price.id);
+  perform public.seal_ai_price_components_v1(array[v_price.id],greatest(pg_catalog.clock_timestamp(),v_price.created_at));
+  select components_sealed_at into v_sealed_at from public.ai_price_versions where id=v_price.id;
+  if v_sealed_at is null then raise exception 'activation price seal was not persisted' using errcode='23514'; end if;
+  insert into public.ai_routing_lifecycle_audit(
+    operation,price_version_id,old_components_sealed_at,new_components_sealed_at,
+    runtime_contract_id,runtime_contract_sha256,actor,reason,reviewed_source_commit_oid,reviewed_source_sha256,
+    rechecked_at,rechecked_sha256,occurred_at,transaction_id
+  ) values (
+    'price_seal',v_price.id,null,v_sealed_at,p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,
+    p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at,pg_catalog.txid_current()
+  ) returning audit_id into v_id;
+  return v_id;
+end; $$;
+revoke all on function public.seal_ai_price_for_activation_v1(uuid,text,text,text,timestamptz,timestamptz,jsonb,jsonb,text,text,text,text,text,text,timestamptz,text) from public,anon,authenticated,service_role;
+grant execute on function public.seal_ai_price_for_activation_v1(uuid,text,text,text,timestamptz,timestamptz,jsonb,jsonb,text,text,text,text,text,text,timestamptz,text) to service_role;
+
+create function public.transition_ai_provider_profile_version_v1(
+  p_profile_version_id uuid,p_to_status text,p_runtime_contract_id text,p_runtime_contract_sha256 text,
+  p_actor text,p_reason text,p_reviewed_source_commit_oid text,p_reviewed_source_sha256 text,
+  p_rechecked_at timestamptz,p_rechecked_sha256 text
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare v_profile public.ai_provider_profiles%rowtype; v_version public.ai_provider_profile_versions%rowtype; v_updated public.ai_provider_profile_versions%rowtype; v_at timestamptz:=pg_catalog.clock_timestamp(); v_id uuid;
+begin
+  perform pg_catalog.set_config('lock_timeout','5s',true);
+  perform 1 from public.ai_feature_config where id=true for update;
+  if not found then raise exception 'ai feature config singleton is missing' using errcode='23514'; end if;
+  perform public.assert_ai_routing_lifecycle_evidence_v1(p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at);
+  select profile_id into v_profile.id from public.ai_provider_profile_versions where id=p_profile_version_id;
+  if not found then raise exception 'profile promotion target does not exist' using errcode='23503'; end if;
+  select * into v_profile from public.ai_provider_profiles where id=v_profile.id for share;
+  select * into v_version from public.ai_provider_profile_versions where id=p_profile_version_id for update;
+  if not found or v_profile.retired_at is not null or v_version.profile_id is distinct from v_profile.id
+     or v_version.retired_at is not null or v_version.status='retired'
+     or (v_version.status,p_to_status) not in (('draft','validated'),('validated','canary'),('validated','active'),('canary','active')) then
+    raise exception 'invalid non-retirement profile version promotion' using errcode='23514';
+  end if;
+  perform public.assert_ai_routing_lifecycle_runtime_profile_coverage_v1(p_runtime_contract_id,p_runtime_contract_sha256,v_profile.id,v_version.id);
+  update public.ai_provider_profile_versions set status=p_to_status where id=v_version.id returning * into v_updated;
+  if not found or v_updated.status is distinct from p_to_status then raise exception 'profile version promotion was not applied exactly once' using errcode='23514'; end if;
+  select public.insert_ai_routing_lifecycle_audit_v1('profile_version_transition',null,null,v_version.id,null,v_version.status,p_to_status,null,null,null,null,null,null,null,null,p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at) into v_id;
+  return v_id;
+end; $$;
+revoke all on function public.transition_ai_provider_profile_version_v1(uuid,text,text,text,text,text,text,text,timestamptz,text) from public,anon,authenticated,service_role;
+grant execute on function public.transition_ai_provider_profile_version_v1(uuid,text,text,text,text,text,text,text,timestamptz,text) to service_role;
+
+create function public.create_ai_routing_policy_version_v1(
+  p_policy_version_id uuid,p_policy_key text,p_version integer,p_timezone text,p_rules jsonb,p_default_profile_version_id uuid,
+  p_legal_bundle_version text,p_config_sha256 text,p_runtime_contract_id text,p_runtime_contract_sha256 text,
+  p_actor text,p_reason text,p_reviewed_source_commit_oid text,p_reviewed_source_sha256 text,p_rechecked_at timestamptz,p_rechecked_sha256 text
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare v_candidate public.ai_routing_policy_versions%rowtype; v_persisted public.ai_routing_policy_versions%rowtype; v_at timestamptz:=pg_catalog.clock_timestamp(); v_id uuid;
+begin
+  perform pg_catalog.set_config('lock_timeout','5s',true);
+  perform 1 from public.ai_feature_config where id=true for update;
+  if not found then raise exception 'ai feature config singleton is missing' using errcode='23514'; end if;
+  if p_policy_version_id is null or p_policy_key is null or p_policy_key !~ '^[a-z0-9][a-z0-9._-]*$'
+     or p_version is null or p_version<=0 or p_timezone is distinct from 'Asia/Shanghai'
+     or p_rules is null or pg_catalog.jsonb_typeof(p_rules)<>'object' or p_default_profile_version_id is null
+     or p_legal_bundle_version is null or pg_catalog.length(pg_catalog.btrim(p_legal_bundle_version))=0
+     or p_config_sha256 is null or p_config_sha256 !~ '^[0-9a-f]{64}$' then
+    raise exception 'invalid draft routing policy authoring input' using errcode='23514';
+  end if;
+  perform public.assert_ai_routing_lifecycle_evidence_v1(p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at);
+  v_candidate.id:=p_policy_version_id;
+  v_candidate.policy_key:=p_policy_key;
+  v_candidate.version:=p_version;
+  v_candidate.status:='validated';
+  v_candidate.timezone:=p_timezone;
+  v_candidate.rules:=p_rules;
+  v_candidate.default_profile_version_id:=p_default_profile_version_id;
+  v_candidate.legal_bundle_version:=p_legal_bundle_version;
+  v_candidate.config_sha256:=p_config_sha256;
+  v_candidate.runtime_contract_id:=p_runtime_contract_id;
+  v_candidate.runtime_contract_sha256:=p_runtime_contract_sha256;
+  v_candidate.created_at:=v_at;
+  perform public.lock_and_validate_ai_routing_policy_row_v1(v_candidate,'validated',v_at);
+  perform public.assert_ai_routing_lifecycle_selected_price_evidence_v1(v_candidate,p_rechecked_at);
+  insert into public.ai_routing_policy_versions(
+    id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,config_sha256,runtime_contract_id,runtime_contract_sha256,created_at
+  ) values (
+    p_policy_version_id,p_policy_key,p_version,'draft',p_timezone,p_rules,p_default_profile_version_id,p_legal_bundle_version,p_config_sha256,p_runtime_contract_id,p_runtime_contract_sha256,v_at
+  ) returning * into v_persisted;
+  select * into v_persisted from public.ai_routing_policy_versions where id=p_policy_version_id for update;
+  if not found or v_persisted.status<>'draft'
+     or (v_persisted.id,v_persisted.policy_key,v_persisted.version,v_persisted.timezone,v_persisted.rules,v_persisted.default_profile_version_id,v_persisted.legal_bundle_version,v_persisted.config_sha256,v_persisted.runtime_contract_id,v_persisted.runtime_contract_sha256,v_persisted.created_at)
+        is distinct from (p_policy_version_id,p_policy_key,p_version,p_timezone,p_rules,p_default_profile_version_id,p_legal_bundle_version,p_config_sha256,p_runtime_contract_id,p_runtime_contract_sha256,v_at) then
+    raise exception 'persisted draft policy differs from the validated authored candidate' using errcode='23514';
+  end if;
+  select public.insert_ai_routing_lifecycle_audit_v1('policy_create',v_persisted.id,null,null,null,null,null,null,null,null,null,null,null,null,null,p_runtime_contract_id,p_runtime_contract_sha256,p_actor,p_reason,p_reviewed_source_commit_oid,p_reviewed_source_sha256,p_rechecked_at,p_rechecked_sha256,v_at) into v_id;
+  return v_id;
+end; $$;
+revoke all on function public.create_ai_routing_policy_version_v1(uuid,text,integer,text,jsonb,uuid,text,text,text,text,text,text,text,text,timestamptz,text) from public,anon,authenticated,service_role;
+grant execute on function public.create_ai_routing_policy_version_v1(uuid,text,integer,text,jsonb,uuid,text,text,text,text,text,text,text,text,timestamptz,text) to service_role;
 
 commit;

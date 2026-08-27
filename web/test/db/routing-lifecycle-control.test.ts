@@ -35,6 +35,10 @@ interface Fixture {
   runtimeContractId: string;
   runtimeContractSha256: string;
   runtimeTargetId: string;
+  sourceUrl: string;
+  createdPolicyIds: string[];
+  additionalRuntimeContractIds: string[];
+  additionalRuntimeTargetIds: string[];
 }
 
 function migrationSource(): string {
@@ -64,6 +68,9 @@ describe("DB-013 lifecycle-control migration contract", () => {
       "retire_ai_provider_profile_version_v1",
       "retire_ai_provider_profile_v1",
       "close_ai_price_version_v1",
+      "seal_ai_price_for_activation_v1",
+      "transition_ai_provider_profile_version_v1",
+      "create_ai_routing_policy_version_v1",
     ];
 
     for (const wrapper of wrappers) {
@@ -92,7 +99,11 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
   });
 
   async function fixture(
-    options: { malformedRules?: boolean } = {},
+    options: {
+      malformedRules?: boolean;
+      profileStatus?: "draft" | "validated";
+      sealPrice?: boolean;
+    } = {},
   ): Promise<Fixture> {
     const suffix = crypto.randomUUID();
     const profileId = crypto.randomUUID();
@@ -100,6 +111,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     const priceVersionId = crypto.randomUUID();
     const policyVersionId = crypto.randomUUID();
     const profileKey = `db013.control.${suffix}`;
+    const sourceUrl = `https://example.com/${suffix}`;
     const runtime = authorSyntheticRuntimeContract({ profileKey });
 
     const rulesSql = options.malformedRules
@@ -122,14 +134,14 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
         'deepseek-v4-flash', 'polish_v2', 'automatic_cache_v1',
         '${DEEPSEEK_LEGAL_MANIFEST_ID}', 'deepseek.official', '{}'::jsonb, '${"a".repeat(64)}'
       );
-      update public.ai_provider_profile_versions set status = 'validated'
-      where id = '${profileVersionId}'::uuid;
+      ${options.profileStatus === "draft" ? "" : `update public.ai_provider_profile_versions set status = 'validated'
+      where id = '${profileVersionId}'::uuid;`}
       insert into public.ai_price_versions (
         id, profile_version_id, version, pricing_lane, currency, calculator_kind,
         valid_from, source_url, source_checked_at, source_snapshot_sha256, parameters
       ) values (
         '${priceVersionId}', '${profileVersionId}', 1, 'default', 'CNY', 'linear_token_v1',
-        pg_catalog.clock_timestamp() - interval '2 hours', 'https://example.com/${suffix}',
+        pg_catalog.clock_timestamp() - interval '2 hours', '${sourceUrl}',
         pg_catalog.clock_timestamp() - interval '1 hour', '${"c".repeat(64)}', '{}'::jsonb
       );
       insert into public.ai_price_components (price_version_id, component, nanos_per_million)
@@ -144,7 +156,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       );
       commit;`);
     expect(result.status).toBe(0);
-    sealPriceAsDatabaseOwner(priceVersionId);
+    if (options.sealPrice !== false) sealPriceAsDatabaseOwner(priceVersionId);
     const created = {
       profileId,
       profileVersionId,
@@ -153,6 +165,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       runtimeContractId: runtime.runtimeContractId,
       runtimeContractSha256: runtime.runtimeContractSha256,
       runtimeTargetId: runtime.runtimeTargetId,
+      sourceUrl,
+      createdPolicyIds: [],
+      additionalRuntimeContractIds: [],
+      additionalRuntimeTargetIds: [],
     };
     fixtures.push(created);
     return created;
@@ -175,6 +191,18 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
   }
 
   function cleanup(f: Fixture): void {
+    const policyIds = [f.policyVersionId, ...f.createdPolicyIds]
+      .map((id) => `'${id}'::uuid`)
+      .join(", ");
+    const runtimeContractIds = [
+      f.runtimeContractId,
+      ...f.additionalRuntimeContractIds,
+    ]
+      .map((id) => `'${id}'`)
+      .join(", ");
+    const runtimeTargetIds = [f.runtimeTargetId, ...f.additionalRuntimeTargetIds]
+      .map((id) => `'${id}'`)
+      .join(", ");
     runOwnerSql(`begin;
       set local session_replication_role = replica;
       update public.ai_feature_config
@@ -182,16 +210,16 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
           routing_updated_by = null,
           routing_change_reason = null
       where id = true and active_routing_policy_version_id = '${f.policyVersionId}'::uuid;
-      delete from public.ai_routing_lifecycle_audit where policy_version_id = '${f.policyVersionId}'::uuid or profile_id = '${f.profileId}'::uuid or profile_version_id = '${f.profileVersionId}'::uuid or price_version_id = '${f.priceVersionId}'::uuid;
-      delete from public.ai_routing_policy_versions where id = '${f.policyVersionId}'::uuid;
+      delete from public.ai_routing_lifecycle_audit where policy_version_id = any(array[${policyIds}]) or profile_id = '${f.profileId}'::uuid or profile_version_id = '${f.profileVersionId}'::uuid or price_version_id = '${f.priceVersionId}'::uuid;
+      delete from public.ai_routing_policy_versions where id = any(array[${policyIds}]);
       delete from public.ai_price_component_seal_intents where price_version_id = '${f.priceVersionId}'::uuid;
       delete from public.ai_price_components where price_version_id = '${f.priceVersionId}'::uuid;
       delete from public.ai_price_versions where id = '${f.priceVersionId}'::uuid;
       delete from public.ai_provider_profile_versions where id = '${f.profileVersionId}'::uuid;
       delete from public.ai_provider_profiles where id = '${f.profileId}'::uuid;
-      delete from public.ai_service_runtime_contract_targets where runtime_contract_id = '${f.runtimeContractId}';
-      delete from public.ai_service_runtime_contract_versions where runtime_contract_id = '${f.runtimeContractId}';
-      delete from public.ai_service_runtime_target_versions where runtime_target_id = '${f.runtimeTargetId}';
+      delete from public.ai_service_runtime_contract_targets where runtime_contract_id = any(array[${runtimeContractIds}]);
+      delete from public.ai_service_runtime_contract_versions where runtime_contract_id = any(array[${runtimeContractIds}]);
+      delete from public.ai_service_runtime_target_versions where runtime_target_id = any(array[${runtimeTargetIds}]);
       set local session_replication_role = origin;
       commit;`);
   }
@@ -214,7 +242,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
               'clear_ai_routing_policy_pointer_v1',
               'retire_ai_provider_profile_version_v1',
               'retire_ai_provider_profile_v1',
-              'close_ai_price_version_v1'
+              'close_ai_price_version_v1',
+              'seal_ai_price_for_activation_v1',
+              'transition_ai_provider_profile_version_v1',
+              'create_ai_routing_policy_version_v1'
             )
         ),
         'securedOperatorFunctionCount', (
@@ -228,7 +259,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
               'clear_ai_routing_policy_pointer_v1',
               'retire_ai_provider_profile_version_v1',
               'retire_ai_provider_profile_v1',
-              'close_ai_price_version_v1'
+              'close_ai_price_version_v1',
+              'seal_ai_price_for_activation_v1',
+              'transition_ai_provider_profile_version_v1',
+              'create_ai_routing_policy_version_v1'
             )
             and p.prosecdef
             and p.proconfig = array['search_path=""']
@@ -250,7 +284,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
               'clear_ai_routing_policy_pointer_v1',
               'retire_ai_provider_profile_version_v1',
               'retire_ai_provider_profile_v1',
-              'close_ai_price_version_v1'
+              'close_ai_price_version_v1',
+              'seal_ai_price_for_activation_v1',
+              'transition_ai_provider_profile_version_v1',
+              'create_ai_routing_policy_version_v1'
             )
         ),
         'routeSnapshotGuard', (select pg_catalog.jsonb_build_object('prosecdef', p.prosecdef, 'proconfig', p.proconfig) from pg_catalog.pg_proc as p join pg_catalog.pg_namespace as n on n.oid=p.pronamespace where n.nspname='public' and p.proname='guard_ai_request_route_snapshot'),
@@ -314,13 +351,14 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
           'assert_ai_routing_lifecycle_no_policy_reference_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_no_policy_reference_v1(text,uuid,timestamptz)'::regprocedure, 'execute'),
           'assert_ai_routing_lifecycle_selected_price_evidence_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_selected_price_evidence_v1(public.ai_routing_policy_versions,timestamptz)'::regprocedure, 'execute'),
           'lock_ai_routing_lifecycle_profile_prices_v1', pg_catalog.has_function_privilege('service_role', 'public.lock_ai_routing_lifecycle_profile_prices_v1(uuid,uuid,timestamptz)'::regprocedure, 'execute'),
+          'assert_ai_routing_lifecycle_runtime_profile_coverage_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_runtime_profile_coverage_v1(text,text,uuid,uuid)'::regprocedure, 'execute'),
           'insert_ai_routing_lifecycle_audit_v1', pg_catalog.has_function_privilege('service_role', 'public.insert_ai_routing_lifecycle_audit_v1(text,uuid,uuid,uuid,uuid,text,text,uuid,uuid,bigint,bigint,timestamptz,timestamptz,timestamptz,timestamptz,text,text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute')
         )
       )::text;
     `) as Record<string, unknown>;
     expect(actual).toMatchObject({
-      operatorFunctionCount: 6,
-      securedOperatorFunctionCount: 6,
+      operatorFunctionCount: 9,
+      securedOperatorFunctionCount: 9,
       routeSnapshotGuard: {
         prosecdef: false,
         proconfig: ['search_path=""'],
@@ -380,6 +418,11 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
           "p_price_version_id uuid, p_valid_to timestamp with time zone, p_successor_price_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
+        name: "create_ai_routing_policy_version_v1",
+        arguments:
+          "p_policy_version_id uuid, p_policy_key text, p_version integer, p_timezone text, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_config_sha256 text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
         name: "retire_ai_provider_profile_v1",
         arguments:
           "p_profile_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
@@ -390,9 +433,19 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
           "p_profile_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
+        name: "seal_ai_price_for_activation_v1",
+        arguments:
+          "p_price_version_id uuid, p_rechecked_source_url text, p_rechecked_currency text, p_rechecked_calculator_kind text, p_rechecked_provider_effective_from timestamp with time zone, p_rechecked_provider_effective_to timestamp with time zone, p_rechecked_parameters jsonb, p_rechecked_components jsonb, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
         name: "set_ai_routing_policy_pointer_v1",
         arguments:
           "p_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      },
+      {
+        name: "transition_ai_provider_profile_version_v1",
+        arguments:
+          "p_profile_version_id uuid, p_to_status text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "transition_ai_routing_policy_v2",
@@ -406,6 +459,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       assert_ai_routing_lifecycle_no_policy_reference_v1: false,
       assert_ai_routing_lifecycle_selected_price_evidence_v1: false,
       lock_ai_routing_lifecycle_profile_prices_v1: false,
+      assert_ai_routing_lifecycle_runtime_profile_coverage_v1: false,
       insert_ai_routing_lifecycle_audit_v1: false,
     });
   });
@@ -451,6 +505,347 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       .single();
     expect(priceAfter.error).toBeNull();
     expect(priceAfter.data).toEqual(priceBefore.data);
+  });
+
+  it("rejects every typed price-fact mismatch without sealing or auditing", async () => {
+    const cases: Array<{
+      name: string;
+      override: (ev: Record<string, string>) => Record<string, unknown>;
+    }> = [
+      {
+        name: "source URL",
+        override: () => ({ p_rechecked_source_url: "https://example.com/changed" }),
+      },
+      { name: "currency", override: () => ({ p_rechecked_currency: "USD" }) },
+      {
+        name: "calculator kind",
+        override: () => ({ p_rechecked_calculator_kind: "different_calculator_v1" }),
+      },
+      {
+        name: "provider effective from",
+        override: () => ({ p_rechecked_provider_effective_from: "2020-01-01T00:00:00.000Z" }),
+      },
+      {
+        name: "provider effective to",
+        override: () => ({ p_rechecked_provider_effective_to: "2020-01-01T00:00:00.000Z" }),
+      },
+      {
+        name: "parameters",
+        override: () => ({ p_rechecked_parameters: { changed: true } }),
+      },
+      {
+        name: "missing component",
+        override: () => ({
+          p_rechecked_components: { input_standard: "1", output: "1" },
+        }),
+      },
+      {
+        name: "extra component",
+        override: () => ({
+          p_rechecked_components: {
+            input_standard: "1",
+            input_cache_read: "1",
+            input_cache_write: "1",
+            output: "1",
+          },
+        }),
+      },
+      {
+        name: "malformed decimal",
+        override: () => ({
+          p_rechecked_components: {
+            input_standard: "01",
+            input_cache_read: "1",
+            output: "1",
+          },
+        }),
+      },
+      {
+        name: "numeric component value",
+        override: () => ({
+          p_rechecked_components: {
+            input_standard: 1,
+            input_cache_read: "1",
+            output: "1",
+          },
+        }),
+      },
+      {
+        name: "null component value",
+        override: () => ({
+          p_rechecked_components: {
+            input_standard: null,
+            input_cache_read: "1",
+            output: "1",
+          },
+        }),
+      },
+      {
+        name: "negative decimal",
+        override: () => ({
+          p_rechecked_components: {
+            input_standard: "-1",
+            input_cache_read: "1",
+            output: "1",
+          },
+        }),
+      },
+      {
+        name: "bigint overflow",
+        override: () => ({
+          p_rechecked_components: {
+            input_standard: "9223372036854775808",
+            input_cache_read: "1",
+            output: "1",
+          },
+        }),
+      },
+      {
+        name: "stale recheck",
+        override: (ev: Record<string, string>) => ({
+          p_rechecked_at: new Date(
+            Date.parse(ev.p_rechecked_at) - 1,
+          ).toISOString(),
+        }),
+      },
+    ];
+
+    for (const item of cases) {
+      const f = await fixture({ profileStatus: "draft", sealPrice: false });
+      const ev = await evidence(f);
+      const result = await service.rpc("seal_ai_price_for_activation_v1", {
+        p_price_version_id: f.priceVersionId,
+        p_rechecked_source_url: f.sourceUrl,
+        p_rechecked_currency: "CNY",
+        p_rechecked_calculator_kind: "linear_token_v1",
+        p_rechecked_provider_effective_from: null,
+        p_rechecked_provider_effective_to: null,
+        p_rechecked_parameters: {},
+        p_rechecked_components: {
+          input_standard: "1",
+          input_cache_read: "1",
+          output: "1",
+        },
+        ...ev,
+        ...item.override(ev),
+      });
+      expect(result.error?.code, item.name).toMatch(/23514|P0001/u);
+      expect(
+        ownerJson(`select pg_catalog.jsonb_build_object('sealed', (select components_sealed_at is not null from public.ai_price_versions where id='${f.priceVersionId}'::uuid), 'audit', (select count(*) from public.ai_routing_lifecycle_audit where price_version_id='${f.priceVersionId}'::uuid))::text;`),
+        item.name,
+      ).toEqual({ sealed: false, audit: 0 });
+    }
+  });
+
+  it("seals exact refreshed price facts, promotes non-retired profiles, and authors a validated candidate before inserting its draft", async () => {
+    const f = await fixture({ profileStatus: "draft", sealPrice: false });
+    const ev = await evidence(f);
+    const priceArguments = {
+      p_price_version_id: f.priceVersionId,
+      p_rechecked_source_url: f.sourceUrl,
+      p_rechecked_currency: "CNY",
+      p_rechecked_calculator_kind: "linear_token_v1",
+      p_rechecked_provider_effective_from: null,
+      p_rechecked_provider_effective_to: null,
+      p_rechecked_parameters: {},
+      ...ev,
+    };
+
+    const sealed = await service.rpc("seal_ai_price_for_activation_v1", {
+      ...priceArguments,
+      p_rechecked_components: {
+        input_standard: "1",
+        input_cache_read: "1",
+        output: "1",
+      },
+    });
+    expect(sealed.error).toBeNull();
+    expect(sealed.data).toMatch(CANONICAL_UUID);
+
+    const promoted = await service.rpc(
+      "transition_ai_provider_profile_version_v1",
+      { p_profile_version_id: f.profileVersionId, p_to_status: "validated", ...ev },
+    );
+    expect(promoted.error).toBeNull();
+    expect(promoted.data).toMatch(CANONICAL_UUID);
+    expect(
+      (
+        await service.rpc("transition_ai_provider_profile_version_v1", {
+          p_profile_version_id: f.profileVersionId,
+          p_to_status: "draft",
+          ...ev,
+        })
+      ).error?.code,
+    ).toMatch(/23514|P0001/u);
+
+    const createdPolicyId = crypto.randomUUID();
+    f.createdPolicyIds.push(createdPolicyId);
+    const created = await service.rpc("create_ai_routing_policy_version_v1", {
+      p_policy_version_id: createdPolicyId,
+      p_policy_key: `db013.created.${crypto.randomUUID()}`,
+      p_version: 1,
+      p_timezone: "Asia/Shanghai",
+      p_rules: {
+        schemaVersion: "routing_rules_v1",
+        defaultRoute: {
+          profileVersionId: f.profileVersionId,
+          priceVersionId: f.priceVersionId,
+        },
+        windows: [],
+      },
+      p_default_profile_version_id: f.profileVersionId,
+      p_legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+      p_config_sha256: "e".repeat(64),
+      ...ev,
+    });
+    expect(created.error).toBeNull();
+    expect(created.data).toMatch(CANONICAL_UUID);
+    expect(
+      ownerJson(`
+        select pg_catalog.jsonb_build_object(
+          'policyStatus', (select status from public.ai_routing_policy_versions where id='${createdPolicyId}'::uuid),
+          'priceSeal', (
+            select count(*) = 1 and pg_catalog.bool_and(
+              audit.audit_id::text = '${sealed.data}'
+              and audit.price_version_id = price.id
+              and audit.policy_version_id is null
+              and audit.profile_id is null
+              and audit.profile_version_id is null
+              and audit.from_status is null
+              and audit.to_status is null
+              and audit.old_active_policy_version_id is null
+              and audit.new_active_policy_version_id is null
+              and audit.old_config_generation is null
+              and audit.new_config_generation is null
+              and audit.old_retired_at is null
+              and audit.new_retired_at is null
+              and audit.old_valid_to is null
+              and audit.new_valid_to is null
+              and audit.old_components_sealed_at is null
+              and audit.new_components_sealed_at = price.components_sealed_at
+              and audit.runtime_contract_id = '${f.runtimeContractId}'
+              and audit.runtime_contract_sha256 = '${f.runtimeContractSha256}'
+              and audit.actor = '${EVIDENCE.p_actor}'
+              and audit.reason = '${EVIDENCE.p_reason}'
+              and audit.reviewed_source_commit_oid = '${ev.p_reviewed_source_commit_oid}'
+              and audit.reviewed_source_sha256 = '${f.runtimeContractSha256}'
+              and audit.rechecked_at = '${ev.p_rechecked_at}'::timestamptz
+              and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
+              and audit.occurred_at is not null
+              and audit.transaction_id > 0
+            )
+            from public.ai_routing_lifecycle_audit as audit
+            join public.ai_price_versions as price on price.id = audit.price_version_id
+            where audit.operation='price_seal' and audit.price_version_id='${f.priceVersionId}'::uuid
+          ),
+          'profileTransition', (select count(*) = 1 and pg_catalog.bool_and(from_status='draft' and to_status='validated' and old_components_sealed_at is null and new_components_sealed_at is null and policy_version_id is null and profile_id is null and price_version_id is null) from public.ai_routing_lifecycle_audit where operation='profile_version_transition' and profile_version_id='${f.profileVersionId}'::uuid),
+          'policyCreate', (select count(*) = 1 and pg_catalog.bool_and(policy_version_id='${createdPolicyId}'::uuid and from_status is null and to_status is null and old_components_sealed_at is null and new_components_sealed_at is null) from public.ai_routing_lifecycle_audit where operation='policy_create' and policy_version_id='${createdPolicyId}'::uuid)
+        )::text;
+      `),
+    ).toEqual({
+      policyStatus: "draft",
+      priceSeal: true,
+      profileTransition: true,
+      policyCreate: true,
+    });
+  });
+
+  it("fails closed when an exact sealed evidence root does not cover the target profile", async () => {
+    const f = await fixture({ profileStatus: "draft", sealPrice: false });
+    const uncoveredRuntime = authorSyntheticRuntimeContract({
+      profileKey: `db013.uncovered.${crypto.randomUUID()}`,
+    });
+    f.additionalRuntimeContractIds.push(uncoveredRuntime.runtimeContractId);
+    f.additionalRuntimeTargetIds.push(uncoveredRuntime.runtimeTargetId);
+    const root = readLifecycleEvidenceRoot({
+      runtimeContractId: uncoveredRuntime.runtimeContractId,
+      runtimeContractSha256: uncoveredRuntime.runtimeContractSha256,
+      priceVersionIds: [f.priceVersionId],
+    });
+    const uncoveredEvidence = {
+      p_runtime_contract_id: uncoveredRuntime.runtimeContractId,
+      p_runtime_contract_sha256: uncoveredRuntime.runtimeContractSha256,
+      p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
+      p_reviewed_source_sha256: uncoveredRuntime.runtimeContractSha256,
+      p_rechecked_at: root.recheckedAt,
+      ...EVIDENCE,
+    };
+
+    const seal = await service.rpc("seal_ai_price_for_activation_v1", {
+      p_price_version_id: f.priceVersionId,
+      p_rechecked_source_url: f.sourceUrl,
+      p_rechecked_currency: "CNY",
+      p_rechecked_calculator_kind: "linear_token_v1",
+      p_rechecked_provider_effective_from: null,
+      p_rechecked_provider_effective_to: null,
+      p_rechecked_parameters: {},
+      p_rechecked_components: {
+        input_standard: "1",
+        input_cache_read: "1",
+        output: "1",
+      },
+      ...uncoveredEvidence,
+    });
+    expect(seal.error?.code).toMatch(/23514|P0001/u);
+    const promotion = await service.rpc(
+      "transition_ai_provider_profile_version_v1",
+      {
+        p_profile_version_id: f.profileVersionId,
+        p_to_status: "validated",
+        ...uncoveredEvidence,
+      },
+    );
+    expect(promotion.error?.code).toMatch(/23514|P0001/u);
+    expect(
+      ownerJson(`
+        select pg_catalog.jsonb_build_object(
+          'sealed', (select components_sealed_at is not null from public.ai_price_versions where id='${f.priceVersionId}'::uuid),
+          'profileStatus', (select status from public.ai_provider_profile_versions where id='${f.profileVersionId}'::uuid),
+          'audit', (select count(*) from public.ai_routing_lifecycle_audit where price_version_id='${f.priceVersionId}'::uuid or profile_version_id='${f.profileVersionId}'::uuid)
+        )::text;
+      `),
+    ).toEqual({ sealed: false, profileStatus: "draft", audit: 0 });
+  });
+
+  it("admits exactly the four non-retirement profile promotion edges", async () => {
+    const edges = new Set([
+      "draft:validated",
+      "validated:canary",
+      "validated:active",
+      "canary:active",
+    ]);
+    const preludes: Record<string, string[]> = {
+      draft: [],
+      validated: ["validated"],
+      canary: ["validated", "canary"],
+      active: ["validated", "active"],
+    };
+    for (const from of Object.keys(preludes)) {
+      for (const to of ["draft", "validated", "canary", "active", "retired"]) {
+        const f = await fixture({ profileStatus: "draft" });
+        const ev = await evidence(f);
+        for (const status of preludes[from]!) {
+          expect(
+            (
+              await service.rpc("transition_ai_provider_profile_version_v1", {
+                p_profile_version_id: f.profileVersionId,
+                p_to_status: status,
+                ...ev,
+              })
+            ).error,
+          ).toBeNull();
+        }
+        const result = await service.rpc(
+          "transition_ai_provider_profile_version_v1",
+          { p_profile_version_id: f.profileVersionId, p_to_status: to, ...ev },
+        );
+        if (edges.has(`${from}:${to}`)) {
+          expect(result.error, `${from} -> ${to}`).toBeNull();
+        } else {
+          expect(result.error?.code, `${from} -> ${to}`).toMatch(/23514|P0001/u);
+        }
+      }
+    }
   });
 
   it("writes exactly one owner-readable audit row for each valid policy and pointer operation", async () => {
