@@ -410,6 +410,35 @@ it("waits for an exact Auth health success and bounds retries", async () => {
   ).toBe(false);
 });
 
+it("settles a stuck Auth health fetch with a referenced timeout", async () => {
+  const timeoutHandle = { kind: "auth-health-timeout" };
+  const cleared = [];
+  let requestSignal;
+  const ready = await waitForAuthReady("http://127.0.0.1:54321", {
+    attempts: 1,
+    requestTimeoutMs: 123,
+    setTimeoutImpl(callback, milliseconds) {
+      expect(milliseconds).toBe(123);
+      queueMicrotask(callback);
+      return timeoutHandle;
+    },
+    clearTimeoutImpl(handle) {
+      cleared.push(handle);
+    },
+    fetchImpl: async (_url, { signal }) => {
+      requestSignal = signal;
+      return new Promise(() => {
+        // Deliberately ignore abort: the timeout side of Promise.race must
+        // settle the wait even when the fetch implementation never does.
+      });
+    },
+  });
+
+  expect(ready).toBe(false);
+  expect(requestSignal?.aborted).toBe(true);
+  expect(cleared).toEqual([timeoutHandle]);
+});
+
 it("fails closed before reset for ambiguous project authority", async () => {
   const subject = freshHarness({
     config: 'project_id = "first"\nproject_id = "second"',

@@ -132,6 +132,8 @@ export async function waitForAuthReady(
     fetchImpl = fetch,
     sleepImpl = (milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    setTimeoutImpl = setTimeout,
+    clearTimeoutImpl = clearTimeout,
     attempts = 30,
     intervalMs = 1_000,
     requestTimeoutMs = 3_000,
@@ -139,15 +141,24 @@ export async function waitForAuthReady(
 ) {
   const healthUrl = new URL("/auth/v1/health", apiUrl).toString();
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    let timeoutHandle;
     try {
-      const response = await fetchImpl(healthUrl, {
-        signal: AbortSignal.timeout(requestTimeoutMs),
+      const request = fetchImpl(healthUrl, { signal: controller.signal });
+      const timeout = new Promise((_, reject) => {
+        timeoutHandle = setTimeoutImpl(() => {
+          controller.abort();
+          reject(new Error("Auth health request timed out"));
+        }, requestTimeoutMs);
       });
+      const response = await Promise.race([request, timeout]);
       if (response.status === 200) {
         return true;
       }
     } catch {
       // A reset can briefly make Kong/Auth unreachable; retry within the bound.
+    } finally {
+      if (timeoutHandle !== undefined) clearTimeoutImpl(timeoutHandle);
     }
     if (attempt + 1 < attempts) {
       await sleepImpl(intervalMs);
