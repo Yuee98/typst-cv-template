@@ -131,10 +131,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", ()
     const { data: profiles, error: profileError } = await service
       .from("ai_provider_profiles")
       .select("id,profile_key,display_name,gateway_kind,model_vendor,retired_at")
-      .in(
-        "profile_key",
-        EXPECTED_DARK_REVIEWED_DRAFTS.map((profile) => profile.profile_key),
-      )
       // UUID ordering is locale-independent and fixes the exact row sequence.
       .order("id", { ascending: true });
     expect(profileError).toBeNull();
