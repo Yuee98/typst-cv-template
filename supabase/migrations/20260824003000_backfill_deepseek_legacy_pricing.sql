@@ -18,6 +18,8 @@ declare
   c_max_bigint constant numeric := 9223372036854775807::numeric;
   v_request public.ai_request_ledger%rowtype;
   v_price public.ai_price_versions%rowtype;
+  v_profile public.ai_provider_profile_versions%rowtype;
+  v_parent public.ai_provider_profiles%rowtype;
   v_price_count bigint;
   v_component_count bigint;
   v_exact_component_count bigint;
@@ -33,6 +35,15 @@ begin
   -- A concurrent request->price writer therefore fails boundedly instead of
   -- letting a migration wait indefinitely or partially progress.
   perform pg_catalog.set_config('lock_timeout', '500ms', true);
+
+  -- Lock canonical CFG rows before testing their projection: filtering the
+  -- mismatch away would let a lifecycle/display writer race this backfill.
+  select * into v_parent from public.ai_provider_profiles
+  where id = '11111111-1111-4111-8111-111111111110'::uuid for update;
+  if not found then raise exception 'DB-012 DeepSeek profile identity mismatch' using errcode = '23514'; end if;
+  select * into v_profile from public.ai_provider_profile_versions
+  where id = c_profile_id for update;
+  if not found then raise exception 'DB-012 DeepSeek profile identity mismatch' using errcode = '23514'; end if;
 
   -- CFG-001 owns this exact draft profile identity.  DB-012 never repairs or
   -- activates it, and does not infer an equivalent profile from a model name.
