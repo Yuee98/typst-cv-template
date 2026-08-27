@@ -37,7 +37,10 @@ begin
   -- All DB-012 paths take the canonical price parent before request rows.
   -- A concurrent request->price writer therefore fails boundedly instead of
   -- letting a migration wait indefinitely or partially progress.
-  perform pg_catalog.set_config('lock_timeout', '500ms', true);
+  -- Keep the one-shot catalog backfill bounded, while leaving enough room for
+  -- the canonical profile -> price lock chain to serialize on slower Docker
+  -- and CI hosts before treating a real lock conflict as unavailable.
+  perform pg_catalog.set_config('lock_timeout', '5s', true);
 
   -- Lock canonical CFG rows before testing their projection: filtering the
   -- mismatch away would let a lifecycle/display writer race this backfill.
