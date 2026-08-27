@@ -39,10 +39,14 @@ begin
   if not exists (
     select 1
     from public.ai_provider_profile_versions as profile
+    join public.ai_provider_profiles as parent
+      on parent.id = profile.profile_id
     where profile.id = c_profile_id
       and profile.profile_id = '11111111-1111-4111-8111-111111111110'::uuid
       and profile.version = 1
       and profile.model_id = 'deepseek-v4-flash'
+      and profile.model_snapshot = 'DeepSeek-V4-Flash-0731'
+      and profile.upstream_route = '{}'::jsonb
       and profile.status = 'draft'
       and profile.adapter_kind = 'deepseek_chat_v1'
       and profile.wire_api_kind = 'chat_completions_v1'
@@ -58,6 +62,11 @@ begin
         'a79bbbaa5934d7f4890b2e97e13e7768f031e99625fe11446ba437feeffc8fa9'
       and profile.activated_at is null
       and profile.retired_at is null
+      and parent.id = '11111111-1111-4111-8111-111111111110'::uuid
+      and parent.profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+      and parent.display_name = 'DeepSeek V4 Flash'
+      and parent.gateway_kind = 'direct_deepseek'
+      and parent.model_vendor = 'deepseek'
   ) then
     raise exception 'DB-012 DeepSeek profile identity mismatch'
       using errcode = '23514';
@@ -315,9 +324,10 @@ begin
         raise exception 'DB-012 legacy input-token sum overflow: %', v_request.reservation_id
           using errcode = '22003';
       end if;
-    elsif v_request.input_cached_tokens is not null and v_request.input_cached_tokens < 0
-       or v_request.input_uncached_tokens is not null and v_request.input_uncached_tokens < 0
-       then
+    elsif (
+      (v_request.input_cached_tokens is not null and v_request.input_cached_tokens < 0)
+      or (v_request.input_uncached_tokens is not null and v_request.input_uncached_tokens < 0)
+    ) then
       raise exception 'DB-012 legacy token range violation: %', v_request.reservation_id
         using errcode = '22003';
     end if;
