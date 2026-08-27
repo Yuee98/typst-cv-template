@@ -55,15 +55,6 @@ const SNAPSHOT_TABLES = [
 ] as const;
 
 const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
-  // TODO(CFG001): refresh the exact catalog hashes after DB-012 is applied.
-  // Keep this enumerated rather than weakening the security-authority oracle.
-  {
-    schema: "public",
-    name: "backfill_deepseek_legacy_pricing_v1",
-    identityArguments: "",
-    prokind: "f",
-    definitionSha256: "TODO_REFRESH_FROM_FRESH_CATALOG",
-  },
   {
     schema: "public",
     name: "apply_ai_price_component_seal_intent",
@@ -77,6 +68,13 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     identityArguments: "p_policy_id uuid, p_phase text, p_at timestamp with time zone",
     prokind: "f",
     definitionSha256: "13c1c97b4adcd9d6fb46485f937ac667c4c92300b854ec4346c87ad1e15895da",
+  },
+  {
+    schema: "public",
+    name: "backfill_deepseek_legacy_pricing_v1",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "bea86a4577690291c5abe782e6e61e7bffd757e3e40497f872fa848a2c092598",
   },
   {
     schema: "public",
@@ -306,9 +304,9 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
 // G3 includes DB003C migration 20260824005000's authorized replacement of the
 // sole assert_ai_price_structure_v1(uuid) body.
 const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
-  routineCount: 358,
+  routineCount: 359,
   authorityRootSha256:
-    "bfccc877f387f050f4ab9d7a7294c81285603fa62cf2e7c8d75cc019dc37d149",
+    "9372114963e0f7fb9087e10f643bce3fc454bc31bf681f3347ce485b50befbc7",
 } as const;
 
 function parseOwnerJson(sql: string): unknown {
