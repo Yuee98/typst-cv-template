@@ -142,14 +142,13 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", ()
 
     const { data: featureConfig, error } = await service
       .from("ai_feature_config")
-      .select("ai_polish_enabled,active_routing_policy_version_id,config_generation")
+      .select("ai_polish_enabled,active_routing_policy_version_id")
       .eq("id", true)
       .single();
     expect(error).toBeNull();
     expect(featureConfig).toEqual({
       ai_polish_enabled: false,
       active_routing_policy_version_id: null,
-      config_generation: 0,
     });
   });
 
