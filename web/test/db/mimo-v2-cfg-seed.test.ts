@@ -494,7 +494,17 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     expect(actual.feature).toEqual({ enabled: false, pointer: null, generation: 0 });
 
     const catalog = parsedSnapshot();
-    expect(catalog.availability).toMatchObject({ allowed: false, reason: "AI_DISABLED" });
+    expect(catalog.availability).toEqual({
+      enabled: false,
+      termsAccepted: false,
+      profileVersionId: null,
+      routingPolicyVersionId: null,
+      runtimeContractId: null,
+      runtimeContractSha256: null,
+      legalBundleVersion: null,
+      displayDisclosureKey: null,
+      configGeneration: null,
+    });
     const targets = catalog.tables.ai_service_runtime_target_versions;
     expect(targets.filter((row) => TARGETS.some((target) => target.runtimeTargetId === row.runtime_target_id)))
       .toEqual(expect.arrayContaining(TARGETS.map((target) => expect.objectContaining({
@@ -537,11 +547,13 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       const firstApplication = `cfg002-identical-first-${randomUUID()}`;
       const secondApplication = `cfg002-identical-second-${randomUUID()}`;
       const first = startOwnerSql(String.raw`
+        \set VERBOSITY verbose
         set application_name='${firstApplication}';
         ${readFileSync(MIGRATION_URL, "utf8")}
       `);
       await waitForActivity(firstApplication, "Timeout:PgSleep");
       const second = startOwnerSql(String.raw`
+        \set VERBOSITY verbose
         set application_name='${secondApplication}';
         ${readFileSync(MIGRATION_URL, "utf8")}
       `);
@@ -605,6 +617,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         try {
           await holder.ready;
           const contender = startOwnerSql(String.raw`
+            \set VERBOSITY verbose
             set application_name='${contenderApplication}';
             ${readFileSync(MIGRATION_URL, "utf8")}
           `);
@@ -644,6 +657,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     const before = snapshot();
     const root = createUnsealedRaceRoot("membership-first", [TARGETS[0]]);
     const marker = `CFG002_MEMBERSHIP_HELD_${randomUUID()}`;
+    const contenderMarker = `CFG002_SEAL_CONTENDER_READY_${randomUUID()}`;
     const contenderApplication = `cfg002-seal-after-membership-${randomUUID()}`;
     const holder = startOwnerSqlWithBarrier(
       String.raw`
@@ -662,19 +676,22 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     );
     try {
       await holder.ready;
-      const contender = startOwnerSql(String.raw`
+      const contender = startOwnerSqlWithBarrier(String.raw`
         \set ON_ERROR_STOP on
+        \set VERBOSITY verbose
         begin;
         set local application_name='${contenderApplication}';
         set local statement_timeout='10s';
+        \echo ${contenderMarker}
         update public.ai_service_runtime_contract_versions
         set sealed_at=greatest(pg_catalog.clock_timestamp(), created_at)
         where runtime_contract_id='${root.id}' and runtime_contract_sha256='${root.hash}';
         commit;
-      `);
+      `, contenderMarker);
+      await contender.ready;
       await waitForDatabaseLock(contenderApplication);
       holder.release();
-      const [authored, sealed] = await Promise.all([holder.result, contender]);
+      const [authored, sealed] = await Promise.all([holder.result, contender.result]);
       expect(authored.status, authored.stderr).toBe(0);
       expect(sealed.status, sealed.stderr).toBe(0);
       assertNoDeadlockOrLockTimeout(sealed);
@@ -691,6 +708,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     const before = snapshot();
     const root = createUnsealedRaceRoot("seal-first", TARGETS);
     const marker = `CFG002_SEAL_HELD_${randomUUID()}`;
+    const contenderMarker = `CFG002_MUTATION_CONTENDER_READY_${randomUUID()}`;
     const contenderApplication = `cfg002-mutation-after-seal-${randomUUID()}`;
     const holder = startOwnerSqlWithBarrier(
       String.raw`
@@ -707,19 +725,22 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     );
     try {
       await holder.ready;
-      const contender = startOwnerSql(String.raw`
+      const contender = startOwnerSqlWithBarrier(String.raw`
         \set ON_ERROR_STOP on
+        \set VERBOSITY verbose
         begin;
         set local application_name='${contenderApplication}';
         set local statement_timeout='10s';
+        \echo ${contenderMarker}
         delete from public.ai_service_runtime_contract_targets
         where runtime_contract_id='${root.id}'
           and runtime_target_id='${TARGETS[1].runtimeTargetId}';
         commit;
-      `);
+      `, contenderMarker);
+      await contender.ready;
       await waitForDatabaseLock(contenderApplication);
       holder.release();
-      const [sealed, rejected] = await Promise.all([holder.result, contender]);
+      const [sealed, rejected] = await Promise.all([holder.result, contender.result]);
       expect(sealed.status, sealed.stderr).toBe(0);
       expect(rejected.status).not.toBe(0);
       assertNoDeadlockOrLockTimeout(rejected);
@@ -737,6 +758,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     const original = snapshot();
     const result = runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
+      \set VERBOSITY verbose
       \pset format unaligned
       \pset tuples_only on
       begin;
