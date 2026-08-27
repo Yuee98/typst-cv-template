@@ -997,7 +997,18 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
         message: "components or seal mismatch",
       },
       {
-        mutation: `update public.ai_price_component_seal_intents set price_version_id = (select id from public.ai_price_versions where id <> '${LEGACY_PRICE}'::uuid order by id limit 1) where price_version_id = '${LEGACY_PRICE}'::uuid;`,
+        mutation: `update public.ai_price_component_seal_intents
+          set price_version_id = (
+            select price.id
+            from public.ai_price_versions as price
+            left join public.ai_price_component_seal_intents as existing
+              on existing.price_version_id = price.id
+            where price.id <> '${LEGACY_PRICE}'::uuid
+              and existing.price_version_id is null
+            order by price.id
+            limit 1
+          )
+          where price_version_id = '${LEGACY_PRICE}'::uuid;`,
         message: "components or seal mismatch",
       },
     ] as const;
