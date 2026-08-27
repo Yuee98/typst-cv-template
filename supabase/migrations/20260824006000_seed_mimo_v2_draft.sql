@@ -184,6 +184,8 @@ begin
       and bundle_contract_sha256 = 'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18'
       and sealed_at is not null
   ) or (select count(*) from public.ai_legal_bundle_manifests
+         where legal_bundle_version = '2026-08-23-multi-provider-v1') <> 2
+     or (select count(*) from public.ai_legal_bundle_manifests
          where legal_bundle_version = '2026-08-23-multi-provider-v1'
            and (legal_manifest_id, manifest_sha256) in (
              ('deepseek-official-2026-08-23-v1', '0fa6702d0785a8ce959b0bd4cc31984578143ef269bf7b4df4d1672e6d1fa09b'),
@@ -329,11 +331,52 @@ where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
 do $$
 begin
   if not exists (
+    select 1 from public.ai_provider_profiles
+    where id = '22222222-2222-4222-8222-222222222220'::uuid
+      and profile_key = 'mimo.cn.mimo-v2.5-pro.responses.v1'
+      and display_name = 'MiMo V2.5 Pro' and gateway_kind = 'direct_mimo'
+      and model_vendor = 'xiaomi-mimo' and retired_at is null
+  ) or not exists (
+    select 1 from public.ai_provider_profile_versions
+    where id = '22222222-2222-4222-8222-222222222221'::uuid
+      and profile_id = '22222222-2222-4222-8222-222222222220'::uuid
+      and version = 1 and status = 'draft' and adapter_kind = 'mimo_responses_v1'
+      and wire_api_kind = 'responses_v1' and credential_alias = 'mimo_api_key'
+      and endpoint_alias = 'mimo_cn_official' and model_id = 'mimo-v2.5-pro'
+      and model_snapshot is null and upstream_route = '{}'::jsonb
+      and capability_contract_id = 'mimo_responses_output_text_v1'
+      and cache_policy_id = 'mimo_automatic_prompt_cache_v1'
+      and legal_manifest_id = 'mimo-cn-2026-08-23-v1'
+      and display_disclosure_key = 'mimo-cn-v1'
+      and config = '{"reasoningEffort":"none","structuredOutput":"prompt_only","sendProviderSubjectId":false}'::jsonb
+      and config_sha256 = '319316de510f767885fdb94d75d067a7383c11f513b908026a2ab4ec68c8a121'
+      and validated_at is null and activated_at is null and retired_at is null
+  ) or not exists (
+    select 1 from public.ai_price_versions
+    where id = '22222222-2222-4222-8222-222222222222'::uuid
+      and profile_version_id = '22222222-2222-4222-8222-222222222221'::uuid
+      and pricing_lane = 'default' and version = 1 and currency = 'CNY'
+      and calculator_kind = 'linear_token_v1'
+      and valid_from = '2026-08-25T16:26:26.127Z'::timestamptz
+      and valid_to is null and provider_effective_from is null and provider_effective_to is null
+      and source_url = 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go'
+      and source_checked_at = '2026-08-25T16:26:26.127Z'::timestamptz
+      and source_snapshot_sha256 = '2b9aec6fe83c358db3697965ae4dbdaffbf976fbb48576bff55f2d9c2eb5f065'
+      and parameters = '{}'::jsonb and components_sealed_at is null
+  ) or (select count(*) from public.ai_price_components as actual join (values
+    ('input_cache_read'::text, 25000000::bigint), ('input_standard'::text, 3000000000::bigint),
+    ('input_cache_write'::text, 0::bigint), ('output'::text, 6000000000::bigint)
+  ) as expected(component, nanos_per_million) using (component, nanos_per_million)
+  where actual.price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
+     or (select count(*) from public.ai_price_components where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
+     or not exists (
     select 1 from public.ai_service_runtime_contract_versions
     where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
       and runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
       and sealed_at is not null and sealed_at >= created_at
-  ) or not exists (
+  ) or (select count(*) from public.ai_service_runtime_contract_targets
+         where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1') <> 2
+     or not exists (
     select 1 from public.ai_service_runtime_contract_versions
     where runtime_contract_id = 'runtime.deepseek-v2.v1'
       and runtime_contract_sha256 = '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
@@ -341,7 +384,19 @@ begin
       and runtime_target_set_sha256 = '5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340'
       and sealed_at is not null
   ) or (select count(*) from public.ai_service_runtime_contract_targets
-         where runtime_contract_id = 'runtime.deepseek-v2.v1') <> 1 then
+         where runtime_contract_id = 'runtime.deepseek-v2.v1') <> 1
+     or not exists (
+       select 1 from public.ai_service_runtime_contract_targets
+       where runtime_contract_id = 'runtime.deepseek-v2.v1'
+         and runtime_contract_sha256 = '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
+         and runtime_target_id = 'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'
+         and runtime_target_sha256 = 'aa4948f6f0060a08ada1d0b831babd17c37287be02a9a8f2f9ec69c0f2bed119'
+         and profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+         and legal_manifest_id = 'deepseek-official-2026-08-23-v1'
+         and manifest_sha256 = '0fa6702d0785a8ce959b0bd4cc31984578143ef269bf7b4df4d1672e6d1fa09b'
+         and route_descriptor_id = 'route.deepseek.official.v1'
+         and route_descriptor_sha256 = 'ddd46ac3d94fa9a3d4293f5f59faa52ee93a418927d13a01798f0802ccc99d79'
+     ) then
     raise exception 'MiMo V2 final runtime assertion failed' using errcode = '23514';
   end if;
 end;
