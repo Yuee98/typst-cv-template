@@ -10,6 +10,7 @@ name: DB integration tests
 # Local equivalent:
 #   pnpm supabase:start
 #   pnpm --filter web test:db:cfg001-fresh
+#   node web/scripts/run-cfg002-fresh-reset.mjs
 #   pnpm --filter web test:db
 on:
   pull_request:
@@ -23,6 +24,7 @@ on:
       - "supabase/seed.sql"
       - "web/package.json"
       - "web/scripts/run-cfg001-fresh-reset.mjs"
+      - "web/scripts/run-cfg002-fresh-reset.mjs"
       - "web/scripts/run-db-tests.mjs"
       - "web/scripts/run-db-tests.test.mjs"
       - "web/vitest.config.mts"
@@ -88,6 +90,9 @@ jobs:
       # only the order-sensitive CFG-001 suite.
       - name: Run CFG-001 fresh-reset gate
         run: pnpm --filter web test:db:cfg001-fresh
+
+      - name: Run CFG-002 fresh-reset gate
+        run: node web/scripts/run-cfg002-fresh-reset.mjs
 
       # Required mode makes status, local-API, and child-process failures hard
       # CI errors. The runner accepts only HTTP loopback endpoints and clears
