@@ -22,67 +22,26 @@ describe.skipIf(!RUN_DB_TESTS)("optional linear cache-write pricing (real DB)", 
     label: string,
     components: readonly { component: string; nanosPerMillion: number }[],
   ): Promise<string> {
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: `test.linear-cache-write.${label}.${crypto.randomUUID()}`,
-        display_name: `Linear cache write ${label}`,
-        gateway_kind: "direct_mimo",
-        model_vendor: "fixture",
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-
-    const { data: version, error: versionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        adapter_kind: "fixture_adapter_v1",
-        wire_api_kind: "responses_v1",
-        credential_alias: "fixture_credential_v1",
-        endpoint_alias: "fixture_endpoint_v1",
-        model_id: "fixture-model",
-        capability_contract_id: "fixture_capability_v1",
-        cache_policy_id: "fixture_cache_v1",
-        legal_manifest_id: "fixture_legal_v1",
-        display_disclosure_key: "fixture-v1",
-        config_sha256: "a".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(versionError).toBeNull();
-
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version!.id,
-        pricing_lane: "default",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: "2026-08-25T00:00:00Z",
-        valid_to: null,
-        source_url: "https://example.com/linear-cache-write-fixture",
-        source_checked_at: "2026-08-25T00:00:00Z",
-        source_snapshot_sha256: "b".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
-    expect(price!.id).toMatch(UUID);
-
-    const { error: componentsError } = await service.from("ai_price_components").insert(
-      components.map(({ component, nanosPerMillion }) => ({
-        price_version_id: price!.id,
-        component,
-        nanos_per_million: nanosPerMillion,
-      })),
-    );
-    expect(componentsError).toBeNull();
-    return price!.id as string;
+    const profileId = crypto.randomUUID();
+    const versionId = crypto.randomUUID();
+    const priceId = crypto.randomUUID();
+    const profileKey = `test.linear-cache-write.${label}.${profileId}`;
+    const componentSql = components
+      .map(({ component, nanosPerMillion }) =>
+        `('${priceId}'::uuid, '${component}', ${nanosPerMillion})`,
+      )
+      .join(",");
+    runOwnerSql(`begin;
+      insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor)
+        values ('${profileId}'::uuid,'${profileKey}','Linear cache write ${label}','direct_mimo','fixture');
+      insert into public.ai_provider_profile_versions(id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,endpoint_alias,model_id,capability_contract_id,cache_policy_id,legal_manifest_id,display_disclosure_key,config_sha256)
+        values ('${versionId}'::uuid,'${profileId}'::uuid,1,'fixture_adapter_v1','responses_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','fixture-v1','${"a".repeat(64)}');
+      insert into public.ai_price_versions(id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,source_url,source_checked_at,source_snapshot_sha256,parameters)
+        values ('${priceId}'::uuid,'${versionId}'::uuid,'default',1,'CNY','linear_token_v1','2026-08-25T00:00:00Z','https://example.com/linear-cache-write-fixture','2026-08-25T00:00:00Z','${"b".repeat(64)}','{}'::jsonb);
+      insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ${componentSql};
+      commit;`);
+    expect(priceId).toMatch(UUID);
+    return priceId;
   }
 
   async function expectSealed(priceId: string): Promise<void> {

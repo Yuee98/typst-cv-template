@@ -10,6 +10,7 @@ import {
   signInAsUser,
   type TestUser,
 } from "./helpers";
+import { runOwnerSql } from "./runtime-contract-fixtures";
 
 const PERMISSION_DENIED = "42501";
 const CHECK_VIOLATION = "23514";
@@ -42,6 +43,73 @@ function versionFixture(profileId: string, version = 1) {
   };
 }
 
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function runOwnerDomainProbe(sql: string, expectedSqlState?: string) {
+  const result = runOwnerSql(
+    String.raw`\set VERBOSITY verbose
+${sql}`,
+    { expectFailure: expectedSqlState !== undefined },
+  );
+  if (expectedSqlState !== undefined) {
+    expect(result.stderr + result.stdout).toContain(expectedSqlState);
+  }
+  return result;
+}
+
+function insertVersionAsOwner(
+  input: ReturnType<typeof versionFixture> & { created_at?: string },
+  expectedSqlState?: string,
+): string {
+  const id = crypto.randomUUID();
+  runOwnerDomainProbe(
+    String.raw`
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, status, adapter_kind, wire_api_kind,
+        credential_alias, endpoint_alias, model_id, upstream_route,
+        capability_contract_id, cache_policy_id, legal_manifest_id,
+        config, config_sha256, created_at
+      ) values (
+        '${id}'::uuid,
+        '${input.profile_id}'::uuid,
+        ${input.version},
+        ${sqlLiteral(input.status)},
+        ${sqlLiteral(input.adapter_kind)},
+        ${sqlLiteral(input.wire_api_kind)},
+        ${sqlLiteral(input.credential_alias)},
+        ${sqlLiteral(input.endpoint_alias)},
+        ${sqlLiteral(input.model_id)},
+        ${sqlLiteral(JSON.stringify(input.upstream_route))}::jsonb,
+        ${sqlLiteral(input.capability_contract_id)},
+        ${sqlLiteral(input.cache_policy_id)},
+        ${sqlLiteral(input.legal_manifest_id)},
+        ${sqlLiteral(JSON.stringify(input.config))}::jsonb,
+        ${sqlLiteral(input.config_sha256)},
+        ${input.created_at === undefined ? "default" : `${sqlLiteral(input.created_at)}::timestamptz`}
+      );
+    `,
+    expectedSqlState,
+  );
+  return id;
+}
+
+function updateVersionAsOwner(
+  versionId: string,
+  assignment: string,
+  expectedSqlState?: string,
+) {
+  return runOwnerDomainProbe(
+    String.raw`
+      update public.ai_provider_profile_versions
+      set ${assignment}
+      where id = '${versionId}'::uuid;
+    `,
+    expectedSqlState,
+  );
+}
+
 describe.skipIf(!RUN_DB_TESTS)("provider profile foundation (real DB)", () => {
   let service: SupabaseClient;
   let anon: SupabaseClient;
@@ -60,15 +128,22 @@ describe.skipIf(!RUN_DB_TESTS)("provider profile foundation (real DB)", () => {
   });
 
   async function createProfile(label: string) {
+    const id = crypto.randomUUID();
+    runOwnerSql(String.raw`
+      insert into public.ai_provider_profiles (
+        id, profile_key, display_name, gateway_kind, model_vendor
+      ) values (
+        '${id}'::uuid,
+        ${sqlLiteral(`test.${label}.${id}`)},
+        ${sqlLiteral(`Test ${label}`)},
+        'direct_mimo',
+        'fixture'
+      );
+    `);
     const { data, error } = await service
       .from("ai_provider_profiles")
-      .insert({
-        profile_key: `test.${label}.${crypto.randomUUID()}`,
-        display_name: `Test ${label}`,
-        gateway_kind: "direct_mimo",
-        model_vendor: "fixture",
-      })
       .select("*")
+      .eq("id", id)
       .single();
     expect(error).toBeNull();
     return data!;
@@ -76,10 +151,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider profile foundation (real DB)", () => {
 
   it("stores a stable identity and immutable execution version", async () => {
     const profile = await createProfile("immutable");
+    const versionId = insertVersionAsOwner(versionFixture(profile.id));
     const { data: version, error } = await service
       .from("ai_provider_profile_versions")
-      .insert(versionFixture(profile.id))
       .select("*")
+      .eq("id", versionId)
       .single();
     expect(error).toBeNull();
     expect(version).toMatchObject({
@@ -89,46 +165,46 @@ describe.skipIf(!RUN_DB_TESTS)("provider profile foundation (real DB)", () => {
       wire_api_kind: "responses_v1",
     });
 
-    const { error: identityError } = await service
-      .from("ai_provider_profiles")
-      .update({ profile_key: `changed.${crypto.randomUUID()}` })
-      .eq("id", profile.id);
-    expect(identityError?.code).toBe(CHECK_VIOLATION);
+    runOwnerDomainProbe(
+      String.raw`
+        update public.ai_provider_profiles
+        set profile_key = ${sqlLiteral(`changed.${crypto.randomUUID()}`)}
+        where id = '${profile.id}'::uuid;
+      `,
+      CHECK_VIOLATION,
+    );
 
-    const { error: configError } = await service
-      .from("ai_provider_profile_versions")
-      .update({ config: { changed: true } })
-      .eq("id", version!.id);
-    expect(configError?.code).toBe(CHECK_VIOLATION);
+    updateVersionAsOwner(
+      version!.id,
+      `config = '{"changed":true}'::jsonb`,
+      CHECK_VIOLATION,
+    );
 
-    const { error: deleteError } = await service
-      .from("ai_provider_profiles")
-      .delete()
-      .eq("id", profile.id);
-    expect(deleteError?.code).toBe(CHECK_VIOLATION);
+    runOwnerDomainProbe(
+      String.raw`
+        delete from public.ai_provider_profiles
+        where id = '${profile.id}'::uuid;
+      `,
+      CHECK_VIOLATION,
+    );
   });
 
   it("enforces unique versions, required aliases, and valid states", async () => {
     const profile = await createProfile("constraints");
     const fixture = versionFixture(profile.id);
-    expect(
-      (await service.from("ai_provider_profile_versions").insert(fixture)).error,
-    ).toBeNull();
+    insertVersionAsOwner(fixture);
 
-    const duplicate = await service
-      .from("ai_provider_profile_versions")
-      .insert(fixture);
-    expect(duplicate.error?.code).toBe(UNIQUE_VIOLATION);
+    insertVersionAsOwner(fixture, UNIQUE_VIOLATION);
 
-    const invalidState = await service
-      .from("ai_provider_profile_versions")
-      .insert({ ...versionFixture(profile.id, 2), status: "ready" });
-    expect(invalidState.error?.code).toBe(CHECK_VIOLATION);
+    insertVersionAsOwner(
+      { ...versionFixture(profile.id, 2), status: "ready" },
+      CHECK_VIOLATION,
+    );
 
-    const blankAlias = await service
-      .from("ai_provider_profile_versions")
-      .insert({ ...versionFixture(profile.id, 3), endpoint_alias: " " });
-    expect(blankAlias.error?.code).toBe(CHECK_VIOLATION);
+    insertVersionAsOwner(
+      { ...versionFixture(profile.id, 3), endpoint_alias: " " },
+      CHECK_VIOLATION,
+    );
 
     for (const [index, status] of [
       "validated",
@@ -136,94 +212,113 @@ describe.skipIf(!RUN_DB_TESTS)("provider profile foundation (real DB)", () => {
       "active",
       "retired",
     ].entries()) {
-      const nonDraftInsert = await service
-        .from("ai_provider_profile_versions")
-        .insert({ ...versionFixture(profile.id, 10 + index), status });
-      expect(nonDraftInsert.error?.code).toBe(CHECK_VIOLATION);
+      insertVersionAsOwner(
+        { ...versionFixture(profile.id, 10 + index), status },
+        CHECK_VIOLATION,
+      );
     }
   });
 
   it("allows only monotonic lifecycle transitions", async () => {
     const profile = await createProfile("lifecycle");
-    const { data: version } = await service
-      .from("ai_provider_profile_versions")
-      .insert(versionFixture(profile.id))
-      .select("id")
-      .single();
+    const versionId = insertVersionAsOwner(versionFixture(profile.id));
 
+    updateVersionAsOwner(versionId, "status = 'validated'");
     const validated = await service
       .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version!.id)
       .select("status,validated_at")
+      .eq("id", versionId)
       .single();
     expect(validated.error).toBeNull();
     expect(validated.data?.validated_at).toBeTruthy();
 
+    updateVersionAsOwner(versionId, "status = 'active'");
     const active = await service
       .from("ai_provider_profile_versions")
-      .update({ status: "active" })
-      .eq("id", version!.id)
       .select("status,activated_at")
+      .eq("id", versionId)
       .single();
     expect(active.error).toBeNull();
     expect(active.data?.activated_at).toBeTruthy();
 
-    const rewriteTimestamp = await service
-      .from("ai_provider_profile_versions")
-      .update({ validated_at: "2026-01-01T00:00:00Z" })
-      .eq("id", version!.id);
-    expect(rewriteTimestamp.error?.code).toBe(CHECK_VIOLATION);
+    updateVersionAsOwner(
+      versionId,
+      "validated_at = '2026-01-01T00:00:00Z'::timestamptz",
+      CHECK_VIOLATION,
+    );
 
-    const backwards = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "draft" })
-      .eq("id", version!.id);
-    expect(backwards.error?.code).toBe(CHECK_VIOLATION);
+    updateVersionAsOwner(versionId, "status = 'draft'", CHECK_VIOLATION);
   });
 
-  it("clamps trigger-managed lifecycle timestamps to monotonic row time", async () => {
+  it("clamps owner-authored trigger timestamps to monotonic row time", async () => {
     const profile = await createProfile("lifecycle-clock-clamp");
     const futureCreatedAt = new Date(Date.now() + 5 * 60_000).toISOString();
-    const { data: version, error: insertError } = await service
+    const versionId = insertVersionAsOwner({
+      ...versionFixture(profile.id),
+      created_at: futureCreatedAt,
+    });
+    const { error: insertError } = await service
       .from("ai_provider_profile_versions")
-      .insert({ ...versionFixture(profile.id), created_at: futureCreatedAt })
       .select("id,created_at")
+      .eq("id", versionId)
       .single();
     expect(insertError).toBeNull();
 
+    updateVersionAsOwner(versionId, "status = 'validated'");
     const validated = await service
       .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version!.id)
       .select("created_at,validated_at")
+      .eq("id", versionId)
       .single();
     expect(validated.error).toBeNull();
     expect(Date.parse(validated.data!.validated_at!)).toBeGreaterThanOrEqual(
       Date.parse(validated.data!.created_at),
     );
 
+    updateVersionAsOwner(versionId, "status = 'active'");
     const active = await service
       .from("ai_provider_profile_versions")
-      .update({ status: "active" })
-      .eq("id", version!.id)
       .select("created_at,validated_at,activated_at")
+      .eq("id", versionId)
       .single();
     expect(active.error).toBeNull();
     expect(Date.parse(active.data!.activated_at!)).toBeGreaterThanOrEqual(
       Date.parse(active.data!.validated_at!),
     );
 
+    // This is an owner-only DB-012 trigger probe. DB-013 retirement authority,
+    // evidence checks, and auditing are covered by routing-lifecycle-control.
+    updateVersionAsOwner(versionId, "status = 'retired'");
     const retired = await service
       .from("ai_provider_profile_versions")
-      .update({ status: "retired" })
-      .eq("id", version!.id)
       .select("created_at,validated_at,activated_at,retired_at")
+      .eq("id", versionId)
       .single();
     expect(retired.error).toBeNull();
     expect(Date.parse(retired.data!.retired_at!)).toBeGreaterThanOrEqual(
       Date.parse(retired.data!.activated_at!),
     );
+  });
+
+  it("denies service-role direct provider catalog mutation", async () => {
+    const profile = await createProfile("service-acl");
+
+    const profileUpdate = await service
+      .from("ai_provider_profiles")
+      .update({ display_name: "forbidden service update" })
+      .eq("id", profile.id);
+    expect(profileUpdate.error?.code).toBe(PERMISSION_DENIED);
+
+    const versionInsert = await service
+      .from("ai_provider_profile_versions")
+      .insert(versionFixture(profile.id));
+    expect(versionInsert.error?.code).toBe(PERMISSION_DENIED);
+
+    const profileDelete = await service
+      .from("ai_provider_profiles")
+      .delete()
+      .eq("id", profile.id);
+    expect(profileDelete.error?.code).toBe(PERMISSION_DENIED);
   });
 
   describe.each([

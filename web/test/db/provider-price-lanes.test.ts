@@ -2,11 +2,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { createServiceClient, RUN_DB_TESTS } from "./helpers";
-import { authorSyntheticRuntimeContract } from "./runtime-contract-fixtures";
+import { authorSyntheticRuntimeContract, runOwnerSql } from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
 const EXCLUSION_VIOLATION = "23P01";
 const NOT_NULL_VIOLATION = "23502";
+const PERMISSION_DENIED = "42501";
+const UNIQUE_VIOLATION = "23505";
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
 
 describe.skipIf(!RUN_DB_TESTS)("provider price lanes and provenance (real DB)", () => {
   let service: SupabaseClient;
@@ -16,38 +22,42 @@ describe.skipIf(!RUN_DB_TESTS)("provider price lanes and provenance (real DB)", 
   });
 
   async function createProfileVersion(label: string): Promise<string> {
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: `test.price-lane.${label}.${crypto.randomUUID()}`,
-        display_name: `Price lane ${label}`,
-        gateway_kind: "direct_deepseek",
-        model_vendor: "fixture",
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-
-    const { data: version, error: versionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        adapter_kind: "fixture_adapter_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "fixture_credential_v1",
-        endpoint_alias: "fixture_endpoint_v1",
-        model_id: "fixture-model",
-        capability_contract_id: "fixture_capability_v1",
-        cache_policy_id: "fixture_cache_v1",
-        legal_manifest_id: "fixture_legal_v1",
-        display_disclosure_key: "fixture-v1",
-        config_sha256: "a".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(versionError).toBeNull();
-    return version!.id as string;
+    const profileId = crypto.randomUUID();
+    const versionId = crypto.randomUUID();
+    runOwnerSql(String.raw`
+      begin;
+      insert into public.ai_provider_profiles (
+        id, profile_key, display_name, gateway_kind, model_vendor
+      ) values (
+        '${profileId}'::uuid,
+        ${sqlLiteral(`test.price-lane.${label}.${profileId}`)},
+        ${sqlLiteral(`Price lane ${label}`)},
+        'direct_deepseek',
+        'fixture'
+      );
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, adapter_kind, wire_api_kind,
+        credential_alias, endpoint_alias, model_id,
+        capability_contract_id, cache_policy_id, legal_manifest_id,
+        display_disclosure_key, config_sha256
+      ) values (
+        '${versionId}'::uuid,
+        '${profileId}'::uuid,
+        1,
+        'fixture_adapter_v1',
+        'chat_completions_v1',
+        'fixture_credential_v1',
+        'fixture_endpoint_v1',
+        'fixture-model',
+        'fixture_capability_v1',
+        'fixture_cache_v1',
+        'fixture_legal_v1',
+        'fixture-v1',
+        '${"a".repeat(64)}'
+      );
+      commit;
+    `);
+    return versionId;
   }
 
   function priceFixture(
@@ -70,68 +80,124 @@ describe.skipIf(!RUN_DB_TESTS)("provider price lanes and provenance (real DB)", 
     };
   }
 
+  type PriceFixture = Omit<ReturnType<typeof priceFixture>, "pricing_lane"> & {
+    pricing_lane: string | null;
+    provider_effective_from?: string;
+    provider_effective_to?: string;
+  };
+
+  function ownerDomainProbe(sql: string, expectedSqlState?: string) {
+    const result = runOwnerSql(
+      String.raw`\set VERBOSITY verbose
+${sql}`,
+      { expectFailure: expectedSqlState !== undefined },
+    );
+    if (expectedSqlState !== undefined) {
+      expect(result.stderr + result.stdout).toContain(expectedSqlState);
+    }
+    return result;
+  }
+
+  function ownerInsertPrice(
+    price: PriceFixture,
+    options: { omitPricingLane?: boolean; expectedSqlState?: string } = {},
+  ): string {
+    const id = crypto.randomUUID();
+    const validTo = price.valid_to
+      ? `${sqlLiteral(price.valid_to)}::timestamptz`
+      : "null";
+    const effectiveFrom = price.provider_effective_from
+      ? `${sqlLiteral(price.provider_effective_from)}::timestamptz`
+      : "null";
+    const effectiveTo = price.provider_effective_to
+      ? `${sqlLiteral(price.provider_effective_to)}::timestamptz`
+      : "null";
+    const laneColumn = options.omitPricingLane ? "" : ", pricing_lane";
+    const laneValue = options.omitPricingLane
+      ? ""
+      : `, ${price.pricing_lane === null ? "null" : sqlLiteral(price.pricing_lane)}`;
+    ownerDomainProbe(
+      String.raw`
+        insert into public.ai_price_versions (
+          id, profile_version_id${laneColumn}, version, currency,
+          calculator_kind, valid_from, valid_to, source_url,
+          source_checked_at, source_snapshot_sha256, parameters,
+          provider_effective_from, provider_effective_to
+        ) values (
+          '${id}'::uuid,
+          '${price.profile_version_id}'::uuid${laneValue},
+          ${price.version},
+          ${sqlLiteral(price.currency)},
+          ${sqlLiteral(price.calculator_kind)},
+          ${sqlLiteral(price.valid_from)}::timestamptz,
+          ${validTo},
+          ${sqlLiteral(price.source_url)},
+          ${sqlLiteral(price.source_checked_at)}::timestamptz,
+          ${sqlLiteral(price.source_snapshot_sha256)},
+          '{}'::jsonb,
+          ${effectiveFrom},
+          ${effectiveTo}
+        );
+      `,
+      options.expectedSqlState,
+    );
+    return id;
+  }
+
   it("requires an explicit, canonical pricing lane after migration", async () => {
     const profileVersionId = await createProfileVersion("required");
     const fixture = priceFixture(profileVersionId, "default");
-    const withoutLane = { ...fixture } as Partial<typeof fixture>;
-    delete withoutLane.pricing_lane;
+    ownerInsertPrice(fixture, {
+      omitPricingLane: true,
+      expectedSqlState: NOT_NULL_VIOLATION,
+    });
 
-    const missing = await service.from("ai_price_versions").insert(withoutLane);
-    expect(missing.error?.code).toBe(NOT_NULL_VIOLATION);
-
-    const explicitNull = await service
-      .from("ai_price_versions")
-      .insert({ ...fixture, pricing_lane: null });
-    expect(explicitNull.error?.code).toBe(NOT_NULL_VIOLATION);
+    ownerInsertPrice(
+      { ...fixture, pricing_lane: null },
+      { expectedSqlState: NOT_NULL_VIOLATION },
+    );
 
     for (const invalidLane of ["", "Peak", " peak", "peak/window", "-peak"]) {
-      const invalid = await service.from("ai_price_versions").insert({
-        ...fixture,
-        pricing_lane: invalidLane,
-      });
-      expect(invalid.error?.code, invalidLane).toBe(CHECK_VIOLATION);
+      ownerInsertPrice(
+        { ...fixture, pricing_lane: invalidLane },
+        { expectedSqlState: CHECK_VIOLATION },
+      );
     }
 
-    const valid = await service
-      .from("ai_price_versions")
-      .insert({ ...fixture, pricing_lane: "peak.weekday-v1" });
-    expect(valid.error).toBeNull();
+    expect(ownerInsertPrice({ ...fixture, pricing_lane: "peak.weekday-v1" })).toBeTruthy();
   });
 
   it("partitions identity and overlap checks by profile plus lane", async () => {
     const profileVersionId = await createProfileVersion("overlap");
     const offpeak = priceFixture(profileVersionId, "offpeak");
-    expect((await service.from("ai_price_versions").insert(offpeak)).error).toBeNull();
+    expect(ownerInsertPrice(offpeak)).toBeTruthy();
 
-    const sameLaneOverlap = await service.from("ai_price_versions").insert({
-      ...offpeak,
-      version: 2,
-      valid_from: "2026-09-01T00:00:00Z",
-      valid_to: "2027-01-01T00:00:00Z",
-    });
-    expect(sameLaneOverlap.error?.code).toBe(EXCLUSION_VIOLATION);
+    ownerInsertPrice(
+      {
+        ...offpeak,
+        version: 2,
+        valid_from: "2026-09-01T00:00:00Z",
+        valid_to: "2027-01-01T00:00:00Z",
+      },
+      { expectedSqlState: EXCLUSION_VIOLATION },
+    );
 
-    const otherLaneOverlap = await service.from("ai_price_versions").insert({
-      ...offpeak,
-      pricing_lane: "peak",
-    });
-    expect(otherLaneOverlap.error).toBeNull();
+    expect(ownerInsertPrice({ ...offpeak, pricing_lane: "peak" })).toBeTruthy();
 
-    const duplicateLaneVersion = await service.from("ai_price_versions").insert({
-      ...offpeak,
-      valid_from: "2027-01-01T00:00:00Z",
-      valid_to: "2027-02-01T00:00:00Z",
-    });
-    expect(duplicateLaneVersion.error?.code).toBe("23505");
+    ownerInsertPrice(
+      {
+        ...offpeak,
+        valid_from: "2027-01-01T00:00:00Z",
+        valid_to: "2027-02-01T00:00:00Z",
+      },
+      { expectedSqlState: UNIQUE_VIOLATION },
+    );
   });
 
   it("keeps nullable provider-effective provenance distinct and immutable", async () => {
     const unknownProfile = await createProfileVersion("provenance-unknown");
-    const { data: unknown, error: unknownError } = await service
-      .from("ai_price_versions")
-      .insert(priceFixture(unknownProfile, "default"))
-      .select("id,provider_effective_from,provider_effective_to")
-      .single();
+    const unknownId = ownerInsertPrice(priceFixture(unknownProfile, "default"));
+    const { data: unknown, error: unknownError } = await service.from("ai_price_versions").select("id,provider_effective_from,provider_effective_to").eq("id", unknownId).single();
     expect(unknownError).toBeNull();
     expect(unknown).toMatchObject({
       provider_effective_from: null,
@@ -139,44 +205,86 @@ describe.skipIf(!RUN_DB_TESTS)("provider price lanes and provenance (real DB)", 
     });
 
     const endOnlyProfile = await createProfileVersion("provenance-end-only");
-    const endOnly = await service.from("ai_price_versions").insert({
-      ...priceFixture(endOnlyProfile, "default"),
-      provider_effective_to: "2026-08-24T00:00:00Z",
-    });
-    expect(endOnly.error).toBeNull();
+    expect(ownerInsertPrice({ ...priceFixture(endOnlyProfile, "default"), provider_effective_to: "2026-08-24T00:00:00Z" })).toBeTruthy();
 
     const invalidProfile = await createProfileVersion("provenance-invalid");
-    const invalidRange = await service.from("ai_price_versions").insert({
-      ...priceFixture(invalidProfile, "default"),
-      provider_effective_from: "2026-08-25T00:00:00Z",
-      provider_effective_to: "2026-08-24T00:00:00Z",
-    });
-    expect(invalidRange.error?.code).toBe(CHECK_VIOLATION);
+    ownerInsertPrice(
+      {
+        ...priceFixture(invalidProfile, "default"),
+        provider_effective_from: "2026-08-25T00:00:00Z",
+        provider_effective_to: "2026-08-24T00:00:00Z",
+      },
+      { expectedSqlState: CHECK_VIOLATION },
+    );
 
-    const mutate = await service
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_price_versions
+        set provider_effective_from = '2026-08-01T00:00:00Z'::timestamptz
+        where id = '${unknown!.id}'::uuid;
+      `,
+      CHECK_VIOLATION,
+    );
+  });
+
+  it("denies service-role direct price catalog mutation", async () => {
+    const profileVersionId = await createProfileVersion("service-acl");
+    const fixture = priceFixture(profileVersionId, "default");
+    const priceId = ownerInsertPrice(fixture);
+    ownerDomainProbe(String.raw`
+      insert into public.ai_price_components (
+        price_version_id, component, nanos_per_million
+      ) values ('${priceId}'::uuid, 'input_standard', 1);
+    `);
+
+    const priceInsert = await service
       .from("ai_price_versions")
-      .update({ provider_effective_from: "2026-08-01T00:00:00Z" })
-      .eq("id", unknown!.id);
-    expect(mutate.error?.code).toBe(CHECK_VIOLATION);
+      .insert({ ...fixture, version: 2 });
+    expect(priceInsert.error?.code).toBe(PERMISSION_DENIED);
+
+    const priceUpdate = await service
+      .from("ai_price_versions")
+      .update({ source_url: "https://example.com/forbidden-update" })
+      .eq("id", priceId);
+    expect(priceUpdate.error?.code).toBe(PERMISSION_DENIED);
+
+    const priceDelete = await service
+      .from("ai_price_versions")
+      .delete()
+      .eq("id", priceId);
+    expect(priceDelete.error?.code).toBe(PERMISSION_DENIED);
+
+    const componentInsert = await service.from("ai_price_components").insert({
+      price_version_id: priceId,
+      component: "output",
+      nanos_per_million: 1,
+    });
+    expect(componentInsert.error?.code).toBe(PERMISSION_DENIED);
+
+    const componentUpdate = await service
+      .from("ai_price_components")
+      .update({ nanos_per_million: 2 })
+      .eq("price_version_id", priceId)
+      .eq("component", "input_standard");
+    expect(componentUpdate.error?.code).toBe(PERMISSION_DENIED);
+
+    const componentDelete = await service
+      .from("ai_price_components")
+      .delete()
+      .eq("price_version_id", priceId)
+      .eq("component", "input_standard");
+    expect(componentDelete.error?.code).toBe(PERMISSION_DENIED);
   });
 
   it("allows component authoring on drafts but rejects unsealed request snapshots", async () => {
     const runtime = authorSyntheticRuntimeContract();
     const profileVersionId = await createProfileVersion("unsealed");
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert(priceFixture(profileVersionId, "default"))
-      .select("id,components_sealed_at")
-      .single();
+    const priceId = ownerInsertPrice(priceFixture(profileVersionId, "default"));
+    const { data: price, error: priceError } = await service.from("ai_price_versions").select("id,components_sealed_at").eq("id", priceId).single();
     expect(priceError).toBeNull();
     expect(price?.components_sealed_at).toBeNull();
 
-    const component = await service.from("ai_price_components").insert({
-      price_version_id: price!.id,
-      component: "input_standard",
-      nanos_per_million: 1,
-    });
-    expect(component.error).toBeNull();
+    expect(runOwnerSql(`insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ('${priceId}','input_standard',1);`).status).toBe(0);
 
     const request = await service.from("ai_request_ledger").insert({
       request_id: crypto.randomUUID(),
