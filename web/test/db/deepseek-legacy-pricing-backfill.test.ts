@@ -400,11 +400,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     const first = await read(reservationId);
     runBackfill();
     const second = await read(reservationId);
-    expect(second).toMatchObject({
-      route_schema_version: first.route_schema_version,
-      price_version_id: first.price_version_id,
-      estimated_cost_nanos: first.estimated_cost_nanos,
-    });
+    expect(second).toEqual(first);
 
     const denied = await service.rpc("backfill_deepseek_legacy_pricing_v1");
     expect(denied.error).not.toBeNull();
@@ -413,6 +409,113 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
       p_sealed_at: BEFORE,
     });
     expect(helperDenied.error).not.toBeNull();
+  });
+
+  it("rejects service-role mutation of every representative legacy-bound fact", async () => {
+    const reservationId = await insertHistorical();
+    runBackfill();
+    const original = await read(reservationId);
+    for (const mutation of [
+      { input_cached_tokens: 99 },
+      { input_total_tokens: 99, cache_usage_reporting: "unavailable" },
+      { estimated_cost_nanos: 1, known_estimated_cost_nanos: 1 },
+      { status: "failed_upstream" },
+    ]) {
+      const result = await service
+        .from("ai_request_ledger")
+        .update(mutation)
+        .eq("reservation_id", reservationId);
+      expect(result.error?.code).toBe(CHECK_VIOLATION);
+      expect(result.error?.message).toContain("legacy pricing ledger rows are immutable");
+      expect(await read(reservationId)).toEqual(original);
+    }
+  });
+
+  it("fails closed on route-null DB-012 markers without changing bare work", async () => {
+    const good = await insertHistorical();
+    const originalGood = await read(good);
+    const baselineCatalog = ownerLegacyCatalogSnapshot();
+    for (const marker of [
+      { usage_schema_version: "legacy_v1" },
+      { cost_basis: "legacy_request_aggregate" },
+      { billing_currency: "CNY", estimated_cost_nanos: 0, known_estimated_cost_nanos: 0 },
+    ]) {
+      const marked = await insertHistorical(marker);
+      const originalMarked = await read(marked);
+      const result = runOwnerSql(
+        "select public.backfill_deepseek_legacy_pricing_v1();",
+        { expectFailure: true },
+      );
+      expect(result.stderr + result.stdout).toContain("legacy request projection mismatch");
+      expect(await read(good)).toEqual(originalGood);
+      expect(await read(marked)).toEqual(originalMarked);
+      expect(ownerLegacyCatalogSnapshot()).toEqual(baselineCatalog);
+      const cleanup = await service
+        .from("ai_request_ledger")
+        .delete()
+        .eq("reservation_id", marked);
+      expect(cleanup.error).toBeNull();
+    }
+  });
+
+  it("rolls back hostile complete legacy projection and seal-intent defects", async () => {
+    const good = await insertHistorical();
+    runBackfill();
+    const original = await read(good);
+    const catalog = ownerLegacyCatalogSnapshot();
+    const defects = [
+      {
+        mutation: "update public.ai_request_ledger set known_estimated_cost_nanos = 1, estimated_cost_nanos = 1 where route_schema_version = 'legacy_pricing_v1';",
+        message: "legacy request projection mismatch",
+      },
+      {
+        mutation: "update public.ai_request_ledger set cache_usage_reporting = null where route_schema_version = 'legacy_pricing_v1';",
+        message: "legacy request projection mismatch",
+      },
+      {
+        mutation: "update public.ai_request_ledger set incomplete_fields = array['estimated_cost'] where route_schema_version = 'legacy_pricing_v1';",
+        message: "legacy request projection mismatch",
+      },
+      {
+        mutation: "update public.ai_request_ledger set provider_reported_currency = 'CNY', provider_reported_cost_nanos = 1, cost_reconciliation_status = 'mismatch' where route_schema_version = 'legacy_pricing_v1';",
+        message: "legacy request projection mismatch",
+      },
+      {
+        mutation: `delete from public.ai_price_component_seal_intents where price_version_id = '${LEGACY_PRICE}'::uuid;`,
+        message: "components or seal mismatch",
+      },
+      {
+        mutation: `update public.ai_price_component_seal_intents set applied_at = null where price_version_id = '${LEGACY_PRICE}'::uuid;`,
+        message: "components or seal mismatch",
+      },
+      {
+        mutation: `update public.ai_price_component_seal_intents set price_version_id = (select id from public.ai_price_versions where id <> '${LEGACY_PRICE}'::uuid order by id limit 1) where price_version_id = '${LEGACY_PRICE}'::uuid;`,
+        message: "components or seal mismatch",
+      },
+    ] as const;
+    for (const defect of defects) {
+      const result = runOwnerSql(String.raw`
+        begin;
+        set local session_replication_role = replica;
+        ${defect.mutation}
+        set local session_replication_role = origin;
+        do $probe$ begin
+          begin
+            perform public.backfill_deepseek_legacy_pricing_v1();
+            raise exception 'expected DB-012 hostile replay rejection';
+          exception when others then
+            if sqlstate <> '23514'
+               or sqlerrm not like ${`'%${defect.message}%'`} then
+              raise;
+            end if;
+          end;
+        end $probe$;
+        rollback;
+      `);
+      expect(result.status).toBe(0);
+      expect(await read(good)).toEqual(original);
+      expect(ownerLegacyCatalogSnapshot()).toEqual(catalog);
+    }
   });
 
   it("rolls back atomically when the canonical price/request lock order cannot proceed", async () => {
