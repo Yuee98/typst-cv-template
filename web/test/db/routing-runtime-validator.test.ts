@@ -17,8 +17,19 @@ import {
   type SyntheticRuntimeContractSet,
 } from "./runtime-contract-fixtures";
 
-const CHECK_VIOLATION = "23514";
 const PERMISSION_DENIED = "42501";
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function sqlNullableLiteral(value: string | null): string {
+  return value === null ? "null" : sqlLiteral(value);
+}
+
+function sqlJson(value: unknown): string {
+  return `${sqlLiteral(JSON.stringify(value))}::jsonb`;
+}
 
 interface RuntimeContractPair {
   runtimeContractId: string;
@@ -74,28 +85,66 @@ function mapFixtureRouteIds(
 
 describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
   let service: SupabaseClient;
+  let activePolicyId: string | null = null;
 
   beforeAll(() => {
     service = createServiceClient();
   });
 
-  afterAll(async () => {
-    const { data } = await service
-      .from("ai_feature_config")
-      .select("active_routing_policy_version_id")
-      .eq("id", true)
-      .single();
-    if (data?.active_routing_policy_version_id) {
-      await service
-        .from("ai_feature_config")
-        .update({
-          active_routing_policy_version_id: null,
-          routing_updated_by: "runtime-validator-cleanup",
-          routing_change_reason: `runtime validator cleanup ${crypto.randomUUID()}`,
-        })
-        .eq("id", true);
+  afterAll(() => {
+    if (activePolicyId === null) {
+      return;
     }
+    const cleanup = runOwnerSql(String.raw`
+      update public.ai_feature_config
+      set active_routing_policy_version_id = null,
+          routing_updated_by = 'runtime-validator-cleanup',
+          routing_change_reason = ${sqlLiteral(`runtime validator cleanup ${crypto.randomUUID()}`)}
+      where id = true
+        and active_routing_policy_version_id = '${activePolicyId}'::uuid;
+    `);
+    expect(cleanup.status).toBe(0);
   });
+
+  async function lifecycleEvidence(
+    runtime: RuntimeContractPair,
+    reason: string,
+  ): Promise<Record<string, string>> {
+    const result = runOwnerSql(String.raw`
+      \pset format unaligned
+      \pset tuples_only on
+      select pg_catalog.jsonb_build_object(
+        'reviewedSourceCommitOid', reviewed_source_commit_oid,
+        'recheckedAt', created_at
+      )::text
+      from public.ai_service_runtime_contract_versions
+      where runtime_contract_id = ${sqlLiteral(runtime.runtimeContractId)}
+        and runtime_contract_sha256 = ${sqlLiteral(runtime.runtimeContractSha256)};
+    `);
+    const line = result.stdout
+      .split(/\r?\n/u)
+      .map((value) => value.trim())
+      .findLast((value) => value.startsWith("{"));
+    if (line === undefined) {
+      throw new Error(`owner runtime evidence read returned no JSON: ${result.stdout}`);
+    }
+    const root = JSON.parse(line) as {
+      reviewedSourceCommitOid?: unknown;
+      recheckedAt?: unknown;
+    };
+    expect(root.reviewedSourceCommitOid).toMatch(/^sha1:[0-9a-f]{40}$/u);
+    expect(root.recheckedAt).toEqual(expect.any(String));
+    return {
+      p_runtime_contract_id: runtime.runtimeContractId,
+      p_runtime_contract_sha256: runtime.runtimeContractSha256,
+      p_actor: "routing-runtime-validator",
+      p_reason: reason,
+      p_reviewed_source_commit_oid: root.reviewedSourceCommitOid as string,
+      p_reviewed_source_sha256: runtime.runtimeContractSha256,
+      p_rechecked_at: root.recheckedAt as string,
+      p_rechecked_sha256: runtime.runtimeContractSha256,
+    };
+  }
 
   async function createRouteFixture(options: {
     label: string;
@@ -106,62 +155,16 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
   }): Promise<RouteFixture> {
     const suffix = crypto.randomUUID();
     const profileKey = `test.validator.${options.label}.${suffix}`;
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: `Validator ${options.label}`,
-        gateway_kind: "direct_deepseek",
-        model_vendor: "deepseek",
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-
-    const { data: version, error: versionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        adapter_kind: "deepseek_chat_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "deepseek_api_key",
-        endpoint_alias: "deepseek_official",
-        model_id: "deepseek-v4-flash",
-        upstream_route: {},
-        capability_contract_id: "polish_v2",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id:
-          options.legalManifestId ?? DEEPSEEK_LEGAL_MANIFEST_ID,
-        display_disclosure_key:
-          options.displayDisclosureKey === undefined
-            ? "deepseek.official"
-            : options.displayDisclosureKey,
-        config: {},
-        config_sha256: "1".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(versionError).toBeNull();
-
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version!.id,
-        version: 1,
-        pricing_lane: "default",
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from:
-          options.validFrom ?? new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: "https://example.com/validator-price",
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: "2".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
+    const profileId = crypto.randomUUID();
+    const profileVersionId = crypto.randomUUID();
+    const priceVersionId = crypto.randomUUID();
+    const displayDisclosureKey =
+      options.displayDisclosureKey === undefined
+        ? "deepseek.official"
+        : options.displayDisclosureKey;
+    const validFrom =
+      options.validFrom ?? new Date(Date.now() - 3_600_000).toISOString();
+    const sourceCheckedAt = new Date().toISOString();
 
     const components = [
       "input_standard",
@@ -169,14 +172,72 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
       "output",
       ...(options.includeCacheWrite ? ["input_cache_write"] : []),
     ].map((component) => ({
-      price_version_id: price!.id,
+      price_version_id: priceVersionId,
       component,
       nanos_per_million: 1,
     }));
-    const componentInsert = await service
-      .from("ai_price_components")
-      .insert(components);
-    expect(componentInsert.error).toBeNull();
+    const authored = runOwnerSql(String.raw`
+      begin;
+      insert into public.ai_provider_profiles (
+        id, profile_key, display_name, gateway_kind, model_vendor
+      ) values (
+        '${profileId}'::uuid,
+        ${sqlLiteral(profileKey)},
+        ${sqlLiteral(`Validator ${options.label}`)},
+        'direct_deepseek',
+        'deepseek'
+      );
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, adapter_kind, wire_api_kind,
+        credential_alias, endpoint_alias, model_id, upstream_route,
+        capability_contract_id, cache_policy_id, legal_manifest_id,
+        display_disclosure_key, config, config_sha256
+      ) values (
+        '${profileVersionId}'::uuid,
+        '${profileId}'::uuid,
+        1,
+        'deepseek_chat_v1',
+        'chat_completions_v1',
+        'deepseek_api_key',
+        'deepseek_official',
+        'deepseek-v4-flash',
+        '{}'::jsonb,
+        'polish_v2',
+        'automatic_cache_v1',
+        ${sqlLiteral(options.legalManifestId ?? DEEPSEEK_LEGAL_MANIFEST_ID)},
+        ${sqlNullableLiteral(displayDisclosureKey)},
+        '{}'::jsonb,
+        '${"1".repeat(64)}'
+      );
+      insert into public.ai_price_versions (
+        id, profile_version_id, version, pricing_lane, currency,
+        calculator_kind, valid_from, source_url, source_checked_at,
+        source_snapshot_sha256, parameters
+      ) values (
+        '${priceVersionId}'::uuid,
+        '${profileVersionId}'::uuid,
+        1,
+        'default',
+        'CNY',
+        'linear_token_v1',
+        ${sqlLiteral(validFrom)}::timestamptz,
+        'https://example.com/validator-price',
+        ${sqlLiteral(sourceCheckedAt)}::timestamptz,
+        '${"2".repeat(64)}',
+        '{}'::jsonb
+      );
+      insert into public.ai_price_components (
+        price_version_id, component, nanos_per_million
+      ) values
+        ${components
+          .map(
+            ({ component, nanos_per_million: nanosPerMillion }) =>
+              `('${priceVersionId}'::uuid, ${sqlLiteral(component)}, ${nanosPerMillion})`,
+          )
+          .join(",\n        ")};
+      commit;
+    `);
+    expect(authored.status).toBe(0);
 
     const runtime = authorSyntheticRuntimeContract({
       profileKey,
@@ -184,10 +245,10 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     });
 
     return {
-      profileId: profile!.id,
+      profileId,
       profileKey,
-      profileVersionId: version!.id,
-      priceVersionId: price!.id,
+      profileVersionId,
+      priceVersionId,
       runtime,
     };
   }
@@ -206,50 +267,52 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     displayDisclosureKey: string;
     configHashCharacter: string;
   }) {
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: input.profileKey,
-        display_name: input.displayName,
-        gateway_kind: input.gatewayKind,
-        model_vendor: input.modelVendor,
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-
-    const { data: version, error: versionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        adapter_kind: input.adapterKind,
-        wire_api_kind: input.wireApiKind,
-        credential_alias: input.credentialAlias,
-        endpoint_alias: input.endpointAlias,
-        model_id: input.modelId,
-        upstream_route: {},
-        capability_contract_id: "polish_v2",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: input.legalManifestId,
-        display_disclosure_key: input.displayDisclosureKey,
-        config: {},
-        config_sha256: input.configHashCharacter.repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(versionError).toBeNull();
-
-    const validated = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version!.id);
-    expect(validated.error).toBeNull();
+    const profileId = crypto.randomUUID();
+    const profileVersionId = crypto.randomUUID();
+    const authored = runOwnerSql(String.raw`
+      begin;
+      insert into public.ai_provider_profiles (
+        id, profile_key, display_name, gateway_kind, model_vendor
+      ) values (
+        '${profileId}'::uuid,
+        ${sqlLiteral(input.profileKey)},
+        ${sqlLiteral(input.displayName)},
+        ${sqlLiteral(input.gatewayKind)},
+        ${sqlLiteral(input.modelVendor)}
+      );
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, adapter_kind, wire_api_kind,
+        credential_alias, endpoint_alias, model_id, upstream_route,
+        capability_contract_id, cache_policy_id, legal_manifest_id,
+        display_disclosure_key, config, config_sha256
+      ) values (
+        '${profileVersionId}'::uuid,
+        '${profileId}'::uuid,
+        1,
+        ${sqlLiteral(input.adapterKind)},
+        ${sqlLiteral(input.wireApiKind)},
+        ${sqlLiteral(input.credentialAlias)},
+        ${sqlLiteral(input.endpointAlias)},
+        ${sqlLiteral(input.modelId)},
+        '{}'::jsonb,
+        'polish_v2',
+        'automatic_cache_v1',
+        ${sqlLiteral(input.legalManifestId)},
+        ${sqlLiteral(input.displayDisclosureKey)},
+        '{}'::jsonb,
+        ${sqlLiteral(input.configHashCharacter.repeat(64))}
+      );
+      update public.ai_provider_profile_versions
+      set status = 'validated'
+      where id = '${profileVersionId}'::uuid;
+      commit;
+    `);
+    expect(authored.status).toBe(0);
 
     return {
-      profileId: profile!.id as string,
+      profileId,
       profileKey: input.profileKey,
-      profileVersionId: version!.id as string,
+      profileVersionId,
     };
   }
 
@@ -258,34 +321,39 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     pricingLane: "offpeak" | "peak" | "default";
     snapshotHashCharacter: string;
   }): Promise<string> {
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: input.profileVersionId,
-        pricing_lane: input.pricingLane,
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: `https://example.com/shared-${input.pricingLane}-price`,
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: input.snapshotHashCharacter.repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
-
-    const componentInsert = await service.from("ai_price_components").insert(
-      ["input_standard", "input_cache_read", "output"].map((component) => ({
-        price_version_id: price!.id,
-        component,
-        nanos_per_million: 1,
-      })),
-    );
-    expect(componentInsert.error).toBeNull();
-    sealPriceAsDatabaseOwner(price!.id);
-    return price!.id as string;
+    const priceVersionId = crypto.randomUUID();
+    const validFrom = new Date(Date.now() - 3_600_000).toISOString();
+    const sourceCheckedAt = new Date().toISOString();
+    const authored = runOwnerSql(String.raw`
+      begin;
+      insert into public.ai_price_versions (
+        id, profile_version_id, pricing_lane, version, currency,
+        calculator_kind, valid_from, source_url, source_checked_at,
+        source_snapshot_sha256, parameters
+      ) values (
+        '${priceVersionId}'::uuid,
+        '${input.profileVersionId}'::uuid,
+        ${sqlLiteral(input.pricingLane)},
+        1,
+        'CNY',
+        'linear_token_v1',
+        ${sqlLiteral(validFrom)}::timestamptz,
+        ${sqlLiteral(`https://example.com/shared-${input.pricingLane}-price`)},
+        ${sqlLiteral(sourceCheckedAt)}::timestamptz,
+        ${sqlLiteral(input.snapshotHashCharacter.repeat(64))},
+        '{}'::jsonb
+      );
+      insert into public.ai_price_components (
+        price_version_id, component, nanos_per_million
+      ) values
+        ('${priceVersionId}'::uuid, 'input_standard', 1),
+        ('${priceVersionId}'::uuid, 'input_cache_read', 1),
+        ('${priceVersionId}'::uuid, 'output', 1);
+      commit;
+    `);
+    expect(authored.status).toBe(0);
+    sealPriceAsDatabaseOwner(priceVersionId);
+    return priceVersionId;
   }
 
   async function createSharedRoutingFixtureGraph(): Promise<SharedRoutingFixtureGraph> {
@@ -418,31 +486,36 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
       );
     }
     const runtime = options.runtime ?? route.runtime;
-    const { data, error } = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.validator.policy.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules,
-        default_profile_version_id: mappedDefaultProfileVersionId,
-        legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-        runtime_contract_id: runtime.runtimeContractId,
-        runtime_contract_sha256: runtime.runtimeContractSha256,
-        config_sha256: "3".repeat(64),
-      })
-      .select("id,status")
-      .single();
-    expect(error).toBeNull();
-    return data!;
+    const policyId = crypto.randomUUID();
+    const authored = runOwnerSql(String.raw`
+      insert into public.ai_routing_policy_versions (
+        id, policy_key, version, timezone, rules,
+        default_profile_version_id, legal_bundle_version,
+        runtime_contract_id, runtime_contract_sha256, config_sha256
+      ) values (
+        '${policyId}'::uuid,
+        ${sqlLiteral(`test.validator.policy.${crypto.randomUUID()}`)},
+        1,
+        'Asia/Shanghai',
+        ${sqlJson(rules)},
+        '${mappedDefaultProfileVersionId}'::uuid,
+        ${sqlLiteral(INITIAL_LEGAL_BUNDLE_VERSION)},
+        ${sqlLiteral(runtime.runtimeContractId)},
+        ${sqlLiteral(runtime.runtimeContractSha256)},
+        '${"3".repeat(64)}'
+      );
+    `);
+    expect(authored.status).toBe(0);
+    return { id: policyId, status: "draft" };
   }
 
-  async function validateProfile(route: RouteFixture) {
-    const result = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", route.profileVersionId);
-    expect(result.error).toBeNull();
+  function validateProfile(route: RouteFixture) {
+    const result = runOwnerSql(String.raw`
+      update public.ai_provider_profile_versions
+      set status = 'validated'
+      where id = '${route.profileVersionId}'::uuid;
+    `);
+    expect(result.status).toBe(0);
   }
 
   it("accepts exact rules, then requires canary/active for the pointer", async () => {
@@ -455,10 +528,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
       .from("ai_routing_policy_versions")
       .update({ status: "validated" })
       .eq("id", policy.id);
-    expect(directValidated.error?.code).toBe(CHECK_VIOLATION);
-    expect(directValidated.error?.message).toContain(
-      "direct routing policy lifecycle transitions await DB-013 authority",
-    );
+    expect(directValidated.error?.code).toBe(PERMISSION_DENIED);
 
     const unauthorizedTransition = await service.rpc(
       "transition_ai_routing_policy_v1",
@@ -471,32 +541,35 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
 
     transitionPolicyAsDatabaseOwner(policy.id, "validated");
 
-    const validatedPointer = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: policy.id,
-        routing_updated_by: "runtime-validator",
-        routing_change_reason: `reject validated ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
-    expect(validatedPointer.error?.code).toBe(CHECK_VIOLATION);
+    const validatedPointer = runOwnerSql(
+      String.raw`
+        \set VERBOSITY verbose
+        update public.ai_feature_config
+        set active_routing_policy_version_id = '${policy.id}'::uuid,
+            routing_updated_by = 'runtime-validator',
+            routing_change_reason = ${sqlLiteral(`reject validated ${crypto.randomUUID()}`)}
+        where id = true;
+      `,
+      { expectFailure: true },
+    );
+    expect(validatedPointer.stderr + validatedPointer.stdout).toContain("23514");
+    expect(validatedPointer.stderr).toMatch(/canary|active/i);
 
-    const canaryProfile = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "canary" })
-      .eq("id", route.profileVersionId);
-    expect(canaryProfile.error).toBeNull();
+    const canaryProfile = runOwnerSql(String.raw`
+      update public.ai_provider_profile_versions
+      set status = 'canary'
+      where id = '${route.profileVersionId}'::uuid;
+    `);
+    expect(canaryProfile.status).toBe(0);
     transitionPolicyAsDatabaseOwner(policy.id, "canary");
 
-    const activation = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: policy.id,
-        routing_updated_by: "runtime-validator",
-        routing_change_reason: `activate canary ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
+    const activationReason = `activate canary ${crypto.randomUUID()}`;
+    const activation = await service.rpc("set_ai_routing_policy_pointer_v1", {
+      p_policy_version_id: policy.id,
+      ...(await lifecycleEvidence(route.runtime, activationReason)),
+    });
     expect(activation.error).toBeNull();
+    activePolicyId = policy.id;
 
     const unauthorizedAssert = await service.rpc(
       "assert_ai_routing_policy_v1",
@@ -508,15 +581,13 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     );
     expect(unauthorizedAssert.error?.code).toBe(PERMISSION_DENIED);
 
-    const cleanup = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: null,
-        routing_updated_by: "runtime-validator",
-        routing_change_reason: `deactivate canary ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
+    const cleanupReason = `deactivate canary ${crypto.randomUUID()}`;
+    const cleanup = await service.rpc("clear_ai_routing_policy_pointer_v1", {
+      p_expected_policy_version_id: policy.id,
+      ...(await lifecycleEvidence(route.runtime, cleanupReason)),
+    });
     expect(cleanup.error).toBeNull();
+    activePolicyId = null;
   });
 
   it("matches every shared routing-rules shape and window-count case", async () => {
@@ -766,25 +837,41 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
 
     transitionPolicyAsDatabaseOwner(policy.id, "validated");
 
-    const profileCanary = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "canary" })
-      .eq("id", route.profileVersionId);
-    expect(profileCanary.error).toBeNull();
+    const profileCanary = runOwnerSql(String.raw`
+      update public.ai_provider_profile_versions
+      set status = 'canary'
+      where id = '${route.profileVersionId}'::uuid;
+    `);
+    expect(profileCanary.status).toBe(0);
     const canary = transitionPolicyAsDatabaseOwner(policy.id, "canary", {
       expectFailure: true,
     });
     expect(canary.stderr).toMatch(/price is unavailable/i);
   });
 
-  it("uses owner intent authority and rejects service-role nested-trigger forgery", async () => {
+  it("uses owner intent authority and structurally rejects direct seal forgery", async () => {
     const route = await createRouteFixture({ label: "seal-authority" });
 
-    const directSeal = await service
+    // The service role retains the narrow column-level UPDATE needed by the
+    // route-snapshot guard's row lock. Directly setting the seal is therefore
+    // denied structurally by the trigger/intent contract, not by ACL.
+    const directSeal = runOwnerSql(
+      String.raw`
+        \set VERBOSITY verbose
+        update public.ai_price_versions
+        set components_sealed_at = greatest(clock_timestamp(), created_at)
+        where id = '${route.priceVersionId}'::uuid;
+      `,
+      { expectFailure: true },
+    );
+    expect(directSeal.stderr).toContain("23514");
+    const unsealed = await service
       .from("ai_price_versions")
-      .update({ components_sealed_at: new Date().toISOString() })
-      .eq("id", route.priceVersionId);
-    expect(directSeal.error?.code).toBe(CHECK_VIOLATION);
+      .select("components_sealed_at")
+      .eq("id", route.priceVersionId)
+      .single();
+    expect(unsealed.error).toBeNull();
+    expect(unsealed.data?.components_sealed_at).toBeNull();
 
     const unauthorizedHelper = await service.rpc("seal_ai_price_components_v1", {
       p_price_version_ids: [route.priceVersionId],

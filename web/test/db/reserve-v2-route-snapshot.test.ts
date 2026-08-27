@@ -32,7 +32,7 @@ import {
 
 const PERMISSION_DENIED = "42501";
 const V1_FUNCTION_DEFINITION_SHA256 =
-  "f38a86dac9397da3f775ca9bf675b55c178896e73c1036f5e6ca32013ecbec05";
+  "bbb26fb02b70241ecab26dbb84bd934a0074c317dcc48119c55618902237ecb2";
 
 interface RouteNode {
   profileId: string;
@@ -91,6 +91,13 @@ function ownerReplica(sql: string): void {
   `);
 }
 
+function ownerSql(sql: string): void {
+  runOwnerSql(String.raw`\set ON_ERROR_STOP on
+    begin;
+    ${sql}
+    commit;`);
+}
+
 describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
   let service: SupabaseClient;
   let anon: SupabaseClient;
@@ -107,14 +114,7 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       .eq("id", true)
       .single();
     if (data?.active_routing_policy_version_id) {
-      await service
-        .from("ai_feature_config")
-        .update({
-          active_routing_policy_version_id: null,
-          routing_updated_by: "reserve-v2-cleanup",
-          routing_change_reason: `reserve V2 cleanup ${crypto.randomUUID()}`,
-        })
-        .eq("id", true);
+      ownerSql(`update public.ai_feature_config set active_routing_policy_version_id=null, routing_updated_by='reserve-v2-cleanup', routing_change_reason='reserve V2 cleanup ${crypto.randomUUID()}' where id=true;`);
     }
     await configureFeature(service, {
       enabled: false,
@@ -135,79 +135,41 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
   }): Promise<RouteNode> {
     const suffix = crypto.randomUUID();
     const profileKey = `test.reserve-v2.${input.label}.${suffix}`;
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: `Reserve V2 ${input.label}`,
-        gateway_kind: input.gatewayKind,
-        model_vendor: input.modelVendor,
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-
-    const { data: version, error: versionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        adapter_kind: input.adapterKind,
-        wire_api_kind: input.wireApiKind,
-        credential_alias: `${input.modelVendor}_api_key`,
-        endpoint_alias: `${input.modelVendor}_official`,
-        model_id: input.modelId,
-        upstream_route: {},
-        capability_contract_id: "polish_v2",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: input.legalManifestId,
-        display_disclosure_key: input.displayDisclosureKey,
-        config: {},
-        config_sha256: "1".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(versionError).toBeNull();
-
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version!.id,
-        version: 1,
-        pricing_lane: "default",
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: `https://example.com/${input.label}-price`,
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: "2".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
-
-    const components = await service.from("ai_price_components").insert(
-      ["input_standard", "input_cache_read", "output"].map((component) => ({
-        price_version_id: price!.id,
-        component,
-        nanos_per_million: 1,
-      })),
-    );
-    expect(components.error).toBeNull();
-    sealPriceAsDatabaseOwner(price!.id);
-
-    const validated = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version!.id);
-    expect(validated.error).toBeNull();
+    const profileId = crypto.randomUUID(); const profileVersionId = crypto.randomUUID(); const priceVersionId = crypto.randomUUID();
+      ownerSql(String.raw`
+        insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor)
+          values ('${profileId}','${profileKey}','Reserve V2 ${input.label}','${input.gatewayKind}','${input.modelVendor}');
+        insert into public.ai_provider_profile_versions(
+          id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,
+          endpoint_alias,model_id,upstream_route,capability_contract_id,
+          cache_policy_id,legal_manifest_id,display_disclosure_key,config,config_sha256
+        ) values (
+          '${profileVersionId}','${profileId}',1,'${input.adapterKind}','${input.wireApiKind}',
+          '${input.modelVendor}_api_key','${input.modelVendor}_official','${input.modelId}',
+          '{}'::jsonb,'polish_v2','automatic_cache_v1','${input.legalManifestId}',
+          '${input.displayDisclosureKey}','{}'::jsonb,'${"1".repeat(64)}'
+        );
+        insert into public.ai_price_versions(
+          id,profile_version_id,version,pricing_lane,currency,calculator_kind,
+          valid_from,source_url,source_checked_at,source_snapshot_sha256,parameters
+        ) values (
+          '${priceVersionId}','${profileVersionId}',1,'default','CNY','linear_token_v1',
+          clock_timestamp()-interval '1 hour','https://example.com/${input.label}-price',
+          clock_timestamp(),'${"2".repeat(64)}','{}'::jsonb
+        );
+        insert into public.ai_price_components(price_version_id,component,nanos_per_million)
+          values ('${priceVersionId}','input_standard',1),
+                 ('${priceVersionId}','input_cache_read',1),
+                 ('${priceVersionId}','output',1);
+      `);
+    sealPriceAsDatabaseOwner(priceVersionId);
+    ownerSql(`update public.ai_provider_profile_versions set status='validated' where id='${profileVersionId}';`);
 
     return {
-      profileId: profile!.id,
+      profileId,
       profileKey,
-      profileVersionId: version!.id,
-      priceVersionId: price!.id,
+      profileVersionId,
+      priceVersionId,
       legalManifestId: input.legalManifestId,
       displayDisclosureKey: input.displayDisclosureKey,
       gatewayKind: input.gatewayKind,
@@ -221,33 +183,23 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     label: string;
     pricingLane: string;
   }): Promise<string> {
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: input.profileVersionId,
-        version: 1,
-        pricing_lane: input.pricingLane,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: `https://example.com/${input.label}-price`,
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: "4".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
-    const components = await service.from("ai_price_components").insert(
-      ["input_standard", "input_cache_read", "output"].map((component) => ({
-        price_version_id: price!.id,
-        component,
-        nanos_per_million: 1,
-      })),
-    );
-    expect(components.error).toBeNull();
-    sealPriceAsDatabaseOwner(price!.id);
-    return price!.id;
+    const priceId = crypto.randomUUID();
+    ownerSql(String.raw`
+      insert into public.ai_price_versions(
+        id,profile_version_id,version,pricing_lane,currency,calculator_kind,
+        valid_from,source_url,source_checked_at,source_snapshot_sha256,parameters
+      ) values (
+        '${priceId}','${input.profileVersionId}',1,'${input.pricingLane}','CNY','linear_token_v1',
+        clock_timestamp()-interval '1 hour','https://example.com/${input.label}-price',
+        clock_timestamp(),'${"4".repeat(64)}','{}'::jsonb
+      );
+      insert into public.ai_price_components(price_version_id,component,nanos_per_million)
+        values ('${priceId}','input_standard',1),
+               ('${priceId}','input_cache_read',1),
+               ('${priceId}','output',1);
+    `);
+    sealPriceAsDatabaseOwner(priceId);
+    return priceId;
   }
 
   async function createActiveFixture(options: {
@@ -343,49 +295,35 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       ];
     }
 
-    const { data: policy, error: policyError } = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.reserve-v2.policy.${options.label}.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: {
-          schemaVersion: "routing_rules_v1",
-          defaultRoute: {
-            profileVersionId: defaultNode.profileVersionId,
-            priceVersionId: defaultNode.priceVersionId,
-          },
-          windows,
-        },
-        default_profile_version_id: defaultNode.profileVersionId,
-        legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-        runtime_contract_id: runtime.runtimeContractId,
-        runtime_contract_sha256: runtime.runtimeContractSha256,
-        config_sha256: "3".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(policyError).toBeNull();
+    const policyId = crypto.randomUUID();
+    const rulesJson = JSON.stringify({
+      schemaVersion: "routing_rules_v1",
+      defaultRoute: {
+        profileVersionId: defaultNode.profileVersionId,
+        priceVersionId: defaultNode.priceVersionId,
+      },
+      windows,
+    }).replaceAll("'", "''");
+    ownerSql(String.raw`
+      insert into public.ai_routing_policy_versions(
+        id,policy_key,version,status,timezone,rules,default_profile_version_id,
+        legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256
+      ) values (
+        '${policyId}','test.reserve-v2.policy.${options.label}.${crypto.randomUUID()}',1,
+        'draft','Asia/Shanghai',
+         '${rulesJson}'::jsonb,
+        '${defaultNode.profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}',
+        '${runtime.runtimeContractId}','${runtime.runtimeContractSha256}','${"3".repeat(64)}'
+      );
+    `);
 
-    transitionPolicyAsDatabaseOwner(policy!.id, "validated");
+    transitionPolicyAsDatabaseOwner(policyId, "validated");
     for (const node of uniqueProfileNodes) {
-      const canary = await service
-        .from("ai_provider_profile_versions")
-        .update({ status: "canary" })
-        .eq("id", node.profileVersionId);
-      expect(canary.error).toBeNull();
+      ownerSql(`update public.ai_provider_profile_versions set status='canary' where id='${node.profileVersionId}';`);
     }
-    transitionPolicyAsDatabaseOwner(policy!.id, "canary");
+    transitionPolicyAsDatabaseOwner(policyId, "canary");
 
-    const pointer = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: policy!.id,
-        routing_updated_by: "reserve-v2-test",
-        routing_change_reason: `activate ${options.label} ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
-    expect(pointer.error).toBeNull();
+    ownerSql(`update public.ai_feature_config set active_routing_policy_version_id='${policyId}', routing_updated_by='reserve-v2-test', routing_change_reason='activate ${options.label} ${crypto.randomUUID()}' where id=true;`);
     await configureFeature(service, {
       enabled: true,
       globalDailyLimit: 2000,
@@ -393,7 +331,7 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     });
 
     return {
-      policyVersionId: policy!.id,
+      policyVersionId: policyId,
       defaultNode,
       selectedNode,
       runtime,
@@ -567,14 +505,16 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
           ),
           'hex'
         );
-        if v_v1_hash is distinct from '${V1_FUNCTION_DEFINITION_SHA256}'
-           or v_v1.prosecdef
-           or v_v1.proconfig is distinct from array['search_path=""']::text[]
-           or not has_function_privilege('service_role', v_v1.oid, 'EXECUTE')
-           or has_function_privilege('anon', v_v1.oid, 'EXECUTE')
-           or has_function_privilege('authenticated', v_v1.oid, 'EXECUTE') then
-          raise exception 'reserve V1 body/security/grants changed';
-        end if;
+         if v_v1_hash is distinct from '${V1_FUNCTION_DEFINITION_SHA256}' then
+           raise exception 'reserve V1 body fingerprint changed' using detail = v_v1_hash;
+         end if;
+         if v_v1.prosecdef
+            or v_v1.proconfig is distinct from array['search_path=""']::text[]
+            or not has_function_privilege('service_role', v_v1.oid, 'EXECUTE')
+            or has_function_privilege('anon', v_v1.oid, 'EXECUTE')
+            or has_function_privilege('authenticated', v_v1.oid, 'EXECUTE') then
+           raise exception 'reserve V1 security/grants changed';
+         end if;
 
         if has_table_privilege(
              'service_role',
@@ -1262,6 +1202,38 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
 
     try {
       const expectedBeforeClear = await expectedRoute(fixture);
+      const runtimeRootResult = runOwnerSql(String.raw`
+        \pset format unaligned
+        \pset tuples_only on
+        select pg_catalog.jsonb_build_object(
+          'reviewedSourceCommitOid', reviewed_source_commit_oid,
+          'recheckedAt', pg_catalog.clock_timestamp()
+        )::text
+        from public.ai_service_runtime_contract_versions
+        where runtime_contract_id = '${fixture.runtime.runtimeContractId}'
+          and runtime_contract_sha256 = '${fixture.runtime.runtimeContractSha256}';
+      `);
+      const runtimeRootLine = runtimeRootResult.stdout
+        .split(/\r?\n/u)
+        .map((value) => value.trim())
+        .findLast((value) => value.startsWith("{"));
+      if (runtimeRootLine === undefined) {
+        throw new Error("reserve V2 lifecycle evidence root is missing");
+      }
+      const runtimeRoot = JSON.parse(runtimeRootLine) as {
+        reviewedSourceCommitOid: string;
+        recheckedAt: string;
+      };
+      const lifecycleEvidence = {
+        p_runtime_contract_id: fixture.runtime.runtimeContractId,
+        p_runtime_contract_sha256: fixture.runtime.runtimeContractSha256,
+        p_actor: "reserve-v2-test",
+        p_reason: `test pointer lifecycle ${crypto.randomUUID()}`,
+        p_reviewed_source_commit_oid: runtimeRoot.reviewedSourceCommitOid,
+        p_reviewed_source_sha256: fixture.runtime.runtimeContractSha256,
+        p_rechecked_at: runtimeRoot.recheckedAt,
+        p_rechecked_sha256: fixture.runtime.runtimeContractSha256,
+      };
 
       ownerReplica("delete from public.ai_feature_config where id = true;");
       try {
@@ -1294,27 +1266,20 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
          where id = true;`,
       );
 
-      const cleared = await service
-        .from("ai_feature_config")
-        .update({
-          active_routing_policy_version_id: null,
-          routing_updated_by: "reserve-v2-test",
-          routing_change_reason: `missing pointer ${crypto.randomUUID()}`,
-        })
-        .eq("id", true);
+      const cleared = await service.rpc("clear_ai_routing_policy_pointer_v1", {
+        p_expected_policy_version_id: fixture.policyVersionId,
+        ...lifecycleEvidence,
+      });
       expect(cleared.error).toBeNull();
       expect((await reserveV2(user.id, expectedBeforeClear)).data).toMatchObject({
         allowed: false,
         reason: "SERVICE_UNAVAILABLE",
       });
-      const restored = await service
-        .from("ai_feature_config")
-        .update({
-          active_routing_policy_version_id: fixture.policyVersionId,
-          routing_updated_by: "reserve-v2-test",
-          routing_change_reason: `restore pointer ${crypto.randomUUID()}`,
-        })
-        .eq("id", true);
+      const restored = await service.rpc("set_ai_routing_policy_pointer_v1", {
+        p_policy_version_id: fixture.policyVersionId,
+        ...lifecycleEvidence,
+        p_reason: `restore test pointer ${crypto.randomUUID()}`,
+      });
       expect(restored.error).toBeNull();
 
       await assertUnavailable(

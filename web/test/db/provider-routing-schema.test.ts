@@ -7,11 +7,36 @@ import {
   MIMO_LEGAL_MANIFEST_ID,
   MIMO_LEGAL_MANIFEST_SHA256,
   sealPriceAsDatabaseOwner,
+  runOwnerSql,
   transitionPolicyAsDatabaseOwner,
   type SyntheticRuntimeContract,
 } from "./runtime-contract-fixtures";
 
 const CHECK_VIOLATION = "23514";
+const PERMISSION_DENIED = "42501";
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function sqlJson(value: unknown): string {
+  return `${sqlLiteral(JSON.stringify(value))}::jsonb`;
+}
+
+function ownerDomainProbe(
+  sql: string,
+  expectedSqlState?: string,
+) {
+  const result = runOwnerSql(
+    String.raw`\set VERBOSITY verbose
+${sql}`,
+    { expectFailure: expectedSqlState !== undefined },
+  );
+  if (expectedSqlState !== undefined) {
+    expect(result.stderr + result.stdout).toContain(expectedSqlState);
+  }
+  return result;
+}
 
 interface RoutingTargetFixture {
   id: string;
@@ -22,6 +47,7 @@ interface RoutingTargetFixture {
 describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
   let service: SupabaseClient;
   let legalBundleVersion: string;
+  let ownerPointerPolicyId: string | null = null;
 
   beforeAll(async () => {
     service = createServiceClient();
@@ -30,22 +56,23 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
     legalBundleVersion = data as string;
   });
 
-  afterAll(async () => {
-    const { data } = await service
-      .from("ai_feature_config")
-      .select("active_routing_policy_version_id")
-      .eq("id", true)
-      .single();
-    if (data?.active_routing_policy_version_id) {
-      await service
-        .from("ai_feature_config")
-        .update({
-          active_routing_policy_version_id: null,
-          routing_updated_by: "provider-routing-test-cleanup",
-          routing_change_reason: `restore inactive routing pointer ${crypto.randomUUID()}`,
-        })
-        .eq("id", true);
+  afterAll(() => {
+    if (ownerPointerPolicyId === null) {
+      return;
     }
+    const cleanup = runOwnerSql(String.raw`
+      update public.ai_feature_config
+      set active_routing_policy_version_id = null,
+          routing_updated_by = 'provider-routing-test-cleanup',
+          routing_change_reason = ${sqlLiteral(
+            `restore routing pointer ${crypto.randomUUID()}`,
+          )}
+      where id = true
+        and active_routing_policy_version_id = '${ownerPointerPolicyId}'::uuid
+      returning active_routing_policy_version_id, config_generation;
+    `);
+    expect(cleanup.status).toBe(0);
+    expect(cleanup.stdout).toMatch(/UPDATE 1/);
   });
 
   async function createProfileVersion(
@@ -53,67 +80,70 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
     status: "draft" | "validated" | "canary" | "active",
   ): Promise<RoutingTargetFixture> {
     const profileKey = `test.routing.${label}.${crypto.randomUUID()}`;
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: `Routing ${label}`,
-        gateway_kind: "direct_mimo",
-        model_vendor: "fixture",
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-
-    const { data: version, error: versionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        status: "draft",
-        adapter_kind: "fixture_adapter_v1",
-        wire_api_kind: "responses_v1",
-        credential_alias: "fixture_credential_v1",
-        endpoint_alias: "fixture_endpoint_v1",
-        model_id: "fixture-model",
-        upstream_route: {},
-        capability_contract_id: "fixture_capability_v1",
-        cache_policy_id: "fixture_cache_v1",
-        legal_manifest_id: MIMO_LEGAL_MANIFEST_ID,
-        display_disclosure_key: "mimo.official",
-        config: {},
-        config_sha256: "d".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(versionError).toBeNull();
-
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version!.id,
-        pricing_lane: "default",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: "https://example.com/provider-routing-price",
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: "a".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
-    const components = await service.from("ai_price_components").insert(
-      ["input_standard", "input_cache_read", "output"].map((component) => ({
-        price_version_id: price!.id,
-        component,
-        nanos_per_million: 1,
-      })),
-    );
-    expect(components.error).toBeNull();
-    sealPriceAsDatabaseOwner(price!.id);
+    const profileId = crypto.randomUUID();
+    const versionId = crypto.randomUUID();
+    const priceId = crypto.randomUUID();
+    const authored = runOwnerSql(String.raw`
+      begin;
+      insert into public.ai_provider_profiles (
+        id, profile_key, display_name, gateway_kind, model_vendor
+      ) values (
+        '${profileId}'::uuid,
+        ${sqlLiteral(profileKey)},
+        ${sqlLiteral(`Routing ${label}`)},
+        'direct_mimo',
+        'fixture'
+      );
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, status, adapter_kind, wire_api_kind,
+        credential_alias, endpoint_alias, model_id, upstream_route,
+        capability_contract_id, cache_policy_id, legal_manifest_id,
+        display_disclosure_key, config, config_sha256
+      ) values (
+        '${versionId}'::uuid,
+        '${profileId}'::uuid,
+        1,
+        'draft',
+        'fixture_adapter_v1',
+        'responses_v1',
+        'fixture_credential_v1',
+        'fixture_endpoint_v1',
+        'fixture-model',
+        '{}'::jsonb,
+        'fixture_capability_v1',
+        'fixture_cache_v1',
+        ${sqlLiteral(MIMO_LEGAL_MANIFEST_ID)},
+        'mimo.official',
+        '{}'::jsonb,
+        '${"d".repeat(64)}'
+      );
+      insert into public.ai_price_versions (
+        id, profile_version_id, pricing_lane, version, currency,
+        calculator_kind, valid_from, source_url, source_checked_at,
+        source_snapshot_sha256, parameters
+      ) values (
+        '${priceId}'::uuid,
+        '${versionId}'::uuid,
+        'default',
+        1,
+        'CNY',
+        'linear_token_v1',
+        pg_catalog.clock_timestamp() - interval '1 hour',
+        'https://example.com/provider-routing-price',
+        pg_catalog.clock_timestamp(),
+        '${"a".repeat(64)}',
+        '{}'::jsonb
+      );
+      insert into public.ai_price_components (
+        price_version_id, component, nanos_per_million
+      ) values
+        ('${priceId}'::uuid, 'input_standard', 1),
+        ('${priceId}'::uuid, 'input_cache_read', 1),
+        ('${priceId}'::uuid, 'output', 1);
+      commit;
+    `);
+    expect(authored.status).toBe(0);
+    sealPriceAsDatabaseOwner(priceId);
 
     const runtime = authorSyntheticRuntimeContract({
       profileKey,
@@ -123,18 +153,19 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
 
     if (status !== "draft") {
       for (const nextStatus of ["validated", "canary", "active"] as const) {
-        const transition = await service
-          .from("ai_provider_profile_versions")
-          .update({ status: nextStatus })
-          .eq("id", version!.id);
-        expect(transition.error).toBeNull();
+        const transition = runOwnerSql(String.raw`
+          update public.ai_provider_profile_versions
+          set status = ${sqlLiteral(nextStatus)}
+          where id = '${versionId}'::uuid;
+        `);
+        expect(transition.status).toBe(0);
         if (nextStatus === status) {
           break;
         }
       }
     }
 
-    return { id: version!.id, priceVersionId: price!.id, runtime };
+    return { id: versionId, priceVersionId: priceId, runtime };
   }
 
   function strictRules(target: RoutingTargetFixture) {
@@ -154,22 +185,28 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
     status: "draft" | "validated" | "canary" | "active",
     legalVersion = legalBundleVersion,
   ) {
-    const { data, error } = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.routing.${label}.${crypto.randomUUID()}`,
-        version: 1,
-        status: "draft",
-        timezone: "Asia/Shanghai",
-        rules: strictRules(target),
-        default_profile_version_id: target.id,
-        legal_bundle_version: legalVersion,
-        runtime_contract_id: target.runtime.runtimeContractId,
-        runtime_contract_sha256: target.runtime.runtimeContractSha256,
-        config_sha256: "e".repeat(64),
-      })
-      .select("*")
-      .single();
+    const policyId = crypto.randomUUID();
+    const authored = runOwnerSql(String.raw`
+      insert into public.ai_routing_policy_versions (
+        id, policy_key, version, status, timezone, rules,
+        default_profile_version_id, legal_bundle_version,
+        runtime_contract_id, runtime_contract_sha256, config_sha256
+      ) values (
+        '${policyId}'::uuid,
+        ${sqlLiteral(`test.routing.${label}.${crypto.randomUUID()}`)},
+        1,
+        'draft',
+        'Asia/Shanghai',
+        ${sqlJson(strictRules(target))},
+        '${target.id}'::uuid,
+        ${sqlLiteral(legalVersion)},
+        ${sqlLiteral(target.runtime.runtimeContractId)},
+        ${sqlLiteral(target.runtime.runtimeContractSha256)},
+        '${"e".repeat(64)}'
+      );
+    `);
+    expect(authored.status).toBe(0);
+    const { data, error } = await service.from("ai_routing_policy_versions").select("*").eq("id", policyId).single();
     expect(error).toBeNull();
     if (status === "draft") {
       return data!;
@@ -203,58 +240,78 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
     expect(Number(config?.config_generation)).toBeGreaterThanOrEqual(0);
 
     const profile = await createProfileVersion("timezone", "draft");
-    const invalidTimezone = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.invalid-timezone.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "UTC",
-        rules: strictRules(profile),
-        default_profile_version_id: profile.id,
-        legal_bundle_version: legalBundleVersion,
-        runtime_contract_id: profile.runtime.runtimeContractId,
-        runtime_contract_sha256: profile.runtime.runtimeContractSha256,
-        config_sha256: "e".repeat(64),
-      });
-    expect(invalidTimezone.error?.code).toBe(CHECK_VIOLATION);
+    const insertPolicyDomainProbe = (
+      timezone: string,
+      rules: unknown,
+      status = "draft",
+    ) => ownerDomainProbe(
+      String.raw`
+        insert into public.ai_routing_policy_versions (
+          id, policy_key, version, status, timezone, rules,
+          default_profile_version_id, legal_bundle_version,
+          runtime_contract_id, runtime_contract_sha256, config_sha256
+        ) values (
+          '${crypto.randomUUID()}'::uuid,
+          ${sqlLiteral(`test.routing.domain.${crypto.randomUUID()}`)},
+          1,
+          ${sqlLiteral(status)},
+          ${sqlLiteral(timezone)},
+          ${sqlJson(rules)},
+          '${profile.id}'::uuid,
+          ${sqlLiteral(legalBundleVersion)},
+          ${sqlLiteral(profile.runtime.runtimeContractId)},
+          ${sqlLiteral(profile.runtime.runtimeContractSha256)},
+          '${"e".repeat(64)}'
+        );
+      `,
+      CHECK_VIOLATION,
+    );
 
-    const invalidRules = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.invalid-rules.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: [],
-        default_profile_version_id: profile.id,
-        legal_bundle_version: legalBundleVersion,
-        runtime_contract_id: profile.runtime.runtimeContractId,
-        runtime_contract_sha256: profile.runtime.runtimeContractSha256,
-        config_sha256: "e".repeat(64),
-      });
-    expect(invalidRules.error?.code).toBe(CHECK_VIOLATION);
+    insertPolicyDomainProbe("UTC", strictRules(profile));
+    insertPolicyDomainProbe("Asia/Shanghai", []);
 
-    for (const [index, status] of [
+    for (const status of [
       "validated",
       "canary",
       "active",
       "retired",
-    ].entries()) {
-      const nonDraftInsert = await service
-        .from("ai_routing_policy_versions")
-        .insert({
-          policy_key: `test.non-draft.${index}.${crypto.randomUUID()}`,
-          version: 1,
-          status,
-          timezone: "Asia/Shanghai",
-          rules: strictRules(profile),
-          default_profile_version_id: profile.id,
-          legal_bundle_version: legalBundleVersion,
-          runtime_contract_id: profile.runtime.runtimeContractId,
-          runtime_contract_sha256: profile.runtime.runtimeContractSha256,
-          config_sha256: "e".repeat(64),
-        });
-      expect(nonDraftInsert.error?.code).toBe(CHECK_VIOLATION);
+    ]) {
+      insertPolicyDomainProbe(
+        "Asia/Shanghai",
+        strictRules(profile),
+        status,
+      );
     }
+  });
+
+  it("denies direct service-role catalog and pointer control-plane mutation", async () => {
+    const profile = await createProfileVersion("service-acl", "draft");
+    const policy = await createPolicy(profile, "service-acl", "draft");
+
+    const insert = await service.from("ai_routing_policy_versions").insert({
+      policy_key: `test.routing.service-acl.${crypto.randomUUID()}`,
+      version: 1,
+      timezone: "Asia/Shanghai",
+      rules: strictRules(profile),
+      default_profile_version_id: profile.id,
+      legal_bundle_version: legalBundleVersion,
+      runtime_contract_id: profile.runtime.runtimeContractId,
+      runtime_contract_sha256: profile.runtime.runtimeContractSha256,
+      config_sha256: "e".repeat(64),
+    });
+    expect(insert.error?.code).toBe(PERMISSION_DENIED);
+
+    const update = await service
+      .from("ai_routing_policy_versions")
+      .update({ status: "validated" })
+      .eq("id", policy.id);
+    expect(update.error?.code).toBe(PERMISSION_DENIED);
+
+    const pointer = await service
+      .from("ai_feature_config")
+      .update({ active_routing_policy_version_id: policy.id })
+      .eq("id", true);
+    expect(pointer.error?.code).toBe(PERMISSION_DENIED);
   });
 
   it("fails closed before activation for draft profiles, draft policies, or stale legal", async () => {
@@ -280,15 +337,18 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       "draft-policy",
       "draft",
     );
-    const draftPolicyActivation = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: draftPolicy.id,
-        routing_updated_by: "provider-routing-test",
-        routing_change_reason: `prove draft policy rejection ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
-    expect(draftPolicyActivation.error?.code).toBe(CHECK_VIOLATION);
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_feature_config
+        set active_routing_policy_version_id = '${draftPolicy.id}'::uuid,
+            routing_updated_by = 'provider-routing-test',
+            routing_change_reason = ${sqlLiteral(
+              `prove draft policy rejection ${crypto.randomUUID()}`,
+            )}
+        where id = true;
+      `,
+      CHECK_VIOLATION,
+    );
 
     const staleLegalPolicy = await createPolicy(
       validatedProfile,
@@ -304,7 +364,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
     expect(staleTransition.stderr).toMatch(/current legal bundle/i);
   });
 
-  it("increments generation and requires audit fields for canary pointer changes", async () => {
+  it("owner-only DB007 pointer trigger increments generation and requires audit fields", async () => {
     const profile = await createProfileVersion("activate", "canary");
     const policy = await createPolicy(profile, "activate", "canary");
     const { data: before } = await service
@@ -313,59 +373,86 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       .eq("id", true)
       .single();
 
-    const missingAudit = await service
-      .from("ai_feature_config")
-      .update({ active_routing_policy_version_id: policy.id })
-      .eq("id", true);
-    expect(missingAudit.error?.code).toBe(CHECK_VIOLATION);
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_feature_config
+        set active_routing_policy_version_id = '${policy.id}'::uuid
+        where id = true;
+      `,
+      CHECK_VIOLATION,
+    );
 
-    const activation = await service
+    const activation = runOwnerSql(String.raw`
+      update public.ai_feature_config
+      set active_routing_policy_version_id = '${policy.id}'::uuid,
+          routing_updated_by = 'provider-routing-test',
+          routing_change_reason = ${sqlLiteral(
+            `activate canary fixture ${crypto.randomUUID()}`,
+          )}
+      where id = true
+      returning active_routing_policy_version_id, config_generation,
+        routing_updated_at;
+    `);
+    expect(activation.status).toBe(0);
+    expect(activation.stdout).toMatch(/UPDATE 1/);
+    ownerPointerPolicyId = policy.id;
+
+    const { data: activated, error: activationReadError } = await service
       .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: policy.id,
-        routing_updated_by: "provider-routing-test",
-        routing_change_reason: `activate canary fixture ${crypto.randomUUID()}`,
-      })
-      .eq("id", true)
       .select("active_routing_policy_version_id,config_generation,routing_updated_at")
+      .eq("id", true)
       .single();
-    expect(activation.error).toBeNull();
-    expect(activation.data?.active_routing_policy_version_id).toBe(policy.id);
-    expect(Number(activation.data?.config_generation)).toBe(
+    expect(activationReadError).toBeNull();
+    expect(activated?.active_routing_policy_version_id).toBe(policy.id);
+    expect(Number(activated?.config_generation)).toBe(
       Number(before?.config_generation) + 1,
     );
-    expect(activation.data?.routing_updated_at).toBeTruthy();
+    expect(activated?.routing_updated_at).toBeTruthy();
 
-    const spoofGeneration = await service
-      .from("ai_feature_config")
-      .update({ config_generation: Number(activation.data?.config_generation) + 10 })
-      .eq("id", true);
-    expect(spoofGeneration.error?.code).toBe(CHECK_VIOLATION);
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_feature_config
+        set config_generation = ${Number(activated?.config_generation) + 10}
+        where id = true;
+      `,
+      CHECK_VIOLATION,
+    );
 
-    const rewriteAuditWithoutPointerChange = await service
-      .from("ai_feature_config")
-      .update({
-        routing_updated_by: "different-actor",
-        routing_change_reason: "rewrite audit without changing pointer",
-        routing_updated_at: "2026-01-01T00:00:00Z",
-      })
-      .eq("id", true);
-    expect(rewriteAuditWithoutPointerChange.error?.code).toBe(CHECK_VIOLATION);
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_feature_config
+        set routing_updated_by = 'different-actor',
+            routing_change_reason = 'rewrite audit without changing pointer',
+            routing_updated_at = '2026-01-01T00:00:00Z'::timestamptz
+        where id = true;
+      `,
+      CHECK_VIOLATION,
+    );
 
-    const deactivate = await service
+    const deactivate = runOwnerSql(String.raw`
+      update public.ai_feature_config
+      set active_routing_policy_version_id = null,
+          routing_updated_by = 'provider-routing-test',
+          routing_change_reason = ${sqlLiteral(
+            `restore inactive fixture ${crypto.randomUUID()}`,
+          )}
+      where id = true
+        and active_routing_policy_version_id = '${policy.id}'::uuid
+      returning active_routing_policy_version_id, config_generation;
+    `);
+    expect(deactivate.status).toBe(0);
+    expect(deactivate.stdout).toMatch(/UPDATE 1/);
+    ownerPointerPolicyId = null;
+
+    const { data: deactivated, error: deactivationReadError } = await service
       .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: null,
-        routing_updated_by: "provider-routing-test",
-        routing_change_reason: `restore inactive fixture ${crypto.randomUUID()}`,
-      })
-      .eq("id", true)
       .select("active_routing_policy_version_id,config_generation")
+      .eq("id", true)
       .single();
-    expect(deactivate.error).toBeNull();
-    expect(deactivate.data?.active_routing_policy_version_id).toBeNull();
-    expect(Number(deactivate.data?.config_generation)).toBe(
-      Number(activation.data?.config_generation) + 1,
+    expect(deactivationReadError).toBeNull();
+    expect(deactivated?.active_routing_policy_version_id).toBeNull();
+    expect(Number(deactivated?.config_generation)).toBe(
+      Number(activated?.config_generation) + 1,
     );
   });
 
@@ -373,38 +460,55 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
     const profile = await createProfileVersion("immutable-policy", "validated");
     const policy = await createPolicy(profile, "immutable-policy", "validated");
 
-    const mutate = await service
-      .from("ai_routing_policy_versions")
-      .update({ rules: { changed: true } })
-      .eq("id", policy.id);
-    expect(mutate.error?.code).toBe(CHECK_VIOLATION);
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_routing_policy_versions
+        set rules = '{"changed":true}'::jsonb
+        where id = '${policy.id}'::uuid;
+      `,
+      CHECK_VIOLATION,
+    );
 
-    const backwards = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "draft" })
-      .eq("id", policy.id);
-    expect(backwards.error?.code).toBe(CHECK_VIOLATION);
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_routing_policy_versions
+        set status = 'draft'
+        where id = '${policy.id}'::uuid;
+      `,
+      CHECK_VIOLATION,
+    );
   });
 
   it("clamps policy lifecycle timestamps to monotonic row time", async () => {
     const profile = await createProfileVersion("policy-clock-clamp", "validated");
     const futureCreatedAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const policyId = crypto.randomUUID();
+    const authored = runOwnerSql(String.raw`
+      insert into public.ai_routing_policy_versions (
+        id, policy_key, version, status, timezone, rules,
+        default_profile_version_id, legal_bundle_version,
+        runtime_contract_id, runtime_contract_sha256, config_sha256,
+        created_at
+      ) values (
+        '${policyId}'::uuid,
+        ${sqlLiteral(`test.routing.policy-clock-clamp.${crypto.randomUUID()}`)},
+        1,
+        'draft',
+        'Asia/Shanghai',
+        ${sqlJson(strictRules(profile))},
+        '${profile.id}'::uuid,
+        ${sqlLiteral(legalBundleVersion)},
+        ${sqlLiteral(profile.runtime.runtimeContractId)},
+        ${sqlLiteral(profile.runtime.runtimeContractSha256)},
+        '${"f".repeat(64)}',
+        ${sqlLiteral(futureCreatedAt)}::timestamptz
+      );
+    `);
+    expect(authored.status).toBe(0);
     const { data: policy, error: insertError } = await service
       .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.routing.policy-clock-clamp.${crypto.randomUUID()}`,
-        version: 1,
-        status: "draft",
-        timezone: "Asia/Shanghai",
-        rules: strictRules(profile),
-        default_profile_version_id: profile.id,
-        legal_bundle_version: legalBundleVersion,
-        runtime_contract_id: profile.runtime.runtimeContractId,
-        runtime_contract_sha256: profile.runtime.runtimeContractSha256,
-        config_sha256: "f".repeat(64),
-        created_at: futureCreatedAt,
-      })
       .select("id,created_at")
+      .eq("id", policyId)
       .single();
     expect(insertError).toBeNull();
 
@@ -419,11 +523,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       Date.parse(validated.data!.created_at),
     );
 
-    const profileActive = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "active" })
-      .eq("id", profile.id);
-    expect(profileActive.error).toBeNull();
+    expect(runOwnerSql(String.raw`
+      update public.ai_provider_profile_versions
+      set status = 'active'
+      where id = '${profile.id}'::uuid;
+    `).status).toBe(0);
     transitionPolicyAsDatabaseOwner(policy!.id, "active");
     const active = await service
       .from("ai_routing_policy_versions")
@@ -435,13 +539,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       Date.parse(active.data!.validated_at!),
     );
 
-    const retired = await service
-      .from("ai_routing_policy_versions")
-      .update({ status: "retired" })
-      .eq("id", policy!.id)
-      .select("created_at,validated_at,activated_at,retired_at")
-      .single();
-    expect(retired.error?.code).toBe(CHECK_VIOLATION);
+    ownerDomainProbe(
+      String.raw`
+        update public.ai_routing_policy_versions
+        set status = 'retired'
+        where id = '${policy!.id}'::uuid;
+      `,
+      CHECK_VIOLATION,
+    );
 
     const retained = await service
       .from("ai_routing_policy_versions")

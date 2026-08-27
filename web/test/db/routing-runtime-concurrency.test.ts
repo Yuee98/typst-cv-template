@@ -185,15 +185,14 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       .eq("id", true)
       .single();
     if (data?.active_routing_policy_version_id) {
-      const cleared = await service
-        .from("ai_feature_config")
-        .update({
-          active_routing_policy_version_id: null,
-          routing_updated_by: "runtime-concurrency",
-          routing_change_reason: `${label} ${crypto.randomUUID()}`,
-        })
-        .eq("id", true);
-      expect(cleared.error).toBeNull();
+      const cleared = runOwnerSql(String.raw`begin;
+        update public.ai_feature_config
+        set active_routing_policy_version_id = null,
+            routing_updated_by = 'runtime-concurrency',
+            routing_change_reason = '${label} ${crypto.randomUUID()}'
+        where id = true;
+        commit;`);
+      expect(cleared.status).toBe(0);
     }
   }
 
@@ -204,113 +203,84 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     await clearPointer(`prepare ${label}`);
     const suffix = crypto.randomUUID();
     const profileKey = `test.concurrent.${label}.${suffix}`;
-    const { data: profile, error: profileError } = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: `Concurrent ${label}`,
-        gateway_kind: "direct_deepseek",
-        model_vendor: "deepseek",
-      })
-      .select("id")
-      .single();
-    expect(profileError).toBeNull();
-    const { data: version, error: versionError } = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile!.id,
-        version: 1,
-        adapter_kind: "deepseek_chat_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "deepseek_api_key",
-        endpoint_alias: "deepseek_official",
-        model_id: "deepseek-v4-flash",
-        capability_contract_id: "polish_v2",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: DEEPSEEK_LEGAL_MANIFEST_ID,
-        display_disclosure_key: "deepseek.official",
-        config: {},
-        config_sha256: "a".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(versionError).toBeNull();
-    const { data: price, error: priceError } = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version!.id,
-        version: 1,
-        pricing_lane: "default",
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: "https://example.com/concurrency-price",
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: "b".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(priceError).toBeNull();
-    const components = await service.from("ai_price_components").insert(
-      ["input_standard", "input_cache_read", "output"].map((component) => ({
-        price_version_id: price!.id,
-        component,
-        nanos_per_million: 1,
-      })),
-    );
-    expect(components.error).toBeNull();
-    sealPriceAsDatabaseOwner(price!.id);
-
     const runtime = authorSyntheticRuntimeContract({ profileKey });
-    const profileValidated = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version!.id);
-    expect(profileValidated.error).toBeNull();
-    const { data: policy, error: policyError } = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.concurrent.policy.${suffix}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: {
-          schemaVersion: "routing_rules_v1",
-          defaultRoute: {
-            profileVersionId: version!.id,
-            priceVersionId: price!.id,
-          },
-          windows: [],
-        },
-        default_profile_version_id: version!.id,
-        legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-        runtime_contract_id: runtime.runtimeContractId,
-        runtime_contract_sha256: runtime.runtimeContractSha256,
-        config_sha256: "c".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(policyError).toBeNull();
+    const profileId = crypto.randomUUID();
+    const profileVersionId = crypto.randomUUID();
+    const priceVersionId = crypto.randomUUID();
+    const policyVersionId = crypto.randomUUID();
+    runOwnerSql(String.raw`begin;
+      insert into public.ai_provider_profiles (
+        id, profile_key, display_name, gateway_kind, model_vendor
+      ) values (
+        '${profileId}', '${profileKey}', 'Concurrent ${label}',
+        'direct_deepseek', 'deepseek'
+      );
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, adapter_kind, wire_api_kind,
+        credential_alias, endpoint_alias, model_id, capability_contract_id,
+        cache_policy_id, legal_manifest_id, display_disclosure_key,
+        config, config_sha256
+      ) values (
+        '${profileVersionId}', '${profileId}', 1, 'deepseek_chat_v1',
+        'chat_completions_v1', 'deepseek_api_key', 'deepseek_official',
+        'deepseek-v4-flash', 'polish_v2', 'automatic_cache_v1',
+        '${DEEPSEEK_LEGAL_MANIFEST_ID}', 'deepseek.official', '{}',
+        '${"a".repeat(64)}'
+      );
+      insert into public.ai_price_versions (
+        id, profile_version_id, version, pricing_lane, currency,
+        calculator_kind, valid_from, source_url, source_checked_at,
+        source_snapshot_sha256, parameters
+      ) values (
+        '${priceVersionId}', '${profileVersionId}', 1, 'default', 'CNY',
+        'linear_token_v1', clock_timestamp() - interval '1 hour',
+        'https://example.com/concurrency-price', clock_timestamp(),
+        '${"b".repeat(64)}', '{}'
+      );
+      insert into public.ai_price_components (
+        price_version_id, component, nanos_per_million
+      ) values
+        ('${priceVersionId}', 'input_standard', 1),
+        ('${priceVersionId}', 'input_cache_read', 1),
+        ('${priceVersionId}', 'output', 1);
+      update public.ai_provider_profile_versions
+      set status = 'validated' where id = '${profileVersionId}';
+      insert into public.ai_routing_policy_versions (
+        id, policy_key, version, status, timezone, rules,
+        default_profile_version_id, legal_bundle_version,
+        runtime_contract_id, runtime_contract_sha256, config_sha256
+      ) values (
+        '${policyVersionId}', 'test.concurrent.policy.${suffix}', 1, 'draft',
+        'Asia/Shanghai', jsonb_build_object(
+          'schemaVersion', 'routing_rules_v1',
+          'defaultRoute', jsonb_build_object(
+            'profileVersionId', '${profileVersionId}',
+            'priceVersionId', '${priceVersionId}'
+          ), 'windows', '[]'::jsonb
+        ), '${profileVersionId}', '${INITIAL_LEGAL_BUNDLE_VERSION}',
+        '${runtime.runtimeContractId}', '${runtime.runtimeContractSha256}',
+        '${"c".repeat(64)}'
+      );
+      commit;`);
+    sealPriceAsDatabaseOwner(priceVersionId);
     if (options.activateCanary !== false) {
-      transitionPolicyAsDatabaseOwner(policy!.id, "validated");
-      expect(
-        (
-          await service
-            .from("ai_provider_profile_versions")
-            .update({ status: "canary" })
-            .eq("id", version!.id)
-        ).error,
-      ).toBeNull();
-      transitionPolicyAsDatabaseOwner(policy!.id, "canary");
-      const pointer = await service
-        .from("ai_feature_config")
-        .update({
-          active_routing_policy_version_id: policy!.id,
-          routing_updated_by: "runtime-concurrency",
-          routing_change_reason: `activate ${label} ${suffix}`,
-        })
-        .eq("id", true);
-      expect(pointer.error).toBeNull();
+      transitionPolicyAsDatabaseOwner(policyVersionId, "validated");
+      expect(runOwnerSql(String.raw`begin;
+        update public.ai_provider_profile_versions
+        set status = 'validated'
+        where id = '${profileVersionId}';
+        update public.ai_provider_profile_versions
+        set status = 'canary'
+        where id = '${profileVersionId}';
+        commit;`).status).toBe(0);
+      transitionPolicyAsDatabaseOwner(policyVersionId, "canary");
+      runOwnerSql(String.raw`begin;
+        update public.ai_feature_config
+        set active_routing_policy_version_id = '${policyVersionId}',
+            routing_updated_by = 'runtime-concurrency',
+            routing_change_reason = 'activate ${label} ${suffix}'
+        where id = true;
+        commit;`);
     }
 
     let configGeneration: string | null = null;
@@ -325,10 +295,10 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     }
 
     return {
-      profileId: profile!.id,
-      profileVersionId: version!.id,
-      priceVersionId: price!.id,
-      policyVersionId: policy!.id,
+      profileId,
+      profileVersionId,
+      priceVersionId,
+      policyVersionId,
       runtimeContractId: runtime.runtimeContractId,
       runtimeContractSha256: runtime.runtimeContractSha256,
       configGeneration,
@@ -472,22 +442,26 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       activateCanary: false,
     });
     transitionPolicyAsDatabaseOwner(replacement.policyVersionId, "validated");
-    const replacementCanary = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "canary" })
-      .eq("id", replacement.profileVersionId);
-    expect(replacementCanary.error).toBeNull();
+    expect(runOwnerSql(String.raw`begin;
+      update public.ai_provider_profile_versions
+      set status = 'validated'
+      where id = '${replacement.profileVersionId}';
+      update public.ai_provider_profile_versions
+      set status = 'canary'
+      where id = '${replacement.profileVersionId}';
+      commit;`).status).toBe(0);
     transitionPolicyAsDatabaseOwner(replacement.policyVersionId, "canary");
 
-    const restoreCurrent = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: current.policyVersionId,
-        routing_updated_by: "runtime-concurrency",
-        routing_change_reason: `restore current ${label} ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
-    expect(restoreCurrent.error).toBeNull();
+    const restoreCurrent = runOwnerSql(String.raw`
+      begin;
+      update public.ai_feature_config
+      set active_routing_policy_version_id = '${current.policyVersionId}'::uuid,
+          routing_updated_by = 'runtime-concurrency',
+          routing_change_reason = 'restore current ${label} ${crypto.randomUUID()}'
+      where id = true;
+      commit;
+    `);
+    expect(restoreCurrent.status).toBe(0);
     const { data: config, error: configError } = await service
       .from("ai_feature_config")
       .select("config_generation")
