@@ -129,14 +129,16 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
       currency: "CNY",
       calculator_kind: "linear_token_v1",
       provider_effective_from: null,
-      provider_effective_to: CUTOFF,
-      valid_to: CUTOFF,
       source_url:
         "https://web.archive.org/web/20260814163114id_/https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
-      source_checked_at: "2026-08-25T16:42:19.348+00:00",
       source_snapshot_sha256:
         "2bab2555968333b6e0a6e9f04c5427880f36fba491d95790c3f44261e00c7d07",
     });
+    expect(new Date(price.data!.provider_effective_to).toISOString()).toBe(CUTOFF);
+    expect(new Date(price.data!.valid_to).toISOString()).toBe(CUTOFF);
+    expect(new Date(price.data!.source_checked_at).toISOString()).toBe(
+      "2026-08-25T16:42:19.348Z",
+    );
 
     expect(billedRow).toMatchObject({
       route_schema_version: "legacy_pricing_v1",

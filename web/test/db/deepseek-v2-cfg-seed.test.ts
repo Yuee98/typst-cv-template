@@ -16,6 +16,7 @@ import {
 import { runOwnerSql } from "./runtime-contract-fixtures";
 
 const SEED = DEEPSEEK_V2_SEED_V1;
+const DB012_LEGACY_PRICE_ID = "11111111-1111-4111-8111-111111111114";
 const RUN_CFG001_FRESH_RESET = process.env.CFG001_FRESH_RESET === "1";
 const DISABLED_AVAILABILITY = {
   enabled: false,
@@ -54,6 +55,15 @@ const SNAPSHOT_TABLES = [
 ] as const;
 
 const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
+  // TODO(CFG001): refresh the exact catalog hashes after DB-012 is applied.
+  // Keep this enumerated rather than weakening the security-authority oracle.
+  {
+    schema: "public",
+    name: "backfill_deepseek_legacy_pricing_v1",
+    identityArguments: "",
+    prokind: "f",
+    definitionSha256: "TODO_REFRESH_FROM_FRESH_CATALOG",
+  },
   {
     schema: "public",
     name: "apply_ai_price_component_seal_intent",
@@ -360,8 +370,25 @@ function migrationBody(): string {
 }
 
 function withUserTriggersDisabled(tables: readonly string[], body: string): string {
+  // CFG-001 hostile cleanups that remove canonical prices may subsequently
+  // remove the profile version.  DB-012 adds a sealed legacy child graph, so
+  // remove its seal intent/components/price first inside the same replica
+  // boundary; the enclosing rollback restores the exact catalog snapshot.
+  const db012LegacyCleanup = body.includes("delete from public.ai_price_versions")
+    ? String.raw`
+      set local session_replication_role = replica;
+      delete from public.ai_price_component_seal_intents
+      where price_version_id = '${DB012_LEGACY_PRICE_ID}'::uuid;
+      delete from public.ai_price_components
+      where price_version_id = '${DB012_LEGACY_PRICE_ID}'::uuid;
+      delete from public.ai_price_versions
+      where id = '${DB012_LEGACY_PRICE_ID}'::uuid;
+      set local session_replication_role = origin;
+    `
+    : "";
   return [
     ...tables.map((table) => `alter table public.${table} disable trigger user;`),
+    db012LegacyCleanup,
     body,
     ...[...tables]
       .reverse()
@@ -737,8 +764,8 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
     ]);
   });
 
-  it("publishes two unsealed CNY lanes and exactly six automatic-cache components", async () => {
-    const priceIds = SEED.pricing.rows.map((row) => row.id);
+  it("publishes exact current and deterministic legacy CNY price lanes", async () => {
+    const priceIds = [...SEED.pricing.rows.map((row) => row.id), DB012_LEGACY_PRICE_ID];
     const [pricesResult, componentsResult] = await Promise.all([
       service
         .from("ai_price_versions")
@@ -757,12 +784,16 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
 
     expect(pricesResult.error).toBeNull();
     expect(componentsResult.error).toBeNull();
-    expect(pricesResult.data).toHaveLength(2);
+    expect(pricesResult.data).toHaveLength(3);
 
     for (const row of pricesResult.data ?? []) {
       const expected = SEED.pricing.rows.find(
         (candidate) => candidate.id === row.id,
       );
+      if (row.id === DB012_LEGACY_PRICE_ID) {
+        expect(row).toMatchObject({ pricing_lane: "legacy", components_sealed_at: expect.any(String) });
+        continue;
+      }
       expect(expected).toBeDefined();
       expect(row).toMatchObject({
         id: expected?.id,
@@ -798,7 +829,13 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           `${right.price_version_id}:${right.component}`,
         ),
       );
-    expect(componentsResult.data).toEqual(expectedComponents);
+    expect(componentsResult.data).toHaveLength(9);
+    expect(componentsResult.data?.filter((row) => row.price_version_id !== DB012_LEGACY_PRICE_ID)).toEqual(expectedComponents);
+    expect(componentsResult.data?.filter((row) => row.price_version_id === DB012_LEGACY_PRICE_ID)).toEqual([
+      { price_version_id: DB012_LEGACY_PRICE_ID, component: "input_cache_read", nanos_per_million: 20_000_000 },
+      { price_version_id: DB012_LEGACY_PRICE_ID, component: "input_standard", nanos_per_million: 1_000_000_000 },
+      { price_version_id: DB012_LEGACY_PRICE_ID, component: "output", nanos_per_million: 2_000_000_000 },
+    ]);
     expect(componentsResult.data?.some((row) => row.component === "input_cache_write")).toBe(
       false,
     );
@@ -1805,6 +1842,12 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
             from public.ai_price_versions
           ),
           'components', (select count(*) from public.ai_price_components),
+          'legacySealIntents', (
+            select count(*) from public.ai_price_component_seal_intents
+            where price_version_id = '${DB012_LEGACY_PRICE_ID}'::uuid
+              and applied_at is not null
+          ),
+          'sealIntents', (select count(*) from public.ai_price_component_seal_intents),
           'policies', (select count(*) from public.ai_routing_policy_versions),
           'runtimeRoots', (
             select count(*) from public.ai_service_runtime_contract_versions
@@ -1839,7 +1882,6 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
             + (select count(*) from public.ai_profile_usage_daily)
             + (select count(*) from public.ai_rate_minutes)
             + (select count(*) from public.user_terms_acceptances)
-            + (select count(*) from public.ai_price_component_seal_intents)
             + (select count(*) from public.ai_routing_policy_transition_intents)
         )::text;
       `);
@@ -1847,9 +1889,11 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
       expect(actual).toEqual({
         profiles: 1,
         profileVersions: 1,
-        prices: 2,
-        priceLanes: ["offpeak", "peak"],
-        components: 6,
+        prices: 3,
+        priceLanes: ["legacy", "offpeak", "peak"],
+        components: 9,
+        legacySealIntents: 1,
+        sealIntents: 1,
         policies: 1,
         runtimeRoots: 1,
         runtimeTargets: 1,

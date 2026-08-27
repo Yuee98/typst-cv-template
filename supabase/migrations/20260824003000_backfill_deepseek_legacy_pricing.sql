@@ -358,7 +358,7 @@ begin
     end if;
 
     -- The trigger recognizes this transaction-local, SECURITY DEFINER-only
-    -- owner path.  service_role can neither execute this function nor satisfy
+    -- owner path.  service_role can neither invoke this function nor satisfy
     -- its current_user check in the trigger replacement below.
     perform pg_catalog.set_config(
       'ai.backfill_deepseek_legacy_pricing_v1', 'owner-executed', true
