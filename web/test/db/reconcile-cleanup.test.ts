@@ -62,12 +62,21 @@ function snapshotProtectedHistory(): string {
   const catalogPairs = PROTECTED_HISTORY_TABLES.map(
     (table) => String.raw`
       '${table}', (
-        select coalesce(
-          pg_catalog.jsonb_agg(
-            pg_catalog.to_jsonb(history_row)
-            order by pg_catalog.to_jsonb(history_row)::text
-          ),
-          '[]'::jsonb
+        select pg_catalog.jsonb_build_object(
+          'rowCount', pg_catalog.count(*),
+          'sha256', pg_catalog.encode(
+            extensions.digest(
+              coalesce(
+                pg_catalog.jsonb_agg(
+                  pg_catalog.to_jsonb(history_row)
+                  order by pg_catalog.to_jsonb(history_row)::text
+                ),
+                '[]'::jsonb
+              )::text,
+              'sha256'
+            ),
+            'hex'
+          )
         )
         from public.${table} as history_row
       )`,
@@ -83,7 +92,32 @@ function snapshotProtectedHistory(): string {
     .map((line) => line.trim())
     .findLast((line) => line.startsWith("{"));
   if (!snapshot) {
-    throw new Error("protected history snapshot returned no JSON");
+    throw new Error("protected history snapshot returned no fingerprints");
+  }
+
+  const fingerprints = JSON.parse(snapshot) as Record<string, unknown>;
+  if (Object.keys(fingerprints).length !== PROTECTED_HISTORY_TABLES.length) {
+    throw new Error("protected history snapshot returned an unexpected table set");
+  }
+  for (const table of PROTECTED_HISTORY_TABLES) {
+    const fingerprint = fingerprints[table];
+    if (
+      typeof fingerprint !== "object" ||
+      fingerprint === null ||
+      Array.isArray(fingerprint)
+    ) {
+      throw new Error(`protected history snapshot omitted ${table}`);
+    }
+    const fields = fingerprint as Record<string, unknown>;
+    if (
+      Object.keys(fields).length !== 2 ||
+      !Number.isSafeInteger(fields.rowCount) ||
+      (fields.rowCount as number) < 0 ||
+      typeof fields.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(fields.sha256)
+    ) {
+      throw new Error(`protected history fingerprint is invalid for ${table}`);
+    }
   }
   return snapshot;
 }
