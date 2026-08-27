@@ -7,6 +7,7 @@ import {
   createTestUser,
   deleteTestUser,
   FEATURE_CONFIG_DEFAULTS,
+  sleep,
   type TestUser,
 } from "./helpers";
 import {
@@ -21,6 +22,8 @@ import {
 } from "./runtime-contract-fixtures";
 
 export const LARGE_GLOBAL_LIMIT = 2_000_000;
+const LIFECYCLE_EVIDENCE_RETRY_DELAY_MS = 200;
+const LIFECYCLE_EVIDENCE_RETRY_TIMEOUT_MS = 10_000;
 
 export interface SettlementRouteSnapshot {
   schemaVersion: "route_snapshot_v1";
@@ -147,6 +150,12 @@ export function completePayload(
   };
 }
 
+function isLifecycleEvidenceFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  return candidate.code === "23514" && candidate.message === "invalid routing lifecycle evidence";
+}
+
 export class SettlementHarness {
   readonly users: TestUser[] = [];
   fixture!: SettlementRouteFixture;
@@ -198,6 +207,24 @@ export class SettlementHarness {
     };
   }
 
+  private async lifecycleSuccessRpc(
+    name:
+      | "transition_ai_routing_policy_v2"
+      | "set_ai_routing_policy_pointer_v1"
+      | "clear_ai_routing_policy_pointer_v1",
+    args: Record<string, unknown>,
+  ) {
+    const deadline = Date.now() + LIFECYCLE_EVIDENCE_RETRY_TIMEOUT_MS;
+    let result = await this.service.rpc(name, args);
+    // The exact evidence guard runs before lifecycle DML/audit. Retrying only
+    // that transient cross-session clock failure cannot duplicate an operation.
+    while (isLifecycleEvidenceFailure(result.error) && Date.now() < deadline) {
+      await sleep(LIFECYCLE_EVIDENCE_RETRY_DELAY_MS);
+      result = await this.service.rpc(name, args);
+    }
+    return result;
+  }
+
   async cleanup(): Promise<void> {
     if (this.fixture) {
       const { data: config, error: configError } = await this.service
@@ -210,7 +237,7 @@ export class SettlementHarness {
         config?.active_routing_policy_version_id === this.fixture.policyVersionId
       ) {
         const reason = `settlement cleanup ${crypto.randomUUID()}`;
-        const cleared = await this.service.rpc(
+        const cleared = await this.lifecycleSuccessRpc(
           "clear_ai_routing_policy_pointer_v1",
           {
             p_expected_policy_version_id: this.fixture.policyVersionId,
@@ -371,7 +398,7 @@ export class SettlementHarness {
       displayDisclosureKey,
     };
 
-    const validated = await this.service.rpc(
+    const validated = await this.lifecycleSuccessRpc(
       "transition_ai_routing_policy_v2",
       {
         p_policy_version_id: policyVersionId,
@@ -391,7 +418,7 @@ export class SettlementHarness {
     `);
     expect(promotedProfile.status, promotedProfile.stderr).toBe(0);
 
-    const canary = await this.service.rpc("transition_ai_routing_policy_v2", {
+    const canary = await this.lifecycleSuccessRpc("transition_ai_routing_policy_v2", {
       p_policy_version_id: policyVersionId,
       p_to_status: "canary",
       ...this.lifecycleEvidence(
@@ -401,7 +428,7 @@ export class SettlementHarness {
     });
     expect(canary.error).toBeNull();
 
-    const activated = await this.service.rpc(
+    const activated = await this.lifecycleSuccessRpc(
       "set_ai_routing_policy_pointer_v1",
       {
         p_policy_version_id: policyVersionId,
