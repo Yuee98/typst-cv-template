@@ -258,90 +258,14 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
     const profileKey = fixture.runtime.profileKey;
 
     try {
-      const parent = await service.from("ai_provider_profiles").insert({
-        id: fixture.profileId,
-        profile_key: profileKey,
-        display_name: "DB012 current-route fixture",
-        gateway_kind: "direct_deepseek",
-        model_vendor: "fixture",
-      });
-      expect(parent.error).toBeNull();
-
-      const version = await service.from("ai_provider_profile_versions").insert({
-        id: fixture.profileVersionId,
-        profile_id: fixture.profileId,
-        version: 1,
-        adapter_kind: "deepseek_chat_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "db012_fixture_api_key",
-        endpoint_alias: "db012_fixture_endpoint",
-        model_id: "db012-current-model",
-        model_snapshot: "db012-current-model-v1",
-        upstream_route: {},
-        capability_contract_id: "db012_fixture_capabilities_v1",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: fixture.runtime.legalManifestId,
-        display_disclosure_key: "db012.fixture.current",
-        config: {},
-        config_sha256: "1".repeat(64),
-      });
-      expect(version.error).toBeNull();
-
-      const price = await service.from("ai_price_versions").insert({
-        id: fixture.priceVersionId,
-        profile_version_id: fixture.profileVersionId,
-        pricing_lane: "default",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: "2026-01-01T00:00:00Z",
-        source_url: "https://example.com/db012-current-route-fixture",
-        source_checked_at: "2026-08-23T00:00:00Z",
-        source_snapshot_sha256: "2".repeat(64),
-        parameters: {},
-      });
-      expect(price.error).toBeNull();
-
-      const components = await service.from("ai_price_components").insert([
-        {
-          price_version_id: fixture.priceVersionId,
-          component: "input_cache_read",
-          nanos_per_million: 20_000_000,
-        },
-        {
-          price_version_id: fixture.priceVersionId,
-          component: "input_standard",
-          nanos_per_million: 1_000_000_000,
-        },
-        {
-          price_version_id: fixture.priceVersionId,
-          component: "output",
-          nanos_per_million: 2_000_000_000,
-        },
-      ]);
-      expect(components.error).toBeNull();
+      runOwnerSql(String.raw`begin;
+        insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor) values ('${fixture.profileId}','${profileKey}','DB012 current-route fixture','direct_deepseek','fixture');
+        insert into public.ai_provider_profile_versions(id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,endpoint_alias,model_id,model_snapshot,upstream_route,capability_contract_id,cache_policy_id,legal_manifest_id,display_disclosure_key,config,config_sha256) values ('${fixture.profileVersionId}','${fixture.profileId}',1,'deepseek_chat_v1','chat_completions_v1','db012_fixture_api_key','db012_fixture_endpoint','db012-current-model','db012-current-model-v1','{}','db012_fixture_capabilities_v1','automatic_cache_v1','${fixture.runtime.legalManifestId}','db012.fixture.current','{}','${"1".repeat(64)}');
+        insert into public.ai_price_versions(id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${fixture.priceVersionId}','${fixture.profileVersionId}','default',1,'CNY','linear_token_v1','2026-01-01T00:00:00Z','https://example.com/db012-current-route-fixture','2026-08-23T00:00:00Z','${"2".repeat(64)}','{}');
+        insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ('${fixture.priceVersionId}','input_cache_read',20000000),('${fixture.priceVersionId}','input_standard',1000000000),('${fixture.priceVersionId}','output',2000000000); commit;`);
       sealPriceAsDatabaseOwner(fixture.priceVersionId);
 
-      const policy = await service.from("ai_routing_policy_versions").insert({
-        id: fixture.policyVersionId,
-        policy_key: `test.db012.current.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: {
-          schemaVersion: "routing_rules_v1",
-          defaultRoute: {
-            profileVersionId: fixture.profileVersionId,
-            priceVersionId: fixture.priceVersionId,
-          },
-          windows: [],
-        },
-        default_profile_version_id: fixture.profileVersionId,
-        legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-        runtime_contract_id: fixture.runtime.runtimeContractId,
-        runtime_contract_sha256: fixture.runtime.runtimeContractSha256,
-        config_sha256: "3".repeat(64),
-      });
-      expect(policy.error).toBeNull();
+      runOwnerSql(String.raw`insert into public.ai_routing_policy_versions(id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256) values ('${fixture.policyVersionId}','test.db012.current.${crypto.randomUUID()}',1,'draft','Asia/Shanghai','{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"${fixture.profileVersionId}","priceVersionId":"${fixture.priceVersionId}"},"windows":[]}'::jsonb,'${fixture.profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${fixture.runtime.runtimeContractId}','${fixture.runtime.runtimeContractSha256}','${"3".repeat(64)}');`);
 
       const request = await service.from("ai_request_ledger").insert({
         reservation_id: fixture.reservationId,

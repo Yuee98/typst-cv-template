@@ -121,6 +121,8 @@ describe.skipIf(!RUN_DB_TESTS)("AI polish execution snapshot V1 (real DB)", () =
     return result.data as JsonObject;
   }
 
+  // Replica-role catalog mutations below are hostile, owner-only corruption
+  // fixtures. They are not valid DB-013 operator lifecycle calls.
   async function expectUnavailableDuring(
     corruptSql: string,
     restoreSql: string,
@@ -507,27 +509,38 @@ describe.skipIf(!RUN_DB_TESTS)("AI polish execution snapshot V1 (real DB)", () =
     });
   });
 
-  it("keeps frozen projection after price closure and profile retirement", async () => {
-    const before = await successfulPrimarySnapshot();
-    const closePrice = await service
-      .from("ai_price_versions")
-      .update({ valid_to: new Date().toISOString() })
-      .eq("id", primaryFixture.priceVersionId);
-    expect(closePrice.error).toBeNull();
-    expect(await successfulPrimarySnapshot()).toEqual(before);
+  // Owner-only corruption seam: these direct catalog mutations intentionally
+  // create an impossible state that DB-013 operator RPCs must never author.
+  it("keeps frozen projection after owner-only price closure and profile-version retirement corruption", async () => {
+    try {
+      const before = await successfulPrimarySnapshot();
+      const closePrice = runOwnerSql(String.raw`
+        update public.ai_price_versions
+        set valid_to = pg_catalog.clock_timestamp()
+        where id = '${primaryFixture.priceVersionId}'::uuid;
+      `);
+      expect(closePrice.status).toBe(0);
+      expect(await successfulPrimarySnapshot()).toEqual(before);
 
-    const retireProfile = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "retired" })
-      .eq("id", primaryFixture.profileVersionId);
-    expect(retireProfile.error).toBeNull();
-    expect(await successfulPrimarySnapshot()).toEqual(before);
+      const retireProfile = runOwnerSql(String.raw`
+        update public.ai_provider_profile_versions
+        set status = 'retired'
+        where id = '${primaryFixture.profileVersionId}'::uuid;
+      `);
+      expect(retireProfile.status).toBe(0);
+      expect(await successfulPrimarySnapshot()).toEqual(before);
 
-    const start = await service.rpc("start_ai_polish_provider_attempt", {
-      p_reservation_id: primaryReservation.reservationId,
-      p_attempt_no: 1,
-    });
-    expect(start.error).toBeNull();
-    expect(start.data).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
+      const start = await service.rpc("start_ai_polish_provider_attempt", {
+        p_reservation_id: primaryReservation.reservationId,
+        p_attempt_no: 1,
+      });
+      expect(start.error).toBeNull();
+      expect(start.data).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
+    } finally {
+      // The corrupted catalog history cannot pass audited pointer-clear
+      // revalidation. Replace it with a healthy audited route so afterAll can
+      // clear that exact pointer through the normal DB013 lifecycle seam.
+      await harness.activateFreshRouteFixture("deepseek");
+    }
   });
 });

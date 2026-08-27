@@ -15,8 +15,8 @@ import {
   INITIAL_LEGAL_BUNDLE_VERSION,
   MIMO_LEGAL_MANIFEST_ID,
   MIMO_LEGAL_MANIFEST_SHA256,
+  runOwnerSql,
   sealPriceAsDatabaseOwner,
-  transitionPolicyAsDatabaseOwner,
 } from "./runtime-contract-fixtures";
 
 export const LARGE_GLOBAL_LIMIT = 2_000_000;
@@ -69,6 +69,50 @@ export interface CompletePayload {
   p_route: unknown;
   p_cost: unknown;
   p_metadata: unknown;
+}
+
+interface LifecycleEvidenceRoot {
+  reviewedSourceCommitOid: string;
+  recheckedAt: string;
+}
+
+function ownerLifecycleEvidenceRoot(
+  fixture: Pick<
+    SettlementRouteFixture,
+    "runtimeContractId" | "runtimeContractSha256" | "priceVersionId"
+  >,
+): LifecycleEvidenceRoot {
+  const result = runOwnerSql(String.raw`
+    \pset format unaligned
+    \pset tuples_only on
+    select pg_catalog.jsonb_build_object(
+      'reviewedSourceCommitOid', root.reviewed_source_commit_oid,
+      'recheckedAt', case
+        when root.created_at >= price.source_checked_at then root.created_at
+        else price.source_checked_at
+      end
+    )::text
+    from public.ai_service_runtime_contract_versions as root
+    join public.ai_price_versions as price
+      on price.id = '${fixture.priceVersionId}'::uuid
+    where root.runtime_contract_id = '${fixture.runtimeContractId}'
+      and root.runtime_contract_sha256 = '${fixture.runtimeContractSha256}';
+  `);
+  const line = result.stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .findLast((value) => value.startsWith("{"));
+  if (line === undefined) {
+    throw new Error(`settlement lifecycle evidence is missing: ${result.stdout}`);
+  }
+  const parsed = JSON.parse(line) as Partial<LifecycleEvidenceRoot>;
+  if (
+    typeof parsed.reviewedSourceCommitOid !== "string" ||
+    typeof parsed.recheckedAt !== "string"
+  ) {
+    throw new Error("settlement lifecycle evidence has an invalid owner readback");
+  }
+  return parsed as LifecycleEvidenceRoot;
 }
 
 export function observedUsage(
@@ -176,16 +220,47 @@ export class SettlementHarness {
     });
   }
 
+  private lifecycleEvidence(
+    fixture: SettlementRouteFixture,
+    reason: string,
+  ): Record<string, string> {
+    const root = ownerLifecycleEvidenceRoot(fixture);
+    return {
+      p_runtime_contract_id: fixture.runtimeContractId,
+      p_runtime_contract_sha256: fixture.runtimeContractSha256,
+      p_actor: "provider-attempt-settlement-test",
+      p_reason: reason,
+      p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
+      p_reviewed_source_sha256: fixture.runtimeContractSha256,
+      p_rechecked_at: root.recheckedAt,
+      p_rechecked_sha256: fixture.runtimeContractSha256,
+    };
+  }
+
   async cleanup(): Promise<void> {
-    const pointer = await this.service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: null,
-        routing_updated_by: "provider-attempt-settlement-test",
-        routing_change_reason: `settlement cleanup ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
-    expect(pointer.error).toBeNull();
+    if (this.fixture) {
+      const { data: config, error: configError } = await this.service
+        .from("ai_feature_config")
+        .select("active_routing_policy_version_id")
+        .eq("id", true)
+        .single();
+      expect(configError).toBeNull();
+      if (
+        config?.active_routing_policy_version_id === this.fixture.policyVersionId
+      ) {
+        const reason = `settlement cleanup ${crypto.randomUUID()}`;
+        const cleared = await this.service.rpc(
+          "clear_ai_routing_policy_pointer_v1",
+          {
+            p_expected_policy_version_id: this.fixture.policyVersionId,
+            ...this.lifecycleEvidence(this.fixture, reason),
+          },
+        );
+        expect(cleared.error).toBeNull();
+      }
+    }
+    // Immutable catalog fixture rows intentionally remain until the fresh DB
+    // reset; cleanup releases only the exact live pointer and mutable users.
     await configureFeature(this.service, { ...FEATURE_CONFIG_DEFAULTS });
     for (const user of this.users) {
       await deleteTestUser(this.service, user.id);
@@ -301,76 +376,6 @@ export class SettlementHarness {
       ? "mimo.official"
       : "deepseek.official";
 
-    const profile = await this.service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: "Provider attempt settlement fixture",
-        gateway_kind: isMimo ? "direct_mimo" : "direct_deepseek",
-        model_vendor: provider,
-      })
-      .select("id")
-      .single();
-    expect(profile.error).toBeNull();
-
-    const version = await this.service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile.data!.id,
-        version: 1,
-        adapter_kind: isMimo ? "mimo_responses_v1" : "deepseek_chat_v1",
-        wire_api_kind: isMimo ? "responses_v1" : "chat_completions_v1",
-        credential_alias: isMimo ? "mimo_api_key" : "deepseek_api_key",
-        endpoint_alias: isMimo ? "mimo_cn_official" : "deepseek_official",
-        model_id: modelId,
-        upstream_route: {},
-        capability_contract_id: "polish_v2",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: isMimo
-          ? MIMO_LEGAL_MANIFEST_ID
-          : DEEPSEEK_LEGAL_MANIFEST_ID,
-        display_disclosure_key: displayDisclosureKey,
-        config: {},
-        config_sha256: "4".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(version.error).toBeNull();
-
-    const price = await this.service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version.data!.id,
-        pricing_lane: "default",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: "https://example.com/provider-attempt-settlement-price",
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: "5".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(price.error).toBeNull();
-
-    const components = await this.service.from("ai_price_components").insert(
-      ["input_standard", "input_cache_read", "output"].map((component) => ({
-        price_version_id: price.data!.id,
-        component,
-        nanos_per_million: 1,
-      })),
-    );
-    expect(components.error).toBeNull();
-    sealPriceAsDatabaseOwner(price.data!.id);
-
-    const validated = await this.service
-      .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version.data!.id);
-    expect(validated.error).toBeNull();
-
     const runtime = authorSyntheticRuntimeContract({
       profileKey,
       ...(isMimo
@@ -380,57 +385,73 @@ export class SettlementHarness {
           }
         : {}),
     });
-    const policy = await this.service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.attempt-settlement.${suffix}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: {
-          schemaVersion: "routing_rules_v1",
-          defaultRoute: {
-            profileVersionId: version.data!.id,
-            priceVersionId: price.data!.id,
-          },
-          windows: [],
-        },
-        default_profile_version_id: version.data!.id,
-        legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-        runtime_contract_id: runtime.runtimeContractId,
-        runtime_contract_sha256: runtime.runtimeContractSha256,
-        config_sha256: "6".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(policy.error).toBeNull();
-
-    transitionPolicyAsDatabaseOwner(policy.data!.id, "validated");
-    const canary = await this.service
-      .from("ai_provider_profile_versions")
-      .update({ status: "canary" })
-      .eq("id", version.data!.id);
-    expect(canary.error).toBeNull();
-    transitionPolicyAsDatabaseOwner(policy.data!.id, "canary");
-
-    const pointer = await this.service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: policy.data!.id,
-        routing_updated_by: "provider-attempt-settlement-test",
-        routing_change_reason: `activate settlement fixture ${suffix}`,
-      })
-      .eq("id", true);
-    expect(pointer.error).toBeNull();
-
-    return {
-      profileId: profile.data!.id,
-      profileVersionId: version.data!.id,
-      priceVersionId: price.data!.id,
-      policyVersionId: policy.data!.id,
+    const profileId = crypto.randomUUID();
+    const profileVersionId = crypto.randomUUID();
+    const priceVersionId = crypto.randomUUID();
+    const policyVersionId = crypto.randomUUID();
+    const authored = runOwnerSql(`begin;
+      insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor) values ('${profileId}','${profileKey}','Provider attempt settlement fixture','${isMimo ? "direct_mimo" : "direct_deepseek"}','${provider}');
+      insert into public.ai_provider_profile_versions(id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,endpoint_alias,model_id,upstream_route,capability_contract_id,cache_policy_id,legal_manifest_id,display_disclosure_key,config,config_sha256) values ('${profileVersionId}','${profileId}',1,'${isMimo ? "mimo_responses_v1" : "deepseek_chat_v1"}','${isMimo ? "responses_v1" : "chat_completions_v1"}','${isMimo ? "mimo_api_key" : "deepseek_api_key"}','${isMimo ? "mimo_cn_official" : "deepseek_official"}','${modelId}','{}','polish_v2','automatic_cache_v1','${isMimo ? MIMO_LEGAL_MANIFEST_ID : DEEPSEEK_LEGAL_MANIFEST_ID}','${displayDisclosureKey}','{}','${"4".repeat(64)}');
+      update public.ai_provider_profile_versions set status='validated' where id='${profileVersionId}'::uuid;
+      insert into public.ai_price_versions(id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${priceVersionId}','${profileVersionId}','default',1,'CNY','linear_token_v1',pg_catalog.clock_timestamp()-interval '1 hour','https://example.com/provider-attempt-settlement-price',pg_catalog.clock_timestamp(),'${"5".repeat(64)}','{}');
+      insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ('${priceVersionId}','input_standard',1),('${priceVersionId}','input_cache_read',1),('${priceVersionId}','output',1);
+      insert into public.ai_routing_policy_versions(id,policy_key,version,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256) values ('${policyVersionId}','test.attempt-settlement.${suffix}',1,'Asia/Shanghai',pg_catalog.jsonb_build_object('schemaVersion','routing_rules_v1','defaultRoute',pg_catalog.jsonb_build_object('profileVersionId','${profileVersionId}','priceVersionId','${priceVersionId}'),'windows','[]'::jsonb),'${profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${runtime.runtimeContractId}','${runtime.runtimeContractSha256}','${"6".repeat(64)}');
+      commit;`);
+    expect(authored.status).toBe(0);
+    sealPriceAsDatabaseOwner(priceVersionId);
+    const fixture: SettlementRouteFixture = {
+      profileId,
+      profileVersionId,
+      priceVersionId,
+      policyVersionId,
       runtimeContractId: runtime.runtimeContractId,
       runtimeContractSha256: runtime.runtimeContractSha256,
       modelId,
       displayDisclosureKey,
     };
+
+    const validated = await this.service.rpc(
+      "transition_ai_routing_policy_v2",
+      {
+        p_policy_version_id: policyVersionId,
+        p_to_status: "validated",
+        ...this.lifecycleEvidence(
+          fixture,
+          `validate settlement fixture ${suffix}`,
+        ),
+      },
+    );
+    expect(validated.error).toBeNull();
+
+    const promotedProfile = runOwnerSql(String.raw`
+      update public.ai_provider_profile_versions
+      set status = 'canary'
+      where id = '${profileVersionId}'::uuid;
+    `);
+    expect(promotedProfile.status, promotedProfile.stderr).toBe(0);
+
+    const canary = await this.service.rpc("transition_ai_routing_policy_v2", {
+      p_policy_version_id: policyVersionId,
+      p_to_status: "canary",
+      ...this.lifecycleEvidence(
+        fixture,
+        `promote settlement fixture ${suffix} to canary`,
+      ),
+    });
+    expect(canary.error).toBeNull();
+
+    const activated = await this.service.rpc(
+      "set_ai_routing_policy_pointer_v1",
+      {
+        p_policy_version_id: policyVersionId,
+        ...this.lifecycleEvidence(
+          fixture,
+          `activate settlement fixture ${suffix}`,
+        ),
+      },
+    );
+    expect(activated.error).toBeNull();
+
+    return fixture;
   }
 }

@@ -19,17 +19,15 @@ import {
   type TestUser,
 } from "./helpers";
 import {
-  authorSyntheticRuntimeContract,
   DEEPSEEK_LEGAL_MANIFEST_ID,
   INITIAL_LEGAL_BUNDLE_VERSION,
   runOwnerSql,
-  sealPriceAsDatabaseOwner,
-  transitionPolicyAsDatabaseOwner,
   type OwnerSqlResult,
 } from "./runtime-contract-fixtures";
+import { SettlementHarness } from "./provider-attempt-settlement-fixtures";
 
 const V1_MARK_SHA256 =
-  "85b5d5b362e4b116f03d43217667c4e6c342d1f45f0a23e1d78424eab63179a6";
+  "abb3784963af0ebd3c2b2d287d270da756533c2805d3588ec39523fb4aaff69a";
 const LARGE_GLOBAL_LIMIT = 2_000_000;
 const DB_CONTAINER = "supabase_db_typst-cv-template";
 const HOLDER_READY = "DB009_HOLDER_READY";
@@ -219,21 +217,32 @@ async function runObservedBlockedRace(
   contenderSql: string,
 ): Promise<{ holder: OwnerSqlResult; contender: OwnerSqlResult }> {
   const holder = startOwnerSqlWithBarrier(holderSql, HOLDER_READY);
-  await holder.ready;
+  let contender: BarrierSqlProcess | undefined;
+  try {
+    await holder.ready;
 
-  const contender = startOwnerSqlWithBarrier(contenderSql, CONTENDER_READY);
-  let contenderSettled = false;
-  const contenderResult = contender.result.then((result) => {
-    contenderSettled = true;
-    return result;
-  });
-  await contender.ready;
-  await sleep(150);
-  expect(contenderSettled).toBe(false);
+    contender = startOwnerSqlWithBarrier(contenderSql, CONTENDER_READY);
+    let contenderSettled = false;
+    const contenderResult = contender.result.then((result) => {
+      contenderSettled = true;
+      return result;
+    });
+    await contender.ready;
+    await sleep(150);
+    expect(contenderSettled).toBe(false);
 
-  const holderResult = await holder.result;
-  const completedContender = await contenderResult;
-  return { holder: holderResult, contender: completedContender };
+    const holderResult = await holder.result;
+    const completedContender = await contenderResult;
+    return { holder: holderResult, contender: completedContender };
+  } finally {
+    holder.release();
+    contender?.release();
+    await Promise.allSettled(
+      contender === undefined
+        ? [holder.result]
+        : [holder.result, contender.result],
+    );
+  }
 }
 
 describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => {
@@ -257,155 +266,29 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
   });
 
   afterAll(async () => {
-    const pointer = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: null,
-        routing_updated_by: "provider-attempt-start-test",
-        routing_change_reason: `provider attempt start cleanup ${crypto.randomUUID()}`,
-      })
-      .eq("id", true);
-    expect(pointer.error).toBeNull();
-
-    await configureFeature(service, { ...FEATURE_CONFIG_DEFAULTS });
-    for (const user of users) {
-      await deleteTestUser(service, user.id);
+    try {
+      // Some resilience cases deliberately leave their active catalog route in
+      // an owner-only impossible state. Replace it through the audited DB013
+      // seam, then clear the valid replacement through that same seam.
+      const cleanupHarness = new SettlementHarness(service);
+      await cleanupHarness.activateFreshRouteFixture("deepseek");
+      await cleanupHarness.cleanup();
+    } finally {
+      await configureFeature(service, { ...FEATURE_CONFIG_DEFAULTS });
+      for (const user of users) {
+        await deleteTestUser(service, user.id);
+      }
     }
   });
 
   async function createActiveRouteFixture(): Promise<RouteFixture> {
-    const suffix = crypto.randomUUID();
-    const profileKey = `test.attempt-start.${suffix}`;
-    const modelId = "deepseek-v4-flash";
-    const displayDisclosureKey = "deepseek.official";
-
-    const profile = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: "Provider attempt start fixture",
-        gateway_kind: "direct_deepseek",
-        model_vendor: "deepseek",
-      })
-      .select("id")
-      .single();
-    expect(profile.error).toBeNull();
-
-    const version = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile.data!.id,
-        version: 1,
-        adapter_kind: "deepseek_chat_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "deepseek_api_key",
-        endpoint_alias: "deepseek_official",
-        model_id: modelId,
-        upstream_route: {},
-        capability_contract_id: "polish_v2",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: DEEPSEEK_LEGAL_MANIFEST_ID,
-        display_disclosure_key: displayDisclosureKey,
-        config: {},
-        config_sha256: "1".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(version.error).toBeNull();
-
-    const price = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version.data!.id,
-        pricing_lane: "default",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: new Date(Date.now() - 3_600_000).toISOString(),
-        source_url: "https://example.com/provider-attempt-start-price",
-        source_checked_at: new Date().toISOString(),
-        source_snapshot_sha256: "2".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(price.error).toBeNull();
-
-    const components = await service.from("ai_price_components").insert(
-      ["input_standard", "input_cache_read", "output"].map((component) => ({
-        price_version_id: price.data!.id,
-        component,
-        nanos_per_million: 1,
-      })),
+    // Catalog fixtures are immutable test history and remain until the suite's
+    // fresh database reset; afterAll performs an audited pointer replacement
+    // and clear even when a resilience case corrupts the current catalog row.
+    const ownerFixture = await new SettlementHarness(service).activateFreshRouteFixture(
+      "deepseek",
     );
-    expect(components.error).toBeNull();
-    sealPriceAsDatabaseOwner(price.data!.id);
-
-    const validatedProfile = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "validated" })
-      .eq("id", version.data!.id);
-    expect(validatedProfile.error).toBeNull();
-
-    const runtime = authorSyntheticRuntimeContract({ profileKey });
-    const policy = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.attempt-start.${suffix}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: {
-          schemaVersion: "routing_rules_v1",
-          defaultRoute: {
-            profileVersionId: version.data!.id,
-            priceVersionId: price.data!.id,
-          },
-          windows: [],
-        },
-        default_profile_version_id: version.data!.id,
-        legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
-        runtime_contract_id: runtime.runtimeContractId,
-        runtime_contract_sha256: runtime.runtimeContractSha256,
-        config_sha256: "3".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(policy.error).toBeNull();
-
-    transitionPolicyAsDatabaseOwner(policy.data!.id, "validated");
-    const canaryProfile = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "canary" })
-      .eq("id", version.data!.id);
-    expect(canaryProfile.error).toBeNull();
-    transitionPolicyAsDatabaseOwner(policy.data!.id, "canary");
-
-    const pointer = await service
-      .from("ai_feature_config")
-      .update({
-        active_routing_policy_version_id: policy.data!.id,
-        routing_updated_by: "provider-attempt-start-test",
-        routing_change_reason: `activate provider attempt start ${suffix}`,
-      })
-      .eq("id", true);
-    expect(pointer.error).toBeNull();
-
-    await configureFeature(service, {
-      enabled: true,
-      globalDailyLimit: LARGE_GLOBAL_LIMIT,
-      allowlist: [],
-    });
-
-    return {
-      profileId: profile.data!.id,
-      profileVersionId: version.data!.id,
-      priceVersionId: price.data!.id,
-      policyVersionId: policy.data!.id,
-      runtimeContractId: runtime.runtimeContractId,
-      runtimeContractSha256: runtime.runtimeContractSha256,
-      modelId,
-      displayDisclosureKey,
-    };
+    return ownerFixture;
   }
 
   async function makeUser(label: string): Promise<TestUser> {
@@ -789,12 +672,16 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
           'hex'
         );
 
+        if v_v1_sha256 is distinct from '${V1_MARK_SHA256}' then
+          raise exception 'V1 provider-start body fingerprint changed'
+            using detail = v_v1_sha256;
+        end if;
+
         if v_v1.prosecdef
            or v_v1.proconfig is distinct from array['search_path=""']::text[]
-           or v_v1_sha256 is distinct from '${V1_MARK_SHA256}'
            or not pg_catalog.has_function_privilege(
-             'service_role', v_v1.oid, 'EXECUTE'
-           )
+              'service_role', v_v1.oid, 'EXECUTE'
+            )
            or pg_catalog.has_function_privilege('anon', v_v1.oid, 'EXECUTE')
            or pg_catalog.has_function_privilege(
              'authenticated', v_v1.oid, 'EXECUTE'
@@ -804,7 +691,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
              from pg_catalog.aclexplode(v_v1.proacl)
              where grantee = 0
            ) then
-          raise exception 'V1 provider-start definition or ACL changed';
+          raise exception 'V1 provider-start security or ACL changed';
         end if;
       end
       $assertions$;
@@ -1359,18 +1246,21 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     expect(await attemptRows(v2Reservation.reservationId)).toHaveLength(1);
   });
 
-  it("keeps a frozen closed price eligible but denies a subsequently retired profile", async () => {
+  it("keeps a frozen closed price eligible after owner-only catalog mutation, then denies retired profile", async () => {
     await configureFeature(service, { globalDailyLimit: LARGE_GLOBAL_LIMIT, allowlist: [] });
     const priceUser = await makeUser("attempt-start-closed-price");
     const retiredUser = await makeUser("attempt-start-retired-profile");
     const priceReservation = await reserveV2(priceUser);
     const retiredReservation = await reserveV2(retiredUser);
 
-    const closePrice = await service
-      .from("ai_price_versions")
-      .update({ valid_to: new Date().toISOString() })
-      .eq("id", fixture.priceVersionId);
-    expect(closePrice.error).toBeNull();
+    // This is an owner-only DBA corruption/resilience seam, not an audited
+    // DB013 price-close operation. The audited wrapper is tested elsewhere.
+    const closePrice = runOwnerSql(String.raw`
+      update public.ai_price_versions
+      set valid_to = greatest(clock_timestamp(), valid_from + interval '1 microsecond')
+      where id = '${fixture.priceVersionId}'::uuid;
+    `);
+    expect(closePrice.status).toBe(0);
 
     const globalBeforePriceStart = await getGlobalStartedCount(service);
     expect(await startAttempt(priceReservation.reservationId, 1)).toMatchObject({
@@ -1380,11 +1270,14 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     });
     expect(await getGlobalStartedCount(service)).toBe(globalBeforePriceStart + 1);
 
-    const retireProfile = await service
-      .from("ai_provider_profile_versions")
-      .update({ status: "retired" })
-      .eq("id", fixture.profileVersionId);
-    expect(retireProfile.error).toBeNull();
+    // Deliberately bypass the audited lifecycle wrapper to model an owner-only
+    // catalog mutation and verify start-time revalidation still fails closed.
+    const retireProfile = runOwnerSql(String.raw`
+      update public.ai_provider_profile_versions
+      set status = 'retired'
+      where id = '${fixture.profileVersionId}'::uuid;
+    `);
+    expect(retireProfile.status).toBe(0);
     const globalBeforeRetiredStart = await getGlobalStartedCount(service);
 
     expect(await startAttempt(retiredReservation.reservationId, 1)).toEqual({
@@ -1394,7 +1287,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     await assertUnstarted(retiredReservation.reservationId, globalBeforeRetiredStart);
   });
 
-  it("waits for a concurrent price close and then starts on the frozen price", async () => {
+  it("waits for a concurrent owner-only price close and then starts on the frozen price", async () => {
     const target = await createActiveRouteFixture();
     const user = await makeUser("attempt-start-observed-price-close");
     const reservation = await reserveV2(user, target);
@@ -1426,7 +1319,7 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     expect(await getGlobalStartedCount(service)).toBe(globalBefore + 1);
   });
 
-  it("waits for a concurrent profile retirement and then denies admission", async () => {
+  it("waits for a concurrent owner-only profile retirement and then denies admission", async () => {
     const target = await createActiveRouteFixture();
     const user = await makeUser("attempt-start-observed-profile-retire");
     const reservation = await reserveV2(user, target);

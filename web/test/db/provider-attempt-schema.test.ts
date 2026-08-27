@@ -157,66 +157,48 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     legalBundleVersion = currentLegal.data as string;
 
     const profileKey = `test.attempt.${crypto.randomUUID()}`;
-    const profile = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: "Attempt schema fixture",
-        gateway_kind: "direct_deepseek",
-        model_vendor: "fixture",
-      })
-      .select("id")
-      .single();
-    expect(profile.error).toBeNull();
-
-    const version = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile.data!.id,
-        version: 1,
-        adapter_kind: "deepseek_chat_v1",
-        wire_api_kind: "chat_completions_v1",
-        credential_alias: "deepseek_api_key_v1",
-        endpoint_alias: "deepseek_official",
-        model_id: "deepseek-v4-flash",
-        upstream_route: {},
-        capability_contract_id: "deepseek_chat_capabilities_v1",
-        cache_policy_id: "automatic_cache_v1",
-        legal_manifest_id: "deepseek-official-2026-08-23-v1",
-        display_disclosure_key: "deepseek.official",
-        config: {},
-        config_sha256: "a".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(version.error).toBeNull();
-    profileVersionId = version.data!.id;
-
-    const price = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: profileVersionId,
-        pricing_lane: "default",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: "2026-01-01T00:00:00Z",
-        source_url: "https://example.com/attempt-price-fixture",
-        source_checked_at: "2026-08-23T00:00:00Z",
-        source_snapshot_sha256: "b".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(price.error).toBeNull();
-    priceVersionId = price.data!.id;
-
-    const components = await service.from("ai_price_components").insert([
-      { price_version_id: priceVersionId, component: "input_cache_read", nanos_per_million: 20_000_000 },
-      { price_version_id: priceVersionId, component: "input_standard", nanos_per_million: 1_000_000_000 },
-      { price_version_id: priceVersionId, component: "output", nanos_per_million: 2_000_000_000 },
-    ]);
-    expect(components.error).toBeNull();
+    const profileId = crypto.randomUUID();
+    profileVersionId = crypto.randomUUID();
+    priceVersionId = crypto.randomUUID();
+    expect(runOwnerSql(String.raw`
+      begin;
+      insert into public.ai_provider_profiles (id, profile_key, display_name, gateway_kind, model_vendor)
+      values ('${profileId}', '${profileKey}', 'Attempt schema fixture', 'direct_deepseek', 'fixture');
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, adapter_kind, wire_api_kind, credential_alias,
+        endpoint_alias, model_id, upstream_route, capability_contract_id,
+        cache_policy_id, legal_manifest_id, display_disclosure_key, config, config_sha256
+      ) values (
+        '${profileVersionId}', '${profileId}', 1, 'deepseek_chat_v1', 'chat_completions_v1',
+        'deepseek_api_key_v1', 'deepseek_official', 'deepseek-v4-flash', '{}'::jsonb,
+        'deepseek_chat_capabilities_v1', 'automatic_cache_v1', 'deepseek-official-2026-08-23-v1',
+        'deepseek.official', '{}'::jsonb, '${"a".repeat(64)}'
+      );
+      insert into public.ai_price_versions (
+        id, profile_version_id, pricing_lane, version, currency, calculator_kind,
+        valid_from, source_url, source_checked_at, source_snapshot_sha256, parameters
+      ) values (
+        '${priceVersionId}', '${profileVersionId}', 'default', 1, 'CNY', 'linear_token_v1',
+        '2026-01-01T00:00:00Z', 'https://example.com/attempt-price-fixture',
+        '2026-08-23T00:00:00Z', '${"b".repeat(64)}', '{}'::jsonb
+      );
+      insert into public.ai_price_components (price_version_id, component, nanos_per_million)
+      values
+        ('${priceVersionId}', 'input_cache_read', 20000000),
+        ('${priceVersionId}', 'input_standard', 1000000000),
+        ('${priceVersionId}', 'output', 2000000000);
+      commit;
+    `).status).toBe(0);
+    expect(runOwnerSql(String.raw`
+      begin;
+      update public.ai_provider_profile_versions
+      set status = 'validated'
+      where id = '${profileVersionId}';
+      update public.ai_provider_profile_versions
+      set status = 'canary'
+      where id = '${profileVersionId}';
+      commit;
+    `).status).toBe(0);
     sealPriceAsDatabaseOwner(priceVersionId);
 
     const runtime = authorSyntheticRuntimeContract({ profileKey });
@@ -228,23 +210,17 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(secondRuntimeContractId).not.toBe(runtimeContractId);
     expect(secondRuntimeContractSha256).not.toBe(runtimeContractSha256);
 
-    const policy = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.attempt.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: { kind: "fixture_default_only_v1" },
-        default_profile_version_id: profileVersionId,
-        legal_bundle_version: legalBundleVersion,
-        runtime_contract_id: runtimeContractId,
-        runtime_contract_sha256: runtimeContractSha256,
-        config_sha256: "c".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(policy.error).toBeNull();
-    policyVersionId = policy.data!.id;
+    policyVersionId = crypto.randomUUID();
+    expect(runOwnerSql(String.raw`
+      insert into public.ai_routing_policy_versions (
+        id, policy_key, version, timezone, rules, default_profile_version_id,
+        legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+      ) values (
+        '${policyVersionId}', 'test.attempt.${crypto.randomUUID()}', 1, 'Asia/Shanghai',
+        '{"kind":"fixture_default_only_v1"}'::jsonb, '${profileVersionId}',
+        '${legalBundleVersion}', '${runtimeContractId}', '${runtimeContractSha256}', '${"c".repeat(64)}'
+      );
+    `).status).toBe(0);
   });
 
   afterAll(async () => {
@@ -289,96 +265,75 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     modelId: string;
   }): Promise<FrozenFixture> {
     const profileKey = `test.attempt.${input.key}.${crypto.randomUUID()}`;
-    const profile = await service
-      .from("ai_provider_profiles")
-      .insert({
-        profile_key: profileKey,
-        display_name: `${input.key} attempt schema fixture`,
-        gateway_kind: input.gatewayKind,
-        model_vendor: "fixture",
-      })
-      .select("id")
-      .single();
-    expect(profile.error).toBeNull();
-
     const credentialAlias = `${input.key}_api_key_v1`;
     const capabilityContractId = `${input.key}_capabilities_v1`;
     const cachePolicyId = "automatic_cache_v1";
     const legalManifestId = `${input.key}-legal-v1`;
     const displayDisclosureKey = `${input.key}-disclosure-v1`;
-    const version = await service
-      .from("ai_provider_profile_versions")
-      .insert({
-        profile_id: profile.data!.id,
-        version: 1,
-        adapter_kind: input.adapterKind,
-        wire_api_kind: input.wireApiKind,
-        credential_alias: credentialAlias,
-        endpoint_alias: input.endpointAlias,
-        model_id: input.modelId,
-        upstream_route: {},
-        capability_contract_id: capabilityContractId,
-        cache_policy_id: cachePolicyId,
-        legal_manifest_id: legalManifestId,
-        display_disclosure_key: displayDisclosureKey,
-        config: {},
-        config_sha256: "d".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(version.error).toBeNull();
-
-    const price = await service
-      .from("ai_price_versions")
-      .insert({
-        profile_version_id: version.data!.id,
-        pricing_lane: "default",
-        version: 1,
-        currency: "CNY",
-        calculator_kind: "linear_token_v1",
-        valid_from: "2026-01-01T00:00:00Z",
-        source_url: `https://example.com/${input.key}-price-fixture`,
-        source_checked_at: "2026-08-23T00:00:00Z",
-        source_snapshot_sha256: "e".repeat(64),
-        parameters: {},
-      })
-      .select("id")
-      .single();
-    expect(price.error).toBeNull();
-
-    const components = await service.from("ai_price_components").insert([
-      { price_version_id: price.data!.id, component: "input_cache_read", nanos_per_million: 20_000_000 },
-      { price_version_id: price.data!.id, component: "input_standard", nanos_per_million: 1_000_000_000 },
-      { price_version_id: price.data!.id, component: "output", nanos_per_million: 2_000_000_000 },
-    ]);
-    expect(components.error).toBeNull();
-    sealPriceAsDatabaseOwner(price.data!.id);
+    const profileId = crypto.randomUUID();
+    const profileVersionId = crypto.randomUUID();
+    const priceVersionId = crypto.randomUUID();
+    expect(runOwnerSql(String.raw`
+      begin;
+      insert into public.ai_provider_profiles (id, profile_key, display_name, gateway_kind, model_vendor)
+      values ('${profileId}', '${profileKey}', '${input.key} attempt schema fixture', '${input.gatewayKind}', 'fixture');
+      insert into public.ai_provider_profile_versions (
+        id, profile_id, version, adapter_kind, wire_api_kind, credential_alias,
+        endpoint_alias, model_id, upstream_route, capability_contract_id,
+        cache_policy_id, legal_manifest_id, display_disclosure_key, config, config_sha256
+      ) values (
+        '${profileVersionId}', '${profileId}', 1, '${input.adapterKind}', '${input.wireApiKind}',
+        '${credentialAlias}', '${input.endpointAlias}', '${input.modelId}', '{}'::jsonb,
+        '${capabilityContractId}', '${cachePolicyId}', '${legalManifestId}',
+        '${displayDisclosureKey}', '{}'::jsonb, '${"d".repeat(64)}'
+      );
+      insert into public.ai_price_versions (
+        id, profile_version_id, pricing_lane, version, currency, calculator_kind,
+        valid_from, source_url, source_checked_at, source_snapshot_sha256, parameters
+      ) values (
+        '${priceVersionId}', '${profileVersionId}', 'default', 1, 'CNY', 'linear_token_v1',
+        '2026-01-01T00:00:00Z', 'https://example.com/${input.key}-price-fixture',
+        '2026-08-23T00:00:00Z', '${"e".repeat(64)}', '{}'::jsonb
+      );
+      insert into public.ai_price_components (price_version_id, component, nanos_per_million)
+      values
+        ('${priceVersionId}', 'input_cache_read', 20000000),
+        ('${priceVersionId}', 'input_standard', 1000000000),
+        ('${priceVersionId}', 'output', 2000000000);
+      commit;
+    `).status).toBe(0);
+    expect(runOwnerSql(String.raw`
+      begin;
+      update public.ai_provider_profile_versions
+      set status = 'validated'
+      where id = '${profileVersionId}';
+      update public.ai_provider_profile_versions
+      set status = 'canary'
+      where id = '${profileVersionId}';
+      commit;
+    `).status).toBe(0);
+    sealPriceAsDatabaseOwner(priceVersionId);
 
     const runtime = authorSyntheticRuntimeContract();
 
-    const policy = await service
-      .from("ai_routing_policy_versions")
-      .insert({
-        policy_key: `test.attempt.${input.key}.${crypto.randomUUID()}`,
-        version: 1,
-        timezone: "Asia/Shanghai",
-        rules: { kind: "fixture_default_only_v1" },
-        default_profile_version_id: version.data!.id,
-        legal_bundle_version: legalBundleVersion,
-        runtime_contract_id: runtime.runtimeContractId,
-        runtime_contract_sha256: runtime.runtimeContractSha256,
-        config_sha256: "f".repeat(64),
-      })
-      .select("id")
-      .single();
-    expect(policy.error).toBeNull();
+    const policyVersionId = crypto.randomUUID();
+    expect(runOwnerSql(String.raw`
+      insert into public.ai_routing_policy_versions (
+        id, policy_key, version, timezone, rules, default_profile_version_id,
+        legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+      ) values (
+        '${policyVersionId}', 'test.attempt.${input.key}.${crypto.randomUUID()}', 1, 'Asia/Shanghai',
+        '{"kind":"fixture_default_only_v1"}'::jsonb, '${profileVersionId}',
+        '${legalBundleVersion}', '${runtime.runtimeContractId}', '${runtime.runtimeContractSha256}', '${"f".repeat(64)}'
+      );
+    `).status).toBe(0);
 
     const snapshot = {
       route_schema_version: "route_snapshot_v1",
       config_generation: 8,
-      routing_policy_version_id: policy.data!.id,
-      profile_version_id: version.data!.id,
-      price_version_id: price.data!.id,
+      routing_policy_version_id: policyVersionId,
+      profile_version_id: profileVersionId,
+      price_version_id: priceVersionId,
       legal_bundle_version: legalBundleVersion,
       runtime_contract_id: runtime.runtimeContractId,
       runtime_contract_sha256: runtime.runtimeContractSha256,
