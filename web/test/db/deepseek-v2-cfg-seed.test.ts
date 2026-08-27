@@ -74,7 +74,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     name: "backfill_deepseek_legacy_pricing_v1",
     identityArguments: "",
     prokind: "f",
-    definitionSha256: "bea86a4577690291c5abe782e6e61e7bffd757e3e40497f872fa848a2c092598",
+    definitionSha256: "4e54695cc56a4f67b442fbaf17af5ed9c3ee6ca7d2e52121320dfac3d85993f1",
   },
   {
     schema: "public",
@@ -306,7 +306,7 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
 const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
   routineCount: 359,
   authorityRootSha256:
-    "9372114963e0f7fb9087e10f643bce3fc454bc31bf681f3347ce485b50befbc7",
+    "0d8d163eeb9d66bb4813a4915733ca9c0240d318e04da9fadc058b8ebe687e67",
 } as const;
 
 function parseOwnerJson(sql: string): unknown {

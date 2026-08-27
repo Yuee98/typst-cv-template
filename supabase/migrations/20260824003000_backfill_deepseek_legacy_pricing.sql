@@ -23,9 +23,12 @@ declare
   v_price_count bigint;
   v_component_count bigint;
   v_exact_component_count bigint;
+  v_seal_intent_count bigint;
+  v_exact_seal_intent_count bigint;
   v_cost numeric;
   v_input_total numeric;
   v_created_price boolean := false;
+  v_is_bare_candidate boolean;
   v_complete_tokens boolean;
   v_input_aggregate_known boolean;
   v_zero_or_absent_tokens boolean;
@@ -38,47 +41,57 @@ begin
 
   -- Lock canonical CFG rows before testing their projection: filtering the
   -- mismatch away would let a lifecycle/display writer race this backfill.
-  select * into v_parent from public.ai_provider_profiles
-  where id = '11111111-1111-4111-8111-111111111110'::uuid for update;
-  if not found then raise exception 'DB-012 DeepSeek profile identity mismatch' using errcode = '23514'; end if;
-  select * into v_profile from public.ai_provider_profile_versions
-  where id = c_profile_id for update;
-  if not found then raise exception 'DB-012 DeepSeek profile identity mismatch' using errcode = '23514'; end if;
+  select * into v_parent
+  from public.ai_provider_profiles
+  where id = '11111111-1111-4111-8111-111111111110'::uuid
+  for update;
+  if not found then
+    raise exception 'DB-012 DeepSeek profile identity mismatch'
+      using errcode = '23514';
+  end if;
+
+  select * into v_profile
+  from public.ai_provider_profile_versions
+  where id = c_profile_id
+  for update;
+  if not found then
+    raise exception 'DB-012 DeepSeek profile identity mismatch'
+      using errcode = '23514';
+  end if;
 
   -- CFG-001 owns this exact draft profile identity.  DB-012 never repairs or
   -- activates it, and does not infer an equivalent profile from a model name.
-  if not exists (
-    select 1
-    from public.ai_provider_profile_versions as profile
-    join public.ai_provider_profiles as parent
-      on parent.id = profile.profile_id
-    where profile.id = c_profile_id
-      and profile.profile_id = '11111111-1111-4111-8111-111111111110'::uuid
-      and profile.version = 1
-      and profile.model_id = 'deepseek-v4-flash'
-      and profile.model_snapshot = 'DeepSeek-V4-Flash-0731'
-      and profile.upstream_route = '{}'::jsonb
-      and profile.status = 'draft'
-      and profile.adapter_kind = 'deepseek_chat_v1'
-      and profile.wire_api_kind = 'chat_completions_v1'
-      and profile.credential_alias = 'deepseek_api_key'
-      and profile.endpoint_alias = 'deepseek_official'
-      and profile.capability_contract_id = 'deepseek_chat_json_object_v1'
-      and profile.cache_policy_id = 'deepseek_automatic_context_cache_v1'
-      and profile.legal_manifest_id = 'deepseek-official-2026-08-23-v1'
-      and profile.display_disclosure_key = 'deepseek-official-v1'
-      and profile.config =
-        '{"thinking":"disabled","structuredOutput":"json_object","providerSubjectField":"user_id"}'::jsonb
-      and profile.config_sha256 =
-        'a79bbbaa5934d7f4890b2e97e13e7768f031e99625fe11446ba437feeffc8fa9'
-      and profile.activated_at is null
-      and profile.retired_at is null
-      and parent.id = '11111111-1111-4111-8111-111111111110'::uuid
-      and parent.profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
-      and parent.display_name = 'DeepSeek V4 Flash'
-      and parent.gateway_kind = 'direct_deepseek'
-      and parent.model_vendor = 'deepseek'
-  ) then
+  if v_parent.profile_key is distinct from
+       'deepseek.official.deepseek-v4-flash.chat.v1'
+     or v_parent.display_name is distinct from 'DeepSeek V4 Flash'
+     or v_parent.gateway_kind is distinct from 'direct_deepseek'
+     or v_parent.model_vendor is distinct from 'deepseek'
+     or v_parent.retired_at is not null
+     or v_profile.profile_id is distinct from v_parent.id
+     or v_profile.version is distinct from 1
+     or v_profile.model_id is distinct from 'deepseek-v4-flash'
+     or v_profile.model_snapshot is distinct from 'DeepSeek-V4-Flash-0731'
+     or v_profile.upstream_route is distinct from '{}'::jsonb
+     or v_profile.status is distinct from 'draft'
+     or v_profile.adapter_kind is distinct from 'deepseek_chat_v1'
+     or v_profile.wire_api_kind is distinct from 'chat_completions_v1'
+     or v_profile.credential_alias is distinct from 'deepseek_api_key'
+     or v_profile.endpoint_alias is distinct from 'deepseek_official'
+     or v_profile.capability_contract_id is distinct from
+       'deepseek_chat_json_object_v1'
+     or v_profile.cache_policy_id is distinct from
+       'deepseek_automatic_context_cache_v1'
+     or v_profile.legal_manifest_id is distinct from
+       'deepseek-official-2026-08-23-v1'
+     or v_profile.display_disclosure_key is distinct from
+       'deepseek-official-v1'
+     or v_profile.config is distinct from
+       '{"thinking":"disabled","structuredOutput":"json_object","providerSubjectField":"user_id"}'::jsonb
+     or v_profile.config_sha256 is distinct from
+       'a79bbbaa5934d7f4890b2e97e13e7768f031e99625fe11446ba437feeffc8fa9'
+     or v_profile.validated_at is not null
+     or v_profile.activated_at is not null
+     or v_profile.retired_at is not null then
     raise exception 'DB-012 DeepSeek profile identity mismatch'
       using errcode = '23514';
   end if;
@@ -192,96 +205,95 @@ begin
   where price.id = c_price_id
   for share;
 
+  select count(*), count(*) filter (
+    where intent.applied_at is not null
+      and intent.requested_at is not distinct from v_price.components_sealed_at
+      and (not v_created_price or intent.requested_txid = pg_catalog.txid_current())
+  ) into v_seal_intent_count, v_exact_seal_intent_count
+  from public.ai_price_component_seal_intents as intent
+  where intent.price_version_id = c_price_id;
+
   if v_component_count <> 3
      or v_exact_component_count <> 3
-     or v_price.components_sealed_at is null then
+     or v_price.components_sealed_at is null
+     or v_seal_intent_count <> 1
+     or v_exact_seal_intent_count <> 1 then
     raise exception 'DB-012 legacy price components or seal mismatch'
       using errcode = '23514';
   end if;
 
-  -- The candidate is deliberately narrower than "old-looking" rows.  Current
-  -- route/V2/cost facts and child attempts are not repaired or reinterpreted.
+  -- Lock both exact bare candidates and every row carrying a DB-012-owned
+  -- marker.  Explicit current route snapshots remain outside this historical
+  -- classifier unless they also claim a legacy-only marker or price.
   for v_request in
     select request.*
     from public.ai_request_ledger as request
-    where request.state = 'finalized'
-      and request.status is not null
-      and request.finalized_at is not null
-      and request.model is not distinct from 'deepseek-v4-flash'
-      and request.reserved_at < c_cutoff
-      and (request.provider_started_at is null or request.provider_started_at < c_cutoff)
-      and request.finalized_at < c_cutoff
-      and request.route_schema_version is null
-      and pg_catalog.num_nonnulls(
-        request.config_generation,
-        request.routing_policy_version_id,
-        request.profile_version_id,
-        request.price_version_id,
-        request.legal_bundle_version,
-        request.runtime_contract_id,
-        request.runtime_contract_sha256,
-        request.gateway_kind,
-        request.model_id,
-        request.wire_api_kind,
-        request.display_disclosure_key
-      ) = 0
-      and request.usage_schema_version is null
-      and request.cost_basis is null
-      and pg_catalog.num_nonnulls(
-        request.input_total_tokens,
-        request.input_cache_read_tokens,
-        request.input_cache_write_tokens,
-        request.input_standard_tokens,
-        request.reasoning_tokens,
-        request.cache_usage_reporting,
-        request.incomplete_fields,
-        request.billing_currency,
-        request.known_estimated_cost_nanos,
-        request.estimated_cost_nanos,
-        request.provider_reported_currency,
-        request.provider_reported_cost_nanos,
-        request.cost_reconciliation_status
-      ) = 0
-      and not exists (
-        select 1
-        from public.ai_provider_attempt_ledger as attempt
-        where attempt.reservation_id = request.reservation_id
-      )
-    order by request.reservation_id
+    where request.route_schema_version = 'legacy_pricing_v1'
+       or request.usage_schema_version = 'legacy_v1'
+       or request.cost_basis = 'legacy_request_aggregate'
+       or request.price_version_id = c_price_id
+       or (
+         request.profile_version_id = c_profile_id
+         and request.route_schema_version is distinct from 'route_snapshot_v1'
+       )
+       or (
+         request.route_schema_version is null
+         and request.model is not distinct from 'deepseek-v4-flash'
+         and request.state = 'finalized'
+         and request.status is not null
+         and request.finalized_at is not null
+         and request.reserved_at < c_cutoff
+         and (
+           request.provider_started_at is null
+           or request.provider_started_at < c_cutoff
+         )
+         and request.finalized_at < c_cutoff
+         and not exists (
+           select 1
+           from public.ai_provider_attempt_ledger as attempt
+           where attempt.reservation_id = request.reservation_id
+         )
+       )
+    order by request.reservation_id::text collate "C"
     for update of request
   loop
-    -- Recheck all facts after the parent lock.  Any late child, prebinding, or
-    -- cutoff/identity change fails closed instead of producing a partial run.
+    v_is_bare_candidate := v_request.route_schema_version is null
+      and pg_catalog.num_nonnulls(
+        v_request.config_generation, v_request.routing_policy_version_id,
+        v_request.profile_version_id, v_request.price_version_id,
+        v_request.legal_bundle_version, v_request.runtime_contract_id,
+        v_request.runtime_contract_sha256, v_request.gateway_kind,
+        v_request.model_id, v_request.wire_api_kind,
+        v_request.display_disclosure_key, v_request.usage_schema_version,
+        v_request.cost_basis, v_request.input_total_tokens,
+        v_request.input_cache_read_tokens, v_request.input_cache_write_tokens,
+        v_request.input_standard_tokens, v_request.reasoning_tokens,
+        v_request.cache_usage_reporting, v_request.incomplete_fields,
+        v_request.billing_currency, v_request.known_estimated_cost_nanos,
+        v_request.estimated_cost_nanos, v_request.provider_reported_currency,
+        v_request.provider_reported_cost_nanos,
+        v_request.cost_reconciliation_status
+      ) = 0;
+
+    -- Both bare and already-bound rows must still belong to the exact
+    -- historical cohort.  A legacy marker outside it is corruption, not an
+    -- unrelated row to skip.
     if v_request.state is distinct from 'finalized'
        or v_request.status is null
        or v_request.finalized_at is null
        or v_request.model is distinct from 'deepseek-v4-flash'
        or v_request.reserved_at >= c_cutoff
-       or v_request.provider_started_at >= c_cutoff
+       or (
+         v_request.provider_started_at is not null
+         and v_request.provider_started_at >= c_cutoff
+       )
        or v_request.finalized_at >= c_cutoff
-       or v_request.route_schema_version is not null
-       or pg_catalog.num_nonnulls(
-         v_request.config_generation, v_request.routing_policy_version_id,
-         v_request.profile_version_id, v_request.price_version_id,
-         v_request.legal_bundle_version, v_request.runtime_contract_id,
-         v_request.runtime_contract_sha256, v_request.gateway_kind,
-         v_request.model_id, v_request.wire_api_kind,
-         v_request.display_disclosure_key, v_request.usage_schema_version,
-         v_request.cost_basis, v_request.input_total_tokens,
-         v_request.input_cache_read_tokens, v_request.input_cache_write_tokens,
-         v_request.input_standard_tokens, v_request.reasoning_tokens,
-         v_request.cache_usage_reporting, v_request.incomplete_fields,
-         v_request.billing_currency, v_request.known_estimated_cost_nanos,
-         v_request.estimated_cost_nanos, v_request.provider_reported_currency,
-         v_request.provider_reported_cost_nanos,
-         v_request.cost_reconciliation_status
-       ) <> 0
        or exists (
          select 1 from public.ai_provider_attempt_ledger as attempt
          where attempt.reservation_id = v_request.reservation_id
        ) then
-      raise exception 'DB-012 candidate changed while locked'
-        using errcode = '23514';
+      raise exception 'DB-012 legacy request footprint mismatch: %',
+        v_request.reservation_id using errcode = '23514';
     end if;
 
     v_complete_tokens := v_request.input_cached_tokens is not null
@@ -368,46 +380,87 @@ begin
       v_cost := null;
     end if;
 
-    -- The trigger recognizes this transaction-local, SECURITY DEFINER-only
-    -- owner path.  service_role can neither invoke this function nor satisfy
-    -- its current_user check in the trigger replacement below.
-    perform pg_catalog.set_config(
-      'ai.backfill_deepseek_legacy_pricing_v1', 'owner-executed', true
-    );
+    if v_is_bare_candidate then
+      -- The trigger recognizes this transaction-local, SECURITY DEFINER-only
+      -- owner path. service_role can neither invoke this function nor satisfy
+      -- its current_user check in the trigger replacement below.
+      perform pg_catalog.set_config(
+        'ai.backfill_deepseek_legacy_pricing_v1', 'owner-executed', true
+      );
 
-    update public.ai_request_ledger
-    set route_schema_version = 'legacy_pricing_v1',
-        profile_version_id = c_profile_id,
-        price_version_id = c_price_id,
-        usage_schema_version = 'legacy_v1',
-        input_total_tokens = case when v_input_aggregate_known then v_input_total::bigint else null end,
-        input_cache_read_tokens = v_request.input_cached_tokens,
-        input_cache_write_tokens = null,
-        input_standard_tokens = v_request.input_uncached_tokens,
-        reasoning_tokens = null,
-        cache_usage_reporting = case
-          when v_input_aggregate_known then 'unavailable'
-          else null
-        end,
-        incomplete_fields = case
-          when v_cost is null then array['estimated_cost']::text[]
-          else array[]::text[]
-        end,
-        cost_basis = 'legacy_request_aggregate',
-        billing_currency = 'CNY',
-        known_estimated_cost_nanos = v_cost::bigint,
-        estimated_cost_nanos = v_cost::bigint,
-        provider_reported_currency = null,
-        provider_reported_cost_nanos = null,
-        cost_reconciliation_status = case
-          when v_cost is null then 'incomplete_usage'
-          else 'not_available'
-        end
-    where reservation_id = v_request.reservation_id;
+      update public.ai_request_ledger
+      set route_schema_version = 'legacy_pricing_v1',
+          profile_version_id = c_profile_id,
+          price_version_id = c_price_id,
+          usage_schema_version = 'legacy_v1',
+          input_total_tokens = case
+            when v_input_aggregate_known then v_input_total::bigint else null
+          end,
+          input_cache_read_tokens = v_request.input_cached_tokens,
+          input_cache_write_tokens = null,
+          input_standard_tokens = v_request.input_uncached_tokens,
+          reasoning_tokens = null,
+          cache_usage_reporting = case
+            when v_input_aggregate_known then 'unavailable' else null
+          end,
+          incomplete_fields = case
+            when v_cost is null then array['estimated_cost']::text[]
+            else array[]::text[]
+          end,
+          cost_basis = 'legacy_request_aggregate',
+          billing_currency = 'CNY',
+          known_estimated_cost_nanos = v_cost::bigint,
+          estimated_cost_nanos = v_cost::bigint,
+          provider_reported_currency = null,
+          provider_reported_cost_nanos = null,
+          cost_reconciliation_status = case
+            when v_cost is null then 'incomplete_usage' else 'not_available'
+          end
+      where reservation_id = v_request.reservation_id;
 
-    if not found then
-      raise exception 'DB-012 locked candidate update disappeared'
-        using errcode = '23514';
+      if not found then
+        raise exception 'DB-012 locked candidate update disappeared'
+          using errcode = '23514';
+      end if;
+    elsif v_request.route_schema_version is distinct from 'legacy_pricing_v1'
+       or v_request.profile_version_id is distinct from c_profile_id
+       or v_request.price_version_id is distinct from c_price_id
+       or pg_catalog.num_nonnulls(
+         v_request.config_generation, v_request.routing_policy_version_id,
+         v_request.legal_bundle_version, v_request.runtime_contract_id,
+         v_request.runtime_contract_sha256, v_request.gateway_kind,
+         v_request.model_id, v_request.wire_api_kind,
+         v_request.display_disclosure_key
+       ) <> 0
+       or v_request.usage_schema_version is distinct from 'legacy_v1'
+       or v_request.input_total_tokens is distinct from (case
+         when v_input_aggregate_known then v_input_total::bigint else null
+       end)
+       or v_request.input_cache_read_tokens is distinct from
+         v_request.input_cached_tokens
+       or v_request.input_cache_write_tokens is not null
+       or v_request.input_standard_tokens is distinct from
+         v_request.input_uncached_tokens
+       or v_request.reasoning_tokens is not null
+       or v_request.cache_usage_reporting is distinct from (case
+         when v_input_aggregate_known then 'unavailable'::text else null
+       end)
+       or v_request.incomplete_fields is distinct from (case
+         when v_cost is null then array['estimated_cost']::text[]
+         else array[]::text[]
+       end)
+       or v_request.cost_basis is distinct from 'legacy_request_aggregate'
+       or v_request.billing_currency is distinct from 'CNY'
+       or v_request.known_estimated_cost_nanos is distinct from v_cost::bigint
+       or v_request.estimated_cost_nanos is distinct from v_cost::bigint
+       or v_request.provider_reported_currency is not null
+       or v_request.provider_reported_cost_nanos is not null
+       or v_request.cost_reconciliation_status is distinct from (case
+         when v_cost is null then 'incomplete_usage'::text
+         else 'not_available'::text
+       end) then
+      raise exception 'DB-012 legacy request projection mismatch: %',
+        v_request.reservation_id using errcode = '23514';
     end if;
   end loop;
 end;
