@@ -8,10 +8,10 @@ import {
   DEEPSEEK_LEGAL_MANIFEST_ID,
   INITIAL_LEGAL_BUNDLE_VERSION,
   LEGAL_FINGERPRINT_V1_EXPECTED_SHA256,
-  LEGAL_FINGERPRINT_V1_PROFILE_MAPPING,
   MIMO_LEGAL_MANIFEST_ID,
 } from "@/server/polish/legal-fingerprint-v1-descriptors";
 import { DEEPSEEK_V2_SEED_V1 } from "@/server/polish/deepseek-v2-seed-v1";
+import { MIMO_V2_SEED_IDENTITY_V1 } from "@/server/polish/mimo-v2-seed-identity-v1";
 
 import { createServiceClient, RUN_DB_TESTS } from "./helpers";
 
@@ -52,6 +52,25 @@ function canonicalManifestSetHash(
 const EXPECTED_MANIFEST_SET_SHA256 = canonicalManifestSetHash(
   EXPECTED_MANIFESTS,
 );
+
+const EXPECTED_DARK_REVIEWED_DRAFTS = Object.freeze([
+  Object.freeze({
+    id: DEEPSEEK_V2_SEED_V1.profile.id,
+    profile_key: DEEPSEEK_V2_SEED_V1.profile.profileKey,
+    display_name: DEEPSEEK_V2_SEED_V1.profile.displayName,
+    gateway_kind: DEEPSEEK_V2_SEED_V1.profile.gatewayKind,
+    model_vendor: DEEPSEEK_V2_SEED_V1.profile.modelVendor,
+    retired_at: null,
+  }),
+  Object.freeze({
+    id: MIMO_V2_SEED_IDENTITY_V1.profile.id,
+    profile_key: MIMO_V2_SEED_IDENTITY_V1.profile.profileKey,
+    display_name: MIMO_V2_SEED_IDENTITY_V1.profile.displayName,
+    gateway_kind: MIMO_V2_SEED_IDENTITY_V1.profile.gatewayKind,
+    model_vendor: MIMO_V2_SEED_IDENTITY_V1.profile.modelVendor,
+    retired_at: null,
+  }),
+]);
 
 describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", () => {
   let service: SupabaseClient;
@@ -108,33 +127,30 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", ()
     );
   });
 
-  it("admits only the later reviewed DeepSeek draft while routing stays inactive", async () => {
+  it("admits exactly the reviewed DeepSeek and MiMo dark drafts while routing stays inactive", async () => {
     const { data: profiles, error: profileError } = await service
       .from("ai_provider_profiles")
       .select("id,profile_key,display_name,gateway_kind,model_vendor,retired_at")
       .in(
         "profile_key",
-        LEGAL_FINGERPRINT_V1_PROFILE_MAPPING.map((profile) => profile.profileKey),
-      );
+        EXPECTED_DARK_REVIEWED_DRAFTS.map((profile) => profile.profile_key),
+      )
+      // UUID ordering is locale-independent and fixes the exact row sequence.
+      .order("id", { ascending: true });
     expect(profileError).toBeNull();
-    expect(profiles).toEqual([
-      {
-        id: DEEPSEEK_V2_SEED_V1.profile.id,
-        profile_key: DEEPSEEK_V2_SEED_V1.profile.profileKey,
-        display_name: DEEPSEEK_V2_SEED_V1.profile.displayName,
-        gateway_kind: DEEPSEEK_V2_SEED_V1.profile.gatewayKind,
-        model_vendor: DEEPSEEK_V2_SEED_V1.profile.modelVendor,
-        retired_at: null,
-      },
-    ]);
+    expect(profiles).toEqual(EXPECTED_DARK_REVIEWED_DRAFTS);
 
     const { data: featureConfig, error } = await service
       .from("ai_feature_config")
-      .select("active_routing_policy_version_id")
+      .select("ai_polish_enabled,active_routing_policy_version_id,config_generation")
       .eq("id", true)
       .single();
     expect(error).toBeNull();
-    expect(featureConfig?.active_routing_policy_version_id).toBeNull();
+    expect(featureConfig).toEqual({
+      ai_polish_enabled: false,
+      active_routing_policy_version_id: null,
+      config_generation: 0,
+    });
   });
 
   it("keeps the CFG migration owner-only and narrowly scoped", () => {
