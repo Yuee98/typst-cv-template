@@ -430,6 +430,15 @@ declare
   v_pricing_lane text;
   v_backfill_owner text;
 begin
+  -- A completed historical binding is a ledger fact, not a service-role
+  -- editable cost record.  DB-012 itself only transitions bare rows.
+  if tg_op = 'UPDATE'
+     and old.route_schema_version is not distinct from 'legacy_pricing_v1'
+     and pg_catalog.to_jsonb(new) is distinct from pg_catalog.to_jsonb(old) then
+    raise exception 'legacy pricing ledger rows are immutable once bound'
+      using errcode = '23514';
+  end if;
+
   if tg_op = 'UPDATE' and old.route_schema_version is not null and (
     new.route_schema_version, new.config_generation,
     new.routing_policy_version_id, new.profile_version_id, new.price_version_id,
