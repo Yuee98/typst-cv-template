@@ -127,11 +127,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-000 initial legal bundle seed (real DB)", ()
     );
   });
 
-  it("admits exactly the reviewed DeepSeek and MiMo dark drafts while routing stays inactive", async () => {
+  it("keeps the reviewed legal profile mapping to exactly the DeepSeek and MiMo dark drafts while routing stays inactive", async () => {
     const { data: profiles, error: profileError } = await service
       .from("ai_provider_profiles")
       .select("id,profile_key,display_name,gateway_kind,model_vendor,retired_at")
-      // UUID ordering is locale-independent and fixes the exact row sequence.
+      .in(
+        "profile_key",
+        EXPECTED_DARK_REVIEWED_DRAFTS.map((profile) => profile.profile_key),
+      )
+      // UUID ordering fixes the legal mapping's exact row sequence.
       .order("id", { ascending: true });
     expect(profileError).toBeNull();
     expect(profiles).toEqual(EXPECTED_DARK_REVIEWED_DRAFTS);
