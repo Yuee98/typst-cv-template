@@ -4,32 +4,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { acceptAiLegalBundle, configureFeature, createServiceClient, createTestUser, deleteTestUser, RUN_DB_TESTS, sleep } from "./helpers";
-import { authorSyntheticRuntimeContract, DEEPSEEK_LEGAL_MANIFEST_ID, INITIAL_LEGAL_BUNDLE_VERSION, runOwnerSql, sealPriceAsDatabaseOwner, startOwnerSql, type OwnerSqlResult } from "./runtime-contract-fixtures";
+import { authorSyntheticRuntimeContract, DEEPSEEK_LEGAL_MANIFEST_ID, INITIAL_LEGAL_BUNDLE_VERSION, readLifecycleEvidenceRoot, runOwnerSql, sealPriceAsDatabaseOwner, startOwnerSql, type OwnerSqlResult } from "./runtime-contract-fixtures";
 
 const DB_CONTAINER = "supabase_db_typst-cv-template";
 const EVIDENCE = {
   p_actor: "db013-concurrency",
   p_reason: "DB-013 deterministic concurrency gate",
-  p_reviewed_source_commit_oid: "sha1:0123456789abcdef0123456789abcdef01234567",
-  p_reviewed_source_sha256: "a".repeat(64),
-  p_rechecked_at: new Date().toISOString(),
-  p_rechecked_sha256: "b".repeat(64),
 } as const;
 
 interface Barrier { ready: Promise<void>; result: Promise<OwnerSqlResult>; release: () => void }
 interface Fixture { profileId: string; profileVersionId: string; priceVersionId: string; policyVersionId: string; runtimeContractId: string; runtimeContractSha256: string; runtimeTargetId: string; }
-
-function ownerJson(sql: string): Record<string, unknown> {
-  const result = runOwnerSql(`\\pset format unaligned
-\\pset tuples_only on
-${sql}`);
-  const line = result.stdout
-    .split(/\r?\n/u)
-    .map((value) => value.trim())
-    .findLast((value) => value.startsWith("{"));
-  if (!line) throw new Error(`expected owner JSON, got: ${result.stdout}`);
-  return JSON.parse(line) as Record<string, unknown>;
-}
 
 function heldOwnerSql(sql: string, marker: string, releaseSql = "commit;"): Barrier {
   let readyResolve!: () => void;
@@ -84,24 +68,20 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
   afterEach(async () => { while (ownedFixtures.length) { const current = ownedFixtures[0]; await cleanup(current); ownedFixtures.shift(); } });
 
   async function evidence(f: Fixture) {
-    const facts = ownerJson(`select pg_catalog.jsonb_build_object(
-      'reviewedSourceCommitOid', root.reviewed_source_commit_oid,
-      'recheckedAt', case
-        when root.created_at >= price.source_checked_at then root.created_at
-        else price.source_checked_at
-      end
-    )::text
-    from public.ai_service_runtime_contract_versions as root
-    join public.ai_price_versions as price on price.id='${f.priceVersionId}'::uuid
-    where root.runtime_contract_id='${f.runtimeContractId}'
-      and root.runtime_contract_sha256='${f.runtimeContractSha256}';`);
-    if (
-      typeof facts.reviewedSourceCommitOid !== "string" ||
-      typeof facts.recheckedAt !== "string"
-    ) {
-      throw new Error("DB-013 evidence fixture is missing its owner-only facts");
-    }
-    return { ...EVIDENCE, p_runtime_contract_id: f.runtimeContractId, p_runtime_contract_sha256: f.runtimeContractSha256, p_reviewed_source_commit_oid: facts.reviewedSourceCommitOid, p_reviewed_source_sha256: f.runtimeContractSha256, p_rechecked_at: facts.recheckedAt };
+    const root = readLifecycleEvidenceRoot({
+      runtimeContractId: f.runtimeContractId,
+      runtimeContractSha256: f.runtimeContractSha256,
+      priceVersionIds: [f.priceVersionId],
+    });
+    return {
+      ...EVIDENCE,
+      p_runtime_contract_id: f.runtimeContractId,
+      p_runtime_contract_sha256: f.runtimeContractSha256,
+      p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
+      p_reviewed_source_sha256: f.runtimeContractSha256,
+      p_rechecked_at: root.recheckedAt,
+      p_rechecked_sha256: f.runtimeContractSha256,
+    };
   }
 
   async function lifecycle(name: string, args: Record<string, unknown>) { return service.rpc(name, args); }

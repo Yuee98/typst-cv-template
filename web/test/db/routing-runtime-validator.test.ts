@@ -11,6 +11,7 @@ import {
   INITIAL_LEGAL_BUNDLE_VERSION,
   MIMO_LEGAL_MANIFEST_ID,
   MIMO_LEGAL_MANIFEST_SHA256,
+  readLifecycleEvidenceRoot,
   runOwnerSql,
   sealPriceAsDatabaseOwner,
   transitionPolicyAsDatabaseOwner,
@@ -106,42 +107,24 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     expect(cleanup.status).toBe(0);
   });
 
-  async function lifecycleEvidence(
+  function lifecycleEvidence(
     runtime: RuntimeContractPair,
     reason: string,
-  ): Promise<Record<string, string>> {
-    const result = runOwnerSql(String.raw`
-      \pset format unaligned
-      \pset tuples_only on
-      select pg_catalog.jsonb_build_object(
-        'reviewedSourceCommitOid', reviewed_source_commit_oid,
-        'recheckedAt', created_at
-      )::text
-      from public.ai_service_runtime_contract_versions
-      where runtime_contract_id = ${sqlLiteral(runtime.runtimeContractId)}
-        and runtime_contract_sha256 = ${sqlLiteral(runtime.runtimeContractSha256)};
-    `);
-    const line = result.stdout
-      .split(/\r?\n/u)
-      .map((value) => value.trim())
-      .findLast((value) => value.startsWith("{"));
-    if (line === undefined) {
-      throw new Error(`owner runtime evidence read returned no JSON: ${result.stdout}`);
-    }
-    const root = JSON.parse(line) as {
-      reviewedSourceCommitOid?: unknown;
-      recheckedAt?: unknown;
-    };
-    expect(root.reviewedSourceCommitOid).toMatch(/^sha1:[0-9a-f]{40}$/u);
-    expect(root.recheckedAt).toEqual(expect.any(String));
+    priceVersionIds: readonly string[],
+  ): Record<string, string> {
+    const root = readLifecycleEvidenceRoot({
+      runtimeContractId: runtime.runtimeContractId,
+      runtimeContractSha256: runtime.runtimeContractSha256,
+      priceVersionIds,
+    });
     return {
       p_runtime_contract_id: runtime.runtimeContractId,
       p_runtime_contract_sha256: runtime.runtimeContractSha256,
       p_actor: "routing-runtime-validator",
       p_reason: reason,
-      p_reviewed_source_commit_oid: root.reviewedSourceCommitOid as string,
+      p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
       p_reviewed_source_sha256: runtime.runtimeContractSha256,
-      p_rechecked_at: root.recheckedAt as string,
+      p_rechecked_at: root.recheckedAt,
       p_rechecked_sha256: runtime.runtimeContractSha256,
     };
   }
@@ -566,7 +549,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     const activationReason = `activate canary ${crypto.randomUUID()}`;
     const activation = await service.rpc("set_ai_routing_policy_pointer_v1", {
       p_policy_version_id: policy.id,
-      ...(await lifecycleEvidence(route.runtime, activationReason)),
+      ...(await lifecycleEvidence(
+        route.runtime,
+        activationReason,
+        [route.priceVersionId],
+      )),
     });
     expect(activation.error).toBeNull();
     activePolicyId = policy.id;
@@ -584,7 +571,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     const cleanupReason = `deactivate canary ${crypto.randomUUID()}`;
     const cleanup = await service.rpc("clear_ai_routing_policy_pointer_v1", {
       p_expected_policy_version_id: policy.id,
-      ...(await lifecycleEvidence(route.runtime, cleanupReason)),
+      ...(await lifecycleEvidence(
+        route.runtime,
+        cleanupReason,
+        [route.priceVersionId],
+      )),
     });
     expect(cleanup.error).toBeNull();
     activePolicyId = null;

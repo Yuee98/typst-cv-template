@@ -24,6 +24,7 @@ import {
   INITIAL_LEGAL_BUNDLE_VERSION,
   MIMO_LEGAL_MANIFEST_ID,
   MIMO_LEGAL_MANIFEST_SHA256,
+  readLifecycleEvidenceRoot,
   runOwnerSql,
   sealPriceAsDatabaseOwner,
   transitionPolicyAsDatabaseOwner,
@@ -1202,28 +1203,14 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
 
     try {
       const expectedBeforeClear = await expectedRoute(fixture);
-      const runtimeRootResult = runOwnerSql(String.raw`
-        \pset format unaligned
-        \pset tuples_only on
-        select pg_catalog.jsonb_build_object(
-          'reviewedSourceCommitOid', reviewed_source_commit_oid,
-          'recheckedAt', pg_catalog.clock_timestamp()
-        )::text
-        from public.ai_service_runtime_contract_versions
-        where runtime_contract_id = '${fixture.runtime.runtimeContractId}'
-          and runtime_contract_sha256 = '${fixture.runtime.runtimeContractSha256}';
-      `);
-      const runtimeRootLine = runtimeRootResult.stdout
-        .split(/\r?\n/u)
-        .map((value) => value.trim())
-        .findLast((value) => value.startsWith("{"));
-      if (runtimeRootLine === undefined) {
-        throw new Error("reserve V2 lifecycle evidence root is missing");
-      }
-      const runtimeRoot = JSON.parse(runtimeRootLine) as {
-        reviewedSourceCommitOid: string;
-        recheckedAt: string;
-      };
+      const runtimeRoot = readLifecycleEvidenceRoot({
+        runtimeContractId: fixture.runtime.runtimeContractId,
+        runtimeContractSha256: fixture.runtime.runtimeContractSha256,
+        priceVersionIds: [
+          fixture.defaultNode.priceVersionId,
+          fixture.selectedNode.priceVersionId,
+        ],
+      });
       const lifecycleEvidence = {
         p_runtime_contract_id: fixture.runtime.runtimeContractId,
         p_runtime_contract_sha256: fixture.runtime.runtimeContractSha256,

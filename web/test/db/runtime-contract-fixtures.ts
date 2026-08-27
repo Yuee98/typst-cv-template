@@ -33,6 +33,17 @@ export interface OwnerSqlResult {
   stderr: string;
 }
 
+export interface LifecycleEvidenceRoot {
+  reviewedSourceCommitOid: string;
+  recheckedAt: string;
+}
+
+export interface LifecycleEvidenceRootInput {
+  runtimeContractId: string;
+  runtimeContractSha256: string;
+  priceVersionIds?: readonly string[];
+}
+
 export function runOwnerSql(
   sql: string,
   options: { expectFailure?: boolean } = {},
@@ -66,6 +77,112 @@ export function runOwnerSql(
     );
   }
   return output;
+}
+
+export function readLifecycleEvidenceRoot(
+  input: LifecycleEvidenceRootInput,
+): LifecycleEvidenceRoot {
+  if (!CODE_ID.test(input.runtimeContractId)) {
+    throw new Error("lifecycle evidence runtime contract id is invalid");
+  }
+  if (!LOWER_HEX_64.test(input.runtimeContractSha256)) {
+    throw new Error("lifecycle evidence runtime contract hash is invalid");
+  }
+  const requestedPriceVersionIds = input.priceVersionIds ?? [];
+  const priceVersionIds = [...new Set(requestedPriceVersionIds)];
+  if (priceVersionIds.length !== requestedPriceVersionIds.length) {
+    throw new Error("lifecycle evidence price version ids contain duplicates");
+  }
+  if (input.priceVersionIds !== undefined && priceVersionIds.length === 0) {
+    throw new Error("lifecycle evidence price version ids are empty");
+  }
+  if (priceVersionIds.some((id) => !CANONICAL_UUID.test(id))) {
+    throw new Error("lifecycle evidence price version id is invalid");
+  }
+
+  const priceJoin = priceVersionIds.length === 0
+    ? ""
+    : String.raw`
+      join lateral (
+        select pg_catalog.max(candidate.source_checked_at) as source_checked_at
+        from public.ai_price_versions as candidate
+        where candidate.id = any(array[${priceVersionIds
+          .map((id) => `${sqlLiteral(id)}::uuid`)
+          .join(", ")}])
+        having count(*) = ${priceVersionIds.length}
+      ) as price on true`;
+  const recheckedAt = priceVersionIds.length === 0
+    ? "root.created_at"
+    : "greatest(root.created_at, price.source_checked_at)";
+
+  // Docker/VM clocks can step backwards between owner sessions. Keep the
+  // exact catalog-derived recheck time and wait boundedly for the DB clock to
+  // catch up instead of forging an earlier timestamp or weakening the validator.
+  const result = runOwnerSql(String.raw`
+    \pset format unaligned
+    \pset tuples_only on
+    with evidence as materialized (
+      select
+        root.reviewed_source_commit_oid,
+        ${recheckedAt} as rechecked_at
+      from public.ai_service_runtime_contract_versions as root${priceJoin}
+      where root.runtime_contract_id = ${sqlLiteral(input.runtimeContractId)}
+        and root.runtime_contract_sha256 = ${sqlLiteral(input.runtimeContractSha256)}
+    ), waited as materialized (
+      select pg_catalog.pg_sleep(
+        case
+          when evidence.rechecked_at > pg_catalog.clock_timestamp() then
+            least(
+              pg_catalog.date_part(
+                'epoch',
+                evidence.rechecked_at - pg_catalog.clock_timestamp()
+              ) + 0.01,
+              2.0
+            )
+          else 0
+        end
+      )
+      from evidence
+    )
+    select pg_catalog.jsonb_build_object(
+      'reviewedSourceCommitOid', evidence.reviewed_source_commit_oid,
+      'recheckedAt', evidence.rechecked_at,
+      'observedAt', pg_catalog.clock_timestamp(),
+      'ready', evidence.rechecked_at <= pg_catalog.clock_timestamp()
+    )::text
+    from evidence
+    cross join waited;
+  `);
+  const line = result.stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .findLast((value) => value.startsWith("{"));
+  if (line === undefined) {
+    throw new Error(`lifecycle evidence root is missing: ${result.stdout}`);
+  }
+
+  const parsed = JSON.parse(line) as {
+    observedAt?: unknown;
+    ready?: unknown;
+    recheckedAt?: unknown;
+    reviewedSourceCommitOid?: unknown;
+  };
+  if (
+    typeof parsed.reviewedSourceCommitOid !== "string" ||
+    !/^sha1:[0-9a-f]{40}$/u.test(parsed.reviewedSourceCommitOid) ||
+    typeof parsed.recheckedAt !== "string" ||
+    Number.isNaN(Date.parse(parsed.recheckedAt)) ||
+    typeof parsed.observedAt !== "string" ||
+    Number.isNaN(Date.parse(parsed.observedAt)) ||
+    parsed.ready !== true
+  ) {
+    throw new Error(`lifecycle evidence root is invalid: ${line}`);
+  }
+
+  return {
+    reviewedSourceCommitOid: parsed.reviewedSourceCommitOid,
+    recheckedAt: parsed.recheckedAt,
+  };
 }
 
 export function startOwnerSql(sql: string): Promise<OwnerSqlResult> {
