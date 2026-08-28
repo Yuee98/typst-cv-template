@@ -48,6 +48,17 @@ function policyGraph(): unknown {
     'validated_at',validated_at,'activated_at',activated_at,'retired_at',retired_at
   ) order by id) from public.ai_routing_policy_versions;`);
 }
+function policyInsert(policy: (typeof SEED.policies)[keyof typeof SEED.policies]): string {
+  return String.raw`insert into public.ai_routing_policy_versions (
+    id, policy_key, version, status, timezone, rules, default_profile_version_id,
+    legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+  ) values (
+    '${policy.id}'::uuid, '${policy.policyKey}', 1, 'draft', 'Asia/Shanghai',
+    '${JSON.stringify(policy.rules)}'::jsonb, '${policy.defaultProfileVersionId}'::uuid,
+    '${SEED.legalBundleVersion}', '${policy.runtimeContractId}',
+    '${policy.runtimeContractSha256}', '${policy.configSha256}'
+  );`;
+}
 function restore(): void { expect(runOwnerSql(source()).status).toBe(0); }
 function removePolicies(): void {
   expect(runOwnerSql(String.raw`begin; set local session_replication_role=replica;
@@ -102,9 +113,9 @@ function assertNoDeadlockOrLockTimeout(result: OwnerSqlResult): void {
   expect(result.stderr).not.toMatch(/(?:40P01|55P03|deadlock detected|lock timeout)/iu);
 }
 function removeReapplyBarrier(): void {
-  runOwnerSql(String.raw`\set ON_ERROR_STOP on
+  expect(runOwnerSql(String.raw`\set ON_ERROR_STOP on
     drop trigger if exists cfg003_reapply_barrier on public.ai_routing_policy_versions;
-    drop function if exists public.cfg003_reapply_barrier();`);
+    drop function if exists public.cfg003_reapply_barrier();`).status).toBe(0);
 }
 function installReapplyBarrier(): void {
   removeReapplyBarrier();
@@ -124,7 +135,11 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql.match(/^begin;$/gmu)).toHaveLength(1);
     expect(sql.match(/^commit;$/gmu)).toHaveLength(1);
     expect(sql).toContain("CFG-003 routing policy identity collision");
+    expect(sql).toContain("CFG-003 routing policy group is partially present");
     expect(sql).toContain("components_sealed_at is null");
+    expect(sql).toContain("ai_legal_bundle_manifests as actual");
+    expect(sql).toContain("DeepSeek V4 Flash");
+    expect(sql).toContain("input_cache_write'::text, 0::bigint");
     expect(sql).not.toMatch(/\b(?:set_ai_routing_policy_pointer_v1|transition_ai_routing_policy|validate_ai_routing_policy|apply_ai_price_component_seal_intent)\b/u);
     expect(sql).not.toMatch(/\b(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?(?:ai_feature_config|ai_request_ledger|ai_provider_attempt_ledger|ai_usage_daily|ai_global_usage_daily|ai_profile_usage_daily|ai_rate_minutes|ai_routing_lifecycle_audit|ai_routing_policy_transition_intents)\b/iu);
   });
@@ -163,15 +178,47 @@ describe("CFG-003 G4 routing-policy seed", () => {
       expect(lines.find((x) => x.startsWith("CORRUPTED="))?.slice(10)).toBe(lines.find((x) => x.startsWith("AFTER="))?.slice(6)); expect(snap()).toBe(canonical);
     });
 
-    it("observes the unique-key serialization for concurrent reapplication and restores both policies", async () => {
-      const beforePolicies = policyGraph(); removePolicies(); installReapplyBarrier();
-      const marker = `CFG003_REAPPLY_HELD_${randomUUID()}`;
-      const holder = startOwnerSqlWithBarrier(String.raw`\set ON_ERROR_STOP on
+    it.each([
+      ["G4 only", SEED.policies.g4, rollback],
+      ["rollback only", SEED.policies.rollback, g4],
+    ])("rejects a complete but partial CFG003 group (%), without repairing its missing half", (_name, present, missing) => {
+      const canonical = snap();
+      const projection = tables.map((t) => `'${t}',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text collate "C"),'[]'::jsonb) from public.${t} x)`).join(",");
+      const result = runOwnerSql(String.raw`\set VERBOSITY verbose
         begin;
-        select pg_catalog.pg_advisory_xact_lock(${CFG003_REAPPLY_ADVISORY_LOCK_KEY});
-        \echo ${marker}
-      `, marker, "commit;");
+        set local session_replication_role=replica;
+        delete from public.ai_routing_policy_versions where id in ('${g4}'::uuid,'${rollback}'::uuid);
+        ${policyInsert(present)}
+        set local session_replication_role=origin;
+        select 'PARTIAL_BEFORE='||jsonb_build_object(${projection})::text;
+        savepoint cfg003_partial_group;
+        \set ON_ERROR_STOP off
+        ${body()}
+        \set ON_ERROR_STOP on
+        rollback to savepoint cfg003_partial_group;
+        select 'PARTIAL_AFTER='||jsonb_build_object(${projection})::text;
+        select 'PARTIAL_MISSING='||count(*) from public.ai_routing_policy_versions where id='${missing}'::uuid;
+        rollback;`, { expectFailure: false });
+      expect(result.stderr).toMatch(/ERROR:\s+23514:/u);
+      const lines = result.stdout.split(/\r?\n/u).map((line) => line.trim());
+      expect(lines.find((line) => line.startsWith("PARTIAL_BEFORE="))?.slice(15)).toBe(lines.find((line) => line.startsWith("PARTIAL_AFTER="))?.slice(14));
+      expect(lines).toContain("PARTIAL_MISSING=0"); expect(snap()).toBe(canonical);
+    });
+
+    it("observes the unique-key serialization for concurrent reapplication and restores both policies", async () => {
+      const beforePolicies = policyGraph();
+      const marker = `CFG003_REAPPLY_HELD_${randomUUID()}`;
+      let holder: BarrierSqlProcess | undefined;
+      let barrierInstalled = false;
       try {
+        removePolicies();
+        installReapplyBarrier();
+        barrierInstalled = true;
+        holder = startOwnerSqlWithBarrier(String.raw`\set ON_ERROR_STOP on
+          begin;
+          select pg_catalog.pg_advisory_xact_lock(${CFG003_REAPPLY_ADVISORY_LOCK_KEY});
+          \echo ${marker}
+        `, marker, "commit;");
         const firstApplication = pgApplicationName("identical-a");
         const secondApplication = pgApplicationName("identical-b");
         await holder.ready;
@@ -193,13 +240,21 @@ describe("CFG-003 G4 routing-policy seed", () => {
         expect(policyGraph()).toEqual(beforePolicies);
         restore(); expect(policyGraph()).toEqual(beforePolicies);
       } finally {
-        holder.release(); await holder.result.catch(() => undefined); removeReapplyBarrier(); restore();
+        holder?.release();
+        await holder?.result.catch(() => undefined);
+        if (barrierInstalled) removeReapplyBarrier();
+        restore();
       }
     });
 
     it.each([
       ["missing MiMo predecessor", `delete from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid;`],
       ["hostile combined selector", `delete from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_target_id='runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1';`],
+      ["mutated DeepSeek offpeak component", `update public.ai_price_components set nanos_per_million=1 where price_version_id='11111111-1111-4111-8111-111111111112'::uuid and component='input_standard';`],
+      ["missing DeepSeek peak component", `delete from public.ai_price_components where price_version_id='11111111-1111-4111-8111-111111111113'::uuid and component='output';`],
+      ["extra DeepSeek offpeak component", `insert into public.ai_price_components (price_version_id,component,nanos_per_million) values ('11111111-1111-4111-8111-111111111112'::uuid,'input_cache_write',0);`],
+      ["mutated DeepSeek profile parent", `update public.ai_provider_profiles set display_name='forged' where id='11111111-1111-4111-8111-111111111110'::uuid;`],
+      ["missing legal membership", `delete from public.ai_legal_bundle_manifests where legal_bundle_version='2026-08-23-multi-provider-v1' and legal_manifest_id='mimo-cn-2026-08-23-v1';`],
     ])("fails closed for % from fresh-absent CFG003 state", (_name, mutate) => {
       const canonical = snap(); const projection = tables.map((t) => `'${t}',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text collate "C"),'[]'::jsonb) from public.${t} x)`).join(",");
       const result = runOwnerSql(String.raw`\set VERBOSITY verbose

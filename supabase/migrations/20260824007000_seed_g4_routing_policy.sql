@@ -7,6 +7,7 @@ do $$
 declare
   expected record;
   actual_count bigint;
+  group_count bigint;
 begin
   -- Preflight every fixed ID and natural identity before either insert. A
   -- pre-existing row is permitted only if its complete authored tuple is exact.
@@ -38,6 +39,24 @@ begin
       raise exception 'CFG-003 routing policy identity collision for %', expected.policy_key using errcode = '23514';
     end if;
   end loop;
+
+  -- CFG-003 is an inseparable two-policy publication. An exact predecessor is
+  -- accepted only as the complete pair; this migration must never repair one
+  -- missing half of a partially applied group.
+  select count(*) into group_count
+  from public.ai_routing_policy_versions
+  where id in (
+    '33333333-3333-4333-8333-333333333333'::uuid,
+    '33333333-3333-4333-8333-333333333334'::uuid
+  ) or (policy_key, version) in (
+    ('polish.deepseek-mimo.daily.g4.v1'::text, 1::integer),
+    ('polish.deepseek-only.daily.rollback.v1'::text, 1::integer)
+  );
+
+  if group_count not in (0, 2) then
+    raise exception 'CFG-003 routing policy group is partially present'
+      using errcode = '23514';
+  end if;
 end;
 $$;
 
@@ -52,6 +71,33 @@ begin
       and sealed_at is not null
   ) or (select count(*) from public.ai_legal_bundle_manifests
          where legal_bundle_version = '2026-08-23-multi-provider-v1') <> 2
+  or (select count(*) from public.ai_legal_bundle_manifests as actual join (values
+        ('deepseek-official-2026-08-23-v1'::text, '0fa6702d0785a8ce959b0bd4cc31984578143ef269bf7b4df4d1672e6d1fa09b'::text),
+        ('mimo-cn-2026-08-23-v1'::text, 'f075f1e39e74a96ef2b536df8ba1e19c0840ce6d3be47d6deccd9c95da861c3f'::text)
+      ) as expected(legal_manifest_id, manifest_sha256)
+        using (legal_manifest_id, manifest_sha256)
+      where actual.legal_bundle_version = '2026-08-23-multi-provider-v1') <> 2
+  or (select count(*) from public.ai_provider_profiles
+      where id = '11111111-1111-4111-8111-111111111110'::uuid
+         or profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1') <> 1
+  or not exists (
+    select 1 from public.ai_provider_profiles
+    where id = '11111111-1111-4111-8111-111111111110'::uuid
+      and profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+      and display_name = 'DeepSeek V4 Flash'
+      and gateway_kind = 'direct_deepseek' and model_vendor = 'deepseek'
+      and retired_at is null
+  ) or (select count(*) from public.ai_provider_profiles
+      where id = '22222222-2222-4222-8222-222222222220'::uuid
+         or profile_key = 'mimo.cn.mimo-v2.5-pro.responses.v1') <> 1
+  or not exists (
+    select 1 from public.ai_provider_profiles
+    where id = '22222222-2222-4222-8222-222222222220'::uuid
+      and profile_key = 'mimo.cn.mimo-v2.5-pro.responses.v1'
+      and display_name = 'MiMo V2.5 Pro'
+      and gateway_kind = 'direct_mimo' and model_vendor = 'xiaomi-mimo'
+      and retired_at is null
+  )
   or not exists (
     select 1 from public.ai_provider_profile_versions
     where id = '11111111-1111-4111-8111-111111111111'::uuid
@@ -114,6 +160,31 @@ begin
       and source_checked_at = '2026-08-25T16:26:26.127Z'::timestamptz
       and source_snapshot_sha256 = '2b9aec6fe83c358db3697965ae4dbdaffbf976fbb48576bff55f2d9c2eb5f065'
       and parameters = '{}'::jsonb and components_sealed_at is null
+  ) or (select count(*) from public.ai_price_components as actual join (values
+        ('input_cache_read'::text, 50000000::bigint),
+        ('input_standard'::text, 1500000000::bigint),
+        ('output'::text, 4500000000::bigint)
+      ) as expected(component, nanos_per_million) using (component, nanos_per_million)
+      where actual.price_version_id = '11111111-1111-4111-8111-111111111112'::uuid) <> 3
+  or (select count(*) from public.ai_price_components
+      where price_version_id = '11111111-1111-4111-8111-111111111112'::uuid) <> 3
+  or (select count(*) from public.ai_price_components as actual join (values
+        ('input_cache_read'::text, 100000000::bigint),
+        ('input_standard'::text, 3000000000::bigint),
+        ('output'::text, 9000000000::bigint)
+      ) as expected(component, nanos_per_million) using (component, nanos_per_million)
+      where actual.price_version_id = '11111111-1111-4111-8111-111111111113'::uuid) <> 3
+  or (select count(*) from public.ai_price_components
+      where price_version_id = '11111111-1111-4111-8111-111111111113'::uuid) <> 3
+  or (select count(*) from public.ai_price_components as actual join (values
+        ('input_cache_read'::text, 25000000::bigint),
+        ('input_standard'::text, 3000000000::bigint),
+        ('input_cache_write'::text, 0::bigint),
+        ('output'::text, 6000000000::bigint)
+      ) as expected(component, nanos_per_million) using (component, nanos_per_million)
+      where actual.price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
+  or (select count(*) from public.ai_price_components
+      where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
   ) or not exists (
     select 1 from public.ai_service_runtime_contract_versions
     where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
