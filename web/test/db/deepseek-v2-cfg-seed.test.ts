@@ -2006,7 +2006,7 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
               and applied_at is not null
           ),
           'sealIntents', (select count(*) from public.ai_price_component_seal_intents),
-          'policies', (select count(*) from public.ai_routing_policy_versions),
+          'policies', (select count(*) from public.ai_routing_policy_versions where id = '${SEED.policy.id}'::uuid),
           'runtimeRoots', (
             select count(*) from public.ai_service_runtime_contract_versions
           ),

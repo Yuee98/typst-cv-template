@@ -516,7 +516,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
           'profileVersions',(select count(*) from public.ai_provider_profile_versions),
           'prices',(select count(*) from public.ai_price_versions),
           'components',(select count(*) from public.ai_price_components),
-          'policies',(select count(*) from public.ai_routing_policy_versions),
+          'policies',(select count(*) from public.ai_routing_policy_versions where id = '33333333-3333-4333-8333-333333333332'::uuid),
           'runtimeRoots',(select count(*) from public.ai_service_runtime_contract_versions),
           'runtimeTargets',(select count(*) from public.ai_service_runtime_target_versions),
           'runtimeMemberships',(select count(*) from public.ai_service_runtime_contract_targets),
