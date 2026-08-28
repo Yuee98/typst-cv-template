@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { G4_ROUTING_POLICY_SEED_V1 } from "@/server/polish/g4-routing-policy-seed-v1";
+import { G4_ROUTING_POLICY_SEED_V1 } from "../../src/server/polish/g4-routing-policy-seed-v1";
 
 import { RUN_DB_TESTS } from "./helpers";
 import { runOwnerSql } from "./runtime-contract-fixtures";

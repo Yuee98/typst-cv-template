@@ -126,6 +126,17 @@ three gates and does not waive the lifecycle preconditions.
 
 ## 6. Exact readback checklist and human gate
 
+### CFG-003 daily candidates are not an operational rollback
+
+The official G4 and explicit successor candidate windows are daily in
+Asia/Shanghai: `[1,2,3,4,5,6,7]`, `09:00-12:00` and `14:00-18:00`, each
+half-open. The old G2 weekday-only policy is historical and must never be used
+as a safe rollback. The G4 candidate deliberately references MiMo while its
+profile is `draft` and its price is unsealed; that darkness is valid seed state
+but blocks lifecycle activation. Operators must use the separately seeded
+daily DeepSeek-only successor through the qualified lifecycle authority after
+the ordinary evidence, sealing, and promotion gates have been met.
+
 After any authorized lifecycle action, the qualified operator must read back
 and preserve evidence for all of the following before asking a human to enable
 or promote anything:
