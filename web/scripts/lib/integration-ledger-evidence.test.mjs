@@ -1,33 +1,52 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
 import {
+  buildExpectedRouteV1,
   DEEPSEEK_INTEGRATION_PROFILE,
   deriveParentIncompleteFields,
   evaluateRequestLedgerEvidence,
   evaluateRunLedgerEvidence,
-  isOfficialDeepSeekChatCompletionsEndpoint,
+  isOfficialIntegrationEndpoint,
   isWithinTransmissionBudget,
+  MIMO_INTEGRATION_PROFILE,
   resolveIntegrationProfile,
+  sameExpectedRouteV1,
 } from "./integration-ledger-evidence.mjs";
 
-function attempt(overrides = {}) {
+function availability(profile, overrides = {}) {
+  return {
+    enabled: true,
+    configGeneration: "7",
+    routingPolicyVersionId: "33333333-3333-4333-8333-333333333333",
+    profileVersionId: profile.profileVersionId,
+    legalBundleVersion: profile.legalBundleVersion,
+    runtimeContractId: profile.runtimeContractId,
+    runtimeContractSha256: profile.runtimeContractSha256,
+    displayDisclosure: { ...profile.displayDisclosure },
+    termsAccepted: false,
+    ...overrides,
+  };
+}
+
+function attempt(profile = DEEPSEEK_INTEGRATION_PROFILE, overrides = {}) {
   return {
     attempt_no: 1,
-    route_schema_version: "route_snapshot_v1",
+    route_schema_version: profile.routeSchemaVersion,
     config_generation: 7,
     routing_policy_version_id: "policy-1",
-    profile_version_id: DEEPSEEK_INTEGRATION_PROFILE.profileVersionId,
-    price_version_id: "price-1",
-    legal_bundle_version: "2026-08-23-multi-provider-v1",
-    runtime_contract_id: DEEPSEEK_INTEGRATION_PROFILE.runtimeContractId,
-    runtime_contract_sha256: "a".repeat(64),
-    gateway_kind: "direct_deepseek",
-    model_id: "deepseek-v4-flash",
-    wire_api_kind: "chat_completions_v1",
-    display_disclosure_key: "deepseek-official-v1",
-    endpoint_alias: "deepseek_official",
-    actual_upstream_endpoint: "https://api.deepseek.com/chat/completions",
-    actual_model_id: "deepseek-v4-flash",
+    profile_version_id: profile.profileVersionId,
+    price_version_id: profile.priceVersionIds[0],
+    legal_bundle_version: profile.legalBundleVersion,
+    runtime_contract_id: profile.runtimeContractId,
+    runtime_contract_sha256: profile.runtimeContractSha256,
+    gateway_kind: profile.gatewayKind,
+    model_id: profile.modelId,
+    wire_api_kind: profile.wireApiKind,
+    display_disclosure_key: profile.displayDisclosure.key,
+    endpoint_alias: profile.endpointAlias,
+    actual_upstream_endpoint: profile.endpoint,
+    actual_model_id: profile.modelId,
     status: "succeeded",
     transmitted: true,
     provider_billable: true,
@@ -38,253 +57,241 @@ function attempt(overrides = {}) {
     input_standard_tokens: 5,
     output_tokens: 7,
     reasoning_tokens: 0,
-    billing_currency: "USD",
-    estimated_currency: "USD",
+    billing_currency: profile.billingCurrency,
+    estimated_currency: profile.billingCurrency,
     estimated_cost_nanos: 17,
-    provider_reported_currency: "USD",
+    provider_reported_currency: profile.billingCurrency,
     provider_reported_cost_nanos: 17,
     ...overrides,
   };
 }
 
-function parent(children, overrides = {}) {
-  const rows = children;
-  const knownEstimatedRows = rows.filter((row) => row.estimated_cost_nanos != null);
-  const knownEstimated =
-    knownEstimatedRows.length === 0
-      ? null
-      : knownEstimatedRows.reduce((sum, row) => sum + row.estimated_cost_nanos, 0);
-  const allKnownEstimated = rows.every((row) => row.estimated_cost_nanos != null || row.provider_billable === false);
+function parent(profile, rows, overrides = {}) {
+  const knownEstimatedRows = rows.filter((row) => Number.isSafeInteger(row.estimated_cost_nanos));
+  const knownEstimated = knownEstimatedRows.length === 0
+    ? null
+    : knownEstimatedRows.reduce((sum, row) => sum + row.estimated_cost_nanos, 0);
+  const estimatedIncomplete = rows.some(
+    (row) => row.provider_billable !== false && row.estimated_cost_nanos == null,
+  );
   const billable = rows.some((row) => row.provider_billable === true)
     ? true
     : rows.every((row) => row.provider_billable === false)
       ? false
       : null;
   const applicable = rows.filter((row) => row.provider_billable !== false);
-  const allReported = applicable.length > 0 && applicable.every((row) => row.provider_reported_cost_nanos != null);
-  const reported = allReported ? applicable.reduce((sum, row) => sum + row.provider_reported_cost_nanos, 0) : null;
-  const estimated = allKnownEstimated ? knownEstimated : null;
+  const reported = applicable.length > 0 && applicable.every((row) => row.provider_reported_cost_nanos != null)
+    ? applicable.reduce((sum, row) => sum + row.provider_reported_cost_nanos, 0)
+    : null;
   return {
     state: "finalized",
     attempt_count: rows.length,
-    route_schema_version: "route_snapshot_v1",
+    route_schema_version: profile.routeSchemaVersion,
     config_generation: 7,
     routing_policy_version_id: "policy-1",
-    profile_version_id: DEEPSEEK_INTEGRATION_PROFILE.profileVersionId,
-    price_version_id: "price-1",
-    legal_bundle_version: "2026-08-23-multi-provider-v1",
-    runtime_contract_id: DEEPSEEK_INTEGRATION_PROFILE.runtimeContractId,
-    runtime_contract_sha256: "a".repeat(64),
-    gateway_kind: "direct_deepseek",
-    model_id: "deepseek-v4-flash",
-    wire_api_kind: "chat_completions_v1",
-    display_disclosure_key: "deepseek-official-v1",
+    profile_version_id: profile.profileVersionId,
+    price_version_id: profile.priceVersionIds[0],
+    legal_bundle_version: profile.legalBundleVersion,
+    runtime_contract_id: profile.runtimeContractId,
+    runtime_contract_sha256: profile.runtimeContractSha256,
+    gateway_kind: profile.gatewayKind,
+    model_id: profile.modelId,
+    wire_api_kind: profile.wireApiKind,
+    display_disclosure_key: profile.displayDisclosure.key,
     provider_billable: billable,
     usage_complete: rows.every((row) => row.usage_observation_kind === "observed" && row.usage_complete === true),
     input_cached_tokens: rows.reduce((sum, row) => sum + (row.input_cache_read_tokens ?? 0), 0),
     input_uncached_tokens: rows.reduce((sum, row) => sum + (row.input_cache_write_tokens ?? 0) + (row.input_standard_tokens ?? 0), 0),
     output_tokens: rows.reduce((sum, row) => sum + (row.output_tokens ?? 0), 0),
     incomplete_fields: deriveParentIncompleteFields(rows),
-    billing_currency: "USD",
+    billing_currency: profile.billingCurrency,
     cost_basis: "frozen_price_version_v1",
     known_estimated_cost_nanos: knownEstimated,
-    estimated_cost_nanos: estimated,
-    provider_reported_currency: reported == null ? null : "USD",
+    estimated_cost_nanos: estimatedIncomplete ? null : knownEstimated,
+    provider_reported_currency: reported == null ? null : profile.billingCurrency,
     provider_reported_cost_nanos: reported,
-    cost_reconciliation_status: !allKnownEstimated
-      ? "incomplete_usage"
-      : reported == null
-        ? "not_available"
-        : reported === estimated
-          ? "matched"
-          : "mismatch",
+    cost_reconciliation_status: estimatedIncomplete ? "incomplete_usage" : reported == null ? "not_available" : reported === knownEstimated ? "matched" : "mismatch",
     ...overrides,
   };
 }
 
 describe("integration ledger evidence", () => {
-  it("accepts only the exact official DeepSeek chat-completions path", () => {
-    expect(isOfficialDeepSeekChatCompletionsEndpoint("https://api.deepseek.com/chat/completions")).toBe(true);
-    for (const endpoint of [
-      "https://api.deepseek.com/v1/chat/completions",
-      "https://api.deepseek.com/chat/completions/",
-      "https://api.deepseek.com.evil.example/chat/completions",
-      "http://api.deepseek.com/chat/completions",
-    ]) {
-      expect(isOfficialDeepSeekChatCompletionsEndpoint(endpoint)).toBe(false);
+  it("resolves exactly the two supported profiles without fallback", () => {
+    expect(resolveIntegrationProfile("deepseek")).toBe(DEEPSEEK_INTEGRATION_PROFILE);
+    expect(resolveIntegrationProfile("mimo")).toBe(MIMO_INTEGRATION_PROFILE);
+    expect(() => resolveIntegrationProfile("openrouter")).toThrow(/unsupported/i);
+  });
+
+  it("accepts only each profile's exact official endpoint", () => {
+    for (const profile of [DEEPSEEK_INTEGRATION_PROFILE, MIMO_INTEGRATION_PROFILE]) {
+      expect(isOfficialIntegrationEndpoint(profile, profile.endpoint)).toBe(true);
+      expect(isOfficialIntegrationEndpoint(profile, `${profile.endpoint}/`)).toBe(false);
+      expect(isOfficialIntegrationEndpoint(profile, "https://diagnostic.internal/v1/responses")).toBe(false);
+    }
+    expect(isOfficialIntegrationEndpoint(DEEPSEEK_INTEGRATION_PROFILE, MIMO_INTEGRATION_PROFILE.endpoint)).toBe(false);
+    expect(isOfficialIntegrationEndpoint(MIMO_INTEGRATION_PROFILE, DEEPSEEK_INTEGRATION_PROFILE.endpoint)).toBe(false);
+  });
+
+  it("derives a strict expected_route_v1 only from the selected availability candidate", () => {
+    const candidate = availability(MIMO_INTEGRATION_PROFILE);
+    const expected = buildExpectedRouteV1(candidate, MIMO_INTEGRATION_PROFILE);
+    expect(expected).toEqual({
+      schemaVersion: "expected_route_v1",
+      configGeneration: "7",
+      profileVersionId: MIMO_INTEGRATION_PROFILE.profileVersionId,
+      legalBundleVersion: MIMO_INTEGRATION_PROFILE.legalBundleVersion,
+      runtimeContractId: MIMO_INTEGRATION_PROFILE.runtimeContractId,
+      runtimeContractSha256: MIMO_INTEGRATION_PROFILE.runtimeContractSha256,
+    });
+    expect(Object.isFrozen(expected)).toBe(true);
+    expect(sameExpectedRouteV1(expected, buildExpectedRouteV1(candidate, MIMO_INTEGRATION_PROFILE))).toBe(true);
+    expect(sameExpectedRouteV1(expected, { ...expected, configGeneration: "8" })).toBe(false);
+  });
+
+  it("rejects disabled, malformed, crossed, and differently-disclosed availability", () => {
+    const profile = MIMO_INTEGRATION_PROFILE;
+    const cases = [
+      availability(profile, { enabled: false }),
+      availability(profile, { configGeneration: "07" }),
+      availability(profile, { profileVersionId: DEEPSEEK_INTEGRATION_PROFILE.profileVersionId }),
+      availability(profile, { runtimeContractId: DEEPSEEK_INTEGRATION_PROFILE.runtimeContractId }),
+      availability(profile, { runtimeContractSha256: DEEPSEEK_INTEGRATION_PROFILE.runtimeContractSha256 }),
+      availability(profile, { displayDisclosure: DEEPSEEK_INTEGRATION_PROFILE.displayDisclosure }),
+    ];
+    for (const candidate of cases) {
+      expect(() => buildExpectedRouteV1(candidate, profile)).toThrow();
     }
   });
 
   it("enforces the 0..4 transmitted-run budget and rejects 5", () => {
     expect([0, 1, 2, 3, 4].every(isWithinTransmissionBudget)).toBe(true);
     expect(isWithinTransmissionBudget(5)).toBe(false);
-    expect(evaluateRequestLedgerEvidence(parent([]), []).issues).toContain("child_count_out_of_range");
+    expect(evaluateRequestLedgerEvidence(parent(DEEPSEEK_INTEGRATION_PROFILE, []), []).issues).toContain("child_count_out_of_range");
+  });
+
+  it("accepts the complete frozen pair for either selected profile", () => {
+    for (const profile of [DEEPSEEK_INTEGRATION_PROFILE, MIMO_INTEGRATION_PROFILE]) {
+      const row = attempt(profile);
+      expect(evaluateRequestLedgerEvidence(parent(profile, [row]), [row], profile)).toEqual(
+        expect.objectContaining({ ok: true, transmissions: 1 }),
+      );
+    }
   });
 
   it("rejects gaps and duplicates while accepting a false pre-entry transmission", () => {
-    const first = attempt({
-      status: "failed_upstream",
-      transmitted: false,
-      provider_billable: false,
-      usage_observation_kind: "unavailable",
-      usage_complete: false,
-      input_cache_read_tokens: null,
-      input_cache_write_tokens: null,
-      input_standard_tokens: null,
-      output_tokens: null,
-      reasoning_tokens: null,
-      actual_upstream_endpoint: null,
-      actual_model_id: null,
-      estimated_cost_nanos: null,
-      estimated_currency: null,
-      provider_reported_cost_nanos: null,
+    const profile = DEEPSEEK_INTEGRATION_PROFILE;
+    const preEntry = attempt(profile, {
+      status: "failed_upstream", transmitted: false, provider_billable: false,
+      usage_observation_kind: "unavailable", usage_complete: false,
+      input_cache_read_tokens: null, input_cache_write_tokens: null, input_standard_tokens: null,
+      output_tokens: null, reasoning_tokens: null, actual_upstream_endpoint: null, actual_model_id: null,
+      estimated_cost_nanos: null, estimated_currency: null, provider_reported_cost_nanos: null,
       provider_reported_currency: null,
     });
-    expect(evaluateRequestLedgerEvidence(parent([first]), [first]).ok).toBe(true);
-
-    const gap = attempt({ attempt_no: 2 });
-    expect(evaluateRequestLedgerEvidence(parent([gap]), [gap]).issues).toContain("attempt_no_gap_or_order");
-
-    const duplicate = [attempt(), attempt({ attempt_no: 1, transmitted: false, status: "failed_upstream", provider_billable: false, estimated_cost_nanos: null, estimated_currency: null, provider_reported_cost_nanos: null, provider_reported_currency: null })];
-    expect(evaluateRequestLedgerEvidence(parent(duplicate), duplicate).issues).toContain("attempt_no_duplicate");
+    expect(evaluateRequestLedgerEvidence(parent(profile, [preEntry]), [preEntry], profile).ok).toBe(true);
+    const gap = attempt(profile, { attempt_no: 2 });
+    expect(evaluateRequestLedgerEvidence(parent(profile, [gap]), [gap], profile).issues).toContain("attempt_no_gap_or_order");
+    const duplicate = [attempt(profile), attempt(profile, { attempt_no: 1, status: "failed_upstream", transmitted: false, provider_billable: false, usage_observation_kind: "unavailable", usage_complete: false, input_cache_read_tokens: null, input_cache_write_tokens: null, input_standard_tokens: null, output_tokens: null, reasoning_tokens: null, actual_upstream_endpoint: null, actual_model_id: null, estimated_cost_nanos: null, estimated_currency: null, provider_reported_cost_nanos: null, provider_reported_currency: null })];
+    expect(evaluateRequestLedgerEvidence(parent(profile, duplicate), duplicate, profile).issues).toContain("attempt_no_duplicate");
   });
 
-  it("rejects null transmission on a known terminal outcome but preserves an unknown cancellation fact", () => {
-    const nullTransmission = attempt({ transmitted: null });
-    expect(evaluateRequestLedgerEvidence(parent([nullTransmission]), [nullTransmission]).issues).toContain("attempt_transmission_truth_invalid");
+  it("rejects null transmission on known terminal outcomes while preserving unknown cancellation facts", () => {
+    const profile = DEEPSEEK_INTEGRATION_PROFILE;
+    const nullTransmission = attempt(profile, { transmitted: null });
+    expect(evaluateRequestLedgerEvidence(parent(profile, [nullTransmission]), [nullTransmission], profile).issues).toContain("attempt_transmission_truth_invalid");
+    const unknown = attempt(profile, {
+      status: "unknown", transmitted: null, provider_billable: null,
+      usage_observation_kind: "unavailable", usage_complete: false,
+      input_cache_read_tokens: null, input_cache_write_tokens: null, input_standard_tokens: null,
+      output_tokens: null, reasoning_tokens: null, actual_upstream_endpoint: null, actual_model_id: null,
+      estimated_currency: null, estimated_cost_nanos: null, provider_reported_currency: null,
+      provider_reported_cost_nanos: null,
+    });
+    expect(evaluateRequestLedgerEvidence(parent(profile, [unknown]), [unknown], profile).ok).toBe(true);
+    expect(deriveParentIncompleteFields([unknown])).toEqual([
+      "attempt_usage", "input_cache_write", "reasoning", "provider_billable", "estimated_cost",
+    ]);
+    for (const marker of deriveParentIncompleteFields([unknown])) {
+      const missing = parent(profile, [unknown], {
+        incomplete_fields: deriveParentIncompleteFields([unknown]).filter((value) => value !== marker),
+      });
+      expect(evaluateRequestLedgerEvidence(missing, [unknown], profile).issues).toContain("parent_incomplete_fields_mismatch");
+    }
+  });
 
-    const unknown = attempt({
-      status: "unknown",
-      transmitted: null,
-      provider_billable: null,
-      usage_observation_kind: "unavailable",
-      usage_complete: false,
-      input_cache_read_tokens: null,
-      input_cache_write_tokens: null,
-      input_standard_tokens: null,
-      output_tokens: null,
-      reasoning_tokens: null,
-      actual_upstream_endpoint: null,
-      actual_model_id: null,
-      estimated_currency: null,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
+  it("rejects crossed profile, price, runtime, gateway, wire, model, currency and endpoint facts", () => {
+    const profile = MIMO_INTEGRATION_PROFILE;
+    const checks = [
+      ["profile", { profile_version_id: DEEPSEEK_INTEGRATION_PROFILE.profileVersionId }, "attempt_profile_version_mismatch"],
+      ["price", { price_version_id: DEEPSEEK_INTEGRATION_PROFILE.priceVersionIds[0] }, "attempt_price_version_mismatch"],
+      ["runtime", { runtime_contract_id: DEEPSEEK_INTEGRATION_PROFILE.runtimeContractId }, "parent_child_runtime_contract_id_mismatch"],
+      ["gateway", { gateway_kind: DEEPSEEK_INTEGRATION_PROFILE.gatewayKind }, "attempt_gateway_mismatch"],
+      ["wire", { wire_api_kind: DEEPSEEK_INTEGRATION_PROFILE.wireApiKind }, "attempt_wire_api_mismatch"],
+      ["model", { model_id: DEEPSEEK_INTEGRATION_PROFILE.modelId, actual_model_id: DEEPSEEK_INTEGRATION_PROFILE.modelId }, "attempt_model_mismatch"],
+      ["currency", { billing_currency: "USD", estimated_currency: "USD", provider_reported_currency: "USD" }, "attempt_billing_currency_mismatch"],
+      ["endpoint", { actual_upstream_endpoint: DEEPSEEK_INTEGRATION_PROFILE.endpoint }, "attempt_endpoint_not_official"],
+    ];
+    for (const [, overrides, expectedIssue] of checks) {
+      const child = attempt(profile, overrides);
+      const result = evaluateRequestLedgerEvidence(parent(profile, [child]), [child], profile);
+      expect(result.issues).toContain(expectedIssue);
+    }
+    const partialRoute = attempt(profile, { actual_model_id: null });
+    expect(evaluateRequestLedgerEvidence(parent(profile, [partialRoute]), [partialRoute], profile).issues).toContain("attempt_route_observation_partial");
+    const wrongParentPrice = parent(profile, [attempt(profile)], { price_version_id: DEEPSEEK_INTEGRATION_PROFILE.priceVersionIds[0] });
+    expect(evaluateRequestLedgerEvidence(wrongParentPrice, [attempt(profile)], profile).issues).toContain("parent_price_version_mismatch");
+  });
+
+  it("preserves cancellation unknowns and clears stale route observations", () => {
+    const profile = DEEPSEEK_INTEGRATION_PROFILE;
+    const canceled = attempt(profile, {
+      status: "canceled", transmitted: true, actual_upstream_endpoint: null, actual_model_id: null,
+      provider_billable: null, usage_observation_kind: "unavailable", usage_complete: false,
+      input_cache_read_tokens: null, input_cache_write_tokens: null, input_standard_tokens: null,
+      output_tokens: null, reasoning_tokens: null, estimated_currency: null, estimated_cost_nanos: null,
+      provider_reported_currency: null, provider_reported_cost_nanos: null,
     });
-    const unknownParent = parent([unknown], {
-      provider_billable: null,
-      usage_complete: false,
-      input_cached_tokens: 0,
-      input_uncached_tokens: 0,
-      output_tokens: 0,
-      incomplete_fields: ["attempt_usage", "input_cache_write", "reasoning", "provider_billable", "estimated_cost"],
-      known_estimated_cost_nanos: null,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-      cost_reconciliation_status: "incomplete_usage",
-    });
-    expect(evaluateRequestLedgerEvidence(unknownParent, [unknown]).ok).toBe(true);
-    const staleUnknownRoute = { ...unknown, actual_upstream_endpoint: "https://api.deepseek.com/chat/completions", actual_model_id: "deepseek-v4-flash" };
-    expect(evaluateRequestLedgerEvidence(unknownParent, [staleUnknownRoute]).issues).toEqual(
+    expect(evaluateRequestLedgerEvidence(parent(profile, [canceled]), [canceled], profile).ok).toBe(true);
+    const unknown = { ...canceled, status: "unknown", transmitted: null, actual_upstream_endpoint: profile.endpoint, actual_model_id: profile.modelId };
+    expect(evaluateRequestLedgerEvidence(parent(profile, [unknown]), [unknown], profile).issues).toEqual(
       expect.arrayContaining(["attempt_route_endpoint_not_cleared", "attempt_route_model_not_cleared"]),
     );
-
-    const canceled = attempt({
-      status: "canceled",
-      transmitted: true,
-      actual_upstream_endpoint: null,
-      actual_model_id: null,
-      provider_billable: null,
-      usage_observation_kind: "unavailable",
-      usage_complete: false,
-      input_cache_read_tokens: null,
-      input_cache_write_tokens: null,
-      input_standard_tokens: null,
-      output_tokens: null,
-      reasoning_tokens: null,
-      estimated_currency: null,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-    });
-    expect(evaluateRequestLedgerEvidence(parent([canceled]), [canceled]).ok).toBe(true);
   });
 
-  it("rejects parent-child identity mismatches", () => {
-    const child = attempt({ actual_model_id: "other-model" });
-    expect(evaluateRequestLedgerEvidence(parent([child]), [child]).issues).toContain("attempt_model_mismatch");
-    const partialRoute = attempt({ actual_model_id: null });
-    expect(evaluateRequestLedgerEvidence(parent([partialRoute]), [partialRoute]).issues).toContain(
-      "attempt_route_observation_partial",
-    );
-    const lookalike = attempt({ actual_upstream_endpoint: "https://api.deepseek.com.evil.example/chat/completions" });
-    expect(evaluateRequestLedgerEvidence(parent([lookalike]), [lookalike]).issues).toContain("attempt_endpoint_not_official");
-  });
-
-  it("preserves incomplete cost and rejects mixed-currency aggregation", () => {
-    const incomplete = attempt({ estimated_cost_nanos: null, estimated_currency: null, provider_reported_cost_nanos: null, provider_reported_currency: null });
-    const incompleteParent = parent([incomplete], {
-      known_estimated_cost_nanos: null,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-      cost_reconciliation_status: "incomplete_usage",
-      incomplete_fields: [],
+  it("requires every derived incomplete marker and rejects contradictory currency aggregation", () => {
+    const profile = DEEPSEEK_INTEGRATION_PROFILE;
+    const incomplete = attempt(profile, {
+      estimated_cost_nanos: null, estimated_currency: null,
+      provider_reported_cost_nanos: null, provider_reported_currency: null,
     });
-    expect(evaluateRequestLedgerEvidence(incompleteParent, [incomplete]).issues).toContain("parent_incomplete_fields_mismatch");
-
-    const mixedCurrency = attempt({ estimated_currency: "CNY" });
-    expect(evaluateRequestLedgerEvidence(parent([mixedCurrency]), [mixedCurrency]).issues).toContain("estimated_currency_mismatch");
-  });
-
-  it("requires every derived incomplete marker and rejects contradictory extras", () => {
-    const canceledUnknown = attempt({
-      status: "canceled",
-      transmitted: true,
-      provider_billable: null,
-      usage_observation_kind: "unavailable",
-      usage_complete: false,
-      input_cache_read_tokens: null,
-      input_cache_write_tokens: null,
-      input_standard_tokens: null,
-      output_tokens: null,
-      reasoning_tokens: null,
-      estimated_currency: null,
-      estimated_cost_nanos: null,
-      provider_reported_currency: null,
-      provider_reported_cost_nanos: null,
-    });
-    const expected = deriveParentIncompleteFields([canceledUnknown]);
-    expect(expected).toEqual([
-      "attempt_usage",
-      "input_cache_write",
-      "reasoning",
-      "provider_billable",
-      "estimated_cost",
-    ]);
+    const expected = deriveParentIncompleteFields([incomplete]);
+    expect(expected).toEqual(["estimated_cost"]);
     for (const marker of expected) {
-      const missing = parent([canceledUnknown], {
+      const missing = parent(profile, [incomplete], {
         incomplete_fields: expected.filter((value) => value !== marker),
       });
-      expect(evaluateRequestLedgerEvidence(missing, [canceledUnknown]).issues).toContain(
-        "parent_incomplete_fields_mismatch",
-      );
+      expect(evaluateRequestLedgerEvidence(missing, [incomplete], profile).issues).toContain("parent_incomplete_fields_mismatch");
     }
-    const complete = attempt();
-    expect(
-      evaluateRequestLedgerEvidence(parent([complete], { incomplete_fields: ["attempt_usage"] }), [complete]).issues,
-    ).toContain("parent_incomplete_fields_mismatch");
+    const contradictory = parent(profile, [attempt(profile)], { incomplete_fields: ["attempt_usage"] });
+    expect(evaluateRequestLedgerEvidence(contradictory, [attempt(profile)], profile).issues).toContain("parent_incomplete_fields_mismatch");
+    const mixedCurrency = attempt(profile, { estimated_currency: "USD" });
+    expect(evaluateRequestLedgerEvidence(parent(profile, [mixedCurrency]), [mixedCurrency], profile).issues).toContain("estimated_currency_mismatch");
   });
 
-  it("never grants an official-proof verdict to a custom upstream", () => {
-    const row = attempt({ actual_upstream_endpoint: "https://diagnostic.internal/chat/completions" });
-    const result = evaluateRunLedgerEvidence([{ parent: parent([row]), attempts: [row] }]);
+  it("rejects custom upstreams in the run verdict", () => {
+    const row = attempt(MIMO_INTEGRATION_PROFILE, { actual_upstream_endpoint: "https://proxy.example/v1/responses" });
+    const result = evaluateRunLedgerEvidence([{ parent: parent(MIMO_INTEGRATION_PROFILE, [row]), attempts: [row] }], { profile: MIMO_INTEGRATION_PROFILE });
     expect(result.ok).toBe(false);
     expect(result.requestResults[0].issues).toContain("attempt_endpoint_not_official");
   });
 
-  it("fails closed for the dark MiMo draft", () => {
-    expect(() => resolveIntegrationProfile("mimo")).toThrow(/fail-closed/i);
+  it("keeps the harness route assertion on every real request and never prints buffered server output", () => {
+    const source = readFileSync(new URL("../run-integration-tests.mjs", import.meta.url), "utf8");
+    expect(source).toContain("expectedRoute,");
+    expect(source.match(/makePolishBody\(/g)).toHaveLength(4);
+    expect(source).toContain("getAuthenticatedAvailability(accessToken, expectedRoute)");
+    expect(source).not.toContain("serverOutput.join");
+    expect(source).not.toContain("featureConfigRestore");
+    expect(source).not.toContain(".update({ ai_polish_enabled: true })");
   });
 });
