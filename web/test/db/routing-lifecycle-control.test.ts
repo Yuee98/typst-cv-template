@@ -129,6 +129,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       malformedRules?: boolean;
       profileStatus?: "draft" | "validated";
       sealPrice?: boolean;
+      providerEffectiveFrom?: string | null;
     } = {},
   ): Promise<Fixture> {
     const suffix = crypto.randomUUID();
@@ -138,6 +139,9 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     const policyVersionId = crypto.randomUUID();
     const profileKey = `db013.control.${suffix}`;
     const sourceUrl = `https://example.com/${suffix}`;
+    const providerEffectiveFromSql = options.providerEffectiveFrom
+      ? `'${options.providerEffectiveFrom}'::timestamptz`
+      : "null";
     const runtime = authorSyntheticRuntimeContract({ profileKey });
 
     const rulesSql = options.malformedRules
@@ -164,10 +168,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       where id = '${profileVersionId}'::uuid;`}
       insert into public.ai_price_versions (
         id, profile_version_id, version, pricing_lane, currency, calculator_kind,
-        valid_from, source_url, source_checked_at, source_snapshot_sha256, parameters
+        valid_from, provider_effective_from, source_url, source_checked_at, source_snapshot_sha256, parameters
       ) values (
         '${priceVersionId}', '${profileVersionId}', 1, 'default', 'CNY', 'linear_token_v1',
-        pg_catalog.clock_timestamp() - interval '2 hours', '${sourceUrl}',
+        pg_catalog.clock_timestamp() - interval '2 hours', ${providerEffectiveFromSql}, '${sourceUrl}',
         pg_catalog.clock_timestamp() - interval '1 hour', '${"c".repeat(64)}', '{}'::jsonb
       );
       insert into public.ai_price_components (price_version_id, component, nanos_per_million)
@@ -680,6 +684,51 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
         item.name,
       ).toEqual({ sealed: false, audit: 0 });
     }
+  });
+
+  it("seals a non-null provider-effective date only when the rechecked date is exact", async () => {
+    const providerEffectiveFrom = "2026-08-16T16:00:00.000Z";
+    const f = await fixture({
+      profileStatus: "draft",
+      sealPrice: false,
+      providerEffectiveFrom,
+    });
+    const ev = await evidence(f);
+    const args = {
+      p_price_version_id: f.priceVersionId,
+      p_rechecked_source_url: f.sourceUrl,
+      p_rechecked_currency: "CNY",
+      p_rechecked_calculator_kind: "linear_token_v1",
+      p_rechecked_provider_effective_to: null,
+      p_rechecked_parameters: {},
+      p_rechecked_components: {
+        input_standard: "1",
+        input_cache_read: "1",
+        output: "1",
+      },
+      ...ev,
+    };
+
+    for (const recheckedProviderEffectiveFrom of [
+      null,
+      "2026-08-16T16:00:01.000Z",
+    ]) {
+      const rejected = await lifecycleRpc("seal_ai_price_for_activation_v1", {
+        ...args,
+        p_rechecked_provider_effective_from: recheckedProviderEffectiveFrom,
+      });
+      expect(rejected.error?.code).toMatch(/23514|P0001/u);
+      expect(
+        ownerJson(`select pg_catalog.jsonb_build_object('sealed', (select components_sealed_at is not null from public.ai_price_versions where id='${f.priceVersionId}'::uuid), 'audit', (select count(*) from public.ai_routing_lifecycle_audit where price_version_id='${f.priceVersionId}'::uuid))::text;`),
+      ).toEqual({ sealed: false, audit: 0 });
+    }
+
+    const sealed = await lifecycleRpc("seal_ai_price_for_activation_v1", {
+      ...args,
+      p_rechecked_provider_effective_from: providerEffectiveFrom,
+    });
+    expect(sealed.error).toBeNull();
+    expect(sealed.data).toMatch(CANONICAL_UUID);
   });
 
   it("seals exact refreshed price facts, promotes non-retired profiles, and authors a validated candidate before inserting its draft", async () => {

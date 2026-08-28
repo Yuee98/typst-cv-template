@@ -503,6 +503,19 @@ describe("CFG-002 MiMo V2 seed static contract", () => {
     expect(migration.match(/runtime\.deepseek-v2-mimo-v2\.5-pro\.v1/gu)).toHaveLength(2);
     expect(migration.match(/049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d/gu)).toHaveLength(2);
   });
+
+  it("freezes current-rate evidence and its separate upstream effective date", () => {
+    const migration = readFileSync(MIGRATION_URL, "utf8");
+
+    expect(migration).toContain("'2026-08-25T16:26:26.127Z'::timestamptz, null, '2026-05-26T16:00:00Z'::timestamptz, null");
+    expect(migration).toContain("'2026-08-28T08:05:41.986Z'::timestamptz");
+    expect(migration).toContain(
+      "'d43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3'",
+    );
+    expect(migration).toContain(
+      "provider_effective_from = '2026-05-26T16:00:00Z'::timestamptz",
+    );
+  });
 });
 
 describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
@@ -539,7 +552,9 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     };
     expect(actual.profile).toMatchObject({ id: PROFILE_ID, profile_key: MIMO_V2_SEED_IDENTITY_V1.profile.profileKey, gateway_kind: "direct_mimo", model_vendor: "xiaomi-mimo" });
     expect(actual.version).toMatchObject({ id: PROFILE_VERSION_ID, status: "draft", validated_at: null, activated_at: null, retired_at: null, config_sha256: MIMO_V2_SEED_IDENTITY_V1.profile.configSha256 });
-    expect(actual.price).toMatchObject({ id: PRICE_ID, pricing_lane: "default", currency: "CNY", calculator_kind: "linear_token_v1", components_sealed_at: null, provider_effective_from: null, provider_effective_to: null });
+    expect(actual.price).toMatchObject({ id: PRICE_ID, pricing_lane: "default", currency: "CNY", calculator_kind: "linear_token_v1", components_sealed_at: null, provider_effective_to: null, source_snapshot_sha256: "d43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3" });
+    expect(new Date(String(actual.price.provider_effective_from)).toISOString()).toBe("2026-05-26T16:00:00.000Z");
+    expect(new Date(String(actual.price.source_checked_at)).toISOString()).toBe("2026-08-28T08:05:41.986Z");
     expect(actual.components.map((row) => [row.component, Number(row.nanos_per_million)])).toEqual([
       ["input_cache_read", 25000000], ["input_cache_write", 0], ["input_standard", 3000000000], ["output", 6000000000],
     ]);

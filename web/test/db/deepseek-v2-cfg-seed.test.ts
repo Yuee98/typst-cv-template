@@ -42,6 +42,29 @@ describe("CFG-001 successor-compatible membership source", () => {
     expect(source).not.toContain("runtime_contract_id = 'runtime.deepseek-v2.v1'\n     or runtime_target_id");
     expect(source).toContain("and runtime_target_id =\n        'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'");
   });
+
+  it("freezes price-effective provenance separately from the operational interval", () => {
+    const source = readFileSync(
+      new URL("../../../supabase/migrations/20260824002000_seed_deepseek_v2_draft.sql", import.meta.url),
+      "utf8",
+    );
+
+    expect(SEED.pricing.sourceCheckedAt).toBe("2026-08-28T08:05:41.804Z");
+    expect(SEED.pricing.sourceSnapshotSha256).toBe(
+      "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    );
+    expect(SEED.pricing.rows).toHaveLength(2);
+    for (const row of SEED.pricing.rows) {
+      expect(row.validFrom).toBe("2026-08-25T06:45:15.787Z");
+      expect(row.providerEffectiveFrom).toBe("2026-08-16T16:00:00.000Z");
+      expect(row.providerEffectiveTo).toBeNull();
+    }
+    expect(source).toContain("'2026-08-16T16:00:00Z'::timestamptz");
+    expect(source).toContain("'2026-08-28T08:05:41.804Z'::timestamptz");
+    expect(source).toContain(
+      "'899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5'",
+    );
+  });
 });
 
 // PostgreSQL preserves migration-source line endings inside stored routine
