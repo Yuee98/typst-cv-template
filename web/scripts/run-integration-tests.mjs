@@ -60,7 +60,11 @@ import {
   resolveIntegrationProfile,
   sameExpectedRouteV1,
 } from "./lib/integration-ledger-evidence.mjs";
-import { buildCancellationProbeItems, readJsonOrNull } from "./lib/integration-http.mjs";
+import {
+  buildCancellationProbeItems,
+  formatCancellationSetupDetail,
+  readJsonOrNull,
+} from "./lib/integration-http.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -504,18 +508,6 @@ function makeCancellationPolishBody(clientRequestId, expectedRoute) {
   };
 }
 
-function safeCancelSetupDetail(startedRow, outcome) {
-  if (startedRow !== null) return `state was already ${startedRow.state}`;
-  if (Number.isInteger(outcome?.status)) {
-    const rawCode = outcome?.body?.error?.code;
-    const code = typeof rawCode === "string" && /^[A-Z0-9_]{1,64}$/u.test(rawCode)
-      ? rawCode
-      : "unavailable";
-    return `reservation never appeared; HTTP ${outcome.status}, code ${code}`;
-  }
-  return "reservation never appeared; client request had no safe HTTP verdict";
-}
-
 async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
   const availabilitySignal = AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS);
   const response = await fetch(`${BASE_URL}/api/polish/availability`, {
@@ -816,13 +808,22 @@ try {
     { token: accessToken, signal: controller.signal },
   ).catch(() => ({ aborted: true }));
 
-  const startedRow = await pollUntil(
-    async () => {
-      const row = await getLedgerRowByClientRequestId(service, userId, cancelClientRequestId);
-      return row && (row.state === "provider_started" || row.state === "finalized") ? row : false;
-    },
-    { timeoutMs: 20_000, intervalMs: 25 },
-  );
+  let startedRow;
+  try {
+    startedRow = await pollUntil(
+      async () => {
+        const row = await getLedgerRowByClientRequestId(service, userId, cancelClientRequestId);
+        return row && (row.state === "provider_started" || row.state === "finalized") ? row : false;
+      },
+      { timeoutMs: 20_000, intervalMs: 25 },
+    );
+  } catch (error) {
+    // A DB observation failure must not orphan a live paid request while the
+    // outer finally deletes its user. Abort and drain before cleanup begins.
+    controller.abort();
+    await cancelFetch;
+    throw error;
+  }
   let cancelRow = null;
   if (startedRow && startedRow.state === "provider_started") {
     check("cancel setup: reservation reaches provider_started", true);
@@ -868,7 +869,7 @@ try {
     check(
       "cancel setup: reservation reaches provider_started",
       false,
-      safeCancelSetupDetail(startedRow, cancelOutcome),
+      formatCancellationSetupDetail(startedRow, cancelOutcome),
     );
   }
 

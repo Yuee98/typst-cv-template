@@ -28,3 +28,27 @@ export function buildCancellationProbeItems() {
     text: `第${index + 1}项：${CANCELLATION_ITEM_TEXT.repeat(2)}`,
   }));
 }
+
+function safeDiagnosticToken(value, pattern) {
+  return typeof value === "string" && pattern.test(value) ? value : "unavailable";
+}
+
+/** Format only bounded lifecycle/status facts; never echo an upstream body. */
+export function formatCancellationSetupDetail(startedRow, outcome) {
+  if (startedRow !== null) {
+    const state = safeDiagnosticToken(startedRow?.state, /^[a-z_]{1,64}$/u);
+    const status = safeDiagnosticToken(startedRow?.status, /^[a-z_]{1,64}$/u);
+    const failureStage = startedRow?.failure_stage === null
+      ? "null"
+      : safeDiagnosticToken(startedRow?.failure_stage, /^[a-z_]{1,64}$/u);
+    const attempts = Number.isInteger(startedRow?.attempt_count) && startedRow.attempt_count >= 0
+      ? startedRow.attempt_count
+      : "unavailable";
+    return `state ${state}; status ${status}; attempts ${attempts}; failure_stage ${failureStage}`;
+  }
+  if (Number.isInteger(outcome?.status)) {
+    const code = safeDiagnosticToken(outcome?.body?.error?.code, /^[A-Z0-9_]{1,64}$/u);
+    return `reservation never appeared; HTTP ${outcome.status}, code ${code}`;
+  }
+  return "reservation never appeared; client request had no safe HTTP verdict";
+}
