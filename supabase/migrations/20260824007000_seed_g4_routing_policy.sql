@@ -119,10 +119,10 @@ begin
       and profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
       and pricing_lane = 'offpeak' and version = 1 and currency = 'CNY'
       and calculator_kind = 'linear_token_v1' and valid_from = '2026-08-25T06:45:15.787Z'::timestamptz
-      and valid_to is null and provider_effective_from is null and provider_effective_to is null
+      and valid_to is null and provider_effective_from = '2026-08-16T16:00:00Z'::timestamptz and provider_effective_to is null
       and source_url = 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/'
-      and source_checked_at = '2026-08-25T06:45:15.787Z'::timestamptz
-      and source_snapshot_sha256 = '593f092cc8e91ad568f4843a83264e2f7aa2551b5c46d1e35b5e2654e3f06a02'
+      and source_checked_at = '2026-08-28T08:05:41.804Z'::timestamptz
+      and source_snapshot_sha256 = '899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5'
       and parameters = '{}'::jsonb and components_sealed_at is null
   ) or not exists (
     select 1 from public.ai_price_versions
@@ -130,10 +130,10 @@ begin
       and profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
       and pricing_lane = 'peak' and version = 1 and currency = 'CNY'
       and calculator_kind = 'linear_token_v1' and valid_from = '2026-08-25T06:45:15.787Z'::timestamptz
-      and valid_to is null and provider_effective_from is null and provider_effective_to is null
+      and valid_to is null and provider_effective_from = '2026-08-16T16:00:00Z'::timestamptz and provider_effective_to is null
       and source_url = 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/'
-      and source_checked_at = '2026-08-25T06:45:15.787Z'::timestamptz
-      and source_snapshot_sha256 = '593f092cc8e91ad568f4843a83264e2f7aa2551b5c46d1e35b5e2654e3f06a02'
+      and source_checked_at = '2026-08-28T08:05:41.804Z'::timestamptz
+      and source_snapshot_sha256 = '899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5'
       and parameters = '{}'::jsonb and components_sealed_at is null
   ) or not exists (
     select 1 from public.ai_provider_profile_versions
@@ -155,10 +155,10 @@ begin
       and profile_version_id = '22222222-2222-4222-8222-222222222221'::uuid
       and pricing_lane = 'default' and version = 1 and currency = 'CNY'
       and calculator_kind = 'linear_token_v1' and valid_from = '2026-08-25T16:26:26.127Z'::timestamptz
-      and valid_to is null and provider_effective_from is null and provider_effective_to is null
+      and valid_to is null and provider_effective_from = '2026-05-26T16:00:00Z'::timestamptz and provider_effective_to is null
       and source_url = 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go'
-      and source_checked_at = '2026-08-25T16:26:26.127Z'::timestamptz
-      and source_snapshot_sha256 = '2b9aec6fe83c358db3697965ae4dbdaffbf976fbb48576bff55f2d9c2eb5f065'
+      and source_checked_at = '2026-08-28T08:05:41.986Z'::timestamptz
+      and source_snapshot_sha256 = 'd43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3'
       and parameters = '{}'::jsonb and components_sealed_at is null
   ) or (select count(*) from public.ai_price_components as actual join (values
         ('input_cache_read'::text, 50000000::bigint),

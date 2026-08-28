@@ -359,12 +359,12 @@ select
   'CNY',
   'linear_token_v1',
   '2026-08-25T06:45:15.787Z'::timestamptz,
-  null,
+  '2026-08-16T16:00:00Z'::timestamptz,
   null,
   null,
   'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/',
-  '2026-08-25T06:45:15.787Z'::timestamptz,
-  '593f092cc8e91ad568f4843a83264e2f7aa2551b5c46d1e35b5e2654e3f06a02',
+  '2026-08-28T08:05:41.804Z'::timestamptz,
+  '899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5',
   '{}'::jsonb
 from (
   values
@@ -637,14 +637,14 @@ begin
       and actual.calculator_kind = 'linear_token_v1'
       and actual.valid_from = '2026-08-25T06:45:15.787Z'::timestamptz
       and actual.valid_to is null
-      and actual.provider_effective_from is null
+      and actual.provider_effective_from = '2026-08-16T16:00:00Z'::timestamptz
       and actual.provider_effective_to is null
       and actual.source_url =
         'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/'
       and actual.source_checked_at =
-        '2026-08-25T06:45:15.787Z'::timestamptz
+        '2026-08-28T08:05:41.804Z'::timestamptz
       and actual.source_snapshot_sha256 =
-        '593f092cc8e91ad568f4843a83264e2f7aa2551b5c46d1e35b5e2654e3f06a02'
+        '899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5'
       and actual.parameters = '{}'::jsonb
       and actual.components_sealed_at is null
   ) <> 2 then

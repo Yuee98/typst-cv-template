@@ -981,18 +981,19 @@ RT-002B 只新增纯 `provider-subject-v2` message/HMAC helper、contract fixtur
 ### DeepSeek V4 Flash
 
 - 当前 CNY 每 1M tokens：低谷 hit ¥0.05、miss ¥1.50、output ¥4.50；高峰 hit ¥0.10、miss ¥3.00、output ¥9.00。
-- 高峰：周一至周五 09:00–12:00、14:00–18:00，`Asia/Shanghai`。
-- 官方价格页未公布当前 price version 的精确生效日期；不得伪造日期。
+- 高峰：每天 09:00–12:00、14:00–18:00，`Asia/Shanghai`。
+- 官方价格页公布当前 peak/offpeak price 自北京 `2026-08-17T00:00:00+08:00`（UTC `2026-08-16T16:00:00Z`）起生效。
 - Chat 的 thinking disabled、JSON object、`user_id`、cache hit/miss 与 body `id` 已确认；Responses 详细 wire guide 未冻结，因此当前迁移仍以 Chat compatibility 为准。
 - 来源：<https://api-docs.deepseek.com/zh-cn/quick_start/pricing/>、<https://api-docs.deepseek.com/api/create-chat-completion/>、<https://api-docs.deepseek.com/guides/kv_cache/>。
 
 ### MiMo V2.5 Pro
 
 - 当前 CNY 每 1M tokens：cache hit ¥0.025、cache miss ¥3.00、output ¥6.00；cache write 标为“限时免费”，但未公布截止日期。
+- 官方公告说明永久降价自北京 `2026-05-27T00:00:00+08:00`（UTC `2026-05-26T16:00:00Z`）起生效；价格页与该公告共同构成当前费率与生效日的 provenance。
 - Responses：`POST https://api.xiaomimimo.com/v1/responses`，model=`mimo-v2.5-pro`，初版发送 `reasoning.effort="none"`；不发送未文档化的 `providerSubjectId`、JSON mode、`previous_response_id` 或 `background`。
 - body `id` 是 correlation ID；解析整个 `output[]` 的 assistant `output_text`，不能假设第一个 item；usage 使用 input/cached/output/reasoning 字段。
 - cache TTL/scope/opt-out、HTTP request-id 和 Responses JSON mode 未获官方确认，不得承诺或依赖。
-- 来源：<https://mimo.mi.com/docs/en-US/api/chat/responses>、<https://mimo.mi.com/docs/en-US/price/pay-as-you-go>、<https://mimo.mi.com/docs/en-US/api/guidance/error-codes>。
+- 来源：<https://mimo.mi.com/docs/en-US/api/chat/responses>、<https://mimo.mi.com/docs/en-US/price/pay-as-you-go>、<https://mimo.mi.com/docs/en-US/news/v2.5-price-update>、<https://mimo.mi.com/docs/en-US/api/guidance/error-codes>。
 
 ## 10. 共享 fixture 最小集合
 
