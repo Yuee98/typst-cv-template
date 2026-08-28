@@ -3709,7 +3709,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
       alreadyFinalized: false,
       status: "canceled",
       quotaCharged: true,
-      providerBillable: null,
     });
 
     const attempts = await service

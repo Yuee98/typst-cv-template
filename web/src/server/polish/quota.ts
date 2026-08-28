@@ -506,11 +506,14 @@ const FINISH_REASONS_V2 = new Set([
   "insufficient_system_resource",
   "unknown",
 ]);
-const FAILURE_STAGES_V2: ReadonlySet<string> = new Set([
+export const POLISH_ATTEMPT_FAILURE_STAGES_V2 = Object.freeze([
   "transport",
   ...POLISH_VALIDATION_FAILURE_STAGES,
   "provider_contract",
-]);
+] as const satisfies readonly NonNullable<PolishAttemptCompletedFactV2["failureStage"]>[]);
+const FAILURE_STAGES_V2: ReadonlySet<string> = new Set(
+  POLISH_ATTEMPT_FAILURE_STAGES_V2,
+);
 const COST_INCOMPLETE_REASONS_V2 = new Set([
   "invalid_usage",
   "usage_incomplete",

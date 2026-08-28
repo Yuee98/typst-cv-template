@@ -11,6 +11,7 @@ import {
   completePolishProviderAttemptV2,
   finalizePolishRequestV2,
   getPolishExecutionSnapshotV1,
+  POLISH_ATTEMPT_FAILURE_STAGES_V2,
   PolishLifecycleV2RpcError,
   recordPolishRequestCancellationV2,
   reservePolishRequestV2,
@@ -90,12 +91,6 @@ const LEGACY_REQUEST_FAILURE_STAGES = Object.freeze([
   "semantic_validation",
   "canceled",
 ]);
-
-const V2_FAILURE_STAGE_CANDIDATES = Object.freeze([
-  "transport",
-  ...POLISH_VALIDATION_FAILURE_STAGES,
-  "provider_contract",
-] as const satisfies readonly NonNullable<PolishAttemptCompletedFactV2["failureStage"]>[]);
 
 function requestLedgerFailureStagesFromMigration(): readonly string[] {
   const source = readFileSync(FAILURE_STAGE_CONSTRAINT_MIGRATION_URL, "utf8");
@@ -676,7 +671,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
     // Exercise the production serializer rather than treating this test's
     // candidate list as the source of truth.  Parent finalization copies the
     // child fact, so every accepted V2 child stage must be admitted by SQL.
-    const emittedV2Stages = V2_FAILURE_STAGE_CANDIDATES.map((failureStage) =>
+    const emittedV2Stages = POLISH_ATTEMPT_FAILURE_STAGES_V2.map((failureStage) =>
       serializePolishAttemptCompletionV2({
         attempt: attemptStart(),
         fact: completedFact({ failureStage }),
@@ -686,7 +681,7 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       }).p_metadata.failure_stage,
     );
 
-    expect(emittedV2Stages).toEqual(V2_FAILURE_STAGE_CANDIDATES);
+    expect(emittedV2Stages).toEqual(POLISH_ATTEMPT_FAILURE_STAGES_V2);
     expect([...new Set(requestLedgerFailureStagesFromMigration())].sort()).toEqual(
       [...new Set([...LEGACY_REQUEST_FAILURE_STAGES, ...emittedV2Stages])].sort(),
     );
