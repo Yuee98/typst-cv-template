@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 import {
+  ATTEMPT_EVIDENCE_FIELDS,
   buildExpectedRouteV1,
   DEEPSEEK_INTEGRATION_PROFILE,
   deriveParentIncompleteFields,
@@ -120,6 +121,9 @@ describe("integration ledger evidence", () => {
     expect(resolveIntegrationProfile("deepseek")).toBe(DEEPSEEK_INTEGRATION_PROFILE);
     expect(resolveIntegrationProfile("mimo")).toBe(MIMO_INTEGRATION_PROFILE);
     expect(() => resolveIntegrationProfile("openrouter")).toThrow(/unsupported/i);
+    for (const inheritedName of ["__proto__", "toString", "constructor"]) {
+      expect(() => resolveIntegrationProfile(inheritedName)).toThrow(/unsupported/i);
+    }
   });
 
   it("accepts only each profile's exact official endpoint", () => {
@@ -258,6 +262,29 @@ describe("integration ledger evidence", () => {
     );
   });
 
+  it("requires complete route observations for transmitted terminal provider outcomes", () => {
+    const profile = MIMO_INTEGRATION_PROFILE;
+    for (const status of ["succeeded", "invalid_output", "failed_upstream", "timed_out"]) {
+      const bothNull = attempt(profile, {
+        status, actual_upstream_endpoint: null, actual_model_id: null,
+      });
+      const issues = evaluateRequestLedgerEvidence(parent(profile, [bothNull]), [bothNull], profile).issues;
+      expect(issues).toContain("attempt_route_observation_missing");
+      expect(issues).not.toContain("attempt_route_observation_partial");
+    }
+    const partial = attempt(profile, { actual_upstream_endpoint: null });
+    expect(evaluateRequestLedgerEvidence(parent(profile, [partial]), [partial], profile).issues).toEqual(
+      expect.arrayContaining(["attempt_route_observation_missing", "attempt_route_observation_partial"]),
+    );
+    const crossed = attempt(profile, {
+      actual_upstream_endpoint: DEEPSEEK_INTEGRATION_PROFILE.endpoint,
+      actual_model_id: DEEPSEEK_INTEGRATION_PROFILE.modelId,
+    });
+    expect(evaluateRequestLedgerEvidence(parent(profile, [crossed]), [crossed], profile).issues).toEqual(
+      expect.arrayContaining(["attempt_endpoint_not_official", "attempt_model_mismatch"]),
+    );
+  });
+
   it("requires every derived incomplete marker and rejects contradictory currency aggregation", () => {
     const profile = DEEPSEEK_INTEGRATION_PROFILE;
     const incomplete = attempt(profile, {
@@ -293,5 +320,17 @@ describe("integration ledger evidence", () => {
     expect(source).not.toContain("serverOutput.join");
     expect(source).not.toContain("featureConfigRestore");
     expect(source).not.toContain(".update({ ai_polish_enabled: true })");
+    expect(source).not.toContain("flips runtime config");
+  });
+
+  it("keeps every evidence-consumed attempt field in the harness query and clears ambient upstream URLs", () => {
+    const source = readFileSync(new URL("../run-integration-tests.mjs", import.meta.url), "utf8");
+    const selection = /const ATTEMPT_LEDGER_SELECT = \[([\s\S]*?)\]\.join\(/.exec(source)?.[1] ?? "";
+    const selected = new Set([...selection.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+    expect(ATTEMPT_EVIDENCE_FIELDS.filter((field) => !selected.has(field))).toEqual([]);
+    expect(source).toContain('"reasoning_tokens"');
+    expect(source).toContain("UPSTREAM_URL_ENV_NAMES");
+    expect(source).toContain("for (const name of UPSTREAM_URL_ENV_NAMES) env[name] = \"\";");
+    expect(source).toContain('integrationProfile.name !== "deepseek" && deepseekBaseUrl');
   });
 });

@@ -24,9 +24,9 @@
  *
  * Release-gate integrity (CP4 round-1):
  *   - NEXT_PUBLIC_SUPABASE_URL must be loopback http, AND must match the
- *     URL/keys reported by `supabase status` — the script creates users and
- *     flips runtime config with the service key, so it must never touch a
- *     hosted project.
+ *     URL/keys reported by `supabase status` — the script creates smoke users
+ *     and terms acceptances with the service key, but never flips runtime
+ *     configuration, so it must never touch a hosted project.
  *   - the server build is REBUILT by default every run (testing the current
  *     head); --reuse-build is an explicit iteration-only opt-in.
  *   - build and start both get explicit POLISH_FAKE_LLM=false /
@@ -68,6 +68,11 @@ const repoRoot = path.resolve(webRoot, "..");
 
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const UPSTREAM_URL_ENV_NAMES = Object.freeze([
+  "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
+  "GLOBAL_AGENT_HTTP_PROXY", "GLOBAL_AGENT_HTTPS_PROXY",
+]);
 
 // Explicit opt-in (off by default — the default is release-gate safe).
 //   --reuse-build            skip build:server and reuse the existing .next
@@ -185,7 +190,7 @@ function preflightEnv() {
 
 /**
  * P0-1: the configured Supabase URL must be loopback http BEFORE any client
- * is constructed — the smoke creates users and flips runtime config with the
+ * is constructed — the smoke creates users and accepts terms with the
  * service-role key, so a hosted/staging URL here is a destructive-safety bug.
  */
 function preflightLocalSupabaseUrl(supabaseUrl) {
@@ -193,7 +198,7 @@ function preflightLocalSupabaseUrl(supabaseUrl) {
   if (!result.ok) {
     fatal(
       `refusing non-local Supabase URL (${result.reason}).`,
-      "The real-key integration smoke creates users and changes AI runtime configuration; " +
+      "The real-key integration smoke creates users and accepts AI terms; " +
         "NEXT_PUBLIC_SUPABASE_URL must be http://127.0.0.1 / localhost / [::1].",
     );
   }
@@ -206,13 +211,19 @@ function preflightLocalSupabaseUrl(supabaseUrl) {
  */
 function preflightUpstream() {
   const deepseekBaseUrl = getEnv("DEEPSEEK_BASE_URL");
+  if (integrationProfile.name !== "deepseek" && deepseekBaseUrl) {
+    fatal(
+      "DEEPSEEK_BASE_URL is forbidden for the MiMo smoke, including the official origin.",
+      "The selected route must be code/DB-owned without an ambient cross-profile override.",
+    );
+  }
   if (deepseekBaseUrl && !isOfficialDeepSeekBaseUrl(deepseekBaseUrl)) {
     fatal(
       "DEEPSEEK_BASE_URL is set to a non-official origin — this smoke proves only exact official provider routes.",
       "Unset custom/proxy upstream variables before running.",
     );
   }
-  for (const name of ["MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL"]) {
+  for (const name of UPSTREAM_URL_ENV_NAMES.filter((name) => name !== "DEEPSEEK_BASE_URL")) {
     if (getEnv(name)) {
       fatal(`${name} is unsupported by the exact-route integration smoke.`, "Unset custom upstream variables before running.");
     }
@@ -303,6 +314,7 @@ function forwardedServerEnv() {
     MIMO_API_KEY: "",
     OPENROUTER_API_KEY: "",
   };
+  for (const name of UPSTREAM_URL_ENV_NAMES) env[name] = "";
   for (const name of [
     integrationProfile.credentialEnv,
     "SUPABASE_SERVICE_ROLE_KEY",
@@ -497,7 +509,7 @@ const REQUEST_LEDGER_SELECT = [
 const ATTEMPT_LEDGER_SELECT = [
   "attempt_no", "status", "transmitted", "provider_billable", "usage_observation_kind",
   "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
-  "output_tokens", "route_schema_version", "config_generation", "routing_policy_version_id",
+  "output_tokens", "reasoning_tokens", "route_schema_version", "config_generation", "routing_policy_version_id",
   "profile_version_id", "price_version_id", "legal_bundle_version", "runtime_contract_id",
   "runtime_contract_sha256", "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key",
   "endpoint_alias", "actual_upstream_endpoint", "actual_model_id", "billing_currency",

@@ -57,10 +57,10 @@ export const MIMO_INTEGRATION_PROFILE = Object.freeze({
   credentialEnv: "MIMO_API_KEY",
 });
 
-const INTEGRATION_PROFILES = Object.freeze({
-  deepseek: DEEPSEEK_INTEGRATION_PROFILE,
-  mimo: MIMO_INTEGRATION_PROFILE,
-});
+const INTEGRATION_PROFILES = new Map([
+  ["deepseek", DEEPSEEK_INTEGRATION_PROFILE],
+  ["mimo", MIMO_INTEGRATION_PROFILE],
+]);
 
 const TERMINAL_ATTEMPT_STATUSES = new Set([
   "succeeded", "invalid_output", "failed_upstream", "timed_out", "canceled", "unknown",
@@ -72,9 +72,25 @@ const PARENT_CHILD_ROUTE_FIELDS = [
   "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key",
 ];
 
+/** Every attempt field consumed by evidence evaluation or aggregation. */
+export const ATTEMPT_EVIDENCE_FIELDS = Object.freeze([
+  "attempt_no", "status", "transmitted", "provider_billable", "usage_observation_kind",
+  "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
+  "output_tokens", "reasoning_tokens", "route_schema_version", "config_generation",
+  "routing_policy_version_id", "profile_version_id", "price_version_id", "legal_bundle_version",
+  "runtime_contract_id", "runtime_contract_sha256", "gateway_kind", "model_id", "wire_api_kind",
+  "display_disclosure_key", "endpoint_alias", "actual_upstream_endpoint", "actual_model_id",
+  "billing_currency", "estimated_currency", "estimated_cost_nanos", "provider_reported_currency",
+  "provider_reported_cost_nanos",
+]);
+
+const ROUTE_OBSERVATION_REQUIRED_STATUSES = new Set([
+  "succeeded", "invalid_output", "failed_upstream", "timed_out",
+]);
+
 export function resolveIntegrationProfile(name = "deepseek") {
-  const profile = INTEGRATION_PROFILES[name];
-  if (profile) return profile;
+  const profile = INTEGRATION_PROFILES.get(name);
+  if (profile !== undefined) return profile;
   throw new Error(`unsupported integration profile: ${name}`);
 }
 
@@ -251,7 +267,17 @@ export function evaluateRequestLedgerEvidence(parent, attempts, profile = DEEPSE
     push(issues, attempt.model_id === profile.modelId, "attempt_model_mismatch");
     push(issues, attempt.endpoint_alias === profile.endpointAlias, "attempt_endpoint_alias_mismatch");
     push(issues, attempt.billing_currency === profile.billingCurrency, "attempt_billing_currency_mismatch");
-    if (attempt.status === "unknown" || attempt.transmitted === false) {
+    const routeObservationRequired = attempt.transmitted === true &&
+      ROUTE_OBSERVATION_REQUIRED_STATUSES.has(attempt.status);
+    if (routeObservationRequired) {
+      const completeObservation = attempt.actual_upstream_endpoint !== null && attempt.actual_model_id !== null;
+      push(issues, completeObservation, "attempt_route_observation_missing");
+      push(issues, (attempt.actual_upstream_endpoint === null) === (attempt.actual_model_id === null), "attempt_route_observation_partial");
+      if (completeObservation) {
+        push(issues, isOfficialIntegrationEndpoint(profile, attempt.actual_upstream_endpoint), "attempt_endpoint_not_official");
+        push(issues, attempt.actual_model_id === profile.modelId, "attempt_model_mismatch");
+      }
+    } else if (attempt.status === "unknown" || attempt.transmitted === false) {
       push(issues, attempt.actual_upstream_endpoint === null, "attempt_route_endpoint_not_cleared");
       push(issues, attempt.actual_model_id === null, "attempt_route_model_not_cleared");
     } else if (attempt.actual_upstream_endpoint !== null || attempt.actual_model_id !== null) {
