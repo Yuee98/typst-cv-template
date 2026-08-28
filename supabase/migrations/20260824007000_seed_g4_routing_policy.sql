@@ -185,7 +185,7 @@ begin
       where actual.price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
   or (select count(*) from public.ai_price_components
       where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
-  ) or not exists (
+  or not exists (
     select 1 from public.ai_service_runtime_contract_versions
     where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
       and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
