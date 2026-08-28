@@ -48,24 +48,22 @@ different provider.
 Before an authorized operator considers a new provider, profile, price, or
 policy edge, obtain a current reviewed source commit and record the exact
 runtime-contract ID/hash that covers the proposed profile's legal manifest.
-The DB-013 evidence validator requires all of the following:
+Lifecycle operations collectively require the following checks where their
+operation applies:
 
-- a sealed matching runtime root; the reviewed source commit OID must be a
-  `sha1:` value and its recorded source SHA-256 must match the runtime-contract
-  SHA-256;
-- a nonempty actor and reason, a recheck timestamp not in the future, and a
-  SHA-256 for that recheck;
-- an unretired profile/version with a code-registered adapter, endpoint alias,
-  credential alias, capability, cache policy, calculator, legal manifest, and
-  display disclosure;
-- an exact sealed legal bundle/manifest projection and runtime-target coverage;
-- a price belonging to that exact profile version, with current source evidence
-  and an exact rechecked source URL, currency, calculator, provider-effective
-  interval, parameters, and component set before it may be sealed;
-- a validated routing policy whose exact targets reference those immutable
-  profile and price versions, plus its legal bundle and runtime pair. The
-  policy validator rejects malformed, retired, expired, unsealed, legal-unbound
-  and wrong-profile targets.
+- `assert_ai_routing_lifecycle_evidence_v1` requires a sealed matching runtime
+  root; a `sha1:` reviewed source commit OID whose recorded source SHA-256
+  matches the runtime-contract SHA-256; a nonempty actor and reason; and a
+  non-future recheck timestamp plus its SHA-256;
+- operation-specific profile, price, policy, and runtime/legal validators
+  require an unretired profile/version, current source evidence, exact
+  price/component facts where sealing applies, sealed legal/runtime coverage,
+  and a valid policy transition or pointer target as applicable;
+- the application code registry independently requires the selected
+  adapter/endpoint/credential aliases, capability, cache policy, calculator,
+  legal manifest, and display disclosure to be code-registered. The policy
+  validator rejects malformed, retired, expired, unsealed, legal-unbound, and
+  wrong-profile targets.
 
 All of these facts are versioned. Do not mutate an activated profile, price,
 policy, runtime, or legal bundle in place; create and validate a successor
@@ -73,9 +71,15 @@ through the approved design and lifecycle process.
 
 ## 4. DB-013 lifecycle surface and audit contract
 
-DB-013 revokes direct control-plane writes and grants the following public
-functions only to `service_role`. The signatures are exact PostgreSQL argument
-type signatures, shown for identification; this runbook intentionally gives no
+DB-013 revokes general lifecycle and routing-pointer DML, and grants the
+following public functions only to `service_role`. It retains narrow,
+structurally guarded `service_role` column updates for
+`ai_feature_config.ai_polish_enabled`, `global_daily_limit`, and
+`enabled_user_allowlist`; `ai_provider_profile_versions.display_disclosure_key`;
+and `ai_price_versions.components_sealed_at`. The first retained authority is
+the immediate database kill switch described above; it is not a broad
+activation surface. The signatures are exact PostgreSQL argument type
+signatures, shown for identification; this runbook intentionally gives no
 invocation payload or direct table-update recipe.
 
 | Function | Exact signature |
