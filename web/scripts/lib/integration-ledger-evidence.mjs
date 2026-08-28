@@ -74,7 +74,7 @@ const PARENT_CHILD_ROUTE_FIELDS = [
 
 /** Every attempt field consumed by evidence evaluation or aggregation. */
 export const ATTEMPT_EVIDENCE_FIELDS = Object.freeze([
-  "attempt_no", "status", "transmitted", "provider_billable", "usage_observation_kind",
+  "attempt_no", "status", "failure_stage", "transmitted", "provider_billable", "usage_observation_kind",
   "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
   "output_tokens", "reasoning_tokens", "route_schema_version", "config_generation",
   "routing_policy_version_id", "profile_version_id", "price_version_id", "legal_bundle_version",
@@ -292,6 +292,8 @@ export function evaluateRequestLedgerEvidence(parent, attempts, profile = DEEPSE
 
   const derivedBillable = deriveBillable(children);
   push(issues, parent?.provider_billable === derivedBillable, "parent_billability_mismatch");
+  const terminalFailureStage = children.at(-1)?.failure_stage ?? null;
+  push(issues, parent?.failure_stage === terminalFailureStage, "parent_failure_stage_mismatch");
   const allUsageComplete = children.every(
     (attempt) => attempt.usage_observation_kind === "observed" && attempt.usage_complete === true,
   );

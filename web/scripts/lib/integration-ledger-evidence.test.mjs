@@ -49,6 +49,7 @@ function attempt(profile = DEEPSEEK_INTEGRATION_PROFILE, overrides = {}) {
     actual_upstream_endpoint: profile.endpoint,
     actual_model_id: profile.modelId,
     status: "succeeded",
+    failure_stage: null,
     transmitted: true,
     provider_billable: true,
     usage_observation_kind: "observed",
@@ -104,6 +105,7 @@ function parent(profile, rows, overrides = {}) {
     input_cached_tokens: rows.reduce((sum, row) => sum + (row.input_cache_read_tokens ?? 0), 0),
     input_uncached_tokens: rows.reduce((sum, row) => sum + (row.input_cache_write_tokens ?? 0) + (row.input_standard_tokens ?? 0), 0),
     output_tokens: rows.reduce((sum, row) => sum + (row.output_tokens ?? 0), 0),
+    failure_stage: rows.at(-1)?.failure_stage ?? null,
     incomplete_fields: deriveParentIncompleteFields(rows),
     billing_currency: profile.billingCurrency,
     cost_basis: "frozen_price_version_v1",
@@ -250,12 +252,20 @@ describe("integration ledger evidence", () => {
     const profile = DEEPSEEK_INTEGRATION_PROFILE;
     const canceled = attempt(profile, {
       status: "canceled", transmitted: true, actual_upstream_endpoint: null, actual_model_id: null,
+      failure_stage: "transport",
       provider_billable: null, usage_observation_kind: "unavailable", usage_complete: false,
       input_cache_read_tokens: null, input_cache_write_tokens: null, input_standard_tokens: null,
       output_tokens: null, reasoning_tokens: null, estimated_currency: null, estimated_cost_nanos: null,
       provider_reported_currency: null, provider_reported_cost_nanos: null,
     });
     expect(evaluateRequestLedgerEvidence(parent(profile, [canceled]), [canceled], profile).ok).toBe(true);
+    expect(
+      evaluateRequestLedgerEvidence(
+        parent(profile, [canceled], { failure_stage: "canceled" }),
+        [canceled],
+        profile,
+      ).issues,
+    ).toContain("parent_failure_stage_mismatch");
     const unknown = { ...canceled, status: "unknown", transmitted: null, actual_upstream_endpoint: profile.endpoint, actual_model_id: profile.modelId };
     expect(evaluateRequestLedgerEvidence(parent(profile, [unknown]), [unknown], profile).issues).toEqual(
       expect.arrayContaining(["attempt_route_endpoint_not_cleared", "attempt_route_model_not_cleared"]),
@@ -370,6 +380,9 @@ describe("integration ledger evidence", () => {
     expect(source).toContain("const CANCELLATION_SETTLEMENT_TIMEOUT_MS = 60_000;");
     expect(source).toContain("observeAbortableRequest(");
     expect(source).toContain('cancelOutcome.kind === "aborted" && cancelOutcome.error === cancellationReason');
+    expect(source).toContain('"cancel ledger: failure_stage=transport"');
+    expect(source).toContain('cancelRow.failure_stage === "transport"');
+    expect(source).not.toContain('"cancel ledger: failure_stage=canceled"');
     expect(source).not.toContain('.catch(() => ({ aborted: true }))');
 
     const guardedStop = source.indexOf("if (stopServerBeforeUserCleanup && server !== null)");

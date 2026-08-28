@@ -556,7 +556,7 @@ const REQUEST_LEDGER_SELECT = [
 ].join(",");
 
 const ATTEMPT_LEDGER_SELECT = [
-  "attempt_no", "status", "transmitted", "provider_billable", "usage_observation_kind",
+  "attempt_no", "status", "failure_stage", "transmitted", "provider_billable", "usage_observation_kind",
   "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
   "output_tokens", "reasoning_tokens", "route_schema_version", "config_generation", "routing_policy_version_id",
   "profile_version_id", "price_version_id", "legal_bundle_version", "runtime_contract_id",
@@ -856,11 +856,13 @@ try {
     // the provider call was entered is CHARGED, settled as canceled. The
     // mid-flight abort means no usage came back, so billability is UNKNOWN
     // (null — CP2 round3 honest accounting), never provably free (false).
+    // The parent preserves the last immutable attempt's adapter stage rather
+    // than replacing that fact with the request-level canceled status.
     check("cancel ledger: status=canceled", cancelRow.status === "canceled", `got ${cancelRow.status}`);
     check("cancel ledger: quota_charged=true", cancelRow.quota_charged === true);
     check(
-      "cancel ledger: failure_stage=canceled",
-      cancelRow.failure_stage === "canceled",
+      "cancel ledger: failure_stage=transport",
+      cancelRow.failure_stage === "transport",
       `got ${cancelRow.failure_stage}`,
     );
     check(
