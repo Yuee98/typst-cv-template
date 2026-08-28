@@ -71,6 +71,8 @@ const runNextModeScript = path.join(scriptsDir, "run-next-mode.mjs");
 
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const AVAILABILITY_TIMEOUT_MS = 10_000;
+const POLISH_REQUEST_TIMEOUT_MS = 75_000;
 const UPSTREAM_URL_ENV_NAMES = Object.freeze([
   "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
@@ -460,11 +462,12 @@ async function waitForServer(server) {
 async function postPolish(body, { token, signal } = {}) {
   const headers = { "content-type": "application/json" };
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
+  const deadline = AbortSignal.timeout(POLISH_REQUEST_TIMEOUT_MS);
   const response = await fetch(`${BASE_URL}/api/polish`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal,
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
   });
   const json = await response.json().catch(() => null);
   return { status: response.status, headers: response.headers, body: json };
@@ -488,6 +491,7 @@ function makePolishBody(clientRequestId, text, expectedRoute) {
 async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
   const response = await fetch(`${BASE_URL}/api/polish/availability`, {
     headers: { authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS),
   });
   const body = await response.json().catch(() => null);
   if (response.status !== 200 || body?.availability?.enabled !== true) {
