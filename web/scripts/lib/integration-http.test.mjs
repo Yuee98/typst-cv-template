@@ -9,6 +9,7 @@ import {
 import {
   CANCELLATION_ITEM_COUNT,
   buildCancellationProbeItems,
+  observeAbortableRequest,
   readJsonOrNull,
 } from "./integration-http.mjs";
 
@@ -29,6 +30,35 @@ describe("integration HTTP body parsing", () => {
     controller.abort();
     rejectBody(abortError);
     await expect(reading).rejects.toBe(abortError);
+  });
+
+  it("attributes cancellation only to the exact abort rejection", async () => {
+    const earlyController = new AbortController();
+    const networkError = new Error("socket closed");
+    const early = observeAbortableRequest(Promise.reject(networkError), earlyController.signal);
+    await Promise.resolve();
+    expect(early.isSettled()).toBe(true);
+
+    const lateAbortReason = new DOMException("late abort", "AbortError");
+    earlyController.abort(lateAbortReason);
+    await expect(early.outcome).resolves.toEqual({ kind: "rejected", error: networkError });
+
+    const activeController = new AbortController();
+    const activeAbortReason = new DOMException("active abort", "AbortError");
+    let rejectActive;
+    const activeRequest = new Promise((_resolve, reject) => { rejectActive = reject; });
+    const active = observeAbortableRequest(activeRequest, activeController.signal);
+    expect(active.isSettled()).toBe(false);
+    activeController.abort(activeAbortReason);
+    rejectActive(activeAbortReason);
+    await expect(active.outcome).resolves.toEqual({ kind: "aborted", error: activeAbortReason });
+
+    const crossedController = new AbortController();
+    const crossedAbortReason = new DOMException("crossed abort", "AbortError");
+    const crossedError = new Error("independent failure");
+    crossedController.abort(crossedAbortReason);
+    const crossed = observeAbortableRequest(Promise.reject(crossedError), crossedController.signal);
+    await expect(crossed.outcome).resolves.toEqual({ kind: "rejected", error: crossedError });
   });
 
   it("keeps the real-provider cancellation probe inside request and output bounds", () => {

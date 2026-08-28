@@ -62,6 +62,7 @@ import {
 } from "./lib/integration-ledger-evidence.mjs";
 import {
   buildCancellationProbeItems,
+  observeAbortableRequest,
   readJsonOrNull,
 } from "./lib/integration-http.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
@@ -78,6 +79,7 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 const AVAILABILITY_TIMEOUT_MS = 10_000;
 const POLISH_REQUEST_TIMEOUT_MS = 75_000;
 const CANCELLATION_ABORT_DELAY_MS = 750;
+const CANCELLATION_SETTLEMENT_TIMEOUT_MS = 60_000;
 // The cancellation probe deliberately uses a valid multi-item section
 // request. It gives the bounded abort timer a wide in-flight provider window;
 // the terminal ledger, not timing alone, remains the transmission proof. The
@@ -421,12 +423,20 @@ function startServer() {
     },
     async stop() {
       if (child.exitCode !== null || child.signalCode !== null) return;
+      const exitedAfterTerm = new Promise((resolve) => child.once("exit", () => resolve(true)));
       child.kill("SIGTERM");
       const exited = await Promise.race([
-        new Promise((resolve) => child.once("exit", () => resolve(true))),
+        exitedAfterTerm,
         sleep(5_000).then(() => false),
       ]);
-      if (!exited) child.kill("SIGKILL");
+      if (exited) return;
+      const exitedAfterKill = new Promise((resolve) => child.once("exit", () => resolve(true)));
+      child.kill("SIGKILL");
+      const killed = await Promise.race([
+        exitedAfterKill,
+        sleep(5_000).then(() => false),
+      ]);
+      if (!killed) throw new Error("integration server did not exit after forced termination");
     },
   };
 }
@@ -598,15 +608,15 @@ async function getAttemptRowsByReservationId(service, reservationId) {
   return data ?? [];
 }
 
-async function waitFinalized(fetchRow, label) {
+async function waitFinalized(fetchRow, label, { timeoutMs = 20_000 } = {}) {
   const row = await pollUntil(
     async () => {
       const current = await fetchRow();
       return current && current.state === "finalized" ? current : false;
     },
-    { timeoutMs: 20_000, intervalMs: 100 },
+    { timeoutMs, intervalMs: 100 },
   );
-  check(`${label}: ledger row reaches state=finalized`, row !== null, "timed out after 20s");
+  check(`${label}: ledger row reaches state=finalized`, row !== null, `timed out after ${timeoutMs}ms`);
   return row;
 }
 
@@ -619,6 +629,9 @@ let server = null;
 let userId = null;
 let fatalError = null;
 let integrationProfile = null;
+let cancellationController = null;
+let cancellationProbe = null;
+let stopServerBeforeUserCleanup = false;
 
 try {
   integrationProfile = preflightProfile();
@@ -802,28 +815,42 @@ try {
   // --- 6. Cancel while the provider call is in flight (transmission #2).
   await getAuthenticatedAvailability(accessToken, expectedRoute);
   const cancelClientRequestId = crypto.randomUUID();
-  const controller = new AbortController();
-  const cancelFetch = postPolish(
-    makeCancellationPolishBody(cancelClientRequestId, expectedRoute),
-    { token: accessToken, signal: controller.signal },
-  ).catch(() => ({ aborted: true }));
+  cancellationController = new AbortController();
+  const cancellationReason = new DOMException("integration cancellation probe", "AbortError");
+  cancellationProbe = observeAbortableRequest(
+    postPolish(
+      makeCancellationPolishBody(cancelClientRequestId, expectedRoute),
+      { token: accessToken, signal: cancellationController.signal },
+    ),
+    cancellationController.signal,
+  );
+  // From request launch until a terminal ledger row is observed, teardown must
+  // stop the server before deleting the user whose cascades carry the proof.
+  stopServerBeforeUserCleanup = true;
 
   // A live provider_started row can be shorter-lived than a PostgREST poll.
   // Time the client disconnect from request launch, then let the immutable
   // terminal parent/attempt ledger prove whether a real transmission was in
   // flight. Too-early (released) and too-late (succeeded) aborts both fail.
   await sleep(CANCELLATION_ABORT_DELAY_MS);
-  controller.abort();
-  const cancelOutcome = await cancelFetch;
   check(
-    "cancel: client fetch aborted",
-    cancelOutcome.aborted === true,
-    "the fetch completed before the abort landed",
+    "cancel: client request remains pending before abort",
+    !cancellationProbe.isSettled(),
+    "the request settled before the bounded abort point",
+  );
+  cancellationController.abort(cancellationReason);
+  const cancelOutcome = await cancellationProbe.outcome;
+  check(
+    "cancel: client fetch rejected from the requested abort",
+    cancelOutcome.kind === "aborted" && cancelOutcome.error === cancellationReason,
+    "the request did not reject from this controller's abort reason",
   );
   const cancelRow = await waitFinalized(
     () => getLedgerRowByClientRequestId(service, userId, cancelClientRequestId),
     "cancel settlement",
+    { timeoutMs: CANCELLATION_SETTLEMENT_TIMEOUT_MS },
   );
+  if (cancelRow !== null) stopServerBeforeUserCleanup = false;
   if (cancelRow) {
     // Designed settlement (roadmap settlement table): a user cancel after
     // the provider call was entered is CHARGED, settled as canceled. The
@@ -879,6 +906,22 @@ try {
     check(`ledger evidence: official ${integrationProfile.displayDisclosure.providerName} proof verdict`, evidence.ok);
   }
   } finally {
+    // Drain the client promise on every exceptional path. If terminal DB proof
+    // is still absent, terminate the Next process before the smoke-user cascade
+    // can erase an in-flight request's lifecycle rows.
+    if (cancellationProbe !== null) {
+      if (!cancellationProbe.isSettled() && !cancellationController.signal.aborted) {
+        cancellationController.abort(
+          new DOMException("integration cleanup cancellation", "AbortError"),
+        );
+      }
+      await cancellationProbe.outcome;
+    }
+    if (stopServerBeforeUserCleanup && server !== null) {
+      log("stopping the server before cleanup because cancellation settlement is unproven");
+      await server.stop();
+      server = null;
+    }
     // --- Cleanup: user deletion cascades ledger/usage/terms rows.
     if (userId !== null) {
       const { error } = await service.auth.admin.deleteUser(userId);

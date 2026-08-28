@@ -13,6 +13,33 @@ export async function readJsonOrNull(response, signal) {
 }
 
 /**
+ * Observe a request without erasing why it settled.  In particular, a network
+ * rejection that happens before (or merely near) a caller abort must never be
+ * relabelled as cancellation just because the caller inspects it later.
+ */
+export function observeAbortableRequest(request, signal) {
+  let settled = false;
+  const outcome = Promise.resolve(request).then(
+    (value) => {
+      settled = true;
+      return { kind: "response", value };
+    },
+    (error) => {
+      settled = true;
+      return {
+        kind: signal.aborted && error === signal.reason ? "aborted" : "rejected",
+        error,
+      };
+    },
+  );
+
+  return Object.freeze({
+    outcome,
+    isSettled: () => settled,
+  });
+}
+
+/**
  * A valid multi-item workload for observing the provider_started window of a
  * fast official model. Keep this fixture pure so its request-contract and
  * output-budget bounds can be tested without a credential or network call.

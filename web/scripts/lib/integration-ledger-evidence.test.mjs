@@ -364,4 +364,17 @@ describe("integration ledger evidence", () => {
     expect(source).toContain("readJsonOrNull(response, availabilitySignal)");
     expect(source).not.toContain("response.json().catch(() => null)");
   });
+
+  it("preserves cancellation attribution and stops uncertain work before user cleanup", () => {
+    const source = readFileSync(new URL("../run-integration-tests.mjs", import.meta.url), "utf8");
+    expect(source).toContain("const CANCELLATION_SETTLEMENT_TIMEOUT_MS = 60_000;");
+    expect(source).toContain("observeAbortableRequest(");
+    expect(source).toContain('cancelOutcome.kind === "aborted" && cancelOutcome.error === cancellationReason');
+    expect(source).not.toContain('.catch(() => ({ aborted: true }))');
+
+    const guardedStop = source.indexOf("if (stopServerBeforeUserCleanup && server !== null)");
+    const userDeletion = source.indexOf("service.auth.admin.deleteUser(userId)");
+    expect(guardedStop).toBeGreaterThan(-1);
+    expect(userDeletion).toBeGreaterThan(guardedStop);
+  });
 });
