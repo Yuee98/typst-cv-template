@@ -1,10 +1,11 @@
 # AI Provider Operations Runbook (OPS-002)
 
-This runbook describes the control plane present at commit
-`7216084a0b532349256a0daf3cd6cf4d4cc4b667`. It is a readback-and-authority
-guide, not an operator wrapper and not a table-DML recipe. A lifecycle change
-must be performed only by a qualified, authorized service-role operator using
-the DB-013 RPC surface below, after the required human approval.
+This runbook describes the current DB-013 control plane and its local-only
+promotion boundary. It is a readback-and-authority guide, not an operator
+wrapper and not a table-DML recipe. A lifecycle change must be performed only
+by a qualified, authorized service-role operator using the DB-013 RPC surface
+below, after the required human approval. Nothing here grants hosted
+authorization or permits bypassing the three gates.
 
 ## 1. Three independent gates
 
@@ -108,34 +109,75 @@ The audit table is append-only. Preserve returned audit IDs and read them back;
 they are evidence of a successful control-plane change, not a substitute for
 the post-change runtime checks below.
 
-## 5. MiMo status at this exact head
+## 5. Current runtime and external evidence
 
-MiMo (`mimo.cn.mimo-v2.5-pro.responses.v1`) is dark and pending. Its seeded
-profile version is `draft`, its price components are not sealed, and the real
-runtime adapter resolver rejects the profile as unavailable. Activation is
-prohibited at this commit, even if `MIMO_API_KEY` is configured or the combined
-MiMo runtime contract is sealed. There is no approved path in this runbook to
-override that state.
+The executable combined runtime is
+`runtime.deepseek-v2-mimo-v2.5-pro.v2`, hash
+`510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c`. Its
+code-owned MiMo Responses adapter is available, but MiMo
+(`mimo.cn.mimo-v2.5-pro.responses.v1`) remains a dark, unsealed draft and is
+not active by default. A qualified DB-013 operator may promote it only after
+the current evidence, seal, validation, and human-approval gates below have
+passed. There is no automatic fallback and no hosted activation authorization.
 
-The repository contains an opt-in `MIMO_LIVE_SMOKE=1` live conformance test.
-It is a paid, local provider call and is deliberately outside normal test runs.
-It may be considered only after separate human authorization and local
-credential handling; it is not a hosted canary, a production deployment, or an
-activation authorization. A successful local smoke does not open any of the
-three gates and does not waive the lifecycle preconditions.
+The current external price evidence that must be rechecked before local
+activation is:
 
-## 6. Exact readback checklist and human gate
+- DeepSeek is effective at `2026-08-16T16:00:00Z`, with daily Asia/Shanghai
+  windows `09:00-12:00` and `14:00-18:00`. Its raw snapshot was checked at
+  `2026-08-28T08:05:41.804Z`, hash prefix `899aff...`.
+- MiMo is effective at `2026-05-26T16:00:00Z`. Its current pricing page was
+  checked at `2026-08-28T08:05:41.986Z`, hash prefix `d43d...`. The
+  cache-write component is limited-time free with an unknown end date; treat
+  that as an expiring fact, not a permanent zero price.
 
-### CFG-003 daily candidates are not an operational rollback
+These facts are evidence inputs, not permission to activate or call a
+provider. A historical legacy price is never activatable. The current
+provenance correction must be integrated and the local database must be
+fresh-reset before any local activation; this runbook does not assert that the
+correction is already integrated. If that source/reset boundary cannot be
+proved, stop.
+
+## 6. Local-only staged promotion and smoke boundary
+
+For a separately approved local exercise, use this staged boundary:
+
+`current price evidence -> seal -> profile validated/active -> policy validated/active -> pointer -> DB kill switch (disabled before pointer, re-enabled only after pointer readback) -> authenticated availability -> separately paid smoke`
+
+The database runtime gate must be disabled before changing the active pointer,
+and must remain disabled through pointer and post-pointer readback. Only after
+the pointer, audit row, and route projections agree may the qualified operator
+re-enable the gate for an authenticated availability read. The final smoke is
+an independently authorized, separately paid local provider call; it is never
+a hosted canary, deployment authorization, or substitute for lifecycle
+evidence. Clean up local smoke state with a fresh reset, and redact
+credentials, raw provider bodies, user content, and reusable invocation
+payloads from all evidence.
+
+The repository's opt-in `MIMO_LIVE_SMOKE=1` conformance test is the separately
+paid local smoke referred to above. Keep it outside normal test runs and never
+use its result as activation or hosted authorization.
+
+For daily operations, use the DeepSeek-only rollback policy
+`33333333-3333-4333-8333-333333333334` first. Consider the G4 MiMo policy
+`33333333-3333-4333-8333-333333333333` only after it is explicitly validated
+and active, and only during the Beijing peak windows above. Neither policy
+may be activated from stale or legacy price evidence.
+
+## 7. Exact readback checklist and human gate
+
+### CFG-003 daily candidates and rollback order
 
 The official G4 and explicit successor candidate windows are daily in
 Asia/Shanghai: `[1,2,3,4,5,6,7]`, `09:00-12:00` and `14:00-18:00`, each
-half-open. The old G2 weekday-only policy is historical and must never be used
-as a safe rollback. The G4 candidate deliberately references MiMo while its
-profile is `draft` and its price is unsealed; that darkness is valid seed state
-but blocks lifecycle activation. Operators must use the separately seeded
-daily DeepSeek-only successor through the qualified lifecycle authority after
-the ordinary evidence, sealing, and promotion gates have been met.
+half-open. The old G2 weekday-only policy and every historical legacy price
+are historical and must never be used as a safe rollback. The seeded G4
+candidate currently references MiMo while its profile is `draft` and its price
+is unsealed; that is valid seed state, but it blocks activation until the
+staged evidence, sealing, validation, and human gates have passed. Operators
+must use the separately seeded daily DeepSeek-only successor first through the
+qualified lifecycle authority; G4 MiMo is considered only after it is active
+and only within the Beijing peak windows.
 
 After any authorized lifecycle action, the qualified operator must read back
 and preserve evidence for all of the following before asking a human to enable
