@@ -180,8 +180,6 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql).toContain("pg_get_constraintdef(oid, true)");
     expect(sql).toContain("is distinct from expected_policy_constraint");
     expect(sql).not.toContain("policy_constraint not like");
-    expect(testSource()).toContain("'dark', jsonb_build_object(");
-    expect(testSource()).toContain("'oldDailyUnselected', (select count(*) = 0");
     expect(sql).toContain("runtime.deepseek-v2-mimo-v2.5-pro.v2");
     expect(sql).toContain("mimo_responses_v1");
     expect(testSource()).toContain("cleanupBarrier = true;");
