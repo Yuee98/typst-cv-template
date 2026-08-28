@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { PolishRequest } from "@/lib/polish/contract";
 import executionFixture from "../../../../../test/fixtures/ai-runtime-execution-contract-v1.json";
@@ -19,7 +19,10 @@ import {
 import { DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1 } from "../../service-runtime-contract-v1";
 import type { PolishInferenceRequestV2, PolishInferenceResultV2 } from "../../inference-v2";
 import type { PolishInferenceProviderV2 } from "../../orchestrator";
-import { resolveProfile } from "../../profile-registry";
+import {
+  resolveProfile,
+  type ProfileExecutionConfigV1,
+} from "../../profile-registry";
 import {
   createFakePolishInferenceProvider,
   createFakePolishProvider,
@@ -330,16 +333,107 @@ function createHarness(options: HarnessOptions = {}) {
 }
 
 describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
-  it("keeps the code-owned G2 resolver DeepSeek-only before any network call", () => {
+  it("keeps the existing DeepSeek profile bound to deepseek_chat_v1", () => {
+    const fetchMock = vi.fn<typeof fetch>();
     const resolver = createCodeOwnedPolishAdapterResolverV2({
       env: { DEEPSEEK_API_KEY: "test-only-key" },
+      fetch: fetchMock,
     });
     expect(
       resolver(resolveProfile("deepseek.official.deepseek-v4-flash.chat.v1")),
     ).toMatchObject({ kind: "deepseek_chat_v1" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves only the registered MiMo profile to mimo_responses_v1", () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const resolver = createCodeOwnedPolishAdapterResolverV2({
+      env: { MIMO_API_KEY: "test-only-mimo-key" },
+      fetch: fetchMock,
+    });
+
+    expect(
+      resolver(resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1")),
+    ).toMatchObject({ kind: "mimo_responses_v1" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["blank", "   "],
+  ])("fails closed for a %s MiMo credential before transmission", (_label, key) => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const resolver = createCodeOwnedPolishAdapterResolverV2({
+      env: key === undefined ? {} : { MIMO_API_KEY: key },
+      fetch: fetchMock,
+    });
+
     expect(() =>
       resolver(resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1")),
-    ).toThrow(PolishAdapterUnavailableV2Error);
+    ).toThrow(/credential mimo_api_key is unavailable/u);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not substitute DeepSeek when the MiMo credential is unavailable", () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const resolver = createCodeOwnedPolishAdapterResolverV2({
+      env: { DEEPSEEK_API_KEY: "deepseek-must-not-be-used" },
+      fetch: fetchMock,
+    });
+
+    expect(() =>
+      resolver(resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1")),
+    ).toThrow(/credential mimo_api_key is unavailable/u);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unknown profile", "profileKey", "unknown.profile.v1"],
+    ["MiMo profile with DeepSeek adapter", "adapterKind", "deepseek_chat_v1"],
+    ["MiMo profile with DeepSeek credential alias", "credentialAlias", "deepseek_api_key"],
+    ["MiMo profile with DeepSeek endpoint alias", "endpointAlias", "deepseek_official"],
+  ])("rejects %s without provider substitution or transmission", (_label, field, value) => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const resolver = createCodeOwnedPolishAdapterResolverV2({
+      env: {
+        DEEPSEEK_API_KEY: "deepseek-must-not-be-used",
+        MIMO_API_KEY: "mimo-must-not-be-used",
+      },
+      fetch: fetchMock,
+    });
+    const crossed = structuredClone(
+      resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1"),
+    ) as unknown as Record<string, unknown>;
+    crossed[field] = value;
+
+    expect(() => resolver(crossed as unknown as ProfileExecutionConfigV1)).toThrow(
+      PolishAdapterUnavailableV2Error,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["adapter", "adapterKind", "mimo_responses_v1"],
+    ["credential alias", "credentialAlias", "mimo_api_key"],
+    ["endpoint alias", "endpointAlias", "mimo_cn_official"],
+  ])("rejects a DeepSeek profile crossed with the MiMo %s", (_label, field, value) => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const resolver = createCodeOwnedPolishAdapterResolverV2({
+      env: {
+        DEEPSEEK_API_KEY: "deepseek-must-not-be-used",
+        MIMO_API_KEY: "mimo-must-not-be-used",
+      },
+      fetch: fetchMock,
+    });
+    const crossed = structuredClone(
+      resolveProfile("deepseek.official.deepseek-v4-flash.chat.v1"),
+    ) as unknown as Record<string, unknown>;
+    crossed[field] = value;
+
+    expect(() => resolver(crossed as unknown as ProfileExecutionConfigV1)).toThrow(
+      PolishAdapterUnavailableV2Error,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("runs reserve → strict snapshot → profile → start → transmit → complete → finalize", async () => {
