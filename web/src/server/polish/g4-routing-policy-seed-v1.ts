@@ -97,7 +97,7 @@ export const G4_ROUTING_POLICY_SEED_V1 = deepFreeze({
   legalBundleVersion: "2026-08-23-multi-provider-v1",
   policies: {
     g4: {
-      id: "33333333-3333-4333-8333-333333333333",
+      id: "33333333-3333-4333-8333-333333333335",
       policyKey: "polish.deepseek-mimo.weekday.g4.v1",
       version: 1,
       status: "draft",
@@ -117,7 +117,7 @@ export const G4_ROUTING_POLICY_SEED_V1 = deepFreeze({
         "7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567",
     },
     rollback: {
-      id: "33333333-3333-4333-8333-333333333334",
+      id: "33333333-3333-4333-8333-333333333336",
       policyKey: "polish.deepseek-only.weekday.rollback.v1",
       version: 1,
       status: "draft",

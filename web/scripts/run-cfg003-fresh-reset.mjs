@@ -24,12 +24,10 @@ const repoRoot = path.resolve(webRoot, "..");
 const supabaseCli = path.join(repoRoot, "node_modules", "supabase", "dist", "supabase.js");
 const vitestCli = path.join(webRoot, "node_modules", "vitest", "vitest.mjs");
 const supabaseConfig = path.join(repoRoot, "supabase", "config.toml");
-const requiredMigration = path.join(
-  repoRoot,
-  "supabase",
-  "migrations",
-  "20260824007000_seed_g4_routing_policy.sql",
-);
+const requiredMigrations = [
+  path.join(repoRoot, "supabase", "migrations", "20260824007000_seed_g4_routing_policy.sql"),
+  path.join(repoRoot, "supabase", "migrations", "20260824008000_seed_weekday_routing_policy.sql"),
+];
 const requiredTest = path.join(webRoot, "test", "db", "g4-routing-policy-cfg-seed.test.ts");
 const CHILD_TIMEOUT_MS = 300_000;
 const KONG_RESTART_TIMEOUT_MS = 120_000;
@@ -76,7 +74,7 @@ export async function runCfg003FreshReset({
   if (!existsSyncImpl(supabaseCli)) return fail("the workspace Supabase CLI is not installed.");
   if (!existsSyncImpl(vitestCli)) return fail("the web Vitest dependency is not installed.");
   if (!existsSyncImpl(supabaseConfig)) return fail("supabase/config.toml is missing.");
-  if (!existsSyncImpl(requiredMigration)) return fail("the required CFG-003 routing-policy migration is missing.");
+  if (requiredMigrations.some((migration) => !existsSyncImpl(migration))) return fail("a required CFG-003 routing-policy migration is missing.");
   if (!existsSyncImpl(requiredTest)) return fail("the required CFG-003 routing-policy database test is missing.");
 
   let config;

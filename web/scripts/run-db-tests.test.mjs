@@ -535,12 +535,12 @@ it("CFG-002 fresh runner fails closed for its complete injected lifecycle", asyn
 it("CFG-003 fresh runner fails closed before side effects and preserves exact lifecycle", async () => {
   const missingMigration = freshHarness({
     runner: runCfg003FreshReset,
-    existsSyncImpl: (target) => !String(target).endsWith("20260824007000_seed_g4_routing_policy.sql"),
+    existsSyncImpl: (target) => !String(target).endsWith("20260824008000_seed_weekday_routing_policy.sql"),
   });
   expect(await missingMigration.run()).toBe(1);
   expect(missingMigration.calls).toHaveLength(0);
   expect(missingMigration.fetchCalls).toHaveLength(0);
-  expect(missingMigration.errors.join("\n")).toMatch(/CFG-003 routing-policy migration is missing/);
+  expect(missingMigration.errors.join("\n")).toMatch(/required CFG-003 routing-policy migration is missing/);
 
   const unsafeStatus = freshHarness({
     runner: runCfg003FreshReset,

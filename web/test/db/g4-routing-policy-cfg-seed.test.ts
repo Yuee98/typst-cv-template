@@ -6,8 +6,10 @@ import { G4_ROUTING_POLICY_SEED_V1 as SEED } from "../../src/server/polish/g4-ro
 import { RUN_DB_TESTS, sleep } from "./helpers";
 import { type OwnerSqlResult, runOwnerSql, startOwnerSql } from "./runtime-contract-fixtures";
 
-const migrationUrl = new URL("../../../supabase/migrations/20260824007000_seed_g4_routing_policy.sql", import.meta.url);
+const migrationUrl = new URL("../../../supabase/migrations/20260824008000_seed_weekday_routing_policy.sql", import.meta.url);
 const g2 = "33333333-3333-4333-8333-333333333332";
+const oldDailyG4 = "33333333-3333-4333-8333-333333333333";
+const oldDailyRollback = "33333333-3333-4333-8333-333333333334";
 const g4 = SEED.policies.g4.id;
 const rollback = SEED.policies.rollback.id;
 const DB_CONTAINER = "supabase_db_typst-cv-template";
@@ -135,25 +137,19 @@ describe("CFG-003 G4 routing-policy seed", () => {
     const sql = source();
     expect(sql.match(/^begin;$/gmu)).toHaveLength(1);
     expect(sql.match(/^commit;$/gmu)).toHaveLength(1);
-    expect(sql).toContain("CFG-003 routing policy identity collision");
-    expect(sql).toContain("CFG-003 routing policy group is partially present");
+    expect(sql).toContain("CFG-003 weekday routing policy identity collision");
+    expect(sql).toContain("CFG-003 weekday routing policy group is partially present");
     expect(sql).toContain("polish.deepseek-mimo.weekday.g4.v1");
     expect(sql).toContain("polish.deepseek-only.weekday.rollback.v1");
     expect(sql).toContain("7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567");
     expect(sql).toContain("c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418");
     expect(sql).toContain('"weekdays":[1,2,3,4,5]');
-    expect(sql).not.toContain("polish.deepseek-mimo.daily.g4.v1");
-    expect(sql).not.toContain("polish.deepseek-only.daily.rollback.v1");
-    expect(sql).toContain("components_sealed_at is null");
-    expect(sql).toContain("where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4\n  or not exists (");
-    expect(sql).not.toContain("where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4\n  ) or not exists (");
-    expect(sql).toContain("ai_legal_bundle_manifests as actual");
-    expect(sql).toContain("DeepSeek V4 Flash");
-    expect(sql).toContain("input_cache_write'::text, 0::bigint");
-    expect(sql).toContain("provider_effective_from = '2026-08-16T16:00:00Z'::timestamptz");
-    expect(sql).toContain("provider_effective_from = '2026-05-26T16:00:00Z'::timestamptz");
-    expect(sql).toContain("'899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5'");
-    expect(sql).toContain("'d43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3'");
+    expect(sql).toContain("polish.deepseek-mimo.daily.g4.v1");
+    expect(sql).toContain("polish.deepseek-only.daily.rollback.v1");
+    expect(sql).toContain("forbidden as a selected pointer target");
+    expect(sql).toContain("forbidden daily selection mismatch");
+    expect(sql).toContain("runtime.deepseek-v2-mimo-v2.5-pro.v2");
+    expect(sql).toContain("mimo_responses_v1");
     expect(testSource()).toContain("cleanupBarrier = true;");
     expect(testSource()).toContain("try { if (cleanupBarrier) removeReapplyBarrier(); } finally { restore(); }");
     expect(sql).not.toMatch(/\b(?:set_ai_routing_policy_pointer_v1|transition_ai_routing_policy|validate_ai_routing_policy|apply_ai_price_component_seal_intent)\b/u);
@@ -166,13 +162,15 @@ describe("CFG-003 G4 routing-policy seed", () => {
         'policies',(select jsonb_agg(jsonb_build_object('id',id,'key',policy_key,'version',version,'rules',rules,'default',default_profile_version_id,'legal',legal_bundle_version,'runtime',runtime_contract_id,'hash',runtime_contract_sha256,'config',config_sha256,'status',status,'validated',validated_at,'active',activated_at,'retired',retired_at) order by id) from public.ai_routing_policy_versions),
         'combined',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_contract_sha256='510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'),
         'legacy',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2.v1' and runtime_contract_sha256='229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'),
-        'dark',(select jsonb_build_object('mimoDraft',(select status='draft' and validated_at is null from public.ai_provider_profile_versions where id='22222222-2222-4222-8222-222222222221'::uuid),'mimoUnsealed',(select components_sealed_at is null from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid),'deepseekUnsealed',(select bool_and(components_sealed_at is null) from public.ai_price_versions where id in ('11111111-1111-4111-8111-111111111112'::uuid,'11111111-1111-4111-8111-111111111113'::uuid)))))::text;`) as Record<string, unknown>;
+        'dark',(select jsonb_build_object('mimoDraft',(select status='draft' and validated_at is null from public.ai_provider_profile_versions where id='22222222-2222-4222-8222-222222222221'::uuid),'mimoUnsealed',(select components_sealed_at is null from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid),'deepseekUnsealed',(select bool_and(components_sealed_at is null) from public.ai_price_versions where id in ('11111111-1111-4111-8111-111111111112'::uuid,'11111111-1111-4111-8111-111111111113'::uuid))),'oldDailyUnselected',(select count(*) = 0 from public.ai_feature_config where active_routing_policy_version_id in ('${oldDailyG4}'::uuid,'${oldDailyRollback}'::uuid))))::text;`) as Record<string, unknown>;
       const policies = value.policies as Array<Record<string, unknown>>;
-      expect(policies.map((x) => x.id)).toEqual([g2, g4, rollback]);
+      expect(policies.map((x) => x.id)).toEqual([g2, oldDailyG4, oldDailyRollback, g4, rollback]);
+      expect(policies).toContainEqual(expect.objectContaining({ id: oldDailyG4, key: "polish.deepseek-mimo.daily.g4.v1", config: "8c64daa9d7e9165417294e2d854b6ca77a2c7ba1db0611f15f9af7a67682bbe3", status: "draft", validated: null, active: null, retired: null }));
+      expect(policies).toContainEqual(expect.objectContaining({ id: oldDailyRollback, key: "polish.deepseek-only.daily.rollback.v1", config: "4bd1a83446b0b19903f9c08aece54e2418cb3f880b49b63f30cbea6c7b4e40dd", status: "draft", validated: null, active: null, retired: null }));
       for (const policy of Object.values(SEED.policies)) expect(policies).toContainEqual(expect.objectContaining({ id: policy.id, key: policy.policyKey, version: 1, rules: policy.rules, default: policy.defaultProfileVersionId, legal: SEED.legalBundleVersion, runtime: policy.runtimeContractId, hash: policy.runtimeContractSha256, config: policy.configSha256, status: "draft", validated: null, active: null, retired: null }));
       expect(value.combined).toEqual(["runtime-target.deepseek.official.deepseek-v4-flash.chat.v1", "runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1"]);
       expect(value.legacy).toEqual(["runtime-target.deepseek.official.deepseek-v4-flash.chat.v1"]);
-      expect(value.dark).toEqual({ mimoDraft: true, mimoUnsealed: true, deepseekUnsealed: true });
+      expect(value.dark).toEqual({ mimoDraft: true, mimoUnsealed: true, deepseekUnsealed: true, oldDailyUnselected: true });
     });
 
     it("serially replays byte-for-byte without pointer, audit, or ledger mutation", () => {

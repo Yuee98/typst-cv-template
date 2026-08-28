@@ -178,9 +178,9 @@ The repository's opt-in `MIMO_LIVE_SMOKE=1` conformance test is the separately
 paid local smoke referred to above. Keep it outside normal test runs and never
 use its result as activation or hosted authorization.
 
-For operations, use the DeepSeek-only rollback policy
-`33333333-3333-4333-8333-333333333334` first. Consider the G4 MiMo policy
-`33333333-3333-4333-8333-333333333333` only after it is explicitly validated
+For operations, use the DeepSeek-only weekday rollback policy
+`33333333-3333-4333-8333-333333333336` first. Consider the weekday G4 MiMo policy
+`33333333-3333-4333-8333-333333333335` only after it is explicitly validated
 and active, and only during the Beijing peak windows above. Neither policy
 may be activated from stale or legacy price evidence.
 
@@ -199,6 +199,11 @@ staged evidence, sealing, validation, and human gates have passed. Operators
 must use the separately seeded weekday DeepSeek-only successor first through the
 qualified lifecycle authority; G4 MiMo is considered only after it is active
 and only within the Beijing peak windows.
+
+The preceding daily policies `33333333-3333-4333-8333-333333333333` and
+`33333333-3333-4333-8333-333333333334` remain immutable historical drafts.
+They are explicitly forbidden as pointer targets or rollback candidates; do not
+select, validate, promote, or reactivate them.
 
 After any authorized lifecycle action, the qualified operator must read back
 and preserve evidence for all of the following before asking a human to enable
