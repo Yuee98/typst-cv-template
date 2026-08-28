@@ -272,6 +272,33 @@ describe("integration ledger evidence", () => {
     );
   });
 
+  it("uses the final ordered attempt as the parent failure-stage authority", () => {
+    const profile = DEEPSEEK_INTEGRATION_PROFILE;
+    const first = attempt(profile, {
+      status: "failed_upstream", failure_stage: "transport", transmitted: false,
+      provider_billable: false, usage_observation_kind: "unavailable", usage_complete: false,
+      input_cache_read_tokens: null, input_cache_write_tokens: null, input_standard_tokens: null,
+      output_tokens: null, reasoning_tokens: null, actual_upstream_endpoint: null, actual_model_id: null,
+      estimated_currency: null, estimated_cost_nanos: null, provider_reported_currency: null,
+      provider_reported_cost_nanos: null,
+    });
+    const second = attempt(profile, { attempt_no: 2, failure_stage: null });
+    const rows = [first, second];
+    const canonicalParent = parent(profile, rows);
+
+    expect(evaluateRequestLedgerEvidence(canonicalParent, rows, profile).ok).toBe(true);
+    expect(
+      evaluateRequestLedgerEvidence(
+        { ...canonicalParent, failure_stage: first.failure_stage },
+        rows,
+        profile,
+      ).issues,
+    ).toContain("parent_failure_stage_mismatch");
+    expect(evaluateRequestLedgerEvidence(canonicalParent, [...rows].reverse(), profile).issues).toEqual(
+      expect.arrayContaining(["attempt_no_gap_or_order", "parent_failure_stage_mismatch"]),
+    );
+  });
+
   it("requires complete route observations for transmitted terminal provider outcomes", () => {
     const profile = MIMO_INTEGRATION_PROFILE;
     for (const status of ["succeeded", "invalid_output", "failed_upstream", "timed_out"]) {
@@ -342,6 +369,7 @@ describe("integration ledger evidence", () => {
     const selected = new Set([...selection.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
     expect(ATTEMPT_EVIDENCE_FIELDS.filter((field) => !selected.has(field))).toEqual([]);
     expect(source).toContain('"reasoning_tokens"');
+    expect(source).toContain('.order("attempt_no", { ascending: true })');
     expect(source).toContain("UPSTREAM_URL_ENV_NAMES");
     expect(source).toContain("for (const name of UPSTREAM_URL_ENV_NAMES) env[name] = \"\";");
     expect(source).toContain('integrationProfile.name !== "deepseek" && deepseekBaseUrl');
