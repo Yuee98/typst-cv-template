@@ -234,21 +234,6 @@ function startOwnerSqlWithBarrier(
   return { ready, result, release: () => release() };
 }
 
-async function waitForActivity(applicationName: string, prefix: string): Promise<void> {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const state = runOwnerSql(String.raw`
-      \pset format unaligned
-      \pset tuples_only on
-      select coalesce(wait_event_type, '') || ':' || coalesce(wait_event, '')
-      from pg_catalog.pg_stat_activity
-      where application_name = '${applicationName}';
-    `).stdout;
-    if (state.split(/\r?\n/u).some((line) => line.trim().startsWith(prefix))) return;
-    await sleep(25);
-  }
-  throw new Error(`${applicationName} never reached ${prefix}`);
-}
-
 async function waitForDatabaseLock(
   applicationName: string,
   contender?: Promise<OwnerSqlResult>,
@@ -296,6 +281,26 @@ function seedGraphCounts(): Record<string, number> {
   `) as Record<string, number>;
 }
 
+function successorTargetProjection(): unknown {
+  return ownerJson(String.raw`
+    select pg_catalog.jsonb_build_object(
+      'targets', (
+        select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value)
+          order by runtime_target_id collate "C"), '[]'::jsonb)
+        from public.ai_service_runtime_target_versions as row_value
+        where runtime_target_id in ('${TARGETS[0].runtimeTargetId}', '${TARGETS[1].runtimeTargetId}')
+      ),
+      'memberships', (
+        select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value)
+          order by runtime_contract_id collate "C", runtime_target_id collate "C"), '[]'::jsonb)
+        from public.ai_service_runtime_contract_targets as row_value
+        where runtime_target_id in ('${TARGETS[0].runtimeTargetId}', '${TARGETS[1].runtimeTargetId}')
+          and runtime_contract_id <> '${CONTRACT.runtimeContractId}'
+      )
+    )::text;
+  `);
+}
+
 function makeSeedAbsent(): void {
   const result = runOwnerSql(String.raw`
     \set ON_ERROR_STOP on
@@ -306,7 +311,12 @@ function makeSeedAbsent(): void {
     delete from public.ai_service_runtime_contract_versions
     where runtime_contract_id='${CONTRACT.runtimeContractId}';
     delete from public.ai_service_runtime_target_versions
-    where runtime_target_id='${TARGETS[1].runtimeTargetId}';
+    where runtime_target_id='${TARGETS[1].runtimeTargetId}'
+      and not exists (
+        select 1 from public.ai_service_runtime_contract_targets
+        where runtime_target_id='${TARGETS[1].runtimeTargetId}'
+          and runtime_contract_id <> '${CONTRACT.runtimeContractId}'
+      );
     delete from public.ai_price_components where price_version_id='${PRICE_ID}'::uuid;
     delete from public.ai_price_versions where id='${PRICE_ID}'::uuid;
     delete from public.ai_provider_profile_versions where id='${PROFILE_VERSION_ID}'::uuid;
@@ -316,7 +326,7 @@ function makeSeedAbsent(): void {
   `);
   expect(result.status, result.stderr).toBe(0);
   expect(seedGraphCounts()).toEqual({
-    profile: 0, version: 0, price: 0, components: 0, root: 0, mimoTarget: 0, memberships: 0,
+    profile: 0, version: 0, price: 0, components: 0, root: 0, mimoTarget: 1, memberships: 0,
   });
 }
 
@@ -606,6 +616,14 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     expect(snapshot()).toBe(before);
   });
 
+  it("removes and reapplies only the CFG002 owner slice without touching shared successor targets", () => {
+    const before = successorTargetProjection();
+    makeSeedAbsent();
+    expect(successorTargetProjection()).toEqual(before);
+    restoreSeed();
+    expect(successorTargetProjection()).toEqual(before);
+  });
+
   it("observes a real unique-key lock for identical concurrent reapplication, then retries unchanged", async () => {
     makeSeedAbsent();
     installReapplyBarrier();
@@ -719,7 +737,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
           // migration would have authored after its observed absence is absent.
           expect(seedGraphCounts()).toEqual({
             profile: collision.id === PROFILE_ID ? 1 : 0,
-            version: 0, price: 0, components: 0, root: 0, mimoTarget: 0, memberships: 0,
+            version: 0, price: 0, components: 0, root: 0, mimoTarget: 1, memberships: 0,
           });
           const profileDomain = ownerJson(String.raw`
             select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value)
@@ -759,15 +777,14 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
   it("serializes membership authoring before root sealing on the real root lock", async () => {
     const before = snapshot();
     const root = createUnsealedRaceRoot("membership-first", [TARGETS[0]]);
-    const holderApplication = pgApplicationName("member-holder");
     const contenderApplication = pgApplicationName("member-seal");
-    // This mirrors the established DB007 mutation-first schedule: the real
-    // membership trigger takes root FOR UPDATE, then pg_sleep only keeps that
-    // already-acquired transaction lock observable while the seal is sent.
-    const holder = startOwnerSql(
+    const marker = `CFG002_MEMBERSHIP_HELD_${randomUUID()}`;
+    // The INSERT completes only after the real membership trigger has taken
+    // the root lock.  Keep that transaction open with a stdin handshake, not
+    // a clock guess, until the sealing contender is observably blocked on it.
+    const holder = startOwnerSqlWithBarrier(
       String.raw`
         \set ON_ERROR_STOP on
-        set application_name='${holderApplication}';
         begin;
         set local statement_timeout='10s';
         insert into public.ai_service_runtime_contract_targets (
@@ -775,12 +792,13 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
           runtime_target_id, runtime_target_sha256, profile_key,
           legal_manifest_id, manifest_sha256, route_descriptor_id, route_descriptor_sha256
         ) values ${membershipValues(root.id, root.hash, TARGETS[1])};
-        select pg_catalog.pg_sleep(0.75);
-        commit;
+        \echo ${marker}
       `,
+      marker,
+      "commit;",
     );
     try {
-      await waitForActivity(holderApplication, "Timeout:PgSleep");
+      await holder.ready;
       const contender = startOwnerSql(String.raw`
         \set ON_ERROR_STOP on
         \set VERBOSITY verbose
@@ -792,14 +810,16 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         where runtime_contract_id='${root.id}' and runtime_contract_sha256='${root.hash}';
         commit;
       `);
-      await waitForDatabaseLock(contenderApplication, contender);
-      const [authored, sealed] = await Promise.all([holder, contender]);
+      await waitForDatabaseLock(contenderApplication, contender, "transactionid");
+      holder.release();
+      const [authored, sealed] = await Promise.all([holder.result, contender]);
       expect(authored.status, authored.stderr).toBe(0);
       expect(sealed.status, sealed.stderr).toBe(0);
       assertNoDeadlockOrLockTimeout(sealed);
       expectExactSealedRaceRoot(root.id, root.hash);
     } finally {
-      await holder.catch(() => undefined);
+      holder.release();
+      await holder.result.catch(() => undefined);
       removeRaceRoot(root.id);
       expect(snapshot()).toBe(before);
     }
@@ -869,7 +889,12 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       delete from public.ai_service_runtime_contract_versions
       where runtime_contract_id='${CONTRACT.runtimeContractId}';
       delete from public.ai_service_runtime_target_versions
-      where runtime_target_id='${TARGETS[1].runtimeTargetId}';
+      where runtime_target_id='${TARGETS[1].runtimeTargetId}'
+        and not exists (
+          select 1 from public.ai_service_runtime_contract_targets
+          where runtime_target_id='${TARGETS[1].runtimeTargetId}'
+            and runtime_contract_id <> '${CONTRACT.runtimeContractId}'
+        );
       delete from public.ai_price_components where price_version_id='${PRICE_ID}'::uuid;
       delete from public.ai_price_versions where id='${PRICE_ID}'::uuid;
       delete from public.ai_provider_profile_versions where id='${PROFILE_VERSION_ID}'::uuid;
