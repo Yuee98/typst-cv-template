@@ -123,13 +123,29 @@ passed. There is no automatic fallback and no hosted activation authorization.
 The current external price evidence that must be rechecked before local
 activation is:
 
-- DeepSeek is effective at `2026-08-16T16:00:00Z`, with daily Asia/Shanghai
-  windows `09:00-12:00` and `14:00-18:00`. Its raw snapshot was checked at
-  `2026-08-28T08:05:41.804Z`, hash prefix `899aff...`.
+- DeepSeek V4 Flash peak/offpeak pricing is sourced from the official pricing
+  page/announcement at
+  `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`. That evidence
+  establishes `2026-08-16T16:00:00Z` as the current effective start, with
+  daily Asia/Shanghai windows `09:00-12:00` and `14:00-18:00`. Its raw
+  snapshot was rechecked at `2026-08-28T08:05:41.804Z`, hash prefix
+  `899aff...`.
 - MiMo is effective at `2026-05-26T16:00:00Z`. Its current pricing page was
-  checked at `2026-08-28T08:05:41.986Z`, hash prefix `d43d...`. The
-  cache-write component is limited-time free with an unknown end date; treat
-  that as an expiring fact, not a permanent zero price.
+  checked at `2026-08-28T08:05:41.986Z`, hash prefix `d43d...` (official page:
+  `https://mimo.mi.com/docs/en-US/price/pay-as-you-go`). The cache-write
+  component is limited-time free with an unknown end date; treat that as an
+  expiring fact, not a permanent zero price.
+
+The price authority graph is **official page/announcement evidence -> planned
+exact provenance seed -> DB-013 seal and validation -> policy/pointer**. The
+current effective date must come from the first node, not be inferred by
+reading a DB-012 legacy row. DB-012's legacy `provider_effective_to` records
+the same `2026-08-16T16:00:00Z` transition boundary solely to close the
+historical lane; it neither establishes the current price nor authorizes that
+legacy price for activation. Until the provenance seed carrying the exact
+source URL, check timestamp, snapshot hash, and effective date above is
+integrated and the local database is fresh-reset, remain fail-closed and do
+not report that correction as already present.
 
 These facts are evidence inputs, not permission to activate or call a
 provider. A historical legacy price is never activatable. The current
