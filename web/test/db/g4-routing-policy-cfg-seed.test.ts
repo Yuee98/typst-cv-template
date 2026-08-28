@@ -180,7 +180,8 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql).toContain("pg_get_constraintdef(oid, true)");
     expect(sql).toContain("is distinct from expected_policy_constraint");
     expect(sql).not.toContain("policy_constraint not like");
-    expect(testSource()).toContain("oldDailyRollback}'::uuid)))))::text;");
+    expect(testSource()).toContain("'dark', jsonb_build_object(");
+    expect(testSource()).toContain("'oldDailyUnselected', (select count(*) = 0");
     expect(sql).toContain("runtime.deepseek-v2-mimo-v2.5-pro.v2");
     expect(sql).toContain("mimo_responses_v1");
     expect(testSource()).toContain("cleanupBarrier = true;");
@@ -192,11 +193,17 @@ describe("CFG-003 G4 routing-policy seed", () => {
   describe.skipIf(!RUN_DB_TESTS)("real DB", () => {
     it("has exactly G2 plus both dark candidates, exact selectors, memberships, and darkness", () => {
       const value = json(String.raw`select jsonb_build_object(
-        'policies',(select jsonb_agg(jsonb_build_object('id',id,'key',policy_key,'version',version,'rules',rules,'default',default_profile_version_id,'legal',legal_bundle_version,'runtime',runtime_contract_id,'hash',runtime_contract_sha256,'config',config_sha256,'status',status,'validated',validated_at,'active',activated_at,'retired',retired_at) order by id) from public.ai_routing_policy_versions),
-        'combined',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_contract_sha256='510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'),
-        'legacy',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2.v1' and runtime_contract_sha256='229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'),
-        'constraints',(select jsonb_agg(jsonb_build_object('name',conname,'definition',pg_get_constraintdef(oid,true),'validated',convalidated) order by conname) from pg_constraint where (conrelid='public.ai_routing_policy_versions'::regclass and conname='ai_routing_policy_versions_cfg003_daily_dark_check') or (conrelid='public.ai_feature_config'::regclass and conname='ai_feature_config_cfg003_daily_pointer_check')),
-        'dark',(select jsonb_build_object('mimoDraft',(select status='draft' and validated_at is null from public.ai_provider_profile_versions where id='22222222-2222-4222-8222-222222222221'::uuid),'mimoUnsealed',(select components_sealed_at is null from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid),'deepseekUnsealed',(select bool_and(components_sealed_at is null) from public.ai_price_versions where id in ('11111111-1111-4111-8111-111111111112'::uuid,'11111111-1111-4111-8111-111111111113'::uuid))),'oldDailyUnselected',(select count(*) = 0 from public.ai_feature_config where active_routing_policy_version_id in ('${oldDailyG4}'::uuid,'${oldDailyRollback}'::uuid)))))::text;`) as Record<string, unknown>;
+        'policies', (select jsonb_agg(jsonb_build_object('id', id, 'key', policy_key, 'version', version, 'rules', rules, 'default', default_profile_version_id, 'legal', legal_bundle_version, 'runtime', runtime_contract_id, 'hash', runtime_contract_sha256, 'config', config_sha256, 'status', status, 'validated', validated_at, 'active', activated_at, 'retired', retired_at) order by id) from public.ai_routing_policy_versions),
+        'combined', (select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'),
+        'legacy', (select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id = 'runtime.deepseek-v2.v1' and runtime_contract_sha256 = '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'),
+        'constraints', (select jsonb_agg(jsonb_build_object('name', conname, 'definition', pg_get_constraintdef(oid, true), 'validated', convalidated) order by conname) from pg_constraint where (conrelid = 'public.ai_routing_policy_versions'::regclass and conname = 'ai_routing_policy_versions_cfg003_daily_dark_check') or (conrelid = 'public.ai_feature_config'::regclass and conname = 'ai_feature_config_cfg003_daily_pointer_check')),
+        'dark', jsonb_build_object(
+          'mimoDraft', (select status = 'draft' and validated_at is null from public.ai_provider_profile_versions where id = '22222222-2222-4222-8222-222222222221'::uuid),
+          'mimoUnsealed', (select components_sealed_at is null from public.ai_price_versions where id = '22222222-2222-4222-8222-222222222222'::uuid),
+          'deepseekUnsealed', (select bool_and(components_sealed_at is null) from public.ai_price_versions where id in ('11111111-1111-4111-8111-111111111112'::uuid, '11111111-1111-4111-8111-111111111113'::uuid)),
+          'oldDailyUnselected', (select count(*) = 0 from public.ai_feature_config where active_routing_policy_version_id in ('${oldDailyG4}'::uuid, '${oldDailyRollback}'::uuid))
+        )
+      )::text;`) as Record<string, unknown>;
       const policies = value.policies as Array<Record<string, unknown>>;
       expect(policies.map((x) => x.id)).toEqual([g2, oldDailyG4, oldDailyRollback, g4, rollback]);
       expect(policies).toContainEqual(expect.objectContaining({ id: oldDailyG4, key: "polish.deepseek-mimo.daily.g4.v1", config: "8c64daa9d7e9165417294e2d854b6ca77a2c7ba1db0611f15f9af7a67682bbe3", status: "draft", validated: null, active: null, retired: null }));
