@@ -3666,6 +3666,129 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt request settlement (real DB)", 
     });
   });
 
+  it("finalizes a transmitted V2 cancellation whose child failed in transport", async () => {
+    await harness.activateFreshRouteFixture();
+    const value = await completed("v2-transport-cancellation", {
+      p_status: "canceled",
+      p_transmitted: true,
+      p_retry_eligible: false,
+      p_provider_billable: null,
+      p_usage: null,
+      p_cost: costObservation({
+        estimated_currency: null,
+        estimated_cost_nanos: null,
+        reconciliation_status: "incomplete_usage",
+      }),
+      p_metadata: attemptMetadata({
+        finish_reason: null,
+        failure_stage: "transport",
+      }),
+    });
+    const before = await settlementSnapshot(
+      value.user.id,
+      value.reservation.reservationId,
+    );
+
+    const cancellation = await service.rpc(
+      "record_ai_polish_request_cancellation",
+      {
+        p_reservation_id: value.reservation.reservationId,
+        p_observation: "observed",
+      },
+    );
+    expect(cancellation.error).toBeNull();
+    expect(cancellation.data).toMatchObject({ ok: true, state: "observed" });
+    expect(
+      await harness.finalize(value.reservation.reservationId, {
+        status: "canceled",
+        quotaCharged: true,
+        providerBillable: null,
+      }),
+    ).toMatchObject({
+      ok: true,
+      alreadyFinalized: false,
+      status: "canceled",
+      quotaCharged: true,
+      providerBillable: null,
+    });
+
+    const attempts = await service
+      .from("ai_provider_attempt_ledger")
+      .select("*")
+      .eq("reservation_id", value.reservation.reservationId)
+      .order("attempt_no");
+    expect(attempts.error).toBeNull();
+    expect(attempts.data).toHaveLength(1);
+    expect(attempts.data![0]).toMatchObject({
+      status: "canceled",
+      transmitted: true,
+      retry_eligible: false,
+      provider_billable: null,
+      usage_observation_kind: "unavailable",
+      cost_reconciliation_status: "incomplete_usage",
+      failure_stage: "transport",
+    });
+
+    const terminal = await settlementSnapshot(
+      value.user.id,
+      value.reservation.reservationId,
+    );
+    expect(terminal.request).toMatchObject({
+      state: "finalized",
+      status: "canceled",
+      quota_charged: true,
+      provider_billable: null,
+      cancellation_state: "observed",
+      attempt_count: 1,
+      failure_stage: "transport",
+      usage_schema_version: "request_usage_aggregate_v2",
+      usage_complete: false,
+      estimated_cost_nanos: null,
+      cost_reconciliation_status: "incomplete_usage",
+    });
+    expect(terminal.request!.incomplete_fields).toEqual(
+      expect.arrayContaining([
+        "attempt_usage",
+        "input_cache_write",
+        "reasoning",
+        "provider_billable",
+        "estimated_cost",
+      ]),
+    );
+    expect(terminal.user).toEqual(before.user);
+    expect(terminal.global).toEqual(before.global);
+    expect(terminal.profile).toHaveLength(1);
+    expect(terminal.profile[0]).toMatchObject({
+      request_count: 1,
+      input_total_tokens: 0,
+      output_tokens: 0,
+      cost_incomplete_count: 1,
+    });
+
+    expect(
+      await harness.finalize(value.reservation.reservationId, {
+        status: "canceled",
+        quotaCharged: true,
+        providerBillable: null,
+      }),
+    ).toMatchObject({ ok: true, alreadyFinalized: true, status: "canceled" });
+    const cancellationReplay = await service.rpc(
+      "record_ai_polish_request_cancellation",
+      {
+        p_reservation_id: value.reservation.reservationId,
+        p_observation: "observed",
+      },
+    );
+    expect(cancellationReplay.error).toBeNull();
+    expect(cancellationReplay.data).toEqual({
+      ok: false,
+      reason: "ALREADY_FINALIZED",
+    });
+    expect(
+      await settlementSnapshot(value.user.id, value.reservation.reservationId),
+    ).toEqual(terminal);
+  });
+
   it("linearizes cancellation-first settlement and keeps charged counters exact on replay", async () => {
     await harness.activateFreshRouteFixture();
     const value = await completed("race-cancellation-before-finalize", {
