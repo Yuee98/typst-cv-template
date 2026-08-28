@@ -21,6 +21,7 @@ interface BarrierSqlProcess {
 }
 
 const source = () => readFileSync(migrationUrl, "utf8");
+const testSource = () => readFileSync(new URL(import.meta.url), "utf8");
 const body = () => source().replace(/^begin;\s*$/mu, "").replace(/^commit;\s*$/mu, "");
 function json(sql: string): unknown {
   const out = runOwnerSql(String.raw`\pset tuples_only on
@@ -140,6 +141,8 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql).toContain("ai_legal_bundle_manifests as actual");
     expect(sql).toContain("DeepSeek V4 Flash");
     expect(sql).toContain("input_cache_write'::text, 0::bigint");
+    expect(testSource()).toContain("cleanupBarrier = true;");
+    expect(testSource()).toContain("try { if (cleanupBarrier) removeReapplyBarrier(); } finally { restore(); }");
     expect(sql).not.toMatch(/\b(?:set_ai_routing_policy_pointer_v1|transition_ai_routing_policy|validate_ai_routing_policy|apply_ai_price_component_seal_intent)\b/u);
     expect(sql).not.toMatch(/\b(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?(?:ai_feature_config|ai_request_ledger|ai_provider_attempt_ledger|ai_usage_daily|ai_global_usage_daily|ai_profile_usage_daily|ai_rate_minutes|ai_routing_lifecycle_audit|ai_routing_policy_transition_intents)\b/iu);
   });
@@ -209,11 +212,13 @@ describe("CFG-003 G4 routing-policy seed", () => {
       const beforePolicies = policyGraph();
       const marker = `CFG003_REAPPLY_HELD_${randomUUID()}`;
       let holder: BarrierSqlProcess | undefined;
-      let barrierInstalled = false;
+      let cleanupBarrier = false;
       try {
         removePolicies();
+        // Cleanup is required before installation: the function may be
+        // created even if the subsequent trigger statement fails.
+        cleanupBarrier = true;
         installReapplyBarrier();
-        barrierInstalled = true;
         holder = startOwnerSqlWithBarrier(String.raw`\set ON_ERROR_STOP on
           begin;
           select pg_catalog.pg_advisory_xact_lock(${CFG003_REAPPLY_ADVISORY_LOCK_KEY});
@@ -242,8 +247,7 @@ describe("CFG-003 G4 routing-policy seed", () => {
       } finally {
         holder?.release();
         await holder?.result.catch(() => undefined);
-        if (barrierInstalled) removeReapplyBarrier();
-        restore();
+        try { if (cleanupBarrier) removeReapplyBarrier(); } finally { restore(); }
       }
     });
 
@@ -253,6 +257,7 @@ describe("CFG-003 G4 routing-policy seed", () => {
       ["mutated DeepSeek offpeak component", `update public.ai_price_components set nanos_per_million=1 where price_version_id='11111111-1111-4111-8111-111111111112'::uuid and component='input_standard';`],
       ["missing DeepSeek peak component", `delete from public.ai_price_components where price_version_id='11111111-1111-4111-8111-111111111113'::uuid and component='output';`],
       ["extra DeepSeek offpeak component", `insert into public.ai_price_components (price_version_id,component,nanos_per_million) values ('11111111-1111-4111-8111-111111111112'::uuid,'input_cache_write',0);`],
+      ["mutated MiMo cache-write component", `update public.ai_price_components set nanos_per_million=1 where price_version_id='22222222-2222-4222-8222-222222222222'::uuid and component='input_cache_write';`],
       ["mutated DeepSeek profile parent", `update public.ai_provider_profiles set display_name='forged' where id='11111111-1111-4111-8111-111111111110'::uuid;`],
       ["missing legal membership", `delete from public.ai_legal_bundle_manifests where legal_bundle_version='2026-08-23-multi-provider-v1' and legal_manifest_id='mimo-cn-2026-08-23-v1';`],
     ])("fails closed for % from fresh-absent CFG003 state", (_name, mutate) => {
