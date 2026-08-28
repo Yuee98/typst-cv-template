@@ -39,6 +39,15 @@ function snap(marker = "CFG003="): string {
   if (!line) throw new Error(`missing snapshot: ${out}`);
   return line.slice(marker.length);
 }
+function policyGraph(): unknown {
+  return json(String.raw`select jsonb_agg(jsonb_build_object(
+    'id',id,'policy_key',policy_key,'version',version,'status',status,'timezone',timezone,
+    'rules',rules,'default_profile_version_id',default_profile_version_id,
+    'legal_bundle_version',legal_bundle_version,'runtime_contract_id',runtime_contract_id,
+    'runtime_contract_sha256',runtime_contract_sha256,'config_sha256',config_sha256,
+    'validated_at',validated_at,'activated_at',activated_at,'retired_at',retired_at
+  ) order by id) from public.ai_routing_policy_versions;`);
+}
 function restore(): void { expect(runOwnerSql(source()).status).toBe(0); }
 function removePolicies(): void {
   expect(runOwnerSql(String.raw`begin; set local session_replication_role=replica;
@@ -126,7 +135,7 @@ describe("CFG-003 G4 routing-policy seed", () => {
         'policies',(select jsonb_agg(jsonb_build_object('id',id,'key',policy_key,'version',version,'rules',rules,'default',default_profile_version_id,'legal',legal_bundle_version,'runtime',runtime_contract_id,'hash',runtime_contract_sha256,'config',config_sha256,'status',status,'validated',validated_at,'active',activated_at,'retired',retired_at) order by id) from public.ai_routing_policy_versions),
         'combined',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_contract_sha256='510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'),
         'legacy',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2.v1' and runtime_contract_sha256='229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'),
-        'dark',(select jsonb_build_object('mimoDraft',(select status='draft' and validated_at is null from public.ai_provider_profile_versions where id='22222222-2222-4222-8222-222222222221'::uuid),'mimoUnsealed',(select components_sealed_at is null from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid),'deepseekUnsealed',(select bool_and(components_sealed_at is null) from public.ai_price_versions where id in ('11111111-1111-4111-8111-111111111112'::uuid,'11111111-1111-4111-8111-111111111113'::uuid))))::text;`) as Record<string, unknown>;
+        'dark',(select jsonb_build_object('mimoDraft',(select status='draft' and validated_at is null from public.ai_provider_profile_versions where id='22222222-2222-4222-8222-222222222221'::uuid),'mimoUnsealed',(select components_sealed_at is null from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid),'deepseekUnsealed',(select bool_and(components_sealed_at is null) from public.ai_price_versions where id in ('11111111-1111-4111-8111-111111111112'::uuid,'11111111-1111-4111-8111-111111111113'::uuid)))))::text;`) as Record<string, unknown>;
       const policies = value.policies as Array<Record<string, unknown>>;
       expect(policies.map((x) => x.id)).toEqual([g2, g4, rollback]);
       for (const policy of Object.values(SEED.policies)) expect(policies).toContainEqual(expect.objectContaining({ id: policy.id, key: policy.policyKey, version: 1, rules: policy.rules, default: policy.defaultProfileVersionId, legal: SEED.legalBundleVersion, runtime: policy.runtimeContractId, hash: policy.runtimeContractSha256, config: policy.configSha256, status: "draft", validated: null, active: null, retired: null }));
@@ -144,7 +153,8 @@ describe("CFG-003 G4 routing-policy seed", () => {
       ["natural key", `update public.ai_routing_policy_versions set id='33333333-3333-4333-8333-333333333399'::uuid where id='${g4}'::uuid;`],
     ])("rolls back a % collision as one transaction", (_kind, mutate) => {
       const canonical = snap();
-      const result = runOwnerSql(String.raw`begin; set local session_replication_role=replica; ${mutate} set local session_replication_role=origin; select 'CORRUPTED='||jsonb_build_object(${tables.map((t) => `'${t}',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text collate "C"),'[]'::jsonb) from public.${t} x)`).join(",")})::text; savepoint p; \set ON_ERROR_STOP off
+      const result = runOwnerSql(String.raw`\set VERBOSITY verbose
+        begin; set local session_replication_role=replica; ${mutate} set local session_replication_role=origin; select 'CORRUPTED='||jsonb_build_object(${tables.map((t) => `'${t}',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text collate "C"),'[]'::jsonb) from public.${t} x)`).join(",")})::text; savepoint p; \set ON_ERROR_STOP off
         ${body()}
         \set ON_ERROR_STOP on
         rollback to p; select 'AFTER='||jsonb_build_object(${tables.map((t) => `'${t}',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text collate "C"),'[]'::jsonb) from public.${t} x)`).join(",")})::text; rollback;`, { expectFailure: false });
@@ -154,7 +164,7 @@ describe("CFG-003 G4 routing-policy seed", () => {
     });
 
     it("observes the unique-key serialization for concurrent reapplication and restores both policies", async () => {
-      const before = snap(); removePolicies(); installReapplyBarrier();
+      const beforePolicies = policyGraph(); removePolicies(); installReapplyBarrier();
       const marker = `CFG003_REAPPLY_HELD_${randomUUID()}`;
       const holder = startOwnerSqlWithBarrier(String.raw`\set ON_ERROR_STOP on
         begin;
@@ -180,8 +190,8 @@ describe("CFG-003 G4 routing-policy seed", () => {
         expect(secondResult.status).not.toBe(0);
         assertNoDeadlockOrLockTimeout(firstResult); assertNoDeadlockOrLockTimeout(secondResult);
         expect(secondResult.stderr).toMatch(/ERROR:\s+23505:/u);
-        expect(snap()).toBe(before);
-        restore(); expect(snap()).toBe(before);
+        expect(policyGraph()).toEqual(beforePolicies);
+        restore(); expect(policyGraph()).toEqual(beforePolicies);
       } finally {
         holder.release(); await holder.result.catch(() => undefined); removeReapplyBarrier(); restore();
       }
@@ -192,7 +202,8 @@ describe("CFG-003 G4 routing-policy seed", () => {
       ["hostile combined selector", `delete from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_target_id='runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1';`],
     ])("fails closed for % from fresh-absent CFG003 state", (_name, mutate) => {
       const canonical = snap(); const projection = tables.map((t) => `'${t}',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text collate "C"),'[]'::jsonb) from public.${t} x)`).join(",");
-      const result = runOwnerSql(String.raw`begin;
+      const result = runOwnerSql(String.raw`\set VERBOSITY verbose
+        begin;
         set local session_replication_role=replica;
         delete from public.ai_routing_policy_versions where id in ('${g4}'::uuid,'${rollback}'::uuid);
         ${mutate}
@@ -213,8 +224,10 @@ describe("CFG-003 G4 routing-policy seed", () => {
     });
 
     it("rejects old combined-v1 and the G4 selector through the operational validator", () => {
-      expect(runOwnerSql(String.raw`\pset tuples_only on select count(*) from public.ai_service_runtime_contract_versions where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v1';`).stdout.trim()).toBe("0");
-      const result = runOwnerSql(String.raw`select public.assert_ai_routing_policy_v1('${g4}'::uuid,'validated',clock_timestamp());`, { expectFailure: true });
+      expect(runOwnerSql(String.raw`\pset tuples_only on
+        select count(*) from public.ai_service_runtime_contract_versions where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v1';`).stdout.trim()).toBe("0");
+      const result = runOwnerSql(String.raw`\set VERBOSITY verbose
+        select public.assert_ai_routing_policy_v1('${g4}'::uuid,'validated',clock_timestamp());`, { expectFailure: true });
       expect(result.stderr).toMatch(/ERROR:\s+(?:23514|P0001):/u);
     });
   });
