@@ -138,6 +138,8 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql).toContain("CFG-003 routing policy identity collision");
     expect(sql).toContain("CFG-003 routing policy group is partially present");
     expect(sql).toContain("components_sealed_at is null");
+    expect(sql).toContain("where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4\n  or not exists (");
+    expect(sql).not.toContain("where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4\n  ) or not exists (");
     expect(sql).toContain("ai_legal_bundle_manifests as actual");
     expect(sql).toContain("DeepSeek V4 Flash");
     expect(sql).toContain("input_cache_write'::text, 0::bigint");
