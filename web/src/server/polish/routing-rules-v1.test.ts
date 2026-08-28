@@ -18,7 +18,7 @@ describe("routing_rules_v1", () => {
     source.windows[0].weekdays[0] = 7;
 
     expect(rules.defaultRoute).toEqual(fixture.routes.deepseekOffpeak);
-    expect(rules.windows[0].weekdays).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(rules.windows[0].weekdays).toEqual([1, 2, 3, 4, 5]);
     expect(Object.isFrozen(rules)).toBe(true);
     expect(Object.isFrozen(rules.windows)).toBe(true);
     expect(Object.isFrozen(rules.windows[0].weekdays)).toBe(true);

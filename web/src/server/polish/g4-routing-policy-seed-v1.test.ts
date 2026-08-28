@@ -23,7 +23,7 @@ function expectDeeplyFrozen(value: unknown): void {
   for (const child of Object.values(value)) expectDeeplyFrozen(child);
 }
 
-describe("CFG-003 G4 daily routing policy seed", () => {
+describe("CFG-003 G4 weekday routing policy seed", () => {
   it("is a deeply frozen literal graph with exact JCS digests", () => {
     expectDeeplyFrozen(G4_ROUTING_POLICY_SEED_V1);
     for (const policy of Object.values(G4_ROUTING_POLICY_SEED_V1.policies)) {
@@ -31,7 +31,7 @@ describe("CFG-003 G4 daily routing policy seed", () => {
     }
   });
 
-  it("uses daily windows while preserving G2 as a distinct historical policy", () => {
+  it("uses weekday windows while preserving G2 as a distinct historical policy", () => {
     const { g4, rollback } = G4_ROUTING_POLICY_SEED_V1.policies;
     expect(validateRoutingRulesV1(g4.rules)).toEqual(fixture.validRules.g4InitialProvider);
     expect(validateRoutingRulesV1(rollback.rules).windows.map((window) => window.route)).toEqual([
@@ -39,21 +39,27 @@ describe("CFG-003 G4 daily routing policy seed", () => {
       fixture.routes.deepseekPeak,
     ]);
     expect(fixture.validRules.g2DeepseekOnly.windows[0].weekdays).toEqual([1, 2, 3, 4, 5]);
-    expect(g4.rules.windows.flatMap((window) => window.weekdays)).toEqual([1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]);
+    expect(g4.policyKey).toBe("polish.deepseek-mimo.weekday.g4.v1");
+    expect(rollback.policyKey).toBe("polish.deepseek-only.weekday.rollback.v1");
+    expect(g4.rules.windows.flatMap((window) => window.weekdays)).toEqual([1, 2, 3, 4, 5, 1, 2, 3, 4, 5]);
+    expect(rollback.rules.windows.flatMap((window) => window.weekdays)).toEqual([1, 2, 3, 4, 5, 1, 2, 3, 4, 5]);
+    expect(g4.configSha256).toBe("7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567");
+    expect(rollback.configSha256).toBe("c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418");
   });
 
   it.each(Array.from({ length: 7 }, (_, index) => index))(
-    "uses the same half-open boundaries on ISO weekday %i",
+    "uses weekday peak windows and weekend offpeak routing on day offset %i",
     (offset) => {
       const day = String(24 + offset).padStart(2, "0");
+      const peakRoute = offset < 5 ? fixture.routes.mimoDefault : fixture.routes.deepseekOffpeak;
       const expected = [
         ["00:59:59", fixture.routes.deepseekOffpeak],
-        ["01:00:00", fixture.routes.mimoDefault],
-        ["03:59:59", fixture.routes.mimoDefault],
+        ["01:00:00", peakRoute],
+        ["03:59:59", peakRoute],
         ["04:00:00", fixture.routes.deepseekOffpeak],
         ["05:59:59", fixture.routes.deepseekOffpeak],
-        ["06:00:00", fixture.routes.mimoDefault],
-        ["09:59:59", fixture.routes.mimoDefault],
+        ["06:00:00", peakRoute],
+        ["09:59:59", peakRoute],
         ["10:00:00", fixture.routes.deepseekOffpeak],
       ] as const;
 

@@ -137,6 +137,13 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql.match(/^commit;$/gmu)).toHaveLength(1);
     expect(sql).toContain("CFG-003 routing policy identity collision");
     expect(sql).toContain("CFG-003 routing policy group is partially present");
+    expect(sql).toContain("polish.deepseek-mimo.weekday.g4.v1");
+    expect(sql).toContain("polish.deepseek-only.weekday.rollback.v1");
+    expect(sql).toContain("7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567");
+    expect(sql).toContain("c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418");
+    expect(sql).toContain('"weekdays":[1,2,3,4,5]');
+    expect(sql).not.toContain("polish.deepseek-mimo.daily.g4.v1");
+    expect(sql).not.toContain("polish.deepseek-only.daily.rollback.v1");
     expect(sql).toContain("components_sealed_at is null");
     expect(sql).toContain("where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4\n  or not exists (");
     expect(sql).not.toContain("where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4\n  ) or not exists (");

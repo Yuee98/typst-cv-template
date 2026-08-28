@@ -15,7 +15,7 @@ const DEEPSEEK_OFFPEAK_PRICE_VERSION_ID = "11111111-1111-4111-8111-111111111112"
 const DEEPSEEK_PEAK_PRICE_VERSION_ID = "11111111-1111-4111-8111-111111111113";
 const MIMO_PROFILE_VERSION_ID = "22222222-2222-4222-8222-222222222221";
 const MIMO_DEFAULT_PRICE_VERSION_ID = "22222222-2222-4222-8222-222222222222";
-const DAILY_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+const PEAK_WEEKDAYS = [1, 2, 3, 4, 5] as const;
 
 const G4_RULES = {
   schemaVersion: "routing_rules_v1",
@@ -25,7 +25,7 @@ const G4_RULES = {
   },
   windows: [
     {
-      weekdays: DAILY_WEEKDAYS,
+      weekdays: PEAK_WEEKDAYS,
       startMinute: 540,
       endMinute: 720,
       route: {
@@ -34,7 +34,7 @@ const G4_RULES = {
       },
     },
     {
-      weekdays: DAILY_WEEKDAYS,
+      weekdays: PEAK_WEEKDAYS,
       startMinute: 840,
       endMinute: 1080,
       route: {
@@ -53,7 +53,7 @@ const ROLLBACK_RULES = {
   },
   windows: [
     {
-      weekdays: DAILY_WEEKDAYS,
+      weekdays: PEAK_WEEKDAYS,
       startMinute: 540,
       endMinute: 720,
       route: {
@@ -62,7 +62,7 @@ const ROLLBACK_RULES = {
       },
     },
     {
-      weekdays: DAILY_WEEKDAYS,
+      weekdays: PEAK_WEEKDAYS,
       startMinute: 840,
       endMinute: 1080,
       route: {
@@ -98,7 +98,7 @@ export const G4_ROUTING_POLICY_SEED_V1 = deepFreeze({
   policies: {
     g4: {
       id: "33333333-3333-4333-8333-333333333333",
-      policyKey: "polish.deepseek-mimo.daily.g4.v1",
+      policyKey: "polish.deepseek-mimo.weekday.g4.v1",
       version: 1,
       status: "draft",
       timezone: "Asia/Shanghai",
@@ -108,17 +108,17 @@ export const G4_ROUTING_POLICY_SEED_V1 = deepFreeze({
       runtimeContractSha256:
         "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c",
       jcsInput: policyJcsInput(
-        "polish.deepseek-mimo.daily.g4.v1",
+        "polish.deepseek-mimo.weekday.g4.v1",
         G4_RULES,
         "runtime.deepseek-v2-mimo-v2.5-pro.v2",
         "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c",
       ),
       configSha256:
-        "8c64daa9d7e9165417294e2d854b6ca77a2c7ba1db0611f15f9af7a67682bbe3",
+        "7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567",
     },
     rollback: {
       id: "33333333-3333-4333-8333-333333333334",
-      policyKey: "polish.deepseek-only.daily.rollback.v1",
+      policyKey: "polish.deepseek-only.weekday.rollback.v1",
       version: 1,
       status: "draft",
       timezone: "Asia/Shanghai",
@@ -128,13 +128,13 @@ export const G4_ROUTING_POLICY_SEED_V1 = deepFreeze({
       runtimeContractSha256:
         "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
       jcsInput: policyJcsInput(
-        "polish.deepseek-only.daily.rollback.v1",
+        "polish.deepseek-only.weekday.rollback.v1",
         ROLLBACK_RULES,
         "runtime.deepseek-v2.v1",
         "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
       ),
       configSha256:
-        "4bd1a83446b0b19903f9c08aece54e2418cb3f880b49b63f30cbea6c7b4e40dd",
+        "c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418",
     },
   },
 });

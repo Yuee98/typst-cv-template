@@ -134,7 +134,7 @@ activation is:
   page/announcement at
   `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`. That evidence
   establishes `2026-08-16T16:00:00Z` as the current effective start, with
-  daily Asia/Shanghai windows `09:00-12:00` and `14:00-18:00`. Its raw
+  weekday Asia/Shanghai windows `09:00-12:00` and `14:00-18:00`. Its raw
   snapshot was rechecked at `2026-08-28T08:05:41.804Z`, hash prefix
   `899aff...`.
 - MiMo is effective at `2026-05-26T16:00:00Z`. Its current pricing page was
@@ -178,7 +178,7 @@ The repository's opt-in `MIMO_LIVE_SMOKE=1` conformance test is the separately
 paid local smoke referred to above. Keep it outside normal test runs and never
 use its result as activation or hosted authorization.
 
-For daily operations, use the DeepSeek-only rollback policy
+For operations, use the DeepSeek-only rollback policy
 `33333333-3333-4333-8333-333333333334` first. Consider the G4 MiMo policy
 `33333333-3333-4333-8333-333333333333` only after it is explicitly validated
 and active, and only during the Beijing peak windows above. Neither policy
@@ -186,16 +186,17 @@ may be activated from stale or legacy price evidence.
 
 ## 7. Exact readback checklist and human gate
 
-### CFG-003 daily candidates and rollback order
+### CFG-003 weekday candidates and rollback order
 
-The official G4 and explicit successor candidate windows are daily in
-Asia/Shanghai: `[1,2,3,4,5,6,7]`, `09:00-12:00` and `14:00-18:00`, each
-half-open. The old G2 weekday-only policy and every historical legacy price
-are historical and must never be used as a safe rollback. The seeded G4
+The official G4 and explicit successor candidate windows are weekdays in
+Asia/Shanghai: `[1,2,3,4,5]`, `09:00-12:00` and `14:00-18:00`, each
+half-open. Weekends use the DeepSeek offpeak default route. The old G2
+weekday-only policy and every historical legacy price are historical and must
+never be used as a safe rollback. The seeded G4
 candidate currently references MiMo while its profile is `draft` and its price
 is unsealed; that is valid seed state, but it blocks activation until the
 staged evidence, sealing, validation, and human gates have passed. Operators
-must use the separately seeded daily DeepSeek-only successor first through the
+must use the separately seeded weekday DeepSeek-only successor first through the
 qualified lifecycle authority; G4 MiMo is considered only after it is active
 and only within the Beijing peak windows.
 
