@@ -319,6 +319,7 @@ describe("integration ledger evidence", () => {
     expect(source).toContain("getAuthenticatedAvailability(accessToken, expectedRoute)");
     expect(source).toContain("makeCancellationPolishBody(cancelClientRequestId, expectedRoute)");
     expect(source).toContain('granularity: "section"');
+    expect(source).toContain("const CANCELLATION_ABORT_DELAY_MS = 750;");
     expect(source).not.toContain("serverOutput.join");
     expect(source).not.toContain("featureConfigRestore");
     expect(source).not.toContain(".update({ ai_polish_enabled: true })");

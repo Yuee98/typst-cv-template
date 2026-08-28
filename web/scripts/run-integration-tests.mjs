@@ -62,7 +62,6 @@ import {
 } from "./lib/integration-ledger-evidence.mjs";
 import {
   buildCancellationProbeItems,
-  formatCancellationSetupDetail,
   readJsonOrNull,
 } from "./lib/integration-http.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
@@ -78,11 +77,12 @@ const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const AVAILABILITY_TIMEOUT_MS = 10_000;
 const POLISH_REQUEST_TIMEOUT_MS = 75_000;
+const CANCELLATION_ABORT_DELAY_MS = 750;
 // The cancellation probe deliberately uses a valid multi-item section
-// request. Fast official models can otherwise finalize a one-item response
-// before the local ledger poll observes provider_started, turning a real
-// cancellation proof into a timing lottery. The pure fixture is contract- and
-// output-budget-tested; the same <=4 transmission budget still applies.
+// request. It gives the bounded abort timer a wide in-flight provider window;
+// the terminal ledger, not timing alone, remains the transmission proof. The
+// pure fixture is contract- and output-budget-tested, and the same <=4
+// transmission budget still applies.
 const UPSTREAM_URL_ENV_NAMES = Object.freeze([
   "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
@@ -808,68 +808,43 @@ try {
     { token: accessToken, signal: controller.signal },
   ).catch(() => ({ aborted: true }));
 
-  let startedRow;
-  try {
-    startedRow = await pollUntil(
-      async () => {
-        const row = await getLedgerRowByClientRequestId(service, userId, cancelClientRequestId);
-        return row && (row.state === "provider_started" || row.state === "finalized") ? row : false;
-      },
-      { timeoutMs: 20_000, intervalMs: 25 },
-    );
-  } catch (error) {
-    // A DB observation failure must not orphan a live paid request while the
-    // outer finally deletes its user. Abort and drain before cleanup begins.
-    controller.abort();
-    await cancelFetch;
-    throw error;
-  }
-  let cancelRow = null;
-  if (startedRow && startedRow.state === "provider_started") {
-    check("cancel setup: reservation reaches provider_started", true);
-    // Let the upstream transmission get genuinely underway, then hang up.
-    await sleep(250);
-    controller.abort();
-    const cancelOutcome = await cancelFetch;
+  // A live provider_started row can be shorter-lived than a PostgREST poll.
+  // Time the client disconnect from request launch, then let the immutable
+  // terminal parent/attempt ledger prove whether a real transmission was in
+  // flight. Too-early (released) and too-late (succeeded) aborts both fail.
+  await sleep(CANCELLATION_ABORT_DELAY_MS);
+  controller.abort();
+  const cancelOutcome = await cancelFetch;
+  check(
+    "cancel: client fetch aborted",
+    cancelOutcome.aborted === true,
+    "the fetch completed before the abort landed",
+  );
+  const cancelRow = await waitFinalized(
+    () => getLedgerRowByClientRequestId(service, userId, cancelClientRequestId),
+    "cancel settlement",
+  );
+  if (cancelRow) {
+    // Designed settlement (roadmap settlement table): a user cancel after
+    // the provider call was entered is CHARGED, settled as canceled. The
+    // mid-flight abort means no usage came back, so billability is UNKNOWN
+    // (null — CP2 round3 honest accounting), never provably free (false).
+    check("cancel ledger: status=canceled", cancelRow.status === "canceled", `got ${cancelRow.status}`);
+    check("cancel ledger: quota_charged=true", cancelRow.quota_charged === true);
     check(
-      "cancel: client fetch aborted",
-      cancelOutcome.aborted === true,
-      "the fetch completed before the abort landed",
+      "cancel ledger: failure_stage=canceled",
+      cancelRow.failure_stage === "canceled",
+      `got ${cancelRow.failure_stage}`,
     );
-    cancelRow = await waitFinalized(
-      () => getLedgerRowByRequestId(service, startedRow.request_id),
-      "cancel settlement",
-    );
-    if (cancelRow) {
-      // Designed settlement (roadmap settlement table): a user cancel after
-      // the provider call was entered is CHARGED, settled as canceled. The
-      // mid-flight abort means no usage came back, so billability is UNKNOWN
-      // (null — CP2 round3 honest accounting), never provably free (false).
-      check("cancel ledger: status=canceled", cancelRow.status === "canceled", `got ${cancelRow.status}`);
-      check("cancel ledger: quota_charged=true", cancelRow.quota_charged === true);
-      check(
-        "cancel ledger: failure_stage=canceled",
-        cancelRow.failure_stage === "canceled",
-        `got ${cancelRow.failure_stage}`,
-      );
-      check(
-        "cancel ledger: attempt_count=1 (provider was entered once)",
-        cancelRow.attempt_count === 1,
-        `got ${cancelRow.attempt_count}`,
-      );
-      check(
-        "cancel ledger: provider_billable=null (billability unknown mid-flight)",
-        cancelRow.provider_billable === null,
-        `got ${cancelRow.provider_billable}`,
-      );
-    }
-  } else {
-    controller.abort();
-    const cancelOutcome = await cancelFetch.catch(() => undefined);
     check(
-      "cancel setup: reservation reaches provider_started",
-      false,
-      formatCancellationSetupDetail(startedRow, cancelOutcome),
+      "cancel ledger: attempt_count is within the two-attempt provider budget",
+      Number.isInteger(cancelRow.attempt_count) && cancelRow.attempt_count >= 1 && cancelRow.attempt_count <= 2,
+      `got ${cancelRow.attempt_count}`,
+    );
+    check(
+      "cancel ledger: provider_billable=null (billability unknown mid-flight)",
+      cancelRow.provider_billable === null,
+      `got ${cancelRow.provider_billable}`,
     );
   }
 

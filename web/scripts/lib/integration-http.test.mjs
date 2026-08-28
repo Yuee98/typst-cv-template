@@ -9,7 +9,6 @@ import {
 import {
   CANCELLATION_ITEM_COUNT,
   buildCancellationProbeItems,
-  formatCancellationSetupDetail,
   readJsonOrNull,
 } from "./integration-http.mjs";
 
@@ -59,20 +58,4 @@ describe("integration HTTP body parsing", () => {
     expect(polishPostRequestSchema.safeParse(body).success).toBe(true);
   });
 
-  it("formats only bounded cancellation diagnostics", () => {
-    expect(formatCancellationSetupDetail({
-      state: "finalized",
-      status: "failed_upstream",
-      attempt_count: 1,
-      failure_stage: "transport",
-    }, null)).toBe("state finalized; status failed_upstream; attempts 1; failure_stage transport");
-    expect(formatCancellationSetupDetail(null, {
-      status: 400,
-      body: { error: { code: "INVALID_REQUEST", message: "private body" } },
-    })).toBe("reservation never appeared; HTTP 400, code INVALID_REQUEST");
-    expect(formatCancellationSetupDetail(null, {
-      status: 500,
-      body: { error: { code: "secret\ncontent", message: "private body" } },
-    })).toBe("reservation never appeared; HTTP 500, code unavailable");
-  });
 });
