@@ -501,7 +501,18 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
 
         v_v1_hash := encode(
           extensions.digest(
-            convert_to(pg_get_functiondef(v_v1.oid), 'UTF8'),
+            convert_to(
+              replace(
+                replace(
+                  pg_get_functiondef(v_v1.oid),
+                  chr(13) || chr(10),
+                  chr(10)
+                ),
+                chr(13),
+                chr(10)
+              ),
+              'UTF8'
+            ),
             'sha256'
           ),
           'hex'

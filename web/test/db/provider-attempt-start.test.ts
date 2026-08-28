@@ -666,7 +666,18 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
         where oid = 'public.mark_ai_polish_provider_started(uuid,text)'::pg_catalog.regprocedure;
         v_v1_sha256 := pg_catalog.encode(
           extensions.digest(
-            pg_catalog.convert_to(pg_catalog.pg_get_functiondef(v_v1.oid), 'UTF8'),
+            pg_catalog.convert_to(
+              pg_catalog.replace(
+                pg_catalog.replace(
+                  pg_catalog.pg_get_functiondef(v_v1.oid),
+                  pg_catalog.chr(13) || pg_catalog.chr(10),
+                  pg_catalog.chr(10)
+                ),
+                pg_catalog.chr(13),
+                pg_catalog.chr(10)
+              ),
+              'UTF8'
+            ),
             'sha256'
           ),
           'hex'
