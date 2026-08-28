@@ -238,28 +238,28 @@ insert into public.ai_service_runtime_contract_versions (
   legal_bundle_version, bundle_contract_sha256, runtime_target_set_sha256
 )
 select
-  'runtime.deepseek-v2-mimo-v2.5-pro.v1',
-  '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d',
-  'sha1:67259cfaf9c2a5c895077a68f632880e59d099fd',
+  'runtime.deepseek-v2-mimo-v2.5-pro.v2',
+  '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c',
+  'sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba',
   '2026-08-23-multi-provider-v1',
   'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18',
   '2ae3a6e969ceee2772d2863ffa23d11dd8e5e725b32df39969f5ade746b55878'
 where not exists (
   select 1 from public.ai_service_runtime_contract_versions
-  where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
+  where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
 );
 
 do $$
 begin
   if (select count(*) from public.ai_service_runtime_contract_versions
-      where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
-         or (runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
-             and runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d')) <> 1
+      where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+         or (runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+             and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c')) <> 1
      or not exists (
        select 1 from public.ai_service_runtime_contract_versions
-       where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
-         and runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
-         and reviewed_source_commit_oid = 'sha1:67259cfaf9c2a5c895077a68f632880e59d099fd'
+       where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+         and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
+         and reviewed_source_commit_oid = 'sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba'
          and legal_bundle_version = '2026-08-23-multi-provider-v1'
          and bundle_contract_sha256 = 'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18'
          and runtime_target_set_sha256 = '2ae3a6e969ceee2772d2863ffa23d11dd8e5e725b32df39969f5ade746b55878'
@@ -277,8 +277,8 @@ insert into public.ai_service_runtime_contract_targets (
   route_descriptor_id, route_descriptor_sha256
 )
 select
-  'runtime.deepseek-v2-mimo-v2.5-pro.v1',
-  '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d',
+  'runtime.deepseek-v2-mimo-v2.5-pro.v2',
+  '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c',
   expected.runtime_target_id, expected.runtime_target_sha256, expected.profile_key,
   expected.legal_manifest_id, expected.manifest_sha256, expected.route_descriptor_id,
   expected.route_descriptor_sha256
@@ -287,8 +287,8 @@ from (values
   ('runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1'::text, '091416c8ff3d9c3b32c24d6906b8d618a70da91a9e3cd68132aadcfa964121a6'::text, 'mimo.cn.mimo-v2.5-pro.responses.v1'::text, 'mimo-cn-2026-08-23-v1'::text, 'f075f1e39e74a96ef2b536df8ba1e19c0840ce6d3be47d6deccd9c95da861c3f'::text, 'route.mimo.cn.official.v1'::text, '405655fe1a3bbc0aa2eff7217b3f78bc8cd0b991f69cf35c06ac361b041e52fa'::text)
 ) as expected(runtime_target_id, runtime_target_sha256, profile_key, legal_manifest_id, manifest_sha256, route_descriptor_id, route_descriptor_sha256)
 join public.ai_service_runtime_contract_versions as root
-  on root.runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
- and root.runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
+  on root.runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+ and root.runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
  and root.sealed_at is null
 where not exists (
   select 1 from public.ai_service_runtime_contract_targets as actual
@@ -302,17 +302,17 @@ declare
 begin
   select sealed_at into v_sealed_at
   from public.ai_service_runtime_contract_versions
-  where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
-    and runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
+  where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+    and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
   for update;
   if not found
      or (select count(*) from public.ai_service_runtime_contract_targets
-         where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1') <> 2
+         where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2') <> 2
      or (select count(*) from public.ai_service_runtime_contract_targets as actual join (values
        ('runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'::text, 'deepseek.official.deepseek-v4-flash.chat.v1'::text),
        ('runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1'::text, 'mimo.cn.mimo-v2.5-pro.responses.v1'::text)
      ) as expected(runtime_target_id, profile_key) using (runtime_target_id, profile_key)
-     where actual.runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1') <> 2 then
+     where actual.runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2') <> 2 then
     raise exception 'MiMo V2 runtime membership mismatch' using errcode = '23514';
   end if;
 end;
@@ -320,9 +320,9 @@ $$;
 
 update public.ai_service_runtime_contract_versions
 set sealed_at = greatest(clock_timestamp(), created_at)
-where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
-  and runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
-  and reviewed_source_commit_oid = 'sha1:67259cfaf9c2a5c895077a68f632880e59d099fd'
+where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+  and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
+  and reviewed_source_commit_oid = 'sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba'
   and legal_bundle_version = '2026-08-23-multi-provider-v1'
   and bundle_contract_sha256 = 'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18'
   and runtime_target_set_sha256 = '2ae3a6e969ceee2772d2863ffa23d11dd8e5e725b32df39969f5ade746b55878'
@@ -371,11 +371,21 @@ begin
      or (select count(*) from public.ai_price_components where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
      or not exists (
     select 1 from public.ai_service_runtime_contract_versions
-    where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
-      and runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
+    where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+      and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
       and sealed_at is not null and sealed_at >= created_at
   ) or (select count(*) from public.ai_service_runtime_contract_targets
-         where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1') <> 2
+         where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2') <> 2
+     or exists (
+       select 1 from public.ai_service_runtime_contract_versions
+       where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
+          or runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
+     )
+     or exists (
+       select 1 from public.ai_service_runtime_contract_targets
+       where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1'
+          or runtime_contract_sha256 = '049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d'
+     )
      or not exists (
     select 1 from public.ai_service_runtime_contract_versions
     where runtime_contract_id = 'runtime.deepseek-v2.v1'

@@ -5,7 +5,10 @@ import {
 import {
   type RuntimeTargetResolverV1,
 } from "./lifecycle-v2-contract";
-import { DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1 } from "./service-runtime-contract-v1";
+import {
+  DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1,
+  DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
+} from "./service-runtime-contract-v1";
 
 type ServerEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -13,6 +16,11 @@ export interface RealPolishRuntimeAuthorityV2 {
   readonly runtimeTargetResolver: RuntimeTargetResolverV1;
   readonly resolveProvider: PolishAdapterResolverV2;
 }
+
+const REAL_POLISH_RUNTIME_TARGET_RESOLVER_V2: RuntimeTargetResolverV1 =
+  (target) =>
+    DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(target) ||
+    DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(target);
 
 /**
  * Real Supabase composition after RT-009A.
@@ -32,7 +40,9 @@ export function createRealPolishRuntimeAuthorityV2(
   }
 
   return Object.freeze({
-    runtimeTargetResolver: DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
+    // Preserve the legacy DeepSeek target for in-flight/rollback execution
+    // while admitting only the exact current combined-v2 target pair.
+    runtimeTargetResolver: REAL_POLISH_RUNTIME_TARGET_RESOLVER_V2,
     resolveProvider: createCodeOwnedPolishAdapterResolverV2({ env }),
   });
 }

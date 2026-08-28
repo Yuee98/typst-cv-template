@@ -90,7 +90,7 @@ describe("CFG-002 MiMo V2 seed identity", () => {
       },
       runtime: {
         runtimeTargetId: "runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1",
-        runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v1",
+        runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v2",
       },
       pricing: {
         reservedDefaultPriceVersionId:

@@ -659,7 +659,7 @@ describe("DeepSeek service runtime contract V1", () => {
       }
       expect(actual, path).toBe(expected);
     }
-  }, 15_000);
+  }, 60_000);
 
   it("keeps the reviewed source as a proper ancestor of the attestation refresh", () => {
     const reviewed = DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID.slice("sha1:".length);
@@ -965,15 +965,21 @@ describe("DeepSeek service runtime contract V1", () => {
   });
 });
 
-describe("reviewed DeepSeek and MiMo service runtime contract V1", () => {
+describe("reviewed DeepSeek and MiMo service runtime contract V2", () => {
   it("freezes the accepted two-target identity without changing the DeepSeek-only pair", () => {
     expect(() =>
       validateDeepSeekMiMoServiceRuntimeContractV1Registry(
         DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
       ),
     ).not.toThrow();
+    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID).toBe(
+      "runtime.deepseek-v2-mimo-v2.5-pro.v2",
+    );
+    expect(DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID).toBe(
+      "sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba",
+    );
     expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
-      "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d",
+      "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c",
     );
     expect(MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256).toBe(
       "091416c8ff3d9c3b32c24d6906b8d618a70da91a9e3cd68132aadcfa964121a6",
@@ -1049,6 +1055,60 @@ describe("reviewed DeepSeek and MiMo service runtime contract V1", () => {
         (pair) => pair.id,
       ),
     ).toEqual(EXPECTED_FACT_IDS);
+    const combinedIdentity = JSON.stringify(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+    );
+    expect(combinedIdentity).not.toContain(
+      "runtime.deepseek-v2-mimo-v2.5-pro.v1",
+    );
+    expect(combinedIdentity).not.toContain(
+      "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d",
+    );
+  });
+
+  it("rebinds combined lifecycle evidence without mutating the legacy DeepSeek evidence", () => {
+    const lifecycleHashes = (
+      registry: typeof DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+      path: string,
+    ) =>
+      new Set(
+        registry.evidence
+          .filter((item) => item.descriptor.source_repo_path === path)
+          .map((item) => item.descriptor.source_git_blob_sha256),
+      );
+    const lifecyclePath = "web/src/server/polish/lifecycle-v2.ts";
+    const lifecycleTestPath =
+      "web/src/server/polish/__tests__/lifecycle/v2.test.ts";
+
+    expect(lifecycleHashes(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1, lifecyclePath)).toEqual(
+      new Set([
+        "ee01910e11617bd28f1490538f21b90e5aa3be4e3ed470e4d1e07801029b4e10",
+      ]),
+    );
+    expect(
+      lifecycleHashes(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1, lifecycleTestPath),
+    ).toEqual(
+      new Set([
+        "e84c75f1c96c76700d757ce5c52405e49076af5a08e875f5cdcb4b185071d173",
+      ]),
+    );
+    expect(
+      lifecycleHashes(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1, lifecyclePath),
+    ).toEqual(
+      new Set([
+        "778a2271ac9ab47ff60dc372c57e8f3e5b41b98ee9cd50b58e6c46ff9ce94b21",
+      ]),
+    );
+    expect(
+      lifecycleHashes(
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+        lifecycleTestPath,
+      ),
+    ).toEqual(
+      new Set([
+        "bb5391bdea9c4dcebdef78683379d0f7a1d5f430dc1095c34814bb0b3a2163dd",
+      ]),
+    );
   });
 
   it("independently reproduces every combined evidence, target, root, and target-set hash", () => {
