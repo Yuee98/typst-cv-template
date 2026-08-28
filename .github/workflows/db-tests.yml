@@ -11,6 +11,7 @@ name: DB integration tests
 #   pnpm supabase:start
 #   pnpm --filter web test:db:cfg001-fresh
 #   node web/scripts/run-cfg002-fresh-reset.mjs
+#   node web/scripts/run-cfg003-fresh-reset.mjs
 #   pnpm --filter web test:db
 on:
   pull_request:
@@ -25,6 +26,7 @@ on:
       - "web/package.json"
       - "web/scripts/run-cfg001-fresh-reset.mjs"
       - "web/scripts/run-cfg002-fresh-reset.mjs"
+      - "web/scripts/run-cfg003-fresh-reset.mjs"
       - "web/scripts/run-db-tests.mjs"
       - "web/scripts/run-db-tests.test.mjs"
       - "web/vitest.config.mts"
@@ -33,6 +35,10 @@ on:
       - "web/src/server/polish/auth.ts"
       - "web/src/server/polish/deepseek-v2-seed-v1.ts"
       - "web/src/server/polish/deepseek-v2-seed-v1.test.ts"
+      - "web/src/server/polish/g4-routing-policy-seed-v1.ts"
+      - "web/src/server/polish/g4-routing-policy-seed-v1.test.ts"
+      - "web/src/server/polish/routing-rules-v1.test.ts"
+      - "web/test/fixtures/routing-rules-v1.json"
       - "web/src/server/polish/lifecycle*.ts"
       - "web/src/server/polish/quota.ts"
       - "web/test/db/**"
@@ -93,6 +99,9 @@ jobs:
 
       - name: Run CFG-002 fresh-reset gate
         run: node web/scripts/run-cfg002-fresh-reset.mjs
+
+      - name: Run CFG-003 fresh-reset gate
+        run: node web/scripts/run-cfg003-fresh-reset.mjs
 
       # Required mode makes status, local-API, and child-process failures hard
       # CI errors. The runner accepts only HTTP loopback endpoints and clears

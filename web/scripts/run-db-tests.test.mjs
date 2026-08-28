@@ -8,6 +8,7 @@ import {
   waitForAuthReady,
 } from "./run-cfg001-fresh-reset.mjs";
 import { runCfg002FreshReset } from "./run-cfg002-fresh-reset.mjs";
+import { runCfg003FreshReset } from "./run-cfg003-fresh-reset.mjs";
 import { runDbTests, validateLocalDatabaseUrl } from "./run-db-tests.mjs";
 
 const GOOD_STATUS = [
@@ -195,7 +196,7 @@ function freshHarness({
   };
 }
 
-const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-cfg003-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/g4-routing-policy-seed-v1.ts", "web/src/server/polish/g4-routing-policy-seed-v1.test.ts", "web/src/server/polish/routing-rules-v1.test.ts", "web/test/fixtures/routing-rules-v1.json", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
@@ -240,13 +241,14 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(steps.map((step) => step.name)).toEqual([
     "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
     "Install dependencies", "Verify DB test runner contract (credential-free)",
-    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run real-DB suite",
+    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run CFG-003 fresh-reset gate", "Run real-DB suite",
   ]);
   const commands = {
     runner: "pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs",
     start: "pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler",
     cfg001Fresh: "pnpm --filter web test:db:cfg001-fresh",
     cfg002Fresh: "node web/scripts/run-cfg002-fresh-reset.mjs",
+    cfg003Fresh: "node web/scripts/run-cfg003-fresh-reset.mjs",
     full: "pnpm --filter web test:db",
   };
   const find = (command) => steps.map((step, index) => ({ step, index })).filter(({ step }) => step.run === command);
@@ -255,7 +257,8 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(indexes.runner).toBeLessThan(indexes.start);
   expect(indexes.start).toBeLessThan(indexes.cfg001Fresh);
   expect(indexes.cfg001Fresh).toBeLessThan(indexes.cfg002Fresh);
-  expect(indexes.cfg002Fresh).toBeLessThan(indexes.full);
+  expect(indexes.cfg002Fresh).toBeLessThan(indexes.cfg003Fresh);
+  expect(indexes.cfg003Fresh).toBeLessThan(indexes.full);
   for (const step of steps) expect(step.hasCondition).toBe(false);
   expect(steps[0].hasWith).toBe(false);
   expect(steps[0].withValues.size).toBe(0);
@@ -529,6 +532,74 @@ it("CFG-002 fresh runner fails closed for its complete injected lifecycle", asyn
   expect(success.calls[4].options.env.CFG001_FRESH_RESET).not.toBe("1");
 });
 
+it("CFG-003 fresh runner fails closed before side effects and preserves exact lifecycle", async () => {
+  const missingMigration = freshHarness({
+    runner: runCfg003FreshReset,
+    existsSyncImpl: (target) => !String(target).endsWith("20260824007000_seed_g4_routing_policy.sql"),
+  });
+  expect(await missingMigration.run()).toBe(1);
+  expect(missingMigration.calls).toHaveLength(0);
+  expect(missingMigration.fetchCalls).toHaveLength(0);
+  expect(missingMigration.errors.join("\n")).toMatch(/CFG-003 routing-policy migration is missing/);
+
+  const unsafeStatus = freshHarness({
+    runner: runCfg003FreshReset,
+    results: [{ status: 0, stdout: GOOD_STATUS.replace("127.0.0.1", "example.com") }],
+  });
+  expect(await unsafeStatus.run()).toBe(1);
+  expect(unsafeStatus.calls).toHaveLength(1);
+  expect(unsafeStatus.fetchCalls).toHaveLength(0);
+
+  const statusFailure = freshHarness({
+    runner: runCfg003FreshReset,
+    results: [{ status: 1 }],
+  });
+  expect(await statusFailure.run()).toBe(1);
+  expect(statusFailure.calls).toHaveLength(1);
+  expect(statusFailure.fetchCalls).toHaveLength(0);
+
+  const vitestFailure = freshHarness({
+    runner: runCfg003FreshReset,
+    results: [
+      { status: 0, stdout: GOOD_STATUS },
+      { status: 0 },
+      { status: 0, stdout: GOOD_STATUS },
+      { status: 0 },
+      { status: 7 },
+    ],
+  });
+  expect(await vitestFailure.run()).toBe(7);
+  expect(vitestFailure.calls).toHaveLength(5);
+
+  const failures = [
+    ["reset", [{ status: 0, stdout: GOOD_STATUS }, { status: 1 }], /reset failed/],
+    ["restart", [{ status: 0, stdout: GOOD_STATUS }, { status: 0 }, { status: 0, stdout: GOOD_STATUS }, { status: 1 }], /gateway restart failed/],
+  ];
+  for (const [label, results, message] of failures) {
+    const subject = freshHarness({ runner: runCfg003FreshReset, results });
+    expect(await subject.run(), label).toBe(1);
+    expect(subject.errors.join("\n"), label).toMatch(message);
+    expect(subject.errors.join("\n"), label).not.toContain("secret-test-key");
+  }
+
+  const success = freshHarness({
+    runner: runCfg003FreshReset,
+    env: { CFG001_FRESH_RESET: "1", CFG002_FRESH_RESET: "1", PARENT_MARKER: "preserved" },
+  });
+  expect(await success.run()).toBe(0);
+  expect(success.calls).toHaveLength(5);
+  expect(success.fetchCalls).toHaveLength(1);
+  expect(success.calls[4].options.env).toMatchObject({
+    CFG003_FRESH_RESET: "1",
+    PARENT_MARKER: "preserved",
+    SUPABASE_TEST_URL: "http://127.0.0.1:54321/",
+  });
+  expect(success.calls[4].options.env.CFG001_FRESH_RESET).toBeUndefined();
+  expect(success.calls[4].options.env.CFG002_FRESH_RESET).toBeUndefined();
+  expect(success.calls[4].options.cwd).toMatch(/[\\/]web$/);
+  expect(success.calls[4].options.timeout).toBe(300_000);
+});
+
 it("required mode fails status, spawn, and timeout errors", async () => {
   for (const result of [
     { status: 1 },
@@ -616,13 +687,14 @@ it("optional developer invocation still skips unavailable Supabase", async () =>
 
 it("valid loopback launches ordinary DB config and clears fresh-reset selector", async () => {
   const subject = harness({
-    env: { CFG001_FRESH_RESET: "1", CFG002_FRESH_RESET: "1" },
+    env: { CFG001_FRESH_RESET: "1", CFG002_FRESH_RESET: "1", CFG003_FRESH_RESET: "1" },
     results: [{ status: 0, stdout: GOOD_STATUS }, { status: 0 }],
   });
   expect(await subject.run()).toBe(0);
   expect(subject.calls[1].args).toEqual(["exec", "vitest", "run", "--config", "vitest.db.config.mts"]);
   expect(subject.calls[1].options.env.CFG001_FRESH_RESET).toBeUndefined();
   expect(subject.calls[1].options.env.CFG002_FRESH_RESET).toBeUndefined();
+  expect(subject.calls[1].options.env.CFG003_FRESH_RESET).toBeUndefined();
   expect(subject.calls[1].options.env.SUPABASE_TEST_URL).toBe("http://127.0.0.1:54321/");
 });
 
@@ -644,6 +716,17 @@ it("URL guard accepts only HTTP loopback endpoints", () => {
   expect(validateLocalDatabaseUrl("http://[::1]:54321").ok).toBe(true);
   expect(validateLocalDatabaseUrl("ftp://127.0.0.1").ok).toBe(false);
   expect(validateLocalDatabaseUrl("http://10.0.0.2").ok).toBe(false);
+});
+
+it("DB config isolates CFG-003 and rejects selector leakage", async () => {
+  const configPath = fileURLToPath(new URL("../vitest.db.config.mts", import.meta.url));
+  const config = (await readFile(configPath, "utf8")).replace(/\r\n/g, "\n");
+  expect(config).toContain("const isCfg003FreshReset = process.env.CFG003_FRESH_RESET === \"1\";");
+  expect(config).toMatch(/isCfg003FreshReset\s*\n\s*\?\s*\[\"test\/db\/g4-routing-policy-cfg-seed\.test\.ts\"\]/);
+  expect(config).toContain("isCfg001FreshReset || isCfg002FreshReset || isCfg003FreshReset");
+  expect(config).toContain('"test/db/g4-routing-policy-cfg-seed.test.ts",');
+  expect(config).toMatch(/filter\(Boolean\)\.length > 1/);
+  expect(config).toMatch(/CFG001_FRESH_RESET, CFG002_FRESH_RESET, and CFG003_FRESH_RESET are mutually exclusive/);
 });
 
 it("DB workflow structural parser rejects nameless and multiline-run steps", () => {
