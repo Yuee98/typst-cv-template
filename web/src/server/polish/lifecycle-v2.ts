@@ -3,6 +3,7 @@ import {
   type PolishRequest,
 } from "@/lib/polish/contract";
 import { createDeepSeekChatV1Adapter } from "./deepseek";
+import { createMimoResponsesV1Adapter } from "./mimo";
 import {
   parseExpectedRouteV1,
   type ExpectedRouteV1,
@@ -20,7 +21,10 @@ import {
   type PolishInferenceProviderV2,
   type RequestUsageAggregateV2,
 } from "./orchestrator";
-import type { ProfileExecutionConfigV1 } from "./profile-registry";
+import {
+  validateProfileExecutionConfig,
+  type ProfileExecutionConfigV1,
+} from "./profile-registry";
 import { deriveProviderSubjectIdV2 } from "./provider-subject-v2";
 import {
   getPolishExecutionSnapshotV1,
@@ -195,11 +199,7 @@ export class PolishAdapterUnavailableV2Error extends Error {
   }
 }
 
-/**
- * G2 code-owned resolver. MiMo remains deliberately unavailable until its
- * independent adapter unit lands; an active MiMo snapshot therefore fails
- * before attempt admission or network transmission.
- */
+/** Code-owned resolver for the reviewed DeepSeek and MiMo adapter sources. */
 export function createCodeOwnedPolishAdapterResolverV2(
   options: {
     env?: Readonly<Record<string, string | undefined>>;
@@ -207,13 +207,35 @@ export function createCodeOwnedPolishAdapterResolverV2(
   } = {},
 ): PolishAdapterResolverV2 {
   return (profile) => {
-    if (
-      profile.profileKey !== "deepseek.official.deepseek-v4-flash.chat.v1" ||
-      profile.adapterKind !== "deepseek_chat_v1"
-    ) {
+    let registeredProfile: ProfileExecutionConfigV1;
+    try {
+      // Revalidate at the operational boundary so a crossed profile, adapter,
+      // credential, endpoint, or other runtime tuple cannot select a provider.
+      registeredProfile = validateProfileExecutionConfig(profile);
+    } catch {
       throw new PolishAdapterUnavailableV2Error();
     }
-    return createDeepSeekChatV1Adapter({ env: options.env, fetch: options.fetch });
+
+    if (
+      registeredProfile.profileKey ===
+        "deepseek.official.deepseek-v4-flash.chat.v1" &&
+      registeredProfile.adapterKind === "deepseek_chat_v1"
+    ) {
+      return createDeepSeekChatV1Adapter({
+        env: options.env,
+        fetch: options.fetch,
+      });
+    }
+    if (
+      registeredProfile.profileKey === "mimo.cn.mimo-v2.5-pro.responses.v1" &&
+      registeredProfile.adapterKind === "mimo_responses_v1"
+    ) {
+      return createMimoResponsesV1Adapter({
+        env: options.env,
+        fetch: options.fetch,
+      });
+    }
+    throw new PolishAdapterUnavailableV2Error();
   };
 }
 
