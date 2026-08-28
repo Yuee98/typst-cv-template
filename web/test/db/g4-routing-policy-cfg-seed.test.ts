@@ -1,14 +1,24 @@
 import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { G4_ROUTING_POLICY_SEED_V1 as SEED } from "../../src/server/polish/g4-routing-policy-seed-v1";
 import { RUN_DB_TESTS, sleep } from "./helpers";
-import { runOwnerSql, startOwnerSql } from "./runtime-contract-fixtures";
+import { type OwnerSqlResult, runOwnerSql, startOwnerSql } from "./runtime-contract-fixtures";
 
 const migrationUrl = new URL("../../../supabase/migrations/20260824007000_seed_g4_routing_policy.sql", import.meta.url);
 const g2 = "33333333-3333-4333-8333-333333333332";
 const g4 = SEED.policies.g4.id;
 const rollback = SEED.policies.rollback.id;
-const tables = ["ai_feature_config", "ai_routing_policy_versions", "ai_routing_lifecycle_audit", "ai_routing_policy_transition_intents", "ai_request_ledger", "ai_provider_attempt_ledger", "ai_usage_daily", "ai_global_usage_daily", "ai_profile_usage_daily", "ai_rate_minutes"] as const;
+const DB_CONTAINER = "supabase_db_typst-cv-template";
+const CFG003_REAPPLY_ADVISORY_LOCK_KEY = 703003;
+const tables = ["ai_provider_profiles", "ai_provider_profile_versions", "ai_price_versions", "ai_price_components", "ai_service_runtime_contract_versions", "ai_service_runtime_target_versions", "ai_service_runtime_contract_targets", "ai_legal_bundle_versions", "ai_legal_bundle_manifests", "ai_legal_manifest_versions", "ai_feature_config", "ai_routing_policy_versions", "ai_routing_lifecycle_audit", "ai_price_component_seal_intents", "ai_routing_policy_transition_intents", "user_terms_acceptances", "ai_request_ledger", "ai_provider_attempt_ledger", "ai_usage_daily", "ai_global_usage_daily", "ai_profile_usage_daily", "ai_rate_minutes"] as const;
+
+interface BarrierSqlProcess {
+  ready: Promise<void>;
+  result: Promise<OwnerSqlResult>;
+  release: () => void;
+}
 
 const source = () => readFileSync(migrationUrl, "utf8");
 const body = () => source().replace(/^begin;\s*$/mu, "").replace(/^commit;\s*$/mu, "");
@@ -34,6 +44,69 @@ function removePolicies(): void {
   expect(runOwnerSql(String.raw`begin; set local session_replication_role=replica;
     delete from public.ai_routing_policy_versions where id in ('${g4}'::uuid,'${rollback}'::uuid);
     set local session_replication_role=origin; commit;`).status).toBe(0);
+}
+function pgApplicationName(label: string): string {
+  return `cfg003-${label}-${randomUUID().replaceAll("-", "")}`;
+}
+function startOwnerSqlWithBarrier(sql: string, marker: string, releaseSql: string): BarrierSqlProcess {
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let settled = false;
+  const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  let released = false;
+  let release = () => undefined;
+  const result = new Promise<OwnerSqlResult>((resolve, reject) => {
+    const child = spawn("docker", ["exec", "-i", DB_CONTAINER, "psql", "-U", "postgres", "-d", "postgres", "--set", "ON_ERROR_STOP=1", "--no-psqlrc"], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    const capture = (chunk: string, error: boolean) => {
+      if (error) stderr += chunk; else stdout += chunk;
+      if (!settled && `${stdout}\n${stderr}`.includes(marker)) { settled = true; resolveReady(); }
+    };
+    child.stdout.on("data", (chunk: string) => capture(chunk, false));
+    child.stderr.on("data", (chunk: string) => capture(chunk, true));
+    child.on("error", (error) => { if (!settled) { settled = true; rejectReady(error); } reject(error); });
+    child.on("close", (status) => {
+      if (!settled) { settled = true; rejectReady(new Error(`owner SQL exited before ${marker}: ${stderr || stdout}`)); }
+      resolve({ status: status ?? -1, stdout, stderr });
+    });
+    release = () => { if (!released) { released = true; child.stdin.end(releaseSql); } };
+    child.stdin.write(sql);
+  });
+  return { ready, result, release };
+}
+async function waitForDatabaseLock(applicationName: string, contender: Promise<OwnerSqlResult>, event: string): Promise<void> {
+  let complete: OwnerSqlResult | undefined;
+  void contender.then((result) => { complete = result; });
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const state = runOwnerSql(String.raw`\pset format unaligned
+      \pset tuples_only on
+      select coalesce(wait_event_type, '') || ':' || coalesce(wait_event, '') from pg_catalog.pg_stat_activity where application_name='${applicationName}';`).stdout;
+    if (state.split(/\r?\n/u).some((line) => line.trim().startsWith(`Lock:${event}`))) return;
+    if (complete) throw new Error(`contender ${applicationName} exited before Lock:${event}: ${complete.stderr || complete.stdout}`);
+    await sleep(25);
+  }
+  throw new Error(`contender ${applicationName} never reported Lock:${event}`);
+}
+function assertNoDeadlockOrLockTimeout(result: OwnerSqlResult): void {
+  expect(result.stderr).not.toMatch(/(?:40P01|55P03|deadlock detected|lock timeout)/iu);
+}
+function removeReapplyBarrier(): void {
+  runOwnerSql(String.raw`\set ON_ERROR_STOP on
+    drop trigger if exists cfg003_reapply_barrier on public.ai_routing_policy_versions;
+    drop function if exists public.cfg003_reapply_barrier();`);
+}
+function installReapplyBarrier(): void {
+  removeReapplyBarrier();
+  expect(runOwnerSql(String.raw`\set ON_ERROR_STOP on
+    create function public.cfg003_reapply_barrier() returns trigger language plpgsql set search_path = '' as $$
+    begin
+      if new.id in ('${g4}'::uuid, '${rollback}'::uuid) then perform pg_catalog.pg_advisory_xact_lock(${CFG003_REAPPLY_ADVISORY_LOCK_KEY}); end if;
+      return new;
+    end;
+    $$;
+    create trigger cfg003_reapply_barrier after insert on public.ai_routing_policy_versions for each row execute function public.cfg003_reapply_barrier();`).status).toBe(0);
 }
 
 describe("CFG-003 G4 routing-policy seed", () => {
@@ -80,29 +153,63 @@ describe("CFG-003 G4 routing-policy seed", () => {
       expect(lines.find((x) => x.startsWith("CORRUPTED="))?.slice(10)).toBe(lines.find((x) => x.startsWith("AFTER="))?.slice(6)); expect(snap()).toBe(canonical);
     });
 
-    it("observes a real late concurrent unique-key collision and restores both policies", async () => {
-      const before = snap(); removePolicies();
+    it("observes the unique-key serialization for concurrent reapplication and restores both policies", async () => {
+      const before = snap(); removePolicies(); installReapplyBarrier();
+      const marker = `CFG003_REAPPLY_HELD_${randomUUID()}`;
+      const holder = startOwnerSqlWithBarrier(String.raw`\set ON_ERROR_STOP on
+        begin;
+        select pg_catalog.pg_advisory_xact_lock(${CFG003_REAPPLY_ADVISORY_LOCK_KEY});
+        \echo ${marker}
+      `, marker, "commit;");
       try {
-        const winner = startOwnerSql(String.raw`begin; ${body()} select pg_sleep(1); commit;`);
-        await sleep(100);
-        const loser = startOwnerSql(String.raw`begin; ${body()} commit;`);
-        const [winnerResult, loserResult] = await Promise.all([winner, loser]);
-        expect(winnerResult.status, winnerResult.stderr).toBe(0);
-        expect(loserResult.status).not.toBe(0);
-        expect(loserResult.stderr).toMatch(/duplicate key|23505/u);
+        const firstApplication = pgApplicationName("identical-a");
+        const secondApplication = pgApplicationName("identical-b");
+        await holder.ready;
+        const first = startOwnerSql(String.raw`\set VERBOSITY verbose
+          set application_name='${firstApplication}';
+          ${source()}`);
+        await waitForDatabaseLock(firstApplication, first, "advisory");
+        const second = startOwnerSql(String.raw`\set VERBOSITY verbose
+          set application_name='${secondApplication}';
+          ${source()}`);
+        await waitForDatabaseLock(secondApplication, second, "transactionid");
+        holder.release();
+        const [holderResult, firstResult, secondResult] = await Promise.all([holder.result, first, second]);
+        expect(holderResult.status, holderResult.stderr).toBe(0);
+        expect(firstResult.status, firstResult.stderr).toBe(0);
+        expect(secondResult.status).not.toBe(0);
+        assertNoDeadlockOrLockTimeout(firstResult); assertNoDeadlockOrLockTimeout(secondResult);
+        expect(secondResult.stderr).toMatch(/ERROR:\s+23505:/u);
         expect(snap()).toBe(before);
-      } finally { restore(); }
+        restore(); expect(snap()).toBe(before);
+      } finally {
+        holder.release(); await holder.result.catch(() => undefined); removeReapplyBarrier(); restore();
+      }
     });
 
     it.each([
-      ["missing MiMo predecessor", "ai_price_versions", `delete from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid;`],
-      ["hostile combined selector", "ai_service_runtime_contract_targets", `delete from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_target_id='runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1';`],
-    ])("fails closed for %", (_name, table, mutate) => {
-      const before = snap(); const result = runOwnerSql(String.raw`begin; alter table public.${table} disable trigger user; ${mutate} savepoint p; \set ON_ERROR_STOP off
+      ["missing MiMo predecessor", `delete from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid;`],
+      ["hostile combined selector", `delete from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_target_id='runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1';`],
+    ])("fails closed for % from fresh-absent CFG003 state", (_name, mutate) => {
+      const canonical = snap(); const projection = tables.map((t) => `'${t}',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text collate "C"),'[]'::jsonb) from public.${t} x)`).join(",");
+      const result = runOwnerSql(String.raw`begin;
+        set local session_replication_role=replica;
+        delete from public.ai_routing_policy_versions where id in ('${g4}'::uuid,'${rollback}'::uuid);
+        ${mutate}
+        set local session_replication_role=origin;
+        select 'FRESH_BEFORE='||jsonb_build_object(${projection})::text;
+        savepoint cfg003_predecessor;
+        \set ON_ERROR_STOP off
         ${body()}
         \set ON_ERROR_STOP on
-        rollback to p; alter table public.${table} enable trigger user; rollback;`, { expectFailure: false });
-      expect(result.stderr).toMatch(/ERROR:\s+23514:/u); expect(snap()).toBe(before);
+        rollback to savepoint cfg003_predecessor;
+        select 'FRESH_AFTER='||jsonb_build_object(${projection})::text;
+        select 'FRESH_ZERO='||count(*) from public.ai_routing_policy_versions where id in ('${g4}'::uuid,'${rollback}'::uuid);
+        rollback;`, { expectFailure: false });
+      expect(result.stderr).toMatch(/ERROR:\s+23514:/u);
+      const lines = result.stdout.split(/\r?\n/u).map((line) => line.trim());
+      expect(lines.find((line) => line.startsWith("FRESH_BEFORE="))?.slice(13)).toBe(lines.find((line) => line.startsWith("FRESH_AFTER="))?.slice(12));
+      expect(lines).toContain("FRESH_ZERO=0"); expect(snap()).toBe(canonical);
     });
 
     it("rejects old combined-v1 and the G4 selector through the operational validator", () => {
