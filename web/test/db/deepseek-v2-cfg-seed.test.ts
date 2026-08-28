@@ -30,6 +30,18 @@ const DISABLED_AVAILABILITY = {
   termsAccepted: false,
 } as const;
 
+describe("CFG-001 successor-compatible membership source", () => {
+  it("scopes membership cardinality to the legacy root while retaining exact tuple checks", () => {
+    const source = readFileSync(
+      new URL("../../../supabase/migrations/20260824002000_seed_deepseek_v2_draft.sql", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("where runtime_contract_id = 'runtime.deepseek-v2.v1';");
+    expect(source).not.toContain("runtime_contract_id = 'runtime.deepseek-v2.v1'\n     or runtime_target_id");
+    expect(source).toContain("and runtime_target_id =\n        'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'");
+  });
+});
+
 // PostgreSQL preserves migration-source line endings inside stored routine
 // bodies. Canonicalize them before hashing so the authority oracle is stable
 // across Windows worktrees and Linux CI checkouts.
