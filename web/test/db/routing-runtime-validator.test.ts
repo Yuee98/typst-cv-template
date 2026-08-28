@@ -937,13 +937,13 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
   it("rejects retired combined-v1 authority and leaves CFG-003 dark candidates non-operational", () => {
     const oldCombined = runOwnerSql(String.raw`
       \pset tuples_only on
-      \pset format unaligned
       select count(*) from public.ai_service_runtime_contract_versions
       where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v1';
     `);
     expect(oldCombined.stdout.trim()).toBe("0");
 
     const darkValidation = runOwnerSql(String.raw`
+      \set VERBOSITY verbose
       begin;
       select public.assert_ai_routing_policy_v1(
         '33333333-3333-4333-8333-333333333333'::uuid,
