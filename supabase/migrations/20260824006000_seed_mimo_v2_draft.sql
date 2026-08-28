@@ -110,10 +110,10 @@ select
   '22222222-2222-4222-8222-222222222222'::uuid,
   '22222222-2222-4222-8222-222222222221'::uuid,
   'default', 1, 'CNY', 'linear_token_v1',
-  '2026-08-25T16:26:26.127Z'::timestamptz, null, null, null,
+  '2026-08-25T16:26:26.127Z'::timestamptz, null, '2026-05-26T16:00:00Z'::timestamptz, null,
   'https://mimo.mi.com/docs/en-US/price/pay-as-you-go',
-  '2026-08-25T16:26:26.127Z'::timestamptz,
-  '2b9aec6fe83c358db3697965ae4dbdaffbf976fbb48576bff55f2d9c2eb5f065',
+  '2026-08-28T08:05:41.986Z'::timestamptz,
+  'd43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3',
   '{}'::jsonb
 where not exists (
   select 1 from public.ai_price_versions
@@ -133,10 +133,10 @@ begin
          and pricing_lane = 'default' and version = 1 and currency = 'CNY'
          and calculator_kind = 'linear_token_v1'
          and valid_from = '2026-08-25T16:26:26.127Z'::timestamptz
-         and valid_to is null and provider_effective_from is null and provider_effective_to is null
+         and valid_to is null and provider_effective_from = '2026-05-26T16:00:00Z'::timestamptz and provider_effective_to is null
          and source_url = 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go'
-         and source_checked_at = '2026-08-25T16:26:26.127Z'::timestamptz
-         and source_snapshot_sha256 = '2b9aec6fe83c358db3697965ae4dbdaffbf976fbb48576bff55f2d9c2eb5f065'
+         and source_checked_at = '2026-08-28T08:05:41.986Z'::timestamptz
+         and source_snapshot_sha256 = 'd43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3'
          and parameters = '{}'::jsonb and components_sealed_at is null
      ) then
     raise exception 'MiMo V2 price version mismatch' using errcode = '23514';
@@ -358,10 +358,10 @@ begin
       and pricing_lane = 'default' and version = 1 and currency = 'CNY'
       and calculator_kind = 'linear_token_v1'
       and valid_from = '2026-08-25T16:26:26.127Z'::timestamptz
-      and valid_to is null and provider_effective_from is null and provider_effective_to is null
+      and valid_to is null and provider_effective_from = '2026-05-26T16:00:00Z'::timestamptz and provider_effective_to is null
       and source_url = 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go'
-      and source_checked_at = '2026-08-25T16:26:26.127Z'::timestamptz
-      and source_snapshot_sha256 = '2b9aec6fe83c358db3697965ae4dbdaffbf976fbb48576bff55f2d9c2eb5f065'
+      and source_checked_at = '2026-08-28T08:05:41.986Z'::timestamptz
+      and source_snapshot_sha256 = 'd43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3'
       and parameters = '{}'::jsonb and components_sealed_at is null
   ) or (select count(*) from public.ai_price_components as actual join (values
     ('input_cache_read'::text, 25000000::bigint), ('input_standard'::text, 3000000000::bigint),

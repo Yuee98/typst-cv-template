@@ -143,6 +143,10 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql).toContain("ai_legal_bundle_manifests as actual");
     expect(sql).toContain("DeepSeek V4 Flash");
     expect(sql).toContain("input_cache_write'::text, 0::bigint");
+    expect(sql).toContain("provider_effective_from = '2026-08-16T16:00:00Z'::timestamptz");
+    expect(sql).toContain("provider_effective_from = '2026-05-26T16:00:00Z'::timestamptz");
+    expect(sql).toContain("'899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5'");
+    expect(sql).toContain("'d43d4c3ad011b00c6dbf4a2966871ebfe566e9a0cbdc2a77ee38833aa1b5edb3'");
     expect(testSource()).toContain("cleanupBarrier = true;");
     expect(testSource()).toContain("try { if (cleanupBarrier) removeReapplyBarrier(); } finally { restore(); }");
     expect(sql).not.toMatch(/\b(?:set_ai_routing_policy_pointer_v1|transition_ai_routing_policy|validate_ai_routing_policy|apply_ai_price_component_seal_intent)\b/u);

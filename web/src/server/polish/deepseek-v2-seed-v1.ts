@@ -102,9 +102,9 @@ export const DEEPSEEK_V2_SEED_V1 = deepFreeze({
   },
   pricing: {
     sourceUrl: "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
-    sourceCheckedAt: "2026-08-25T06:45:15.787Z",
+    sourceCheckedAt: "2026-08-28T08:05:41.804Z",
     sourceSnapshotSha256:
-      "593f092cc8e91ad568f4843a83264e2f7aa2551b5c46d1e35b5e2654e3f06a02",
+      "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
     rows: [
       {
         id: "11111111-1111-4111-8111-111111111112",
@@ -114,7 +114,7 @@ export const DEEPSEEK_V2_SEED_V1 = deepFreeze({
         calculatorKind: "linear_token_v1",
         validFrom: "2026-08-25T06:45:15.787Z",
         validTo: null,
-        providerEffectiveFrom: null,
+        providerEffectiveFrom: "2026-08-16T16:00:00.000Z",
         providerEffectiveTo: null,
         parameters: {},
         componentsSealedAt: null,
@@ -132,7 +132,7 @@ export const DEEPSEEK_V2_SEED_V1 = deepFreeze({
         calculatorKind: "linear_token_v1",
         validFrom: "2026-08-25T06:45:15.787Z",
         validTo: null,
-        providerEffectiveFrom: null,
+        providerEffectiveFrom: "2026-08-16T16:00:00.000Z",
         providerEffectiveTo: null,
         parameters: {},
         componentsSealedAt: null,
