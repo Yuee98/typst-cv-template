@@ -60,7 +60,7 @@ import {
   resolveIntegrationProfile,
   sameExpectedRouteV1,
 } from "./lib/integration-ledger-evidence.mjs";
-import { readJsonOrNull } from "./lib/integration-http.mjs";
+import { buildCancellationProbeItems, readJsonOrNull } from "./lib/integration-http.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -74,14 +74,11 @@ const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const AVAILABILITY_TIMEOUT_MS = 10_000;
 const POLISH_REQUEST_TIMEOUT_MS = 75_000;
-// The cancellation probe deliberately uses a valid, near-maximum section
+// The cancellation probe deliberately uses a valid multi-item section
 // request. Fast official models can otherwise finalize a one-item response
 // before the local ledger poll observes provider_started, turning a real
-// cancellation proof into a timing lottery. The request remains below the
-// 5,000-character/30-item contract caps and the same <=4 transmission budget.
-const CANCELLATION_ITEM_COUNT = 30;
-const CANCELLATION_ITEM_TEXT =
-  "主导微服务架构改造，负责核心链路性能优化与稳定性建设，推进可观测性、容量治理、故障演练和跨团队交付，将延迟、错误率和恢复时间持续降低。";
+// cancellation proof into a timing lottery. The pure fixture is contract- and
+// output-budget-tested; the same <=4 transmission budget still applies.
 const UPSTREAM_URL_ENV_NAMES = Object.freeze([
   "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
@@ -499,16 +496,24 @@ function makePolishBody(clientRequestId, text, expectedRoute) {
 }
 
 function makeCancellationPolishBody(clientRequestId, expectedRoute) {
-  const body = makePolishBody(clientRequestId, CANCELLATION_ITEM_TEXT, expectedRoute);
+  const body = makePolishBody(clientRequestId, "cancellation probe", expectedRoute);
   return {
     ...body,
     granularity: "section",
-    items: Array.from({ length: CANCELLATION_ITEM_COUNT }, (_, index) => ({
-      id: `c${index}`,
-      kind: "experience_bullet",
-      text: `第${index + 1}项：${CANCELLATION_ITEM_TEXT.repeat(2)}`,
-    })),
+    items: buildCancellationProbeItems(),
   };
+}
+
+function safeCancelSetupDetail(startedRow, outcome) {
+  if (startedRow !== null) return `state was already ${startedRow.state}`;
+  if (Number.isInteger(outcome?.status)) {
+    const rawCode = outcome?.body?.error?.code;
+    const code = typeof rawCode === "string" && /^[A-Z0-9_]{1,64}$/u.test(rawCode)
+      ? rawCode
+      : "unavailable";
+    return `reservation never appeared; HTTP ${outcome.status}, code ${code}`;
+  }
+  return "reservation never appeared; client request had no safe HTTP verdict";
 }
 
 async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
@@ -818,16 +823,9 @@ try {
     },
     { timeoutMs: 20_000, intervalMs: 25 },
   );
-  check(
-    "cancel setup: reservation reaches provider_started",
-    startedRow !== null && startedRow.state === "provider_started",
-    startedRow === null
-      ? "reservation never appeared"
-      : `state was already ${startedRow.state} (provider call finished before the abort window)`,
-  );
-
   let cancelRow = null;
   if (startedRow && startedRow.state === "provider_started") {
+    check("cancel setup: reservation reaches provider_started", true);
     // Let the upstream transmission get genuinely underway, then hang up.
     await sleep(250);
     controller.abort();
@@ -866,7 +864,12 @@ try {
     }
   } else {
     controller.abort();
-    await cancelFetch.catch(() => undefined);
+    const cancelOutcome = await cancelFetch.catch(() => undefined);
+    check(
+      "cancel setup: reservation reaches provider_started",
+      false,
+      safeCancelSetupDetail(startedRow, cancelOutcome),
+    );
   }
 
   // --- 7. Evidence readback: exactly this run's two request ids and their

@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { readJsonOrNull } from "./integration-http.mjs";
+import {
+  MAX_ITEM_CHARS,
+  MAX_TARGET_CHARS,
+  computePolishMaxOutputTokens,
+  polishPostRequestSchema,
+} from "../../src/lib/polish/contract";
+import {
+  CANCELLATION_ITEM_COUNT,
+  buildCancellationProbeItems,
+  readJsonOrNull,
+} from "./integration-http.mjs";
 
 describe("integration HTTP body parsing", () => {
   it("returns parsed JSON and tolerates an ordinary non-JSON body", async () => {
@@ -19,5 +29,31 @@ describe("integration HTTP body parsing", () => {
     controller.abort();
     rejectBody(abortError);
     await expect(reading).rejects.toBe(abortError);
+  });
+
+  it("keeps the real-provider cancellation probe inside request and output bounds", () => {
+    const items = buildCancellationProbeItems();
+    const body = {
+      clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      granularity: "section",
+      sectionId: "experience",
+      language: "zh",
+      items,
+      context: { level: 0, references: [] },
+      expectedRoute: {
+        schemaVersion: "expected_route_v1",
+        configGeneration: "3",
+        profileVersionId: "11111111-1111-4111-8111-111111111111",
+        legalBundleVersion: "2026-08-23-multi-provider-v1",
+        runtimeContractId: "runtime.deepseek-v2.v1",
+        runtimeContractSha256: "0".repeat(64),
+      },
+    };
+
+    expect(items).toHaveLength(CANCELLATION_ITEM_COUNT);
+    expect(items.every((item) => item.text.length <= MAX_ITEM_CHARS)).toBe(true);
+    expect(items.reduce((sum, item) => sum + item.text.length, 0)).toBeLessThanOrEqual(MAX_TARGET_CHARS);
+    expect(computePolishMaxOutputTokens(items)).toBeLessThan(8_000);
+    expect(polishPostRequestSchema.safeParse(body).success).toBe(true);
   });
 });
