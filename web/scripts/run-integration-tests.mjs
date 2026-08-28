@@ -44,7 +44,7 @@
  *   SUPABASE_SERVICE_ROLE_KEY (from `supabase status`),
  *   AI_USER_ID_HMAC_SECRET (`openssl rand -hex 32`), AI_POLISH_ENABLED=true,
  *   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
- * plus a running local Supabase (`pnpm supabase:start` at the repo root).
+ * plus a running local Supabase (the workspace Supabase CLI at the repo root).
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -60,14 +60,20 @@ import {
   resolveIntegrationProfile,
   sameExpectedRouteV1,
 } from "./lib/integration-ledger-evidence.mjs";
+import { readJsonOrNull } from "./lib/integration-http.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
+const supabaseCli = path.join(repoRoot, "node_modules", "supabase", "dist", "supabase.js");
+const syncTypstAssetsScript = path.join(scriptsDir, "sync-typst-assets.mjs");
+const runNextModeScript = path.join(scriptsDir, "run-next-mode.mjs");
 
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const AVAILABILITY_TIMEOUT_MS = 10_000;
+const POLISH_REQUEST_TIMEOUT_MS = 75_000;
 const UPSTREAM_URL_ENV_NAMES = Object.freeze([
   "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
@@ -236,16 +242,18 @@ function preflightUpstream() {
  * project than the verified-local one. Never prints key material, only names.
  */
 function preflightSupabaseCliMatch() {
-  const status = spawnSync("pnpm exec supabase status -o env", {
+  if (!existsSync(supabaseCli)) {
+    fatal("the workspace Supabase CLI is not installed.");
+  }
+  const status = spawnSync(process.execPath, [supabaseCli, "status", "-o", "env"], {
     cwd: repoRoot,
-    shell: true,
     encoding: "utf8",
     timeout: 120_000,
   });
   if (status.error || status.status !== 0) {
     fatal(
       "local Supabase is not running (`supabase status` failed).",
-      "Start it with `pnpm supabase:start` at the repo root, then re-run.",
+      "Start the verified local Supabase project, then re-run.",
     );
   }
   const reported = {};
@@ -341,21 +349,30 @@ function ensureServerBuild() {
   }
   log(
     reuseBuild
-      ? "--reuse-build requested but no server build found — running `pnpm build:server`…"
+      ? "--reuse-build requested but no server build found — rebuilding the server directly…"
       : "building the current head (default; may take minutes — --reuse-build opts out for iteration)…",
   );
-  const build = spawnSync("pnpm build:server", {
+  const childEnv = { ...process.env, ...realModeEnv(), ...forwardedServerEnv() };
+  const syncAssets = spawnSync(process.execPath, [syncTypstAssetsScript], {
     cwd: webRoot,
-    shell: true,
     stdio: "inherit",
     timeout: 900_000,
-    env: { ...process.env, ...realModeEnv(), ...forwardedServerEnv() },
+    env: childEnv,
+  });
+  if (syncAssets.error || syncAssets.status !== 0) {
+    fatal("direct Typst asset sync failed; see the build output above.");
+  }
+  const build = spawnSync(process.execPath, [runNextModeScript, "build", "server"], {
+    cwd: webRoot,
+    stdio: "inherit",
+    timeout: 900_000,
+    env: childEnv,
   });
   if (build.error || build.status !== 0) {
-    fatal("`pnpm build:server` failed; see the build output above.");
+    fatal("direct server build failed; see the build output above.");
   }
   if (!existsSync(buildId) || !existsSync(polishRoute)) {
-    fatal("`pnpm build:server` finished but .next still has no server API build.");
+    fatal("direct server build finished but .next still has no server API build.");
   }
 }
 
@@ -446,13 +463,15 @@ async function waitForServer(server) {
 async function postPolish(body, { token, signal } = {}) {
   const headers = { "content-type": "application/json" };
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
+  const deadline = AbortSignal.timeout(POLISH_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const response = await fetch(`${BASE_URL}/api/polish`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal,
+    signal: requestSignal,
   });
-  const json = await response.json().catch(() => null);
+  const json = await readJsonOrNull(response, requestSignal);
   return { status: response.status, headers: response.headers, body: json };
 }
 
@@ -472,10 +491,12 @@ function makePolishBody(clientRequestId, text, expectedRoute) {
 }
 
 async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
+  const availabilitySignal = AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS);
   const response = await fetch(`${BASE_URL}/api/polish/availability`, {
     headers: { authorization: `Bearer ${accessToken}` },
+    signal: availabilitySignal,
   });
-  const body = await response.json().catch(() => null);
+  const body = await readJsonOrNull(response, availabilitySignal);
   if (response.status !== 200 || body?.availability?.enabled !== true) {
     fatal("selected integration profile is not authenticated-and-available on the prepared local route.");
   }
