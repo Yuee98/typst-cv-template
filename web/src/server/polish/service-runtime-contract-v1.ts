@@ -37,7 +37,7 @@ export const MIMO_PROFILE_KEY =
 export const MIMO_PROFILE_VERSION_ID =
   MIMO_V2_SEED_IDENTITY_V1.profile.profileVersionId;
 export const DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID =
-  "sha1:67259cfaf9c2a5c895077a68f632880e59d099fd" as const;
+  "sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba" as const;
 export const MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID =
   "sha1:600caeb322b2f0e829c370a55b2f1813f8ffa175" as const;
 
@@ -445,6 +445,85 @@ const SOURCE_BLOBS = Object.freeze({
   ),
 });
 
+// The legacy DeepSeek registry remains byte-for-byte bound to SOURCE_BLOBS.
+// The combined v2 registry independently rebinds only the lifecycle adapter
+// selection seam to the reviewed Phase A source checkpoint.
+const DEEPSEEK_MIMO_SOURCE_BLOBS = Object.freeze({
+  reserveTest: source(
+    "web/test/db/reserve-v2-route-snapshot.test.ts",
+    "f34eae80629b394ed937a61a0b770b81bcab1bad922766a34a191236bf320791",
+  ),
+  ledgerRequestTest: source(
+    "web/test/db/provider-ledger-expand.test.ts",
+    "fe51db9553ef3d426f39bc2ee340a1fb1503a82cf101d3cb318a09afc09b415d",
+  ),
+  attemptLedgerTest: source(
+    "web/test/db/provider-attempt-schema.test.ts",
+    "b016c62af4541d2b6f39e0a4f29aed0111cefd8015d71ca43d5c4043247d3c4d",
+  ),
+  lifecycleV2: source(
+    "web/src/server/polish/lifecycle-v2.ts",
+    "778a2271ac9ab47ff60dc372c57e8f3e5b41b98ee9cd50b58e6c46ff9ce94b21",
+  ),
+  lifecycleV2Test: source(
+    "web/src/server/polish/__tests__/lifecycle/v2.test.ts",
+    "bb5391bdea9c4dcebdef78683379d0f7a1d5f430dc1095c34814bb0b3a2163dd",
+  ),
+  attemptStartTest: source(
+    "web/test/db/provider-attempt-start.test.ts",
+    "2797bd62815308c675f07a9ac9ca328b45905ccc3ff0be4719ec82119cf903b6",
+  ),
+  attemptFinalizeTest: source(
+    "web/test/db/provider-attempt-finalize.test.ts",
+    "a76d989d37cad3450f1890b4f2a462ba1759bbfe625ddba86251feef5791a1b9",
+  ),
+  durableTransmissionTest: source(
+    "web/test/db/provider-attempt-transmission.test.ts",
+    "4bec6c0568a9f9ff3d64d3b32f6147a3b360b53d57929367873662ec3e057775",
+  ),
+  retentionTest: source(
+    "web/test/db/reconcile-cleanup.test.ts",
+    "08b5e296e6e563bbf4470099cd7346f6e08b6a86b1d1993b1962dd790ea81c3d",
+  ),
+  configPhase: source(
+    "web/src/components/cv-builder/polish/polish-config-phase.tsx",
+    "fbb96f978c20176aee3d149c168ded01d616496da5e61690a56025e55085abb3",
+  ),
+  dialogTest: source(
+    "web/src/components/cv-builder/polish/polish-dialog.test.tsx",
+    "7aa41b73a2bd826770f1dde9837e162c1335389aceea2b5b56c8e36adcbadcfd",
+  ),
+});
+
+const DEEPSEEK_MIMO_SOURCE_REBINDS = Object.freeze([
+  [SOURCE_BLOBS.reserveTest, DEEPSEEK_MIMO_SOURCE_BLOBS.reserveTest],
+  [
+    SOURCE_BLOBS.ledgerRequestTest,
+    DEEPSEEK_MIMO_SOURCE_BLOBS.ledgerRequestTest,
+  ],
+  [
+    SOURCE_BLOBS.attemptLedgerTest,
+    DEEPSEEK_MIMO_SOURCE_BLOBS.attemptLedgerTest,
+  ],
+  [SOURCE_BLOBS.lifecycleV2, DEEPSEEK_MIMO_SOURCE_BLOBS.lifecycleV2],
+  [SOURCE_BLOBS.lifecycleV2Test, DEEPSEEK_MIMO_SOURCE_BLOBS.lifecycleV2Test],
+  [
+    SOURCE_BLOBS.attemptStartTest,
+    DEEPSEEK_MIMO_SOURCE_BLOBS.attemptStartTest,
+  ],
+  [
+    SOURCE_BLOBS.attemptFinalizeTest,
+    DEEPSEEK_MIMO_SOURCE_BLOBS.attemptFinalizeTest,
+  ],
+  [
+    SOURCE_BLOBS.durableTransmissionTest,
+    DEEPSEEK_MIMO_SOURCE_BLOBS.durableTransmissionTest,
+  ],
+  [SOURCE_BLOBS.retentionTest, DEEPSEEK_MIMO_SOURCE_BLOBS.retentionTest],
+  [SOURCE_BLOBS.configPhase, DEEPSEEK_MIMO_SOURCE_BLOBS.configPhase],
+  [SOURCE_BLOBS.dialogTest, DEEPSEEK_MIMO_SOURCE_BLOBS.dialogTest],
+] as const);
+
 const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
   Object.freeze([
     Object.freeze({
@@ -735,17 +814,42 @@ const MIMO_FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
     }),
   ]);
 
+function rebindCombinedReviewedSource(
+  blob: Readonly<SourceBlobV1>,
+): Readonly<SourceBlobV1> {
+  return (
+    DEEPSEEK_MIMO_SOURCE_REBINDS.find(([legacy]) => blob === legacy)?.[1] ??
+    blob
+  );
+}
+
+function rebindCombinedReviewedRoute(
+  route: Readonly<FactEvidenceRouteV1>,
+): Readonly<FactEvidenceRouteV1> {
+  const implementation = route.implementation.map(
+    rebindCombinedReviewedSource,
+  );
+  const test = route.test.map(rebindCombinedReviewedSource);
+  return Object.freeze({
+    factId: route.factId,
+    implementation: sourceSet(
+      ...implementation,
+      ...(route.factId === "fact.neutral.plaintext.v1"
+        ? [SOURCE_BLOBS.mimo]
+        : []),
+    ),
+    test: sourceSet(
+      ...test,
+      ...(route.factId === "fact.neutral.plaintext.v1"
+        ? [SOURCE_BLOBS.mimoTest]
+        : []),
+    ),
+  });
+}
+
 const DEEPSEEK_MIMO_FACT_EVIDENCE_ROUTES = Object.freeze([
-  ...FACT_EVIDENCE_ROUTES.map((route) =>
-    route.factId === "fact.neutral.plaintext.v1"
-      ? Object.freeze({
-          factId: route.factId,
-          implementation: sourceSet(...route.implementation, SOURCE_BLOBS.mimo),
-          test: sourceSet(...route.test, SOURCE_BLOBS.mimoTest),
-        })
-      : route,
-  ),
-  ...MIMO_FACT_EVIDENCE_ROUTES,
+  ...FACT_EVIDENCE_ROUTES.map(rebindCombinedReviewedRoute),
+  ...MIMO_FACT_EVIDENCE_ROUTES.map(rebindCombinedReviewedRoute),
 ]);
 
 function compareUtf8(left: string, right: string): number {
@@ -1013,7 +1117,7 @@ const DEEPSEEK_MIMO_CONTRACT_SHA256 = fingerprintLegalDescriptorV1(
   DEEPSEEK_MIMO_CONTRACT_DESCRIPTOR,
 ).sha256;
 const EXPECTED_DEEPSEEK_MIMO_CONTRACT_SHA256 =
-  "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d";
+  "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c";
 if (
   DEEPSEEK_MIMO_CONTRACT_SHA256 !==
   EXPECTED_DEEPSEEK_MIMO_CONTRACT_SHA256

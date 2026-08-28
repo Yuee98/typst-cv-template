@@ -31,6 +31,10 @@ const IDENTICAL_REAPPLY_ADVISORY_LOCK_KEY = 702003;
 const OLD_CONTRACT_ID = "runtime.deepseek-v2.v1";
 const OLD_CONTRACT_SHA256 =
   "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9";
+const SUPERSEDED_COMBINED_CONTRACT_ID =
+  "runtime.deepseek-v2-mimo-v2.5-pro.v1";
+const SUPERSEDED_COMBINED_CONTRACT_SHA256 =
+  "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d";
 const SNAPSHOT_TABLES = [
   "ai_provider_profiles",
   "ai_provider_profile_versions",
@@ -478,6 +482,7 @@ describe("CFG-002 MiMo V2 seed static contract", () => {
   });
 
   it("cross-checks frozen MiMo identity JCS and the reviewed combined fixture", () => {
+    const migration = readFileSync(MIGRATION_URL, "utf8");
     const profile = MIMO_V2_SEED_IDENTITY_V1.profile;
     const jcs = canonicalize(profile.config);
     expect(Buffer.from(jcs, "utf8").toString("hex")).toBe(profile.configJcsUtf8Hex);
@@ -487,6 +492,13 @@ describe("CFG-002 MiMo V2 seed static contract", () => {
     expect(targetSetHash(TARGETS)).toBe(CONTRACT.runtimeTargetSetSha256);
     expect(TARGETS.map((target) => target.profileKey).sort())
       .toEqual(["deepseek.official.deepseek-v4-flash.chat.v1", profile.profileKey]);
+    expect(CONTRACT).toMatchObject({
+      runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v2",
+      reviewedSourceCommitOid:
+        "sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba",
+    });
+    expect(migration.match(/runtime\.deepseek-v2-mimo-v2\.5-pro\.v1/gu)).toHaveLength(2);
+    expect(migration.match(/049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d/gu)).toHaveLength(2);
   });
 });
 
@@ -566,6 +578,20 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         runtime_contract_sha256: OLD_CONTRACT_SHA256,
         sealed_at: expect.any(String),
       })]));
+    expect(
+      catalog.tables.ai_service_runtime_contract_versions.some(
+        (row) =>
+          row.runtime_contract_id === SUPERSEDED_COMBINED_CONTRACT_ID ||
+          row.runtime_contract_sha256 === SUPERSEDED_COMBINED_CONTRACT_SHA256,
+      ),
+    ).toBe(false);
+    expect(
+      catalog.tables.ai_service_runtime_contract_targets.some(
+        (row) =>
+          row.runtime_contract_id === SUPERSEDED_COMBINED_CONTRACT_ID ||
+          row.runtime_contract_sha256 === SUPERSEDED_COMBINED_CONTRACT_SHA256,
+      ),
+    ).toBe(false);
     for (const table of [
       "ai_routing_lifecycle_audit", "ai_routing_policy_transition_intents",
       "ai_request_ledger", "ai_provider_attempt_ledger", "ai_usage_daily",

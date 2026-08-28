@@ -56,7 +56,7 @@ export const MIMO_V2_SEED_IDENTITY_V1 = deepFreeze({
   },
   runtime: {
     runtimeTargetId: "runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1",
-    runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v1",
+    runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v2",
   },
   pricing: {
     reservedDefaultPriceVersionId: "22222222-2222-4222-8222-222222222222",
