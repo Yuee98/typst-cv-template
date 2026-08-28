@@ -1001,7 +1001,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
         currency: expected?.currency,
         calculator_kind: expected?.calculatorKind,
         valid_to: expected?.validTo,
-        provider_effective_from: expected?.providerEffectiveFrom,
         provider_effective_to: expected?.providerEffectiveTo,
         source_url: SEED.pricing.sourceUrl,
         source_snapshot_sha256: SEED.pricing.sourceSnapshotSha256,
@@ -1009,6 +1008,11 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
         components_sealed_at: expected?.componentsSealedAt,
       });
       expect(new Date(row.valid_from).toISOString()).toBe(expected?.validFrom);
+      expect(
+        row.provider_effective_from === null
+          ? null
+          : new Date(row.provider_effective_from).toISOString(),
+      ).toBe(expected?.providerEffectiveFrom);
       expect(new Date(row.source_checked_at).toISOString()).toBe(
         SEED.pricing.sourceCheckedAt,
       );
