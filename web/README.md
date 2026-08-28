@@ -35,8 +35,9 @@ On CI, failures retain Playwright traces, screenshots, videos, and the HTML repo
 
 ## AI polish local smoke & metrics
 
-Local-only tooling for the AI polish API. `test:integration` proves the real
-chain (real DeepSeek key + real local Supabase, no fake flags) end to end;
+Local-only tooling for the AI polish API. `test:integration` proves one selected
+real profile (`deepseek` or `mimo`) against real local Supabase, with no fake
+flags, end to end;
 `metrics:ai` inspects the ledger and the global cost circuit breaker. Neither
 runs in CI — real API calls cost money — and `test:integration` refuses to
 start when `CI=true`.
@@ -49,29 +50,31 @@ start when `CI=true`.
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | `supabase status` → Publishable key |
 | `SUPABASE_SERVICE_ROLE_KEY` | `supabase status` → Secret key |
 | `DEEPSEEK_API_KEY` | DeepSeek console (real key — billed per token) |
-| `MIMO_API_KEY` | MiMo console; server-only alias for a separately approved DB profile, not used by the current DeepSeek smoke |
+| `MIMO_API_KEY` | MiMo console; required only for `test:integration -- --profile mimo` |
 | `OPENROUTER_API_KEY` | Future optional server-only alias; leave unset for the initial route |
 | `AI_USER_ID_HMAC_SECRET` | generate locally, e.g. `openssl rand -hex 32` |
 | `AI_POLISH_ENABLED` | set to `true` (deployment switch checked by the smoke) |
 
 The database is the runtime authority for the provider/profile version, exact price version, routing policy, legal bundle, and runtime-contract ID/hash; the server freezes that route before a transmission. `DEEPSEEK_API_KEY` and `MIMO_API_KEY` only satisfy code-registered credential aliases and cannot activate a route by themselves. `OPENROUTER_API_KEY` is deliberately future optional, not initial-route enablement. Never add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing switches: those would bypass DB validation, audit, canary, and legal controls. No key belongs in browser code, database rows, logs, ledger data, or error payloads.
 
-The DB-side runtime switch (`ai_feature_config.ai_polish_enabled`) must also
-be `true`; the smoke enables it via the service role when it finds it off
-(test:db restores the post-migration `false` default after every run) and
-puts the original value back during cleanup.
+The DB-side runtime switch and the exact selected route must already be
+prepared by a separate local driver. The smoke never activates a profile,
+policy, price, or feature switch; it fails closed unless authenticated
+availability exposes the selected frozen route.
 
 ### Real-key integration smoke
 
 ```powershell
 pnpm supabase:start        # repo root, once
-pnpm test:integration      # or: pnpm --filter web test:integration
+pnpm test:integration      # defaults to DeepSeek
+pnpm test:integration -- --profile mimo
 ```
 
 The script **rebuilds the server bundle by default every run** (testing the
 current head; `--reuse-build` is an explicit iteration-only opt-in), starts
 `next start`, creates a one-off user, signs in through the real gotrue
-password grant, then asserts:
+password grant, obtains an authenticated availability candidate, derives the
+strict `expected_route_v1` assertion from it, then asserts:
 401 without/with a fake token, 403 before AI-terms acceptance, 200 after
 acceptance (result ids match the targets, polished text non-blank), ledger
 settlement (`state=finalized`, `status=succeeded`, `quota_charged=true`,
@@ -89,18 +92,21 @@ server.
 
 Release-gate integrity: the run refuses a non-loopback
 `NEXT_PUBLIC_SUPABASE_URL` and any mismatch with the URL/keys reported by
-`supabase status` (it mutates users/config with the service key — never a
+`supabase status` (it mutates smoke users and their terms acceptance with the service key — never a
 hosted project); build and start both get explicit `POLISH_FAKE_LLM=false` /
-`POLISH_FAKE_BACKEND=false` / `CI=false`; and a non-official
-`DEEPSEEK_BASE_URL` is rejected unless `--allow-custom-upstream` is passed
-(that run is loudly declared **not** proof of official DeepSeek integration).
-This local smoke override is not a runtime routing authority and must not be promoted to an application environment selector.
+`POLISH_FAKE_BACKEND=false` / `CI=false`; only the selected provider credential
+is forwarded; and fake, proxy, custom, or cross-profile upstream configuration
+is rejected. It proves only the exact official DeepSeek Chat Completions or
+MiMo Responses endpoint frozen in the selected profile. Availability is checked
+again after terms acceptance and before cancellation; any route drift fails the
+run before another provider transmission.
 
 Cost discipline: every request uses one very short item; the run makes 2
 user-visible polish requests (one success, one canceled) and each may use up
 to 2 internal provider attempts — budget assertion ≤4 transmissions, typical
-2 — keeping a full smoke within a fraction of a RMB cent (pinned price
-snapshot 2026-08-04).
+2. Parent and immutable attempt evidence must match the selected profile,
+allowed frozen price version, combined/legacy runtime, gateway, wire API,
+model, CNY currency, and exact official endpoint.
 
 ### Metrics and the global cost alert
 

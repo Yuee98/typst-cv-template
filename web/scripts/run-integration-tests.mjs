@@ -6,7 +6,7 @@
  * Unlike test:db (which skips when no local Supabase is found) this script is
  * a HARD-FAIL preflight: it exists to prove the real chain works, so a missing
  * prerequisite is an error, never a silent skip. It runs the full production
- * wiring — real DeepSeek provider + real local Supabase backend — with NO
+ * wiring — a selected real official provider + real local Supabase backend — with NO
  * POLISH_FAKE_LLM / POLISH_FAKE_BACKEND flags, and is therefore LOCAL-ONLY:
  * it is not part of CI (real API calls cost money) and refuses to run when
  * CI=true.
@@ -24,23 +24,24 @@
  *
  * Release-gate integrity (CP4 round-1):
  *   - NEXT_PUBLIC_SUPABASE_URL must be loopback http, AND must match the
- *     URL/keys reported by `supabase status` — the script creates users and
- *     flips runtime config with the service key, so it must never touch a
- *     hosted project.
+ *     URL/keys reported by `supabase status` — the script creates smoke users
+ *     and terms acceptances with the service key, but never flips runtime
+ *     configuration, so it must never touch a hosted project.
  *   - the server build is REBUILT by default every run (testing the current
  *     head); --reuse-build is an explicit iteration-only opt-in.
  *   - build and start both get explicit POLISH_FAKE_LLM=false /
  *     POLISH_FAKE_BACKEND=false / CI=false (process.env beats .env.local).
- *   - a non-official DEEPSEEK_BASE_URL is rejected. The V2 adapter resolves
- *     its endpoint from the code-owned route authority, so this harness must
- *     not imply that it can exercise a proxy/custom upstream.
+ *   - fake, custom, proxy, and cross-profile upstream configuration is
+ *     rejected. The V2 adapter resolves its endpoint from the code-owned
+ *     route authority, so this harness must not imply proxy coverage.
  *
  * Red lines (roadmap 禁存清单): this script never prints request/response
  * bodies, polished text, access tokens, or any key. Only statuses, error
  * codes, request ids and usage/latency NUMBERS appear in its output.
  *
  * Prerequisites (web/.env.local, never committed):
- *   DEEPSEEK_API_KEY, SUPABASE_SERVICE_ROLE_KEY (from `supabase status`),
+ *   DEEPSEEK_API_KEY or MIMO_API_KEY (selected by --profile),
+ *   SUPABASE_SERVICE_ROLE_KEY (from `supabase status`),
  *   AI_USER_ID_HMAC_SECRET (`openssl rand -hex 32`), AI_POLISH_ENABLED=true,
  *   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
  * plus a running local Supabase (`pnpm supabase:start` at the repo root).
@@ -54,8 +55,10 @@ import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { createClient } from "@supabase/supabase-js";
 import {
+  buildExpectedRouteV1,
   evaluateRunLedgerEvidence,
   resolveIntegrationProfile,
+  sameExpectedRouteV1,
 } from "./lib/integration-ledger-evidence.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
@@ -65,6 +68,11 @@ const repoRoot = path.resolve(webRoot, "..");
 
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const UPSTREAM_URL_ENV_NAMES = Object.freeze([
+  "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
+  "GLOBAL_AGENT_HTTP_PROXY", "GLOBAL_AGENT_HTTPS_PROXY",
+]);
 
 // Explicit opt-in (off by default — the default is release-gate safe).
 //   --reuse-build            skip build:server and reuse the existing .next
@@ -83,7 +91,7 @@ for (let index = 0; index < args.length; index += 1) {
   } else {
     console.error(`[test:integration] unknown argument: ${arg}`);
     console.error(
-      "usage: node scripts/run-integration-tests.mjs [--profile deepseek] [--reuse-build]",
+      "usage: node scripts/run-integration-tests.mjs [--profile deepseek|mimo] [--reuse-build]",
     );
     process.exit(1);
   }
@@ -173,11 +181,16 @@ function preflightEnv() {
   if (getEnv("AI_POLISH_ENABLED") !== "true") {
     fatal('AI_POLISH_ENABLED must be "true" in web/.env.local for the real smoke.');
   }
+  for (const name of ["POLISH_FAKE_LLM", "POLISH_FAKE_BACKEND"]) {
+    if (getEnv(name) === "true") {
+      fatal(`${name}=true is incompatible with a real-provider integration proof.`);
+    }
+  }
 }
 
 /**
  * P0-1: the configured Supabase URL must be loopback http BEFORE any client
- * is constructed — the smoke creates users and flips runtime config with the
+ * is constructed — the smoke creates users and accepts terms with the
  * service-role key, so a hosted/staging URL here is a destructive-safety bug.
  */
 function preflightLocalSupabaseUrl(supabaseUrl) {
@@ -185,26 +198,36 @@ function preflightLocalSupabaseUrl(supabaseUrl) {
   if (!result.ok) {
     fatal(
       `refusing non-local Supabase URL (${result.reason}).`,
-      "The real-key integration smoke creates users and changes AI runtime configuration; " +
+      "The real-key integration smoke creates users and accepts AI terms; " +
         "NEXT_PUBLIC_SUPABASE_URL must be http://127.0.0.1 / localhost / [::1].",
     );
   }
 }
 
 /**
- * P0-2.3: reject a custom DEEPSEEK_BASE_URL before any mutation. The current
- * V2 adapter uses the code-owned endpoint registry, not this legacy override;
- * accepting it would falsely imply proxy coverage.
+ * Reject custom, proxy, and unused provider upstream overrides before any
+ * mutation. The V2 adapter resolves exact endpoints from route authority;
+ * accepting a custom variable would falsely imply proxy coverage.
  */
 function preflightUpstream() {
-  const baseUrl = getEnv("DEEPSEEK_BASE_URL");
-  if (!baseUrl || isOfficialDeepSeekBaseUrl(baseUrl)) {
-    return;
+  const deepseekBaseUrl = getEnv("DEEPSEEK_BASE_URL");
+  if (integrationProfile.name !== "deepseek" && deepseekBaseUrl) {
+    fatal(
+      "DEEPSEEK_BASE_URL is forbidden for the MiMo smoke, including the official origin.",
+      "The selected route must be code/DB-owned without an ambient cross-profile override.",
+    );
   }
-  fatal(
-    "DEEPSEEK_BASE_URL is set to a non-official origin — this V2 smoke only proves the direct official DeepSeek route.",
-    "Unset it before running; custom/proxy diagnostics are unreachable through the current V2 adapter authority.",
-  );
+  if (deepseekBaseUrl && !isOfficialDeepSeekBaseUrl(deepseekBaseUrl)) {
+    fatal(
+      "DEEPSEEK_BASE_URL is set to a non-official origin — this smoke proves only exact official provider routes.",
+      "Unset custom/proxy upstream variables before running.",
+    );
+  }
+  for (const name of UPSTREAM_URL_ENV_NAMES.filter((name) => name !== "DEEPSEEK_BASE_URL")) {
+    if (getEnv(name)) {
+      fatal(`${name} is unsupported by the exact-route integration smoke.`, "Unset custom upstream variables before running.");
+    }
+  }
 }
 
 /**
@@ -284,7 +307,14 @@ function realModeEnv() {
 
 /** The server config shared by build and start, from .env.local/process.env. */
 function forwardedServerEnv() {
-  const env = {};
+  // Explicit empty values win over .env.local loading in child Next processes.
+  // A selected smoke profile must never gain a second credential or fallback.
+  const env = {
+    DEEPSEEK_API_KEY: "",
+    MIMO_API_KEY: "",
+    OPENROUTER_API_KEY: "",
+  };
+  for (const name of UPSTREAM_URL_ENV_NAMES) env[name] = "";
   for (const name of [
     integrationProfile.credentialEnv,
     "SUPABASE_SERVICE_ROLE_KEY",
@@ -348,8 +378,8 @@ function startServer() {
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  // Server logs are metadata-only by construction (PolishLogEvent has no
-  // content fields); buffer them and dump only when the run fails.
+  // Drain child output so it cannot block, but never print it: an upstream or
+  // framework error must not turn a smoke failure into provider-content logs.
   const capture = (chunk) => {
     serverOutput.push(chunk.toString());
     if (serverOutput.length > 200) serverOutput.shift();
@@ -360,9 +390,7 @@ function startServer() {
     child,
     dumpOutput() {
       if (serverOutput.length > 0) {
-        console.error("--- server output (tail) ---");
-        console.error(serverOutput.join(""));
-        console.error("--- end server output ---");
+        console.error("--- server output redacted to preserve no-content logging ---");
       }
     },
     async stop() {
@@ -428,7 +456,10 @@ async function postPolish(body, { token, signal } = {}) {
   return { status: response.status, headers: response.headers, body: json };
 }
 
-function makePolishBody(clientRequestId, text) {
+function makePolishBody(clientRequestId, text, expectedRoute) {
+  if (expectedRoute?.schemaVersion !== "expected_route_v1") {
+    throw new Error("refusing to build a polish request without a strict expected route");
+  }
   return {
     clientRequestId,
     granularity: "item",
@@ -436,7 +467,28 @@ function makePolishBody(clientRequestId, text) {
     language: "zh",
     items: [{ id: "i0", kind: "experience_bullet", text }],
     context: { level: 0, references: [] },
+    expectedRoute,
   };
+}
+
+async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
+  const response = await fetch(`${BASE_URL}/api/polish/availability`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const body = await response.json().catch(() => null);
+  if (response.status !== 200 || body?.availability?.enabled !== true) {
+    fatal("selected integration profile is not authenticated-and-available on the prepared local route.");
+  }
+  let route;
+  try {
+    route = buildExpectedRouteV1(body.availability, integrationProfile);
+  } catch (error) {
+    fatal(error instanceof Error ? error.message : "availability route validation failed");
+  }
+  if (expectedRoute !== null && !sameExpectedRouteV1(expectedRoute, route)) {
+    fatal("availability route changed during the smoke; refusing another provider transmission.");
+  }
+  return Object.freeze({ route, termsAccepted: body.availability.termsAccepted === true });
 }
 
 function utcToday() {
@@ -457,7 +509,7 @@ const REQUEST_LEDGER_SELECT = [
 const ATTEMPT_LEDGER_SELECT = [
   "attempt_no", "status", "transmitted", "provider_billable", "usage_observation_kind",
   "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
-  "output_tokens", "route_schema_version", "config_generation", "routing_policy_version_id",
+  "output_tokens", "reasoning_tokens", "route_schema_version", "config_generation", "routing_policy_version_id",
   "profile_version_id", "price_version_id", "legal_bundle_version", "runtime_contract_id",
   "runtime_contract_sha256", "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key",
   "endpoint_alias", "actual_upstream_endpoint", "actual_model_id", "billing_currency",
@@ -526,7 +578,6 @@ async function waitFinalized(fetchRow, label) {
 let service = null;
 let server = null;
 let userId = null;
-let featureConfigRestore = null;
 let fatalError = null;
 let integrationProfile = null;
 
@@ -553,33 +604,10 @@ try {
   server = startServer();
   try {
     await waitForServer(server);
-  log(`server ready on ${BASE_URL} (real official DeepSeek provider + real local Supabase)`);
-
-  // DB-side runtime switch (distinct from the AI_POLISH_ENABLED env): the
-  // reserve RPC denies with 503 AI_DISABLED while it is off, and test:db
-  // restores the post-migration default (false) after every run — so the
-  // smoke enables it via the service role when needed and restores the
-  // original value during cleanup.
-  const { data: featureConfig, error: featureError } = await service
-    .from("ai_feature_config")
-    .select("ai_polish_enabled")
-    .eq("id", true)
-    .single();
-  if (featureError) fatal(`ai_feature_config read failed: ${featureError.message}`);
-  if (featureConfig.ai_polish_enabled !== true) {
-    const { error: enableError } = await service
-      .from("ai_feature_config")
-      .update({ ai_polish_enabled: true })
-      .eq("id", true);
-    if (enableError) {
-      fatal(`failed to enable the DB runtime switch: ${enableError.message}`);
-    }
-    featureConfigRestore = featureConfig.ai_polish_enabled;
-    log(
-      "DB runtime switch ai_feature_config.ai_polish_enabled was off — " +
-        "enabled via service role (restored on cleanup)",
-    );
-  }
+  log(`server ready on ${BASE_URL} (real official ${integrationProfile.displayDisclosure.providerName} provider + real local Supabase)`);
+  // This harness never activates a route or flips the DB feature switch. A
+  // separate local driver must prepare the exact selected route; authenticated
+  // availability below is the fail-closed proof before any request is sent.
 
   // --- Real auth chain: admin-created one-off user + gotrue password grant.
   const email = `smoke-${crypto.randomUUID()}@example.com`;
@@ -604,6 +632,13 @@ try {
   const accessToken = session.session.access_token;
   log("smoke user created and signed in via the real password grant");
 
+  const availabilityBeforeTerms = await getAuthenticatedAvailability(accessToken);
+  check(
+    "authenticated availability: terms are not yet accepted",
+    availabilityBeforeTerms.termsAccepted === false,
+  );
+  const expectedRoute = availabilityBeforeTerms.route;
+
   // --- 1. Auth denials.
   const noToken = await postPolish({});
   check(
@@ -620,7 +655,7 @@ try {
   );
 
   // --- 2. Terms gate, then acceptance via service role.
-  const beforeTerms = await postPolish(makePolishBody(crypto.randomUUID(), "负责后端服务开发。"), {
+  const beforeTerms = await postPolish(makePolishBody(crypto.randomUUID(), "负责后端服务开发。", expectedRoute), {
     token: accessToken,
   });
   check(
@@ -643,9 +678,12 @@ try {
   if (acceptError) fatal(`terms acceptance insert failed: ${acceptError.message}`);
   log(`AI terms accepted via service role (version ${termsVersion})`);
 
+  const availabilityAfterTerms = await getAuthenticatedAvailability(accessToken, expectedRoute);
+  check("authenticated availability: terms accepted without route drift", availabilityAfterTerms.termsAccepted === true);
+
   // --- 3. Real polish 200 (provider transmission #1).
   const baselineCount = await getDailyRequestCount(service, userId);
-  const successBody = makePolishBody(crypto.randomUUID(), "负责后端服务开发，优化接口性能。");
+  const successBody = makePolishBody(crypto.randomUUID(), "负责后端服务开发，优化接口性能。", expectedRoute);
   const success = await postPolish(successBody, { token: accessToken });
   check("POST /api/polish (real chain) → 200", success.status === 200, `got ${success.status}`);
 
@@ -723,15 +761,17 @@ try {
   );
 
   // --- 6. Cancel while the provider call is in flight (transmission #2).
+  await getAuthenticatedAvailability(accessToken, expectedRoute);
   const cancelClientRequestId = crypto.randomUUID();
   const controller = new AbortController();
   const cancelFetch = postPolish(
     makePolishBody(
       cancelClientRequestId,
       "主导微服务架构改造，负责核心链路性能优化与稳定性建设，推动接口延迟持续下降。",
+      expectedRoute,
     ),
     { token: accessToken, signal: controller.signal },
-  ).catch((error) => ({ aborted: true, error }));
+  ).catch(() => ({ aborted: true }));
 
   const startedRow = await pollUntil(
     async () => {
@@ -819,7 +859,7 @@ try {
       evidence.transmissions <= 4,
       `got ${evidence.transmissions}`,
     );
-    check("ledger evidence: official DeepSeek proof verdict", evidence.ok);
+    check(`ledger evidence: official ${integrationProfile.displayDisclosure.providerName} proof verdict`, evidence.ok);
   }
   } finally {
     // --- Cleanup: user deletion cascades ledger/usage/terms rows.
@@ -852,26 +892,12 @@ try {
         }
       }
     }
-    if (featureConfigRestore !== null) {
-      const { error } = await service
-        .from("ai_feature_config")
-        .update({ ai_polish_enabled: featureConfigRestore })
-        .eq("id", true);
-      if (error) {
-        failures += 1;
-        console.error(`FAIL cleanup: restore ai_feature_config — ${error.message}`);
-      } else {
-        log(`DB runtime switch restored to ai_polish_enabled=${featureConfigRestore}`);
-      }
-    }
   }
 } catch (error) {
   if (error instanceof FatalSmokeError) {
     fatalError = error;
   } else {
-    console.error(
-      `[test:integration] UNEXPECTED: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
-    );
+    console.error("[test:integration] UNEXPECTED: details redacted to preserve no-content logging.");
     failures += 1;
   }
 } finally {
@@ -890,6 +916,6 @@ if (fatalError !== null || failures > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    "\nAll integration smoke assertions passed (real official DeepSeek + real local Supabase)",
+    `\nAll integration smoke assertions passed (real official ${integrationProfile.displayDisclosure.providerName} + real local Supabase)`,
   );
 }
