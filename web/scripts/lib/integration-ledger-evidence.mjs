@@ -82,6 +82,45 @@ function deriveBillable(attempts) {
   return null;
 }
 
+/**
+ * Mirrors the V2 parent aggregation contract exactly. Unknown/unavailable
+ * child usage cannot silently become a complete parent observation.
+ */
+export function deriveParentIncompleteFields(attempts) {
+  const children = Array.isArray(attempts) ? attempts : [];
+  const allUsageComplete = children.every(
+    (attempt) => attempt.usage_observation_kind === "observed" && attempt.usage_complete === true,
+  );
+  const cacheWriteKnown = children.every(
+    (attempt) =>
+      attempt.usage_observation_kind === "observed" && Number.isSafeInteger(attempt.input_cache_write_tokens),
+  );
+  const reasoningKnown = children.every(
+    (attempt) =>
+      attempt.usage_observation_kind === "observed" && Number.isSafeInteger(attempt.reasoning_tokens),
+  );
+  const billable = deriveBillable(children);
+  const estimatedIncomplete = children.some(
+    (attempt) => attempt.provider_billable !== false && attempt.estimated_cost_nanos == null,
+  );
+  return Object.freeze([
+    ...(allUsageComplete ? [] : ["attempt_usage"]),
+    ...(cacheWriteKnown ? [] : ["input_cache_write"]),
+    ...(reasoningKnown ? [] : ["reasoning"]),
+    ...(billable === null ? ["provider_billable"] : []),
+    ...(estimatedIncomplete ? ["estimated_cost"] : []),
+  ]);
+}
+
+function hasExactStrings(actual, expected) {
+  return (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    new Set(actual).size === actual.length &&
+    actual.every((value) => expected.includes(value))
+  );
+}
+
 function expectedCostReconciliation(attempts, estimatedIncomplete, estimated) {
   if (estimatedIncomplete) return "incomplete_usage";
   const applicable = attempts.filter((attempt) => attempt.provider_billable !== false);
@@ -107,11 +146,9 @@ export function evaluateRequestLedgerEvidence(
   parent,
   attempts,
   profile = DEEPSEEK_INTEGRATION_PROFILE,
-  { requireOfficialEndpoint = true } = {},
 ) {
   const issues = [];
   const children = Array.isArray(attempts) ? attempts : [];
-  const incomplete = new Set(Array.isArray(parent?.incomplete_fields) ? parent.incomplete_fields : []);
 
   push(issues, parent?.state === "finalized", "parent_not_finalized");
   push(issues, parent?.route_schema_version === profile.routeSchemaVersion, "parent_route_schema_mismatch");
@@ -140,15 +177,22 @@ export function evaluateRequestLedgerEvidence(
     }
     push(issues, attempt.gateway_kind === profile.gatewayKind, "attempt_gateway_mismatch");
     push(issues, attempt.wire_api_kind === profile.wireApiKind, "attempt_wire_api_mismatch");
-    push(issues, attempt.model_id === profile.modelId && attempt.actual_model_id === profile.modelId, "attempt_model_mismatch");
+    push(issues, attempt.model_id === profile.modelId, "attempt_model_mismatch");
     push(issues, attempt.endpoint_alias === profile.endpointAlias, "attempt_endpoint_alias_mismatch");
-    push(
-      issues,
-      requireOfficialEndpoint
-        ? isOfficialDeepSeekChatCompletionsEndpoint(attempt.actual_upstream_endpoint)
-        : typeof attempt.actual_upstream_endpoint === "string" && attempt.actual_upstream_endpoint.length > 0,
-      requireOfficialEndpoint ? "attempt_endpoint_not_official" : "attempt_endpoint_missing",
-    );
+    // Reconciliation makes an unknown transmission explicitly route-unknown;
+    // a definite pre-entry failure likewise has no observed provider route.
+    // Only a known entered attempt can prove the exact provider endpoint/model.
+    if (attempt.status === "unknown" || attempt.transmitted === false) {
+      push(issues, attempt.actual_upstream_endpoint === null, "attempt_route_endpoint_not_cleared");
+      push(issues, attempt.actual_model_id === null, "attempt_route_model_not_cleared");
+    } else {
+      push(issues, attempt.actual_model_id === profile.modelId, "attempt_model_mismatch");
+      push(
+        issues,
+        isOfficialDeepSeekChatCompletionsEndpoint(attempt.actual_upstream_endpoint),
+        "attempt_endpoint_not_official",
+      );
+    }
     push(issues, attempt.billing_currency === parent?.billing_currency, "billing_currency_mismatch");
     push(issues, attempt.estimated_currency == null || attempt.estimated_currency === parent?.billing_currency, "estimated_currency_mismatch");
     push(issues, attempt.provider_reported_currency == null || attempt.provider_reported_currency === parent?.billing_currency, "reported_currency_mismatch");
@@ -161,7 +205,6 @@ export function evaluateRequestLedgerEvidence(
     (attempt) => attempt.usage_observation_kind === "observed" && attempt.usage_complete === true,
   );
   push(issues, parent?.usage_complete === allUsageComplete, "parent_usage_complete_mismatch");
-  if (!allUsageComplete) push(issues, incomplete.has("attempt_usage"), "incomplete_attempt_usage_not_preserved");
 
   const cached = children.reduce(
     (sum, attempt) => sum + (Number.isSafeInteger(attempt.input_cache_read_tokens) ? attempt.input_cache_read_tokens : 0),
@@ -187,7 +230,6 @@ export function evaluateRequestLedgerEvidence(
   push(issues, parent?.cost_basis === "frozen_price_version_v1", "parent_cost_basis_mismatch");
   push(issues, parent?.known_estimated_cost_nanos === knownEstimated, "parent_known_estimated_cost_mismatch");
   push(issues, parent?.estimated_cost_nanos === expectedEstimated, "parent_estimated_cost_mismatch");
-  if (estimatedIncomplete) push(issues, incomplete.has("estimated_cost"), "incomplete_estimated_cost_not_preserved");
 
   const applicable = children.filter((attempt) => attempt.provider_billable !== false);
   const reportedKnown = applicable.filter((attempt) => Number.isSafeInteger(attempt.provider_reported_cost_nanos));
@@ -202,6 +244,12 @@ export function evaluateRequestLedgerEvidence(
     parent?.cost_reconciliation_status === expectedCostReconciliation(children, estimatedIncomplete, expectedEstimated),
     "parent_cost_reconciliation_mismatch",
   );
+  const expectedIncomplete = deriveParentIncompleteFields(children);
+  push(
+    issues,
+    hasExactStrings(parent?.incomplete_fields, expectedIncomplete),
+    "parent_incomplete_fields_mismatch",
+  );
 
   return Object.freeze({
     ok: issues.length === 0,
@@ -210,14 +258,13 @@ export function evaluateRequestLedgerEvidence(
   });
 }
 
-export function evaluateRunLedgerEvidence(records, { profile = DEEPSEEK_INTEGRATION_PROFILE, officialProof = true } = {}) {
+export function evaluateRunLedgerEvidence(records, { profile = DEEPSEEK_INTEGRATION_PROFILE } = {}) {
   const result = (Array.isArray(records) ? records : []).map(({ parent, attempts }) =>
-    evaluateRequestLedgerEvidence(parent, attempts, profile, { requireOfficialEndpoint: officialProof }),
+    evaluateRequestLedgerEvidence(parent, attempts, profile),
   );
   const transmissions = result.reduce((sum, entry) => sum + entry.transmissions, 0);
   return Object.freeze({
-    ok: officialProof && result.every((entry) => entry.ok) && isWithinTransmissionBudget(transmissions),
-    officialProof,
+    ok: result.every((entry) => entry.ok) && isWithinTransmissionBudget(transmissions),
     transmissions,
     requestResults: Object.freeze(result),
   });

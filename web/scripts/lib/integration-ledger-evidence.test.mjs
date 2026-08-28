@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEEPSEEK_INTEGRATION_PROFILE,
+  deriveParentIncompleteFields,
   evaluateRequestLedgerEvidence,
   evaluateRunLedgerEvidence,
   isOfficialDeepSeekChatCompletionsEndpoint,
@@ -36,6 +37,7 @@ function attempt(overrides = {}) {
     input_cache_write_tokens: 3,
     input_standard_tokens: 5,
     output_tokens: 7,
+    reasoning_tokens: 0,
     billing_currency: "USD",
     estimated_currency: "USD",
     estimated_cost_nanos: 17,
@@ -82,7 +84,7 @@ function parent(children, overrides = {}) {
     input_cached_tokens: rows.reduce((sum, row) => sum + (row.input_cache_read_tokens ?? 0), 0),
     input_uncached_tokens: rows.reduce((sum, row) => sum + (row.input_cache_write_tokens ?? 0) + (row.input_standard_tokens ?? 0), 0),
     output_tokens: rows.reduce((sum, row) => sum + (row.output_tokens ?? 0), 0),
-    incomplete_fields: allKnownEstimated ? [] : ["attempt_usage", "estimated_cost", "provider_billable"],
+    incomplete_fields: deriveParentIncompleteFields(rows),
     billing_currency: "USD",
     cost_basis: "frozen_price_version_v1",
     known_estimated_cost_nanos: knownEstimated,
@@ -120,7 +122,24 @@ describe("integration ledger evidence", () => {
   });
 
   it("rejects gaps and duplicates while accepting a false pre-entry transmission", () => {
-    const first = attempt({ status: "failed_upstream", transmitted: false, provider_billable: false, estimated_cost_nanos: null, estimated_currency: null, provider_reported_cost_nanos: null, provider_reported_currency: null });
+    const first = attempt({
+      status: "failed_upstream",
+      transmitted: false,
+      provider_billable: false,
+      usage_observation_kind: "unavailable",
+      usage_complete: false,
+      input_cache_read_tokens: null,
+      input_cache_write_tokens: null,
+      input_standard_tokens: null,
+      output_tokens: null,
+      reasoning_tokens: null,
+      actual_upstream_endpoint: null,
+      actual_model_id: null,
+      estimated_cost_nanos: null,
+      estimated_currency: null,
+      provider_reported_cost_nanos: null,
+      provider_reported_currency: null,
+    });
     expect(evaluateRequestLedgerEvidence(parent([first]), [first]).ok).toBe(true);
 
     const gap = attempt({ attempt_no: 2 });
@@ -144,6 +163,9 @@ describe("integration ledger evidence", () => {
       input_cache_write_tokens: null,
       input_standard_tokens: null,
       output_tokens: null,
+      reasoning_tokens: null,
+      actual_upstream_endpoint: null,
+      actual_model_id: null,
       estimated_currency: null,
       estimated_cost_nanos: null,
       provider_reported_currency: null,
@@ -163,6 +185,10 @@ describe("integration ledger evidence", () => {
       cost_reconciliation_status: "incomplete_usage",
     });
     expect(evaluateRequestLedgerEvidence(unknownParent, [unknown]).ok).toBe(true);
+    const staleUnknownRoute = { ...unknown, actual_upstream_endpoint: "https://api.deepseek.com/chat/completions", actual_model_id: "deepseek-v4-flash" };
+    expect(evaluateRequestLedgerEvidence(unknownParent, [staleUnknownRoute]).issues).toEqual(
+      expect.arrayContaining(["attempt_route_endpoint_not_cleared", "attempt_route_model_not_cleared"]),
+    );
 
     const canceled = attempt({
       status: "canceled",
@@ -174,6 +200,7 @@ describe("integration ledger evidence", () => {
       input_cache_write_tokens: null,
       input_standard_tokens: null,
       output_tokens: null,
+      reasoning_tokens: null,
       estimated_currency: null,
       estimated_cost_nanos: null,
       provider_reported_currency: null,
@@ -185,6 +212,8 @@ describe("integration ledger evidence", () => {
   it("rejects parent-child identity mismatches", () => {
     const child = attempt({ actual_model_id: "other-model" });
     expect(evaluateRequestLedgerEvidence(parent([child]), [child]).issues).toContain("attempt_model_mismatch");
+    const lookalike = attempt({ actual_upstream_endpoint: "https://api.deepseek.com.evil.example/chat/completions" });
+    expect(evaluateRequestLedgerEvidence(parent([lookalike]), [lookalike]).issues).toContain("attempt_endpoint_not_official");
   });
 
   it("preserves incomplete cost and rejects mixed-currency aggregation", () => {
@@ -197,18 +226,56 @@ describe("integration ledger evidence", () => {
       cost_reconciliation_status: "incomplete_usage",
       incomplete_fields: [],
     });
-    expect(evaluateRequestLedgerEvidence(incompleteParent, [incomplete]).issues).toContain("incomplete_estimated_cost_not_preserved");
+    expect(evaluateRequestLedgerEvidence(incompleteParent, [incomplete]).issues).toContain("parent_incomplete_fields_mismatch");
 
     const mixedCurrency = attempt({ estimated_currency: "CNY" });
     expect(evaluateRequestLedgerEvidence(parent([mixedCurrency]), [mixedCurrency]).issues).toContain("estimated_currency_mismatch");
   });
 
-  it("never grants an official-proof verdict to a custom upstream diagnostic", () => {
+  it("requires every derived incomplete marker and rejects contradictory extras", () => {
+    const canceledUnknown = attempt({
+      status: "canceled",
+      transmitted: true,
+      provider_billable: null,
+      usage_observation_kind: "unavailable",
+      usage_complete: false,
+      input_cache_read_tokens: null,
+      input_cache_write_tokens: null,
+      input_standard_tokens: null,
+      output_tokens: null,
+      reasoning_tokens: null,
+      estimated_currency: null,
+      estimated_cost_nanos: null,
+      provider_reported_currency: null,
+      provider_reported_cost_nanos: null,
+    });
+    const expected = deriveParentIncompleteFields([canceledUnknown]);
+    expect(expected).toEqual([
+      "attempt_usage",
+      "input_cache_write",
+      "reasoning",
+      "provider_billable",
+      "estimated_cost",
+    ]);
+    for (const marker of expected) {
+      const missing = parent([canceledUnknown], {
+        incomplete_fields: expected.filter((value) => value !== marker),
+      });
+      expect(evaluateRequestLedgerEvidence(missing, [canceledUnknown]).issues).toContain(
+        "parent_incomplete_fields_mismatch",
+      );
+    }
+    const complete = attempt();
+    expect(
+      evaluateRequestLedgerEvidence(parent([complete], { incomplete_fields: ["attempt_usage"] }), [complete]).issues,
+    ).toContain("parent_incomplete_fields_mismatch");
+  });
+
+  it("never grants an official-proof verdict to a custom upstream", () => {
     const row = attempt({ actual_upstream_endpoint: "https://diagnostic.internal/chat/completions" });
-    const result = evaluateRunLedgerEvidence([{ parent: parent([row]), attempts: [row] }], { officialProof: false });
+    const result = evaluateRunLedgerEvidence([{ parent: parent([row]), attempts: [row] }]);
     expect(result.ok).toBe(false);
-    expect(result.officialProof).toBe(false);
-    expect(result.requestResults[0].ok).toBe(true);
+    expect(result.requestResults[0].issues).toContain("attempt_endpoint_not_official");
   });
 
   it("fails closed for the dark MiMo draft", () => {

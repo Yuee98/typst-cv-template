@@ -31,9 +31,9 @@
  *     head); --reuse-build is an explicit iteration-only opt-in.
  *   - build and start both get explicit POLISH_FAKE_LLM=false /
  *     POLISH_FAKE_BACKEND=false / CI=false (process.env beats .env.local).
- *   - a non-official DEEPSEEK_BASE_URL is rejected; --allow-custom-upstream
- *     permits it with a loud "NOT proof of direct official DeepSeek
- *     integration" disclaimer.
+ *   - a non-official DEEPSEEK_BASE_URL is rejected. The V2 adapter resolves
+ *     its endpoint from the code-owned route authority, so this harness must
+ *     not imply that it can exercise a proxy/custom upstream.
  *
  * Red lines (roadmap 禁存清单): this script never prints request/response
  * bodies, polished text, access tokens, or any key. Only statuses, error
@@ -66,20 +66,15 @@ const repoRoot = path.resolve(webRoot, "..");
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
-// Explicit opt-ins (both off by default — the defaults are release-gate safe).
+// Explicit opt-in (off by default — the default is release-gate safe).
 //   --reuse-build            skip build:server and reuse the existing .next
-//   --allow-custom-upstream  permit a non-official DEEPSEEK_BASE_URL (the run
-//                            is then NOT proof of official DeepSeek access)
 let reuseBuild = false;
-let allowCustomUpstream = false;
 let profileName = "deepseek";
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
   if (arg === "--reuse-build") {
     reuseBuild = true;
-  } else if (arg === "--allow-custom-upstream") {
-    allowCustomUpstream = true;
   } else if (arg === "--profile") {
     profileName = args[index + 1] ?? "";
     index += 1;
@@ -88,7 +83,7 @@ for (let index = 0; index < args.length; index += 1) {
   } else {
     console.error(`[test:integration] unknown argument: ${arg}`);
     console.error(
-      "usage: node scripts/run-integration-tests.mjs [--profile deepseek] [--reuse-build] [--allow-custom-upstream]",
+      "usage: node scripts/run-integration-tests.mjs [--profile deepseek] [--reuse-build]",
     );
     process.exit(1);
   }
@@ -197,24 +192,19 @@ function preflightLocalSupabaseUrl(supabaseUrl) {
 }
 
 /**
- * P0-2.3: a custom DEEPSEEK_BASE_URL can swap the upstream for a proxy/mock
- * while the run still reports "real DeepSeek". The release gate forces the
- * official origin; --allow-custom-upstream opts out WITH a loud disclaimer.
+ * P0-2.3: reject a custom DEEPSEEK_BASE_URL before any mutation. The current
+ * V2 adapter uses the code-owned endpoint registry, not this legacy override;
+ * accepting it would falsely imply proxy coverage.
  */
 function preflightUpstream() {
   const baseUrl = getEnv("DEEPSEEK_BASE_URL");
   if (!baseUrl || isOfficialDeepSeekBaseUrl(baseUrl)) {
-    return false; // official origin (default or explicit) — full proof
+    return;
   }
-  if (!allowCustomUpstream) {
-    fatal(
-      "DEEPSEEK_BASE_URL is set to a non-official origin — the release smoke must " +
-        "prove the DIRECT official DeepSeek integration.",
-      "Unset it for the release run, or pass --allow-custom-upstream (that run is " +
-        "explicitly NOT proof of official DeepSeek access).",
-    );
-  }
-  return true;
+  fatal(
+    "DEEPSEEK_BASE_URL is set to a non-official origin — this V2 smoke only proves the direct official DeepSeek route.",
+    "Unset it before running; custom/proxy diagnostics are unreachable through the current V2 adapter authority.",
+  );
 }
 
 /**
@@ -305,11 +295,6 @@ function forwardedServerEnv() {
   ]) {
     const value = getEnv(name);
     if (value) env[name] = value;
-  }
-  // Only forwarded when --allow-custom-upstream explicitly permits a
-  // non-official origin; an official one is the provider default anyway.
-  if (allowCustomUpstream && getEnv("DEEPSEEK_BASE_URL")) {
-    env.DEEPSEEK_BASE_URL = getEnv("DEEPSEEK_BASE_URL");
   }
   return env;
 }
@@ -542,7 +527,6 @@ let service = null;
 let server = null;
 let userId = null;
 let featureConfigRestore = null;
-let customUpstream = false;
 let fatalError = null;
 let integrationProfile = null;
 
@@ -555,11 +539,7 @@ try {
   const PUBLISHABLE_KEY = getEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
 
   preflightLocalSupabaseUrl(SUPABASE_URL);
-  customUpstream = preflightUpstream();
-  if (customUpstream) {
-    log("⚠ --allow-custom-upstream: DEEPSEEK_BASE_URL points at a CUSTOM upstream —");
-    log("  此运行不构成对官方 DeepSeek 直连的证明 (NOT proof of official DeepSeek integration).");
-  }
+  preflightUpstream();
   preflightSupabaseCliMatch();
   await preflightReachable(SUPABASE_URL);
   ensureServerBuild();
@@ -573,11 +553,7 @@ try {
   server = startServer();
   try {
     await waitForServer(server);
-  log(
-    customUpstream
-      ? `server ready on ${BASE_URL} (CUSTOM upstream — NOT official DeepSeek proof — + real local Supabase)`
-      : `server ready on ${BASE_URL} (real official DeepSeek provider + real local Supabase)`,
-  );
+  log(`server ready on ${BASE_URL} (real official DeepSeek provider + real local Supabase)`);
 
   // DB-side runtime switch (distinct from the AI_POLISH_ENABLED env): the
   // reserve RPC denies with 503 AI_DISABLED while it is off, and test:db
@@ -830,10 +806,7 @@ try {
         attempts: await getAttemptRowsByReservationId(service, parent.reservation_id),
       })),
     );
-    const evidence = evaluateRunLedgerEvidence(records, {
-      profile: integrationProfile,
-      officialProof: !customUpstream,
-    });
+    const evidence = evaluateRunLedgerEvidence(records, { profile: integrationProfile });
     for (const [index, result] of evidence.requestResults.entries()) {
       check(
         `ledger evidence: request ${index + 1} parent/child route, terminal, transmission, usage, and cost facts agree`,
@@ -846,11 +819,7 @@ try {
       evidence.transmissions <= 4,
       `got ${evidence.transmissions}`,
     );
-    if (customUpstream) {
-      log("custom upstream diagnostic: evidence readback completed without an official-proof verdict");
-    } else {
-      check("ledger evidence: official DeepSeek proof verdict", evidence.ok);
-    }
+    check("ledger evidence: official DeepSeek proof verdict", evidence.ok);
   }
   } finally {
     // --- Cleanup: user deletion cascades ledger/usage/terms rows.
@@ -919,11 +888,6 @@ if (fatalError !== null || failures > 0) {
       : `\n${failures} integration assertion(s) failed`,
   );
   process.exitCode = 1;
-} else if (customUpstream) {
-  console.log(
-    "\nAll integration smoke assertions passed — ⚠ CUSTOM upstream: " +
-      "此运行不构成对官方 DeepSeek 直连的证明 (real local Supabase only).",
-  );
 } else {
   console.log(
     "\nAll integration smoke assertions passed (real official DeepSeek + real local Supabase)",
