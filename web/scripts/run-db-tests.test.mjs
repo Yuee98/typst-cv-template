@@ -7,6 +7,7 @@ import {
   runCfg001FreshReset,
   waitForAuthReady,
 } from "./run-cfg001-fresh-reset.mjs";
+import { runCfg002FreshReset } from "./run-cfg002-fresh-reset.mjs";
 import { runDbTests, validateLocalDatabaseUrl } from "./run-db-tests.mjs";
 
 const GOOD_STATUS = [
@@ -158,6 +159,8 @@ function freshHarness({
   env = {},
   results = [],
   fetchImpl = async () => ({ status: 200 }),
+  runner = runCfg001FreshReset,
+  existsSyncImpl = () => true,
 } = {}) {
   const calls = [];
   const fetchCalls = [];
@@ -169,14 +172,14 @@ function freshHarness({
     logs,
     errors,
     run() {
-      return runCfg001FreshReset({
+      return runner({
         env,
         fetchImpl(...args) {
           fetchCalls.push(args);
           return fetchImpl(...args);
         },
         sleepImpl: async () => {},
-        existsSyncImpl: () => true,
+        existsSyncImpl,
         readFileSyncImpl: () => config,
         logger: (message) => logs.push(message),
         errorLogger: (message) => errors.push(message),
@@ -192,7 +195,7 @@ function freshHarness({
   };
 }
 
-const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
@@ -237,20 +240,22 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(steps.map((step) => step.name)).toEqual([
     "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
     "Install dependencies", "Verify DB test runner contract (credential-free)",
-    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run real-DB suite",
+    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run real-DB suite",
   ]);
   const commands = {
     runner: "pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs",
     start: "pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler",
-    fresh: "pnpm --filter web test:db:cfg001-fresh",
+    cfg001Fresh: "pnpm --filter web test:db:cfg001-fresh",
+    cfg002Fresh: "node web/scripts/run-cfg002-fresh-reset.mjs",
     full: "pnpm --filter web test:db",
   };
   const find = (command) => steps.map((step, index) => ({ step, index })).filter(({ step }) => step.run === command);
   for (const command of Object.values(commands)) expect(find(command)).toHaveLength(1);
   const indexes = Object.fromEntries(Object.entries(commands).map(([key, command]) => [key, find(command)[0].index]));
   expect(indexes.runner).toBeLessThan(indexes.start);
-  expect(indexes.start).toBeLessThan(indexes.fresh);
-  expect(indexes.fresh).toBeLessThan(indexes.full);
+  expect(indexes.start).toBeLessThan(indexes.cfg001Fresh);
+  expect(indexes.cfg001Fresh).toBeLessThan(indexes.cfg002Fresh);
+  expect(indexes.cfg002Fresh).toBeLessThan(indexes.full);
   for (const step of steps) expect(step.hasCondition).toBe(false);
   expect(steps[0].hasWith).toBe(false);
   expect(steps[0].withValues.size).toBe(0);
@@ -501,6 +506,29 @@ it("does not run Vitest when Auth never becomes ready", async () => {
   expect(subject.errors.join("\n")).toMatch(/Auth did not become ready/);
 });
 
+it("CFG-002 fresh runner fails closed for its complete injected lifecycle", async () => {
+  const cases = [
+    ["missing CLI", freshHarness({ runner: runCfg002FreshReset, existsSyncImpl: () => false }), 0, /CLI is not installed/],
+    ["unsafe status", freshHarness({ runner: runCfg002FreshReset, results: [{ status: 0, stdout: GOOD_STATUS.replace("127.0.0.1", "example.com") }] }), 1, /safe loopback credentials/],
+    ["reset failure", freshHarness({ runner: runCfg002FreshReset, results: [{ status: 0, stdout: GOOD_STATUS }, { status: 1 }] }), 2, /reset failed/],
+    ["restart failure", freshHarness({ runner: runCfg002FreshReset, results: [{ status: 0, stdout: GOOD_STATUS }, { status: 0 }, { status: 0, stdout: GOOD_STATUS }, { status: 1 }] }), 4, /gateway restart failed/],
+    ["Auth timeout", freshHarness({ runner: runCfg002FreshReset, fetchImpl: async () => ({ status: 502 }) }), 4, /Auth did not become ready/],
+  ];
+  for (const [label, subject, calls, message] of cases) {
+    expect(await subject.run(), label).toBe(1);
+    expect(subject.calls, label).toHaveLength(calls);
+    expect(subject.errors.join("\n"), label).toMatch(message);
+  }
+
+  const success = freshHarness({
+    runner: runCfg002FreshReset,
+    env: { CFG001_FRESH_RESET: "1", PARENT_MARKER: "preserved" },
+  });
+  expect(await success.run()).toBe(0);
+  expect(success.calls[4].options.env).toMatchObject({ CFG002_FRESH_RESET: "1", PARENT_MARKER: "preserved" });
+  expect(success.calls[4].options.env.CFG001_FRESH_RESET).not.toBe("1");
+});
+
 it("required mode fails status, spawn, and timeout errors", async () => {
   for (const result of [
     { status: 1 },
@@ -588,12 +616,13 @@ it("optional developer invocation still skips unavailable Supabase", async () =>
 
 it("valid loopback launches ordinary DB config and clears fresh-reset selector", async () => {
   const subject = harness({
-    env: { CFG001_FRESH_RESET: "1" },
+    env: { CFG001_FRESH_RESET: "1", CFG002_FRESH_RESET: "1" },
     results: [{ status: 0, stdout: GOOD_STATUS }, { status: 0 }],
   });
   expect(await subject.run()).toBe(0);
   expect(subject.calls[1].args).toEqual(["exec", "vitest", "run", "--config", "vitest.db.config.mts"]);
   expect(subject.calls[1].options.env.CFG001_FRESH_RESET).toBeUndefined();
+  expect(subject.calls[1].options.env.CFG002_FRESH_RESET).toBeUndefined();
   expect(subject.calls[1].options.env.SUPABASE_TEST_URL).toBe("http://127.0.0.1:54321/");
 });
 
@@ -733,6 +762,7 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
       run: "pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler",
     },
     { name: "Run CFG-001 fresh-reset gate", run: "pnpm --filter web test:db:cfg001-fresh" },
+    { name: "Run CFG-002 fresh-reset gate", run: "node web/scripts/run-cfg002-fresh-reset.mjs" },
     { name: "Run real-DB suite", run: "pnpm --filter web test:db" },
   ];
   const mutationSteps = steps
@@ -741,6 +771,7 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
       step.run &&
       (/^pnpm exec supabase (?:start|db\s+reset)(?:\s|$)/.test(step.run) ||
         /^pnpm --filter web test:db(?::cfg001-fresh)?$/.test(step.run) ||
+        step.run === "node web/scripts/run-cfg002-fresh-reset.mjs" ||
         /\bvitest(?:\.mjs)?\s+run\s+--config\s+vitest\.db\.config\.mts(?:\s|$)/.test(step.run)),
     );
   expect(mutationSteps).not.toHaveLength(0);

@@ -2,6 +2,11 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const isCfg001FreshReset = process.env.CFG001_FRESH_RESET === "1";
+const isCfg002FreshReset = process.env.CFG002_FRESH_RESET === "1";
+
+if (isCfg001FreshReset && isCfg002FreshReset) {
+  throw new Error("CFG001_FRESH_RESET and CFG002_FRESH_RESET are mutually exclusive");
+}
 
 // Real-DB integration suite (unit 1.4): runs against a LOCAL Supabase
 // instance, completely separate from the mocked unit suite
@@ -20,10 +25,12 @@ export default defineConfig({
     environment: "node",
     include: isCfg001FreshReset
       ? ["test/db/deepseek-v2-cfg-seed.test.ts"]
-      : ["test/db/**/*.test.ts"],
-    exclude: isCfg001FreshReset
+      : isCfg002FreshReset
+        ? ["test/db/mimo-v2-cfg-seed.test.ts"]
+        : ["test/db/**/*.test.ts"],
+    exclude: isCfg001FreshReset || isCfg002FreshReset
       ? []
-      : ["test/db/deepseek-v2-cfg-seed.test.ts"],
+      : ["test/db/deepseek-v2-cfg-seed.test.ts", "test/db/mimo-v2-cfg-seed.test.ts"],
     // All files share one local Supabase (singleton feature config, global
     // daily counters, UTC-day rows), so files must run strictly in sequence.
     fileParallelism: false,
