@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { G4_ROUTING_POLICY_SEED_V1 as SEED } from "../../src/server/polish/g4-routing-policy-seed-v1";
-import { RUN_DB_TESTS } from "./helpers";
-import { runOwnerSql } from "./runtime-contract-fixtures";
+import { RUN_DB_TESTS, sleep } from "./helpers";
+import { runOwnerSql, startOwnerSql } from "./runtime-contract-fixtures";
 
 const migrationUrl = new URL("../../../supabase/migrations/20260824007000_seed_g4_routing_policy.sql", import.meta.url);
 const g2 = "33333333-3333-4333-8333-333333333332";
@@ -30,6 +30,11 @@ function snap(marker = "CFG003="): string {
   return line.slice(marker.length);
 }
 function restore(): void { expect(runOwnerSql(source()).status).toBe(0); }
+function removePolicies(): void {
+  expect(runOwnerSql(String.raw`begin; set local session_replication_role=replica;
+    delete from public.ai_routing_policy_versions where id in ('${g4}'::uuid,'${rollback}'::uuid);
+    set local session_replication_role=origin; commit;`).status).toBe(0);
+}
 
 describe("CFG-003 G4 routing-policy seed", () => {
   it("is owner-only dark DML with no lifecycle or feature side effect", () => {
@@ -73,6 +78,20 @@ describe("CFG-003 G4 routing-policy seed", () => {
       expect(result.stderr).toMatch(/ERROR:\s+23514:/u);
       const after = result.stdout.split(/\r?\n/u).map((x) => x.trim()).find((x) => x.startsWith("AFTER="));
       expect(after?.slice(6)).toBe(before); expect(snap()).toBe(before);
+    });
+
+    it("observes a real late concurrent unique-key collision and restores both policies", async () => {
+      const before = snap(); removePolicies();
+      try {
+        const winner = startOwnerSql(String.raw`begin; ${body()} select pg_sleep(1); commit;`);
+        await sleep(100);
+        const loser = startOwnerSql(String.raw`begin; ${body()} commit;`);
+        const [winnerResult, loserResult] = await Promise.all([winner, loser]);
+        expect(winnerResult.status, winnerResult.stderr).toBe(0);
+        expect(loserResult.status).not.toBe(0);
+        expect(loserResult.stderr).toMatch(/duplicate key|23505/u);
+        expect(snap()).toBe(before);
+      } finally { restore(); }
     });
 
     it.each([
