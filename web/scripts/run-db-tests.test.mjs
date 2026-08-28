@@ -196,7 +196,7 @@ function freshHarness({
   };
 }
 
-const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-cfg003-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/g4-routing-policy-seed-v1.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-cfg003-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/g4-routing-policy-seed-v1.ts", "web/src/server/polish/g4-routing-policy-seed-v1.test.ts", "web/src/server/polish/routing-rules-v1.test.ts", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/fixtures/routing-rules-v1.json", "web/test/db/**", "web/vitest.db.config.mts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
@@ -596,6 +596,8 @@ it("CFG-003 fresh runner fails closed before side effects and preserves exact li
   });
   expect(success.calls[4].options.env.CFG001_FRESH_RESET).toBeUndefined();
   expect(success.calls[4].options.env.CFG002_FRESH_RESET).toBeUndefined();
+  expect(success.calls[4].options.cwd).toMatch(/[\\/]web$/);
+  expect(success.calls[4].options.timeout).toBe(300_000);
 });
 
 it("required mode fails status, spawn, and timeout errors", async () => {
@@ -685,13 +687,14 @@ it("optional developer invocation still skips unavailable Supabase", async () =>
 
 it("valid loopback launches ordinary DB config and clears fresh-reset selector", async () => {
   const subject = harness({
-    env: { CFG001_FRESH_RESET: "1", CFG002_FRESH_RESET: "1" },
+    env: { CFG001_FRESH_RESET: "1", CFG002_FRESH_RESET: "1", CFG003_FRESH_RESET: "1" },
     results: [{ status: 0, stdout: GOOD_STATUS }, { status: 0 }],
   });
   expect(await subject.run()).toBe(0);
   expect(subject.calls[1].args).toEqual(["exec", "vitest", "run", "--config", "vitest.db.config.mts"]);
   expect(subject.calls[1].options.env.CFG001_FRESH_RESET).toBeUndefined();
   expect(subject.calls[1].options.env.CFG002_FRESH_RESET).toBeUndefined();
+  expect(subject.calls[1].options.env.CFG003_FRESH_RESET).toBeUndefined();
   expect(subject.calls[1].options.env.SUPABASE_TEST_URL).toBe("http://127.0.0.1:54321/");
 });
 
@@ -713,6 +716,17 @@ it("URL guard accepts only HTTP loopback endpoints", () => {
   expect(validateLocalDatabaseUrl("http://[::1]:54321").ok).toBe(true);
   expect(validateLocalDatabaseUrl("ftp://127.0.0.1").ok).toBe(false);
   expect(validateLocalDatabaseUrl("http://10.0.0.2").ok).toBe(false);
+});
+
+it("DB config isolates CFG-003 and rejects selector leakage", async () => {
+  const configPath = fileURLToPath(new URL("../vitest.db.config.mts", import.meta.url));
+  const config = (await readFile(configPath, "utf8")).replace(/\r\n/g, "\n");
+  expect(config).toContain("const isCfg003FreshReset = process.env.CFG003_FRESH_RESET === \"1\";");
+  expect(config).toMatch(/isCfg003FreshReset\s*\n\s*\?\s*\[\"test\/db\/g4-routing-policy-cfg-seed\.test\.ts\"\]/);
+  expect(config).toContain("isCfg001FreshReset || isCfg002FreshReset || isCfg003FreshReset");
+  expect(config).toContain('"test/db/g4-routing-policy-cfg-seed.test.ts",');
+  expect(config).toMatch(/filter\(Boolean\)\.length > 1/);
+  expect(config).toMatch(/CFG001_FRESH_RESET, CFG002_FRESH_RESET, and CFG003_FRESH_RESET are mutually exclusive/);
 });
 
 it("DB workflow structural parser rejects nameless and multiline-run steps", () => {

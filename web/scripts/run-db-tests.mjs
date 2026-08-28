@@ -153,6 +153,7 @@ export async function runDbTests({
   // The ordinary gate must never inherit the isolated fresh-reset selector.
   delete fullSuiteEnv.CFG001_FRESH_RESET;
   delete fullSuiteEnv.CFG002_FRESH_RESET;
+  delete fullSuiteEnv.CFG003_FRESH_RESET;
 
   const run = spawnSyncImpl("pnpm", ["exec", "vitest", "run", "--config", "vitest.db.config.mts"], {
     cwd: webRoot,
