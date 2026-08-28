@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import fixture from "../../../test/fixtures/ai-runtime-execution-contract-v1.json";
@@ -72,6 +73,38 @@ const FINALIZE_METADATA: PolishFinalizeMetadataV2 = Object.freeze({
   promptVersion: "2026-08-prompt-v1",
   validatorVersion: "2026-08-validator-v1",
 });
+
+const FAILURE_STAGE_CONSTRAINT_MIGRATION_URL = new URL(
+  "../../../../supabase/migrations/20260824009000_expand_ai_request_failure_stage_v2.sql",
+  import.meta.url,
+);
+
+const LEGACY_REQUEST_FAILURE_STAGES = Object.freeze([
+  "terms",
+  "quota",
+  "request_validation",
+  "provider_http",
+  "provider_timeout",
+  "json_parse",
+  "schema_validation",
+  "semantic_validation",
+  "canceled",
+]);
+
+const V2_FAILURE_STAGE_CANDIDATES = Object.freeze([
+  "transport",
+  ...POLISH_VALIDATION_FAILURE_STAGES,
+  "provider_contract",
+] as const satisfies readonly NonNullable<PolishAttemptCompletedFactV2["failureStage"]>[]);
+
+function requestLedgerFailureStagesFromMigration(): readonly string[] {
+  const source = readFileSync(FAILURE_STAGE_CONSTRAINT_MIGRATION_URL, "utf8");
+  const check = source.match(
+    /add\s+constraint\s+ai_request_ledger_failure_stage_check\s+check\s*\(\s*failure_stage\s+in\s*\(([\s\S]*?)\)\s*\)\s*;/iu,
+  );
+  if (!check?.[1]) throw new Error("missing ai_request_ledger failure-stage check");
+  return [...check[1].matchAll(/'([^']+)'/gu)].map((match) => match[1] ?? "");
+}
 
 function reserveSuccess() {
   return {
@@ -638,6 +671,26 @@ describe("RT-009 V2 terminal attempt persistence", () => {
       expect(JSON.stringify(payload)).not.toContain("INVALID_MODEL_OUTPUT");
     },
   );
+
+  it("keeps the parent-ledger constraint equal to legacy values plus V2 serializer output", () => {
+    // Exercise the production serializer rather than treating this test's
+    // candidate list as the source of truth.  Parent finalization copies the
+    // child fact, so every accepted V2 child stage must be admitted by SQL.
+    const emittedV2Stages = V2_FAILURE_STAGE_CANDIDATES.map((failureStage) =>
+      serializePolishAttemptCompletionV2({
+        attempt: attemptStart(),
+        fact: completedFact({ failureStage }),
+        profileExecutionConfig: PROFILE,
+        billingCurrency: "CNY",
+        routeObservationSecret: "route-secret",
+      }).p_metadata.failure_stage,
+    );
+
+    expect(emittedV2Stages).toEqual(V2_FAILURE_STAGE_CANDIDATES);
+    expect([...new Set(requestLedgerFailureStagesFromMigration())].sort()).toEqual(
+      [...new Set([...LEGACY_REQUEST_FAILURE_STAGES, ...emittedV2Stages])].sort(),
+    );
+  });
 
   it.each([
     ["unrelated HTTPS origin", "https://unregistered.example/v1/responses"],
