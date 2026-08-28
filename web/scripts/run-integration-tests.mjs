@@ -19,8 +19,8 @@
  *
  * Cost discipline: the run makes 2 USER-VISIBLE polish requests (one success,
  * one canceled); each may use up to 2 internal provider attempts, so the
- * budget is ≤4 provider transmissions (typical: 2). Token usage and a rough
- * cost estimate (pinned price snapshot) are printed at the end.
+ * budget is ≤4 provider transmissions (typical: 2). The run validates the
+ * DB-frozen usage/cost aggregates without printing token or cost values.
  *
  * Release-gate integrity (CP4 round-1):
  *   - NEXT_PUBLIC_SUPABASE_URL must be loopback http, AND must match the
@@ -31,9 +31,9 @@
  *     head); --reuse-build is an explicit iteration-only opt-in.
  *   - build and start both get explicit POLISH_FAKE_LLM=false /
  *     POLISH_FAKE_BACKEND=false / CI=false (process.env beats .env.local).
- *   - a non-official DEEPSEEK_BASE_URL is rejected; --allow-custom-upstream
- *     permits it with a loud "NOT proof of direct official DeepSeek
- *     integration" disclaimer.
+ *   - a non-official DEEPSEEK_BASE_URL is rejected. The V2 adapter resolves
+ *     its endpoint from the code-owned route authority, so this harness must
+ *     not imply that it can exercise a proxy/custom upstream.
  *
  * Red lines (roadmap 禁存清单): this script never prints request/response
  * bodies, polished text, access tokens, or any key. Only statuses, error
@@ -53,36 +53,37 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { createClient } from "@supabase/supabase-js";
+import {
+  evaluateRunLedgerEvidence,
+  resolveIntegrationProfile,
+} from "./lib/integration-ledger-evidence.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
 
-// DeepSeek V4 Flash list-price snapshot (USD per 1M tokens), pinned from the
-// official pricing page on 2026-08-04. Rough estimate only — token counts are
-// the authoritative numbers.
-const PRICE_SNAPSHOT_DATE = "2026-08-04";
-const PRICE_PER_MTOK_USD = { inputCached: 0.0028, inputUncached: 0.14, output: 0.28 };
-
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
-// Explicit opt-ins (both off by default — the defaults are release-gate safe).
+// Explicit opt-in (off by default — the default is release-gate safe).
 //   --reuse-build            skip build:server and reuse the existing .next
-//   --allow-custom-upstream  permit a non-official DEEPSEEK_BASE_URL (the run
-//                            is then NOT proof of official DeepSeek access)
 let reuseBuild = false;
-let allowCustomUpstream = false;
-for (const arg of process.argv.slice(2)) {
+let profileName = "deepseek";
+const args = process.argv.slice(2);
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
   if (arg === "--reuse-build") {
     reuseBuild = true;
-  } else if (arg === "--allow-custom-upstream") {
-    allowCustomUpstream = true;
+  } else if (arg === "--profile") {
+    profileName = args[index + 1] ?? "";
+    index += 1;
+  } else if (arg.startsWith("--profile=")) {
+    profileName = arg.slice("--profile=".length);
   } else {
     console.error(`[test:integration] unknown argument: ${arg}`);
     console.error(
-      "usage: node scripts/run-integration-tests.mjs [--reuse-build] [--allow-custom-upstream]",
+      "usage: node scripts/run-integration-tests.mjs [--profile deepseek] [--reuse-build]",
     );
     process.exit(1);
   }
@@ -109,6 +110,14 @@ class FatalSmokeError extends Error {}
 function fatal(message, detail) {
   console.error(`[test:integration] FATAL: ${message}${detail ? `\n${detail}` : ""}`);
   throw new FatalSmokeError(message);
+}
+
+function preflightProfile() {
+  try {
+    return resolveIntegrationProfile(profileName);
+  } catch (error) {
+    fatal(error instanceof Error ? error.message : "invalid integration profile");
+  }
 }
 
 function sleep(ms) {
@@ -148,7 +157,7 @@ function preflightEnv() {
     );
   }
   const required = [
-    "DEEPSEEK_API_KEY",
+    integrationProfile.credentialEnv,
     "SUPABASE_SERVICE_ROLE_KEY",
     "AI_USER_ID_HMAC_SECRET",
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -183,24 +192,19 @@ function preflightLocalSupabaseUrl(supabaseUrl) {
 }
 
 /**
- * P0-2.3: a custom DEEPSEEK_BASE_URL can swap the upstream for a proxy/mock
- * while the run still reports "real DeepSeek". The release gate forces the
- * official origin; --allow-custom-upstream opts out WITH a loud disclaimer.
+ * P0-2.3: reject a custom DEEPSEEK_BASE_URL before any mutation. The current
+ * V2 adapter uses the code-owned endpoint registry, not this legacy override;
+ * accepting it would falsely imply proxy coverage.
  */
 function preflightUpstream() {
   const baseUrl = getEnv("DEEPSEEK_BASE_URL");
   if (!baseUrl || isOfficialDeepSeekBaseUrl(baseUrl)) {
-    return false; // official origin (default or explicit) — full proof
+    return;
   }
-  if (!allowCustomUpstream) {
-    fatal(
-      "DEEPSEEK_BASE_URL is set to a non-official origin — the release smoke must " +
-        "prove the DIRECT official DeepSeek integration.",
-      "Unset it for the release run, or pass --allow-custom-upstream (that run is " +
-        "explicitly NOT proof of official DeepSeek access).",
-    );
-  }
-  return true;
+  fatal(
+    "DEEPSEEK_BASE_URL is set to a non-official origin — this V2 smoke only proves the direct official DeepSeek route.",
+    "Unset it before running; custom/proxy diagnostics are unreachable through the current V2 adapter authority.",
+  );
 }
 
 /**
@@ -282,7 +286,7 @@ function realModeEnv() {
 function forwardedServerEnv() {
   const env = {};
   for (const name of [
-    "DEEPSEEK_API_KEY",
+    integrationProfile.credentialEnv,
     "SUPABASE_SERVICE_ROLE_KEY",
     "AI_USER_ID_HMAC_SECRET",
     "AI_POLISH_ENABLED",
@@ -291,11 +295,6 @@ function forwardedServerEnv() {
   ]) {
     const value = getEnv(name);
     if (value) env[name] = value;
-  }
-  // Only forwarded when --allow-custom-upstream explicitly permits a
-  // non-official origin; an official one is the provider default anyway.
-  if (allowCustomUpstream && getEnv("DEEPSEEK_BASE_URL")) {
-    env.DEEPSEEK_BASE_URL = getEnv("DEEPSEEK_BASE_URL");
   }
   return env;
 }
@@ -444,6 +443,28 @@ function utcToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+const REQUEST_LEDGER_SELECT = [
+  "reservation_id", "request_id", "state", "status", "quota_charged", "provider_billable",
+  "usage_complete", "attempt_count", "provider_started_at", "latency_ms", "failure_stage",
+  "input_cached_tokens", "input_uncached_tokens", "output_tokens", "incomplete_fields",
+  "route_schema_version", "config_generation", "routing_policy_version_id", "profile_version_id",
+  "price_version_id", "legal_bundle_version", "runtime_contract_id", "runtime_contract_sha256",
+  "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key", "billing_currency",
+  "cost_basis", "known_estimated_cost_nanos", "estimated_cost_nanos", "provider_reported_currency",
+  "provider_reported_cost_nanos", "cost_reconciliation_status",
+].join(",");
+
+const ATTEMPT_LEDGER_SELECT = [
+  "attempt_no", "status", "transmitted", "provider_billable", "usage_observation_kind",
+  "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
+  "output_tokens", "route_schema_version", "config_generation", "routing_policy_version_id",
+  "profile_version_id", "price_version_id", "legal_bundle_version", "runtime_contract_id",
+  "runtime_contract_sha256", "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key",
+  "endpoint_alias", "actual_upstream_endpoint", "actual_model_id", "billing_currency",
+  "estimated_currency", "estimated_cost_nanos", "provider_reported_currency",
+  "provider_reported_cost_nanos",
+].join(",");
+
 async function getDailyRequestCount(service, userId) {
   const { data, error } = await service
     .from("ai_usage_daily")
@@ -458,7 +479,7 @@ async function getDailyRequestCount(service, userId) {
 async function getLedgerRowByRequestId(service, requestId) {
   const { data, error } = await service
     .from("ai_request_ledger")
-    .select("*")
+    .select(REQUEST_LEDGER_SELECT)
     .eq("request_id", requestId)
     .maybeSingle();
   if (error) throw new Error(`ai_request_ledger read failed: ${error.message}`);
@@ -468,12 +489,22 @@ async function getLedgerRowByRequestId(service, requestId) {
 async function getLedgerRowByClientRequestId(service, userId, clientRequestId) {
   const { data, error } = await service
     .from("ai_request_ledger")
-    .select("*")
+    .select(REQUEST_LEDGER_SELECT)
     .eq("user_id", userId)
     .eq("client_request_id", clientRequestId)
     .maybeSingle();
   if (error) throw new Error(`ai_request_ledger read failed: ${error.message}`);
   return data;
+}
+
+async function getAttemptRowsByReservationId(service, reservationId) {
+  const { data, error } = await service
+    .from("ai_provider_attempt_ledger")
+    .select(ATTEMPT_LEDGER_SELECT)
+    .eq("reservation_id", reservationId)
+    .order("attempt_no", { ascending: true });
+  if (error) throw new Error(`ai_provider_attempt_ledger read failed: ${error.message}`);
+  return data ?? [];
 }
 
 async function waitFinalized(fetchRow, label) {
@@ -496,21 +527,19 @@ let service = null;
 let server = null;
 let userId = null;
 let featureConfigRestore = null;
-let customUpstream = false;
 let fatalError = null;
+let integrationProfile = null;
 
 try {
+  integrationProfile = preflightProfile();
+  log(`profile: ${integrationProfile.name} (${integrationProfile.profileKey})`);
   preflightEnv();
   const SUPABASE_URL = getEnv("NEXT_PUBLIC_SUPABASE_URL");
   const SERVICE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   const PUBLISHABLE_KEY = getEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
 
   preflightLocalSupabaseUrl(SUPABASE_URL);
-  customUpstream = preflightUpstream();
-  if (customUpstream) {
-    log("⚠ --allow-custom-upstream: DEEPSEEK_BASE_URL points at a CUSTOM upstream —");
-    log("  此运行不构成对官方 DeepSeek 直连的证明 (NOT proof of official DeepSeek integration).");
-  }
+  preflightUpstream();
   preflightSupabaseCliMatch();
   await preflightReachable(SUPABASE_URL);
   ensureServerBuild();
@@ -524,11 +553,7 @@ try {
   server = startServer();
   try {
     await waitForServer(server);
-  log(
-    customUpstream
-      ? `server ready on ${BASE_URL} (CUSTOM upstream — NOT official DeepSeek proof — + real local Supabase)`
-      : `server ready on ${BASE_URL} (real official DeepSeek provider + real local Supabase)`,
-  );
+  log(`server ready on ${BASE_URL} (real official DeepSeek provider + real local Supabase)`);
 
   // DB-side runtime switch (distinct from the AI_POLISH_ENABLED env): the
   // reserve RPC denies with 503 AI_DISABLED while it is off, and test:db
@@ -678,12 +703,6 @@ try {
       `got ${successRow.latency_ms}`,
     );
     check("success ledger: usage_complete=true", successRow.usage_complete === true);
-    // Cache diagnosis only (never asserted): DeepSeek context-cache split.
-    log(
-      `cache diagnosis (success): input_cached_tokens=${successRow.input_cached_tokens} ` +
-        `input_uncached_tokens=${successRow.input_uncached_tokens} ` +
-        `output_tokens=${successRow.output_tokens}`,
-    );
   }
 
   const afterSuccessCount = await getDailyRequestCount(service, userId);
@@ -729,6 +748,7 @@ try {
       : `state was already ${startedRow.state} (provider call finished before the abort window)`,
   );
 
+  let cancelRow = null;
   if (startedRow && startedRow.state === "provider_started") {
     // Let the upstream transmission get genuinely underway, then hang up.
     await sleep(250);
@@ -739,7 +759,7 @@ try {
       cancelOutcome.aborted === true,
       "the fetch completed before the abort landed",
     );
-    const cancelRow = await waitFinalized(
+    cancelRow = await waitFinalized(
       () => getLedgerRowByRequestId(service, startedRow.request_id),
       "cancel settlement",
     );
@@ -771,26 +791,35 @@ try {
     await cancelFetch.catch(() => undefined);
   }
 
-  // --- 7. Cost report (metadata only, straight from this user's ledger rows).
-  const { data: allRows, error: rowsError } = await service
-    .from("ai_request_ledger")
-    .select("status,attempt_count,input_cached_tokens,input_uncached_tokens,output_tokens")
-    .eq("user_id", userId);
-  if (!rowsError && allRows) {
-    const providerCalls = allRows.reduce((sum, row) => sum + (row.attempt_count ?? 0), 0);
-    const cached = allRows.reduce((sum, row) => sum + (row.input_cached_tokens ?? 0), 0);
-    const uncached = allRows.reduce((sum, row) => sum + (row.input_uncached_tokens ?? 0), 0);
-    const output = allRows.reduce((sum, row) => sum + (row.output_tokens ?? 0), 0);
-    const usd =
-      (cached / 1e6) * PRICE_PER_MTOK_USD.inputCached +
-      (uncached / 1e6) * PRICE_PER_MTOK_USD.inputUncached +
-      (output / 1e6) * PRICE_PER_MTOK_USD.output;
-    log(
-      `provider transmissions: ${providerCalls} (2 user requests × ≤2 attempts; budget ≤4) | ` +
-        `tokens — cached in: ${cached}, uncached in: ${uncached}, out: ${output} | ` +
-        `rough cost ≈ $${usd.toFixed(6)} (price snapshot ${PRICE_SNAPSHOT_DATE})`,
+  // --- 7. Evidence readback: exactly this run's two request ids and their
+  // immutable attempt children. No user-wide scan can accidentally include a
+  // prior run in the transmission budget or cost aggregation.
+  check(
+    "ledger evidence: both run request ids finalized",
+    successRow !== null && cancelRow !== null,
+    "expected the succeeded and canceled request ledgers",
+  );
+  if (successRow && cancelRow) {
+    const records = await Promise.all(
+      [successRow, cancelRow].map(async (parent) => ({
+        parent,
+        attempts: await getAttemptRowsByReservationId(service, parent.reservation_id),
+      })),
     );
-    check("provider transmission budget respected (≤4)", providerCalls <= 4, `got ${providerCalls}`);
+    const evidence = evaluateRunLedgerEvidence(records, { profile: integrationProfile });
+    for (const [index, result] of evidence.requestResults.entries()) {
+      check(
+        `ledger evidence: request ${index + 1} parent/child route, terminal, transmission, usage, and cost facts agree`,
+        result.ok,
+        result.ok ? undefined : result.issues.join(","),
+      );
+    }
+    check(
+      "ledger evidence: transmitted attempt budget respected (≤4)",
+      evidence.transmissions <= 4,
+      `got ${evidence.transmissions}`,
+    );
+    check("ledger evidence: official DeepSeek proof verdict", evidence.ok);
   }
   } finally {
     // --- Cleanup: user deletion cascades ledger/usage/terms rows.
@@ -859,11 +888,6 @@ if (fatalError !== null || failures > 0) {
       : `\n${failures} integration assertion(s) failed`,
   );
   process.exitCode = 1;
-} else if (customUpstream) {
-  console.log(
-    "\nAll integration smoke assertions passed — ⚠ CUSTOM upstream: " +
-      "此运行不构成对官方 DeepSeek 直连的证明 (real local Supabase only).",
-  );
 } else {
   console.log(
     "\nAll integration smoke assertions passed (real official DeepSeek + real local Supabase)",
