@@ -317,6 +317,9 @@ describe("integration ledger evidence", () => {
     expect(source).toContain("expectedRoute,");
     expect(source.match(/makePolishBody\(/g)).toHaveLength(4);
     expect(source).toContain("getAuthenticatedAvailability(accessToken, expectedRoute)");
+    expect(source).toContain("const CANCELLATION_ITEM_COUNT = 30;");
+    expect(source).toContain("makeCancellationPolishBody(cancelClientRequestId, expectedRoute)");
+    expect(source).toContain('granularity: "section"');
     expect(source).not.toContain("serverOutput.join");
     expect(source).not.toContain("featureConfigRestore");
     expect(source).not.toContain(".update({ ai_polish_enabled: true })");

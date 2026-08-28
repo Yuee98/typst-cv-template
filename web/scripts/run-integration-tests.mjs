@@ -74,6 +74,14 @@ const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const AVAILABILITY_TIMEOUT_MS = 10_000;
 const POLISH_REQUEST_TIMEOUT_MS = 75_000;
+// The cancellation probe deliberately uses a valid, near-maximum section
+// request. Fast official models can otherwise finalize a one-item response
+// before the local ledger poll observes provider_started, turning a real
+// cancellation proof into a timing lottery. The request remains below the
+// 5,000-character/30-item contract caps and the same <=4 transmission budget.
+const CANCELLATION_ITEM_COUNT = 30;
+const CANCELLATION_ITEM_TEXT =
+  "主导微服务架构改造，负责核心链路性能优化与稳定性建设，推进可观测性、容量治理、故障演练和跨团队交付，将延迟、错误率和恢复时间持续降低。";
 const UPSTREAM_URL_ENV_NAMES = Object.freeze([
   "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
@@ -490,6 +498,19 @@ function makePolishBody(clientRequestId, text, expectedRoute) {
   };
 }
 
+function makeCancellationPolishBody(clientRequestId, expectedRoute) {
+  const body = makePolishBody(clientRequestId, CANCELLATION_ITEM_TEXT, expectedRoute);
+  return {
+    ...body,
+    granularity: "section",
+    items: Array.from({ length: CANCELLATION_ITEM_COUNT }, (_, index) => ({
+      id: `c${index}`,
+      kind: "experience_bullet",
+      text: `第${index + 1}项：${CANCELLATION_ITEM_TEXT.repeat(2)}`,
+    })),
+  };
+}
+
 async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
   const availabilitySignal = AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS);
   const response = await fetch(`${BASE_URL}/api/polish/availability`, {
@@ -786,11 +807,7 @@ try {
   const cancelClientRequestId = crypto.randomUUID();
   const controller = new AbortController();
   const cancelFetch = postPolish(
-    makePolishBody(
-      cancelClientRequestId,
-      "主导微服务架构改造，负责核心链路性能优化与稳定性建设，推动接口延迟持续下降。",
-      expectedRoute,
-    ),
+    makeCancellationPolishBody(cancelClientRequestId, expectedRoute),
     { token: accessToken, signal: controller.signal },
   ).catch(() => ({ aborted: true }));
 
