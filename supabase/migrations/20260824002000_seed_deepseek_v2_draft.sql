@@ -68,8 +68,6 @@ begin
       select 1
       from public.ai_service_runtime_contract_targets
       where runtime_contract_id = 'runtime.deepseek-v2.v1'
-         or runtime_target_id =
-           'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'
     )
     or exists (
       select 1
@@ -162,9 +160,7 @@ begin
 
   select count(*) into v_count
   from public.ai_service_runtime_contract_targets
-  where runtime_contract_id = 'runtime.deepseek-v2.v1'
-     or runtime_target_id =
-       'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1';
+  where runtime_contract_id = 'runtime.deepseek-v2.v1';
 
   if v_count <> 1 or not exists (
     select 1

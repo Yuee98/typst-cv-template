@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { DEEPSEEK_V2_SEED_V1 } from "@/server/polish/deepseek-v2-seed-v1";
+import { G4_ROUTING_POLICY_SEED_V1 } from "@/server/polish/g4-routing-policy-seed-v1";
 
 import {
   acceptAiLegalBundle,
@@ -16,6 +17,7 @@ import {
 import { runOwnerSql } from "./runtime-contract-fixtures";
 
 const SEED = DEEPSEEK_V2_SEED_V1;
+const G4_SEED = G4_ROUTING_POLICY_SEED_V1;
 const DB012_LEGACY_PRICE_ID = "11111111-1111-4111-8111-111111111114";
 const RUN_CFG001_FRESH_RESET = process.env.CFG001_FRESH_RESET === "1";
 const DISABLED_AVAILABILITY = {
@@ -29,6 +31,18 @@ const DISABLED_AVAILABILITY = {
   displayDisclosureKey: null,
   termsAccepted: false,
 } as const;
+
+describe("CFG-001 successor-compatible membership source", () => {
+  it("scopes membership cardinality to the legacy root while retaining exact tuple checks", () => {
+    const source = readFileSync(
+      new URL("../../../supabase/migrations/20260824002000_seed_deepseek_v2_draft.sql", import.meta.url),
+      "utf8",
+    ).replace(/\r\n?/gu, "\n");
+    expect(source).toContain("where runtime_contract_id = 'runtime.deepseek-v2.v1';");
+    expect(source).not.toContain("runtime_contract_id = 'runtime.deepseek-v2.v1'\n     or runtime_target_id");
+    expect(source).toContain("and runtime_target_id =\n        'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'");
+  });
+});
 
 // PostgreSQL preserves migration-source line endings inside stored routine
 // bodies. Canonicalize them before hashing so the authority oracle is stable
@@ -523,6 +537,7 @@ const MIGRATION_URL = new URL(
 
 function migrationBody(): string {
   return readFileSync(MIGRATION_URL, "utf8")
+    .replace(/\r\n?/gu, "\n")
     .replace(/^begin;\s*$/mu, "")
     .replace(/^commit;\s*$/mu, "");
 }
@@ -534,14 +549,12 @@ function withUserTriggersDisabled(tables: readonly string[], body: string): stri
   // boundary; the enclosing rollback restores the exact catalog snapshot.
   const db012LegacyCleanup = body.includes("delete from public.ai_price_versions")
     ? String.raw`
-      set local session_replication_role = replica;
       delete from public.ai_price_component_seal_intents
       where price_version_id = '${DB012_LEGACY_PRICE_ID}'::uuid;
       delete from public.ai_price_components
       where price_version_id = '${DB012_LEGACY_PRICE_ID}'::uuid;
       delete from public.ai_price_versions
       where id = '${DB012_LEGACY_PRICE_ID}'::uuid;
-      set local session_replication_role = origin;
     `
     : "";
   return [
@@ -564,11 +577,9 @@ function moveCanonicalFixedId(
   alternateId: string,
 ): string {
   return String.raw`
-    set local session_replication_role = replica;
     update public.${table}
     set id = '${alternateId}'::uuid
     where id = '${canonicalId}'::uuid;
-    set local session_replication_role = origin;
   `;
 }
 
@@ -812,6 +823,7 @@ async function expectHostileSeedRollback(service: SupabaseClient, {
   expectedError,
   expectedNotice,
 }: HostileSeedCase): Promise<void> {
+  const baseline = snapshotSeedRows();
   const user = await createTestUser(service, "cfg001-hostile-history");
   try {
     const result = runOwnerSql(String.raw`
@@ -821,7 +833,11 @@ async function expectHostileSeedRollback(service: SupabaseClient, {
       \pset tuples_only on
       begin;
       ${historicalFixtureSql(user.id)}
+      -- Only the hostile precondition bypasses successor FKs/triggers.  The
+      -- migration itself must observe the normal origin authority graph.
+      set local session_replication_role = replica;
       ${precondition}
+      set local session_replication_role = origin;
       ${seedSnapshotSql("CFG001_HOSTILE_BEFORE=")}
       savepoint cfg001_migration_body;
       \set ON_ERROR_STOP off
@@ -842,6 +858,7 @@ async function expectHostileSeedRollback(service: SupabaseClient, {
     expect(after).toBe(before);
   } finally {
     await deleteTestUser(service, user.id);
+    expect(snapshotSeedRows()).toBe(baseline);
   }
 }
 
@@ -1966,7 +1983,9 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
         import.meta.url,
       ),
       "utf8",
-    ).toLowerCase();
+    )
+      .replace(/\r\n?/gu, "\n")
+      .toLowerCase();
 
     expect(migration.match(/^begin;$/gm)).toHaveLength(1);
     expect(migration.match(/^commit;$/gm)).toHaveLength(1);
@@ -1987,34 +2006,129 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
 describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
   "CFG-001 strict fresh-reset gate (real DB)",
   () => {
-    it("has exact catalog cardinality, generation zero, and no dynamic history", () => {
+    it("keeps the exact CFG001 owner slice while successor roots remain visible", () => {
       const actual = parseOwnerJson(String.raw`
         select pg_catalog.jsonb_build_object(
-          'profiles', (select count(*) from public.ai_provider_profiles),
-          'profileVersions', (
-            select count(*) from public.ai_provider_profile_versions
+          'profiles', (
+            select count(*)
+            from public.ai_provider_profiles
+            where id = '${SEED.profile.id}'::uuid
+              and profile_key = '${SEED.profile.profileKey}'
           ),
-          'prices', (select count(*) from public.ai_price_versions),
+          'profileVersions', (
+            select count(*)
+            from public.ai_provider_profile_versions
+            where id = '${SEED.profile.profileVersionId}'::uuid
+              and profile_id = '${SEED.profile.id}'::uuid
+              and version = ${SEED.profile.version}
+              and status = '${SEED.profile.status}'
+          ),
+          'prices', (
+            select count(*)
+            from public.ai_price_versions
+            where id in (
+              '${SEED.pricing.rows[0].id}'::uuid,
+              '${SEED.pricing.rows[1].id}'::uuid,
+              '${DB012_LEGACY_PRICE_ID}'::uuid
+            )
+          ),
           'priceLanes', (
             select pg_catalog.jsonb_agg(pricing_lane order by pricing_lane)
             from public.ai_price_versions
+            where id in (
+              '${SEED.pricing.rows[0].id}'::uuid,
+              '${SEED.pricing.rows[1].id}'::uuid,
+              '${DB012_LEGACY_PRICE_ID}'::uuid
+            )
           ),
-          'components', (select count(*) from public.ai_price_components),
+          'components', (
+            select count(*)
+            from public.ai_price_components
+            where price_version_id in (
+              '${SEED.pricing.rows[0].id}'::uuid,
+              '${SEED.pricing.rows[1].id}'::uuid,
+              '${DB012_LEGACY_PRICE_ID}'::uuid
+            )
+          ),
           'legacySealIntents', (
             select count(*) from public.ai_price_component_seal_intents
             where price_version_id = '${DB012_LEGACY_PRICE_ID}'::uuid
               and applied_at is not null
           ),
-          'sealIntents', (select count(*) from public.ai_price_component_seal_intents),
-          'policies', (select count(*) from public.ai_routing_policy_versions where id = '${SEED.policy.id}'::uuid),
-          'runtimeRoots', (
-            select count(*) from public.ai_service_runtime_contract_versions
+          'g2Policy', (
+            select count(*)
+            from public.ai_routing_policy_versions
+            where id = '${SEED.policy.id}'::uuid
+              and policy_key = '${SEED.policy.policyKey}'
+              and version = ${SEED.policy.version}
+              and status = '${SEED.policy.status}'
+              and runtime_contract_id = '${SEED.policy.runtimeContractId}'
+              and runtime_contract_sha256 = '${SEED.policy.runtimeContractSha256}'
           ),
-          'runtimeTargets', (
-            select count(*) from public.ai_service_runtime_target_versions
+          'legacyRoot', (
+            select count(*)
+            from public.ai_service_runtime_contract_versions
+            where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}'
+              and runtime_contract_sha256 = '${SEED.runtime.contract.runtimeContractSha256}'
+              and sealed_at is not null
           ),
-          'runtimeMemberships', (
-            select count(*) from public.ai_service_runtime_contract_targets
+          'sharedDeepseekTarget', (
+            select count(*)
+            from public.ai_service_runtime_target_versions
+            where runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}'
+              and runtime_target_sha256 = '${SEED.runtime.targets[0].runtimeTargetSha256}'
+              and profile_key = '${SEED.runtime.targets[0].profileKey}'
+              and legal_manifest_id = '${SEED.runtime.targets[0].legalManifestId}'
+              and manifest_sha256 = '${SEED.runtime.targets[0].manifestSha256}'
+              and route_descriptor_id = '${SEED.runtime.targets[0].routeDescriptorId}'
+              and route_descriptor_sha256 = '${SEED.runtime.targets[0].routeDescriptorSha256}'
+          ),
+          'legacyMembership', (
+            select count(*)
+            from public.ai_service_runtime_contract_targets
+            where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}'
+              and runtime_contract_sha256 = '${SEED.runtime.contract.runtimeContractSha256}'
+              and runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}'
+              and runtime_target_sha256 = '${SEED.runtime.targets[0].runtimeTargetSha256}'
+              and profile_key = '${SEED.runtime.targets[0].profileKey}'
+              and legal_manifest_id = '${SEED.runtime.targets[0].legalManifestId}'
+              and manifest_sha256 = '${SEED.runtime.targets[0].manifestSha256}'
+              and route_descriptor_id = '${SEED.runtime.targets[0].routeDescriptorId}'
+              and route_descriptor_sha256 = '${SEED.runtime.targets[0].routeDescriptorSha256}'
+          ),
+          'combinedV2Memberships', (
+            select pg_catalog.jsonb_agg(runtime_target_id order by runtime_target_id)
+            from public.ai_service_runtime_contract_targets
+            where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+              and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
+          ),
+          'cfg003Policies', (
+            select coalesce(
+              pg_catalog.jsonb_agg(
+                pg_catalog.jsonb_build_object(
+                  'id', id,
+                  'key', policy_key,
+                  'version', version,
+                  'status', status,
+                  'timezone', timezone,
+                  'rules', rules,
+                  'default', default_profile_version_id,
+                  'legal', legal_bundle_version,
+                  'runtime', runtime_contract_id,
+                  'hash', runtime_contract_sha256,
+                  'config', config_sha256,
+                  'validated', validated_at,
+                  'active', activated_at,
+                  'retired', retired_at
+                ) order by id
+              ),
+              '[]'::jsonb
+            )
+            from public.ai_routing_policy_versions
+            where id in (
+              '${G4_SEED.policies.g4.id}'::uuid,
+              '${G4_SEED.policies.rollback.id}'::uuid
+            )
           ),
           'legalHeaders', (select count(*) from public.ai_legal_bundle_versions),
           'legalManifests', (
@@ -2052,11 +2166,30 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
         priceLanes: ["legacy", "offpeak", "peak"],
         components: 9,
         legacySealIntents: 1,
-        sealIntents: 1,
-        policies: 1,
-        runtimeRoots: 1,
-        runtimeTargets: 1,
-        runtimeMemberships: 1,
+        g2Policy: 1,
+        legacyRoot: 1,
+        sharedDeepseekTarget: 1,
+        legacyMembership: 1,
+        combinedV2Memberships: [
+          "runtime-target.deepseek.official.deepseek-v4-flash.chat.v1",
+          "runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1",
+        ],
+        cfg003Policies: Object.values(G4_SEED.policies).map((policy) => ({
+          id: policy.id,
+          key: policy.policyKey,
+          version: policy.version,
+          status: policy.status,
+          timezone: policy.timezone,
+          rules: policy.rules,
+          default: policy.defaultProfileVersionId,
+          legal: G4_SEED.legalBundleVersion,
+          runtime: policy.runtimeContractId,
+          hash: policy.runtimeContractSha256,
+          config: policy.configSha256,
+          validated: null,
+          active: null,
+          retired: null,
+        })),
         legalHeaders: 1,
         legalManifests: 2,
         legalMemberships: 2,
