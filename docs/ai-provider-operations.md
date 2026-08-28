@@ -120,6 +120,13 @@ not active by default. A qualified DB-013 operator may promote it only after
 the current evidence, seal, validation, and human-approval gates below have
 passed. There is no automatic fallback and no hosted activation authorization.
 
+`docs/ai-provider-contract.md` is an immutable reviewed service/legal evidence
+blob for the current manifest and runtime roots. Its embedded price prose is a
+historical snapshot and is not activation-price authority; do not edit it in
+place or infer current rates/windows from it. Current activation facts come
+only from the official recheck below, the exact seeded price row, and DB-013's
+matching seal evidence.
+
 The current external price evidence that must be rechecked before local
 activation is:
 
@@ -136,23 +143,20 @@ activation is:
   component is limited-time free with an unknown end date; treat that as an
   expiring fact, not a permanent zero price.
 
-The price authority graph is **official page/announcement evidence -> planned
+The price authority graph is **official page/announcement evidence -> reviewed
 exact provenance seed -> DB-013 seal and validation -> policy/pointer**. The
 current effective date must come from the first node, not be inferred by
 reading a DB-012 legacy row. DB-012's legacy `provider_effective_to` records
 the same `2026-08-16T16:00:00Z` transition boundary solely to close the
 historical lane; it neither establishes the current price nor authorizes that
-legacy price for activation. Until the provenance seed carrying the exact
-source URL, check timestamp, snapshot hash, and effective date above is
-integrated and the local database is fresh-reset, remain fail-closed and do
-not report that correction as already present.
+legacy price for activation. Before execution, prove that the selected exact
+head contains the provenance seed carrying the source URL, check timestamp,
+snapshot hash, and effective date above, then fresh-reset the local database.
+Otherwise remain fail-closed.
 
 These facts are evidence inputs, not permission to activate or call a
-provider. A historical legacy price is never activatable. The current
-provenance correction must be integrated and the local database must be
-fresh-reset before any local activation; this runbook does not assert that the
-correction is already integrated. If that source/reset boundary cannot be
-proved, stop.
+provider. A historical legacy price is never activatable. If the exact
+source/head/reset boundary cannot be proved, stop.
 
 ## 6. Local-only staged promotion and smoke boundary
 
