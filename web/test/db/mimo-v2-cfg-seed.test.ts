@@ -310,13 +310,6 @@ function makeSeedAbsent(): void {
     where runtime_contract_id='${CONTRACT.runtimeContractId}';
     delete from public.ai_service_runtime_contract_versions
     where runtime_contract_id='${CONTRACT.runtimeContractId}';
-    delete from public.ai_service_runtime_target_versions
-    where runtime_target_id='${TARGETS[1].runtimeTargetId}'
-      and not exists (
-        select 1 from public.ai_service_runtime_contract_targets
-        where runtime_target_id='${TARGETS[1].runtimeTargetId}'
-          and runtime_contract_id <> '${CONTRACT.runtimeContractId}'
-      );
     delete from public.ai_price_components where price_version_id='${PRICE_ID}'::uuid;
     delete from public.ai_price_versions where id='${PRICE_ID}'::uuid;
     delete from public.ai_provider_profile_versions where id='${PROFILE_VERSION_ID}'::uuid;
@@ -888,13 +881,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       where runtime_contract_id='${CONTRACT.runtimeContractId}';
       delete from public.ai_service_runtime_contract_versions
       where runtime_contract_id='${CONTRACT.runtimeContractId}';
-      delete from public.ai_service_runtime_target_versions
-      where runtime_target_id='${TARGETS[1].runtimeTargetId}'
-        and not exists (
-          select 1 from public.ai_service_runtime_contract_targets
-          where runtime_target_id='${TARGETS[1].runtimeTargetId}'
-            and runtime_contract_id <> '${CONTRACT.runtimeContractId}'
-        );
       delete from public.ai_price_components where price_version_id='${PRICE_ID}'::uuid;
       delete from public.ai_price_versions where id='${PRICE_ID}'::uuid;
       delete from public.ai_provider_profile_versions where id='${PROFILE_VERSION_ID}'::uuid;
