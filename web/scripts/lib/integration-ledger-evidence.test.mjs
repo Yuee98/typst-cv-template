@@ -333,4 +333,14 @@ describe("integration ledger evidence", () => {
     expect(source).toContain("for (const name of UPSTREAM_URL_ENV_NAMES) env[name] = \"\";");
     expect(source).toContain('integrationProfile.name !== "deepseek" && deepseekBaseUrl');
   });
+
+  it("runs installed build and Supabase tools directly without invoking a package manager", () => {
+    const source = readFileSync(new URL("../run-integration-tests.mjs", import.meta.url), "utf8");
+    expect(source).toContain('const supabaseCli = path.join(repoRoot, "node_modules", "supabase", "dist", "supabase.js");');
+    expect(source).toContain('spawnSync(process.execPath, [supabaseCli, "status", "-o", "env"]');
+    expect(source).toContain("spawnSync(process.execPath, [syncTypstAssetsScript]");
+    expect(source).toContain('spawnSync(process.execPath, [runNextModeScript, "build", "server"]');
+    expect(source).not.toContain('spawnSync("pnpm');
+    expect(source).not.toContain("shell: true");
+  });
 });
