@@ -996,18 +996,6 @@ RT-002B 只新增纯 `provider-subject-v2` message/HMAC helper、contract fixtur
 
 ## 10. 共享 fixture 最小集合
 
-### CFG-003 daily routing candidates
-
-`polish.deepseek-mimo.daily.g4.v1` and its explicit
-`polish.deepseek-only.daily.rollback.v1` successor are immutable draft
-candidates. Their only official windows are Asia/Shanghai daily `[1,2,3,4,5,6,7]`
-half-open `09:00-12:00` and `14:00-18:00`; the historical weekday-only G2
-policy is not a safe rollback. The G4 windows select the MiMo V2 profile and
-its draft, unsealed price, while the successor selects DeepSeek peak pricing.
-Neither candidate supplies a fallback, current/latest lookup, activation, or
-pointer write. Validation/canary/active still require the normal sealed prices
-and promoted profiles, so this dark seed is not activation authorization.
-
 DB、runtime 与 API tests 必须共同覆盖：
 
 1. reserve 返回完整一致的 `route_snapshot_v1`，旧字段仍存在。
