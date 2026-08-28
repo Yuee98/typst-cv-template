@@ -193,6 +193,8 @@ describe("integration ledger evidence", () => {
     const canceled = attempt({
       status: "canceled",
       transmitted: true,
+      actual_upstream_endpoint: null,
+      actual_model_id: null,
       provider_billable: null,
       usage_observation_kind: "unavailable",
       usage_complete: false,
@@ -212,6 +214,10 @@ describe("integration ledger evidence", () => {
   it("rejects parent-child identity mismatches", () => {
     const child = attempt({ actual_model_id: "other-model" });
     expect(evaluateRequestLedgerEvidence(parent([child]), [child]).issues).toContain("attempt_model_mismatch");
+    const partialRoute = attempt({ actual_model_id: null });
+    expect(evaluateRequestLedgerEvidence(parent([partialRoute]), [partialRoute]).issues).toContain(
+      "attempt_route_observation_partial",
+    );
     const lookalike = attempt({ actual_upstream_endpoint: "https://api.deepseek.com.evil.example/chat/completions" });
     expect(evaluateRequestLedgerEvidence(parent([lookalike]), [lookalike]).issues).toContain("attempt_endpoint_not_official");
   });

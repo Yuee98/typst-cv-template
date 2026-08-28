@@ -181,17 +181,24 @@ export function evaluateRequestLedgerEvidence(
     push(issues, attempt.endpoint_alias === profile.endpointAlias, "attempt_endpoint_alias_mismatch");
     // Reconciliation makes an unknown transmission explicitly route-unknown;
     // a definite pre-entry failure likewise has no observed provider route.
-    // Only a known entered attempt can prove the exact provider endpoint/model.
+    // Entering a provider (transmitted=true) does not guarantee a route
+    // observation survived cancellation. If either observation exists, it must
+    // be the complete exact official endpoint/model pair.
     if (attempt.status === "unknown" || attempt.transmitted === false) {
       push(issues, attempt.actual_upstream_endpoint === null, "attempt_route_endpoint_not_cleared");
       push(issues, attempt.actual_model_id === null, "attempt_route_model_not_cleared");
-    } else {
-      push(issues, attempt.actual_model_id === profile.modelId, "attempt_model_mismatch");
+    } else if (attempt.actual_upstream_endpoint !== null || attempt.actual_model_id !== null) {
+      push(
+        issues,
+        attempt.actual_upstream_endpoint !== null && attempt.actual_model_id !== null,
+        "attempt_route_observation_partial",
+      );
       push(
         issues,
         isOfficialDeepSeekChatCompletionsEndpoint(attempt.actual_upstream_endpoint),
         "attempt_endpoint_not_official",
       );
+      push(issues, attempt.actual_model_id === profile.modelId, "attempt_model_mismatch");
     }
     push(issues, attempt.billing_currency === parent?.billing_currency, "billing_currency_mismatch");
     push(issues, attempt.estimated_currency == null || attempt.estimated_currency === parent?.billing_currency, "estimated_currency_mismatch");
