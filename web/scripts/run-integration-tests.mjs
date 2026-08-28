@@ -60,6 +60,7 @@ import {
   resolveIntegrationProfile,
   sameExpectedRouteV1,
 } from "./lib/integration-ledger-evidence.mjs";
+import { readJsonOrNull } from "./lib/integration-http.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -463,13 +464,14 @@ async function postPolish(body, { token, signal } = {}) {
   const headers = { "content-type": "application/json" };
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
   const deadline = AbortSignal.timeout(POLISH_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const response = await fetch(`${BASE_URL}/api/polish`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+    signal: requestSignal,
   });
-  const json = await response.json().catch(() => null);
+  const json = await readJsonOrNull(response, requestSignal);
   return { status: response.status, headers: response.headers, body: json };
 }
 
@@ -489,11 +491,12 @@ function makePolishBody(clientRequestId, text, expectedRoute) {
 }
 
 async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
+  const availabilitySignal = AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS);
   const response = await fetch(`${BASE_URL}/api/polish/availability`, {
     headers: { authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS),
+    signal: availabilitySignal,
   });
-  const body = await response.json().catch(() => null);
+  const body = await readJsonOrNull(response, availabilitySignal);
   if (response.status !== 200 || body?.availability?.enabled !== true) {
     fatal("selected integration profile is not authenticated-and-available on the prepared local route.");
   }

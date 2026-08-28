@@ -355,7 +355,10 @@ describe("integration ledger evidence", () => {
     const source = readFileSync(new URL("../run-integration-tests.mjs", import.meta.url), "utf8");
     expect(source).toContain("const AVAILABILITY_TIMEOUT_MS = 10_000;");
     expect(source).toContain("const POLISH_REQUEST_TIMEOUT_MS = 75_000;");
-    expect(source).toContain("signal: AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS)");
-    expect(source).toContain("signal ? AbortSignal.any([signal, deadline]) : deadline");
+    expect(source).toContain("const availabilitySignal = AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS)");
+    expect(source).toContain("const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline");
+    expect(source).toContain("readJsonOrNull(response, requestSignal)");
+    expect(source).toContain("readJsonOrNull(response, availabilitySignal)");
+    expect(source).not.toContain("response.json().catch(() => null)");
   });
 });
