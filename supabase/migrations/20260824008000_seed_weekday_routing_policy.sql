@@ -104,6 +104,101 @@ begin
 end;
 $$;
 
+-- These constraints are deliberately table-owned, so ordinary operators,
+-- security-definer lifecycle functions, and service_role table writes all
+-- preserve the historical daily rows as permanently dark and unselectable.
+do $$
+declare
+  policy_constraint text;
+  pointer_constraint text;
+  expected_policy_constraint text;
+  expected_pointer_constraint text;
+begin
+  -- Build the canonical representation through PostgreSQL itself. Comparing
+  -- pg_get_constraintdef output exactly (instead of marker matching) keeps a
+  -- same-name `... or true` constraint from weakening this irreversible guard.
+  create temporary table cfg003_expected_policy_constraint_shape (
+    id uuid,
+    status text,
+    validated_at timestamptz,
+    activated_at timestamptz,
+    retired_at timestamptz
+  );
+  alter table cfg003_expected_policy_constraint_shape
+    add constraint cfg003_expected_policy_constraint_shape_check check (
+      id <> all (array[
+        '33333333-3333-4333-8333-333333333333'::uuid,
+        '33333333-3333-4333-8333-333333333334'::uuid
+      ]) or (
+        status = 'draft' and validated_at is null and activated_at is null and retired_at is null
+      )
+    );
+  select pg_get_constraintdef(oid, true) into expected_policy_constraint
+  from pg_constraint
+  where conrelid = 'cfg003_expected_policy_constraint_shape'::regclass
+    and conname = 'cfg003_expected_policy_constraint_shape_check';
+
+  create temporary table cfg003_expected_pointer_constraint_shape (
+    active_routing_policy_version_id uuid
+  );
+  alter table cfg003_expected_pointer_constraint_shape
+    add constraint cfg003_expected_pointer_constraint_shape_check check (
+      active_routing_policy_version_id is null or active_routing_policy_version_id <> all (array[
+        '33333333-3333-4333-8333-333333333333'::uuid,
+        '33333333-3333-4333-8333-333333333334'::uuid
+      ])
+    );
+  select pg_get_constraintdef(oid, true) into expected_pointer_constraint
+  from pg_constraint
+  where conrelid = 'cfg003_expected_pointer_constraint_shape'::regclass
+    and conname = 'cfg003_expected_pointer_constraint_shape_check';
+
+  select pg_get_constraintdef(oid, true) into policy_constraint
+  from pg_constraint
+  where conrelid = 'public.ai_routing_policy_versions'::regclass
+    and conname = 'ai_routing_policy_versions_cfg003_daily_dark_check';
+  if policy_constraint is not null and policy_constraint is distinct from expected_policy_constraint then
+    raise exception 'CFG-003 daily-dark policy constraint definition collision' using errcode = '23514';
+  end if;
+
+  select pg_get_constraintdef(oid, true) into pointer_constraint
+  from pg_constraint
+  where conrelid = 'public.ai_feature_config'::regclass
+    and conname = 'ai_feature_config_cfg003_daily_pointer_check';
+  if pointer_constraint is not null and pointer_constraint is distinct from expected_pointer_constraint then
+    raise exception 'CFG-003 daily-pointer constraint definition collision' using errcode = '23514';
+  end if;
+
+  drop table cfg003_expected_pointer_constraint_shape;
+  drop table cfg003_expected_policy_constraint_shape;
+end;
+$$;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.ai_routing_policy_versions'::regclass and conname = 'ai_routing_policy_versions_cfg003_daily_dark_check') then
+    alter table public.ai_routing_policy_versions
+      add constraint ai_routing_policy_versions_cfg003_daily_dark_check check (
+        id <> all (array[
+          '33333333-3333-4333-8333-333333333333'::uuid,
+          '33333333-3333-4333-8333-333333333334'::uuid
+        ]) or (
+          status = 'draft' and validated_at is null and activated_at is null and retired_at is null
+        )
+      );
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.ai_feature_config'::regclass and conname = 'ai_feature_config_cfg003_daily_pointer_check') then
+    alter table public.ai_feature_config
+      add constraint ai_feature_config_cfg003_daily_pointer_check check (
+        active_routing_policy_version_id is null or active_routing_policy_version_id <> all (array[
+          '33333333-3333-4333-8333-333333333333'::uuid,
+          '33333333-3333-4333-8333-333333333334'::uuid
+        ])
+      );
+  end if;
+end;
+$$;
+
 insert into public.ai_routing_policy_versions (
   id, policy_key, version, status, timezone, rules, default_profile_version_id,
   legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
@@ -119,7 +214,46 @@ select * from (values
 where not exists (select 1 from public.ai_routing_policy_versions as actual where actual.id = expected.id);
 
 do $$
+declare
+  expected_policy_constraint text;
+  expected_pointer_constraint text;
 begin
+  create temporary table cfg003_expected_policy_constraint_shape (
+    id uuid,
+    status text,
+    validated_at timestamptz,
+    activated_at timestamptz,
+    retired_at timestamptz
+  );
+  alter table cfg003_expected_policy_constraint_shape
+    add constraint cfg003_expected_policy_constraint_shape_check check (
+      id <> all (array[
+        '33333333-3333-4333-8333-333333333333'::uuid,
+        '33333333-3333-4333-8333-333333333334'::uuid
+      ]) or (
+        status = 'draft' and validated_at is null and activated_at is null and retired_at is null
+      )
+    );
+  select pg_get_constraintdef(oid, true) into expected_policy_constraint
+  from pg_constraint
+  where conrelid = 'cfg003_expected_policy_constraint_shape'::regclass
+    and conname = 'cfg003_expected_policy_constraint_shape_check';
+
+  create temporary table cfg003_expected_pointer_constraint_shape (
+    active_routing_policy_version_id uuid
+  );
+  alter table cfg003_expected_pointer_constraint_shape
+    add constraint cfg003_expected_pointer_constraint_shape_check check (
+      active_routing_policy_version_id is null or active_routing_policy_version_id <> all (array[
+        '33333333-3333-4333-8333-333333333333'::uuid,
+        '33333333-3333-4333-8333-333333333334'::uuid
+      ])
+    );
+  select pg_get_constraintdef(oid, true) into expected_pointer_constraint
+  from pg_constraint
+  where conrelid = 'cfg003_expected_pointer_constraint_shape'::regclass
+    and conname = 'cfg003_expected_pointer_constraint_shape_check';
+
   if (select count(*) from public.ai_routing_policy_versions where id in (
         '33333333-3333-4333-8333-333333333335'::uuid,
         '33333333-3333-4333-8333-333333333336'::uuid
@@ -136,15 +270,30 @@ begin
         id = '33333333-3333-4333-8333-333333333335'::uuid
         and policy_key = 'polish.deepseek-mimo.weekday.g4.v1' and version = 1
         and config_sha256 = '7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567'
+        and timezone = 'Asia/Shanghai'
+        and default_profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
+        and legal_bundle_version = '2026-08-23-multi-provider-v1'
+        and runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
+        and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
         and rules = '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}}]}'::jsonb)
     or not exists (select 1 from public.ai_routing_policy_versions where
         id = '33333333-3333-4333-8333-333333333336'::uuid
         and policy_key = 'polish.deepseek-only.weekday.rollback.v1' and version = 1
         and config_sha256 = 'c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418'
+        and timezone = 'Asia/Shanghai'
+        and default_profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
+        and legal_bundle_version = '2026-08-23-multi-provider-v1'
+        and runtime_contract_id = 'runtime.deepseek-v2.v1'
+        and runtime_contract_sha256 = '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
         and rules = '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}}]}'::jsonb)
+    or not exists (select 1 from pg_constraint where conrelid = 'public.ai_routing_policy_versions'::regclass and conname = 'ai_routing_policy_versions_cfg003_daily_dark_check' and convalidated and pg_get_constraintdef(oid, true) = expected_policy_constraint)
+    or not exists (select 1 from pg_constraint where conrelid = 'public.ai_feature_config'::regclass and conname = 'ai_feature_config_cfg003_daily_pointer_check' and convalidated and pg_get_constraintdef(oid, true) = expected_pointer_constraint)
   then
     raise exception 'CFG-003 weekday routing policy postcondition mismatch' using errcode = '23514';
   end if;
+
+  drop table cfg003_expected_pointer_constraint_shape;
+  drop table cfg003_expected_policy_constraint_shape;
 end;
 $$;
 

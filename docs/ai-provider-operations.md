@@ -203,7 +203,9 @@ and only within the Beijing peak windows.
 The preceding daily policies `33333333-3333-4333-8333-333333333333` and
 `33333333-3333-4333-8333-333333333334` remain immutable historical drafts.
 They are explicitly forbidden as pointer targets or rollback candidates; do not
-select, validate, promote, or reactivate them.
+select, validate, promote, or reactivate them. The local successor installs
+database constraints that reject lifecycle or pointer writes to those IDs even
+from normal operator and service-role paths.
 
 After any authorized lifecycle action, the qualified operator must read back
 and preserve evidence for all of the following before asking a human to enable

@@ -51,6 +51,31 @@ function policyGraph(): unknown {
     'validated_at',validated_at,'activated_at',activated_at,'retired_at',retired_at
   ) order by id) from public.ai_routing_policy_versions;`);
 }
+function expectedDailyConstraintDefinitions(): Record<string, string> {
+  return json(String.raw`
+    create temporary table cfg003_expected_policy_constraint_shape (
+      id uuid, status text, validated_at timestamptz, activated_at timestamptz, retired_at timestamptz
+    );
+    alter table cfg003_expected_policy_constraint_shape
+      add constraint cfg003_expected_policy_constraint_shape_check check (
+        id <> all (array['${oldDailyG4}'::uuid, '${oldDailyRollback}'::uuid]) or (
+          status = 'draft' and validated_at is null and activated_at is null and retired_at is null
+        )
+      );
+    create temporary table cfg003_expected_pointer_constraint_shape (
+      active_routing_policy_version_id uuid
+    );
+    alter table cfg003_expected_pointer_constraint_shape
+      add constraint cfg003_expected_pointer_constraint_shape_check check (
+        active_routing_policy_version_id is null or active_routing_policy_version_id <> all (array[
+          '${oldDailyG4}'::uuid, '${oldDailyRollback}'::uuid
+        ])
+      );
+    select jsonb_build_object(
+      'policy', (select pg_get_constraintdef(oid, true) from pg_constraint where conrelid = 'cfg003_expected_policy_constraint_shape'::regclass and conname = 'cfg003_expected_policy_constraint_shape_check'),
+      'pointer', (select pg_get_constraintdef(oid, true) from pg_constraint where conrelid = 'cfg003_expected_pointer_constraint_shape'::regclass and conname = 'cfg003_expected_pointer_constraint_shape_check')
+    )::text;`) as Record<string, string>;
+}
 function policyInsert(policy: (typeof SEED.policies)[keyof typeof SEED.policies]): string {
   return String.raw`insert into public.ai_routing_policy_versions (
     id, policy_key, version, status, timezone, rules, default_profile_version_id,
@@ -148,6 +173,13 @@ describe("CFG-003 G4 routing-policy seed", () => {
     expect(sql).toContain("polish.deepseek-only.daily.rollback.v1");
     expect(sql).toContain("forbidden as a selected pointer target");
     expect(sql).toContain("forbidden daily selection mismatch");
+    expect(sql).toContain("ai_routing_policy_versions_cfg003_daily_dark_check");
+    expect(sql).toContain("ai_feature_config_cfg003_daily_pointer_check");
+    expect(sql).toContain("active_routing_policy_version_id");
+    expect(sql).toContain("status = 'draft' and validated_at is null and activated_at is null and retired_at is null");
+    expect(sql).toContain("pg_get_constraintdef(oid, true)");
+    expect(sql).toContain("is distinct from expected_policy_constraint");
+    expect(sql).not.toContain("policy_constraint not like");
     expect(sql).toContain("runtime.deepseek-v2-mimo-v2.5-pro.v2");
     expect(sql).toContain("mimo_responses_v1");
     expect(testSource()).toContain("cleanupBarrier = true;");
@@ -162,6 +194,7 @@ describe("CFG-003 G4 routing-policy seed", () => {
         'policies',(select jsonb_agg(jsonb_build_object('id',id,'key',policy_key,'version',version,'rules',rules,'default',default_profile_version_id,'legal',legal_bundle_version,'runtime',runtime_contract_id,'hash',runtime_contract_sha256,'config',config_sha256,'status',status,'validated',validated_at,'active',activated_at,'retired',retired_at) order by id) from public.ai_routing_policy_versions),
         'combined',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_contract_sha256='510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'),
         'legacy',(select jsonb_agg(runtime_target_id order by runtime_target_id) from public.ai_service_runtime_contract_targets where runtime_contract_id='runtime.deepseek-v2.v1' and runtime_contract_sha256='229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'),
+        'constraints',(select jsonb_agg(jsonb_build_object('name',conname,'definition',pg_get_constraintdef(oid,true),'validated',convalidated) order by conname) from pg_constraint where (conrelid='public.ai_routing_policy_versions'::regclass and conname='ai_routing_policy_versions_cfg003_daily_dark_check') or (conrelid='public.ai_feature_config'::regclass and conname='ai_feature_config_cfg003_daily_pointer_check')),
         'dark',(select jsonb_build_object('mimoDraft',(select status='draft' and validated_at is null from public.ai_provider_profile_versions where id='22222222-2222-4222-8222-222222222221'::uuid),'mimoUnsealed',(select components_sealed_at is null from public.ai_price_versions where id='22222222-2222-4222-8222-222222222222'::uuid),'deepseekUnsealed',(select bool_and(components_sealed_at is null) from public.ai_price_versions where id in ('11111111-1111-4111-8111-111111111112'::uuid,'11111111-1111-4111-8111-111111111113'::uuid))),'oldDailyUnselected',(select count(*) = 0 from public.ai_feature_config where active_routing_policy_version_id in ('${oldDailyG4}'::uuid,'${oldDailyRollback}'::uuid))))::text;`) as Record<string, unknown>;
       const policies = value.policies as Array<Record<string, unknown>>;
       expect(policies.map((x) => x.id)).toEqual([g2, oldDailyG4, oldDailyRollback, g4, rollback]);
@@ -171,10 +204,69 @@ describe("CFG-003 G4 routing-policy seed", () => {
       expect(value.combined).toEqual(["runtime-target.deepseek.official.deepseek-v4-flash.chat.v1", "runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1"]);
       expect(value.legacy).toEqual(["runtime-target.deepseek.official.deepseek-v4-flash.chat.v1"]);
       expect(value.dark).toEqual({ mimoDraft: true, mimoUnsealed: true, deepseekUnsealed: true, oldDailyUnselected: true });
+      const expectedConstraints = expectedDailyConstraintDefinitions();
+      expect(value.constraints).toEqual([
+        { name: "ai_feature_config_cfg003_daily_pointer_check", validated: true, definition: expectedConstraints.pointer },
+        { name: "ai_routing_policy_versions_cfg003_daily_dark_check", validated: true, definition: expectedConstraints.policy },
+      ]);
     });
 
     it("serially replays byte-for-byte without pointer, audit, or ledger mutation", () => {
       const before = snap(); expect(runOwnerSql(source()).status).toBe(0); expect(snap()).toBe(before);
+    });
+
+    it("permanently rejects historical daily lifecycle and pointer writes while allowing the weekday candidates", () => {
+      const canonical = snap();
+      const result = runOwnerSql(String.raw`\set VERBOSITY verbose
+        begin;
+        set local session_replication_role=replica;
+        savepoint old_status;
+        \set ON_ERROR_STOP off
+        update public.ai_routing_policy_versions set status='validated', validated_at=clock_timestamp() where id='${oldDailyG4}'::uuid;
+        \set ON_ERROR_STOP on
+        rollback to savepoint old_status;
+        savepoint old_pointer;
+        \set ON_ERROR_STOP off
+        update public.ai_feature_config set active_routing_policy_version_id='${oldDailyRollback}'::uuid where id=true;
+        \set ON_ERROR_STOP on
+        rollback to savepoint old_pointer;
+        update public.ai_routing_policy_versions set status='validated', validated_at=clock_timestamp() where id='${g4}'::uuid;
+        select 'WEEKDAY_STATUS='||status||':'||(validated_at is not null)::text from public.ai_routing_policy_versions where id='${g4}'::uuid;
+        rollback;`, { expectFailure: false });
+      expect(result.stderr).toMatch(/ERROR:\s+23514:/u);
+      expect((result.stderr.match(/ERROR:\s+23514:/gu) ?? [])).toHaveLength(2);
+      expect(result.stdout).toContain("WEEKDAY_STATUS=validated:true");
+      expect(snap()).toBe(canonical);
+    });
+
+    it.each([
+      ["policy", String.raw`
+        alter table public.ai_routing_policy_versions drop constraint ai_routing_policy_versions_cfg003_daily_dark_check;
+        alter table public.ai_routing_policy_versions add constraint ai_routing_policy_versions_cfg003_daily_dark_check check (
+          id <> all (array['${oldDailyG4}'::uuid, '${oldDailyRollback}'::uuid]) or (
+            status = 'draft' and validated_at is null and activated_at is null and retired_at is null
+          ) or true
+        );`],
+      ["pointer", String.raw`
+        alter table public.ai_feature_config drop constraint ai_feature_config_cfg003_daily_pointer_check;
+        alter table public.ai_feature_config add constraint ai_feature_config_cfg003_daily_pointer_check check (
+          active_routing_policy_version_id is null or active_routing_policy_version_id <> all (array[
+            '${oldDailyG4}'::uuid, '${oldDailyRollback}'::uuid
+          ]) or true
+        );`],
+    ])("fails closed on a hostile same-name permissive daily % constraint", (_kind, mutate) => {
+      const canonical = snap();
+      const result = runOwnerSql(String.raw`\set VERBOSITY verbose
+        begin;
+        ${mutate}
+        savepoint cfg003_permissive_constraint;
+        \set ON_ERROR_STOP off
+        ${body()}
+        \set ON_ERROR_STOP on
+        rollback to savepoint cfg003_permissive_constraint;
+        rollback;`, { expectFailure: false });
+      expect(result.stderr).toMatch(/ERROR:\s+23514:/u);
+      expect(snap()).toBe(canonical);
     });
 
     it.each([
