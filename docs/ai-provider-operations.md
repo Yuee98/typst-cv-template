@@ -207,6 +207,17 @@ select, validate, promote, or reactivate them. The local successor installs
 database constraints that reject lifecycle or pointer writes to those IDs even
 from normal operator and service-role paths.
 
+Treat a deployment stopped after migration `20260824007000` as incomplete and
+non-operable. Before any profile, price, policy, pointer, or feature lifecycle
+operation, positively read back migration `20260824008000` and both validated
+table-owned constraints:
+`ai_routing_policy_versions_cfg003_daily_dark_check` on
+`public.ai_routing_policy_versions` and
+`ai_feature_config_cfg003_daily_pointer_check` on
+`public.ai_feature_config`. Missing, unvalidated, or differently defined guards
+are a hard stop; do not rely on the daily rows merely remaining draft by
+convention.
+
 After any authorized lifecycle action, the qualified operator must read back
 and preserve evidence for all of the following before asking a human to enable
 or promote anything:

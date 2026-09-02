@@ -81,8 +81,9 @@ settlement (`state=finalized`, `status=succeeded`, `quota_charged=true`,
 `attempt_count>=1`, `latency_ms` recorded, `usage_complete=true`), the
 `ai_usage_daily` +1, a 409 when resending the same `clientRequestId`, and the
 cancel-while-in-flight settlement (`status=canceled`, `quota_charged=true`,
-`failure_stage=canceled`, `provider_billable=null` — billability is unknown
-when the abort lands mid-flight; the lifecycle treats both `AbortError` and
+`failure_stage=transport`, `provider_billable=null` — request status records
+cancellation while the parent preserves the final adapter-attempt stage;
+billability is unknown when the abort lands mid-flight; the lifecycle treats both `AbortError` and
 Next.js's client-disconnect `ResponseAborted` as user cancellation). It finishes with
 a cache diagnosis line (`input_cached_tokens` vs `input_uncached_tokens`,
 diagnostic only) and a provider-call/token/cost report, then deletes the test
