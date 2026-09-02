@@ -27,7 +27,6 @@ const DISABLED_AVAILABILITY = {
   profileVersionId: null,
   legalBundleVersion: null,
   runtimeContractId: null,
-  runtimeContractSha256: null,
   displayDisclosureKey: null,
   termsAccepted: false,
 } as const;
@@ -119,7 +118,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "assert_ai_routing_lifecycle_evidence_v1",
     identityArguments:
-      "p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text, p_at timestamp with time zone",
+      "p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text, p_at timestamp with time zone",
     prokind: "f",
     definitionSha256: "b5b15e28bd2a99cf72d44e83a342e7f0aed90598c03a1d56efa962f5e5e038d5",
   },
@@ -135,7 +134,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "assert_ai_routing_lifecycle_runtime_profile_coverage_v1",
     identityArguments:
-      "p_runtime_contract_id text, p_runtime_contract_sha256 text, p_profile_id uuid, p_profile_version_id uuid",
+      "p_runtime_contract_id text, p_profile_id uuid, p_profile_version_id uuid",
     prokind: "f",
     definitionSha256: "4bed4391f10c5ced3133a5ee4247fa5aa1aa5654563ff2e8545f14993dadf270",
   },
@@ -165,7 +164,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "clear_ai_routing_policy_pointer_v1",
     identityArguments:
-      "p_expected_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_expected_policy_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "f8d952bfd7949a9ce4819c1bf16dfa2e1f909a508bf6d215795c73da6a74a472",
   },
@@ -173,7 +172,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "close_ai_price_version_v1",
     identityArguments:
-      "p_price_version_id uuid, p_valid_to timestamp with time zone, p_successor_price_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_price_version_id uuid, p_valid_to timestamp with time zone, p_successor_price_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "347da82eee1a9bc0a5dd9769aff321c7e2a878e35203e73793e0ca4d495e15eb",
   },
@@ -205,7 +204,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "create_ai_routing_policy_version_v1",
     identityArguments:
-      "p_policy_version_id uuid, p_policy_key text, p_version integer, p_timezone text, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_config_sha256 text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_policy_version_id uuid, p_policy_key text, p_version integer, p_timezone text, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_config_sha256 text, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "a9cdf7609cd5848b6fd6f616d42c1527adde2ea4b70329bf9f9409063a484989",
   },
@@ -292,7 +291,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "insert_ai_routing_lifecycle_audit_v1",
     identityArguments:
-      "p_operation text, p_policy uuid, p_profile uuid, p_profile_version uuid, p_price uuid, p_from text, p_to text, p_old_pointer uuid, p_new_pointer uuid, p_old_generation bigint, p_new_generation bigint, p_old_retired timestamp with time zone, p_new_retired timestamp with time zone, p_old_valid_to timestamp with time zone, p_new_valid_to timestamp with time zone, p_runtime_id text, p_runtime_hash text, p_actor text, p_reason text, p_commit text, p_source_hash text, p_rechecked timestamp with time zone, p_rechecked_hash text, p_at timestamp with time zone",
+      "p_operation text, p_policy uuid, p_profile uuid, p_profile_version uuid, p_price uuid, p_from text, p_to text, p_old_pointer uuid, p_new_pointer uuid, p_old_generation bigint, p_new_generation bigint, p_old_retired timestamp with time zone, p_new_retired timestamp with time zone, p_old_valid_to timestamp with time zone, p_new_valid_to timestamp with time zone, p_runtime_id text, p_actor text, p_reason text, p_commit text, p_source_hash text, p_rechecked timestamp with time zone, p_rechecked_hash text, p_at timestamp with time zone",
     prokind: "f",
     definitionSha256: "250e81ad9f6bdcc492657b4ced2b4507dc626e3dbda20ad748543855d054ab70",
   },
@@ -338,7 +337,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "retire_ai_provider_profile_v1",
     identityArguments:
-      "p_profile_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_profile_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "56af669a146104dc46c1f311ba47a619a6ee56c7fb5250cc78036e58e0f52afa",
   },
@@ -346,7 +345,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "retire_ai_provider_profile_version_v1",
     identityArguments:
-      "p_profile_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_profile_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "4d3f34fa51b097428a1e314472ea7635ae7ef6c918fab1d7c946a549cef87a7a",
   },
@@ -361,7 +360,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "seal_ai_price_for_activation_v1",
     identityArguments:
-      "p_price_version_id uuid, p_rechecked_source_url text, p_rechecked_currency text, p_rechecked_calculator_kind text, p_rechecked_provider_effective_from timestamp with time zone, p_rechecked_provider_effective_to timestamp with time zone, p_rechecked_parameters jsonb, p_rechecked_components jsonb, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_price_version_id uuid, p_rechecked_source_url text, p_rechecked_currency text, p_rechecked_calculator_kind text, p_rechecked_provider_effective_from timestamp with time zone, p_rechecked_provider_effective_to timestamp with time zone, p_rechecked_parameters jsonb, p_rechecked_components jsonb, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "eec1807a501a4ddd66a1bbaff6d9a08720b4c1fb3bc2a799862e3b5d1b233973",
   },
@@ -369,7 +368,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "set_ai_routing_policy_pointer_v1",
     identityArguments:
-      "p_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_policy_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "0cc317a282cee35d5350b8b37204c92274e1ee9802f857eed7397203ab0845d2",
   },
@@ -391,7 +390,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "transition_ai_provider_profile_version_v1",
     identityArguments:
-      "p_profile_version_id uuid, p_to_status text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_profile_version_id uuid, p_to_status text, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "900c1ac63d6903657ba9e555484b56709a74db1c8a0fbdf651331fa579ecf865",
   },
@@ -406,7 +405,7 @@ const PUBLIC_SECURITY_DEFINER_AUTHORITY_V1 = [
     schema: "public",
     name: "transition_ai_routing_policy_v2",
     identityArguments:
-      "p_policy_version_id uuid, p_to_status text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+      "p_policy_version_id uuid, p_to_status text, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
     prokind: "f",
     definitionSha256: "4790e307474754d8344c46cdde54a2e42b0256e7ac78dd31bf1985f4144329e2",
   },
@@ -424,7 +423,7 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
     schema: "public",
     name: "assert_ai_routing_lifecycle_evidence_v1",
     identityArguments:
-      "p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text, p_at timestamp with time zone",
+      "p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text, p_at timestamp with time zone",
     prokind: "f",
     definitionSha256: "b5b15e28bd2a99cf72d44e83a342e7f0aed90598c03a1d56efa962f5e5e038d5",
   },
@@ -432,7 +431,7 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
     schema: "public",
     name: "assert_ai_routing_lifecycle_runtime_profile_coverage_v1",
     identityArguments:
-      "p_runtime_contract_id text, p_runtime_contract_sha256 text, p_profile_id uuid, p_profile_version_id uuid",
+      "p_runtime_contract_id text, p_profile_id uuid, p_profile_version_id uuid",
     prokind: "f",
     definitionSha256: "4bed4391f10c5ced3133a5ee4247fa5aa1aa5654563ff2e8545f14993dadf270",
   },
@@ -768,22 +767,21 @@ function historicalFixtureSql(userId: string): string {
       'history-route.cfg001.v1', repeat('7', 64)
     );
     insert into public.ai_service_runtime_contract_versions (
-      runtime_contract_id, runtime_contract_sha256, reviewed_source_commit_oid,
+      runtime_contract_id,
       legal_bundle_version, bundle_contract_sha256, runtime_target_set_sha256,
       sealed_at
     ) values (
-      'history-runtime-contract.cfg001.v1', repeat('8', 64),
-      'sha1:0123456789abcdef0123456789abcdef01234567',
+      'history-runtime-contract.cfg001.v1',
       '2026-08-23-multi-provider-v1',
       'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18',
       repeat('9', 64), clock_timestamp()
     );
     insert into public.ai_service_runtime_contract_targets (
-      runtime_contract_id, runtime_contract_sha256, runtime_target_id,
+      runtime_contract_id, runtime_target_id,
       runtime_target_sha256, profile_key, legal_manifest_id, manifest_sha256,
       route_descriptor_id, route_descriptor_sha256
     ) values (
-      'history-runtime-contract.cfg001.v1', repeat('8', 64),
+      'history-runtime-contract.cfg001.v1',
       'history-runtime-target.cfg001.v1', repeat('6', 64),
       'history.cfg001.rollback.v1', 'deepseek-official-2026-08-23-v1',
       '0fa6702d0785a8ce959b0bd4cc31984578143ef269bf7b4df4d1672e6d1fa09b',
@@ -792,13 +790,13 @@ function historicalFixtureSql(userId: string): string {
     insert into public.ai_routing_policy_versions (
       id, policy_key, version, status, timezone, rules,
       default_profile_version_id, legal_bundle_version, config_sha256,
-      runtime_contract_id, runtime_contract_sha256
+      runtime_contract_id
     ) values (
       '44444444-4444-4444-8444-444444444413'::uuid,
       'history.cfg001.rollback.v1', 1, 'draft', 'Asia/Shanghai',
       '{}'::jsonb, '44444444-4444-4444-8444-444444444411'::uuid,
       '2026-08-23-multi-provider-v1', repeat('a', 64),
-      'history-runtime-contract.cfg001.v1', repeat('8', 64)
+      'history-runtime-contract.cfg001.v1'
     );
     insert into public.user_terms_acceptances (user_id, document_key, version)
     values ('${userId}'::uuid, 'ai_terms', '2026-08-23-multi-provider-v1');
@@ -822,7 +820,7 @@ function historicalFixtureSql(userId: string): string {
     insert into public.ai_provider_attempt_ledger (
       reservation_id, attempt_no, route_schema_version, config_generation,
       routing_policy_version_id, profile_version_id, price_version_id,
-      legal_bundle_version, runtime_contract_id, runtime_contract_sha256,
+      legal_bundle_version, runtime_contract_id,
       gateway_kind, model_id, wire_api_kind, display_disclosure_key,
       adapter_kind, credential_alias, endpoint_alias, capability_contract_id,
       cache_policy_id, legal_manifest_id, calculator_kind, billing_currency
@@ -832,7 +830,7 @@ function historicalFixtureSql(userId: string): string {
       '44444444-4444-4444-8444-444444444411'::uuid,
       '44444444-4444-4444-8444-444444444412'::uuid,
       '2026-08-23-multi-provider-v1', 'history-runtime-contract.cfg001.v1',
-      repeat('8', 64), 'direct_deepseek', 'history-model',
+      'direct_deepseek', 'history-model',
       'chat_completions_v1', 'history-disclosure', 'deepseek_chat_v1',
       'history_credential', 'history_endpoint', 'history_capability',
       'history_cache', 'deepseek-official-2026-08-23-v1', 'linear_token_v1', 'CNY'
@@ -1047,7 +1045,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
     const { data, error } = await service
       .from("ai_routing_policy_versions")
       .select(
-        "id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256,validated_at,activated_at,retired_at",
+        "id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,config_sha256,validated_at,activated_at,retired_at",
       )
       .eq("id", SEED.policy.id);
 
@@ -1063,7 +1061,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
         default_profile_version_id: SEED.policy.defaultProfileVersionId,
         legal_bundle_version: SEED.policy.legalBundleVersion,
         runtime_contract_id: SEED.policy.runtimeContractId,
-        runtime_contract_sha256: SEED.policy.runtimeContractSha256,
         config_sha256: SEED.policy.configSha256,
         validated_at: null,
         activated_at: null,
@@ -1082,7 +1079,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       defaultProfileVersionId: row?.default_profile_version_id,
       legalBundleVersion: row?.legal_bundle_version,
       runtimeContractId: row?.runtime_contract_id,
-      runtimeContractSha256: row?.runtime_contract_sha256,
     }).toEqual(SEED.policy.jcsInput);
   });
 
@@ -1094,8 +1090,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           'contract', (
             select pg_catalog.jsonb_build_object(
               'runtimeContractId', root.runtime_contract_id,
-              'runtimeContractSha256', root.runtime_contract_sha256,
-              'reviewedSourceCommitOid', root.reviewed_source_commit_oid,
               'legalBundleVersion', root.legal_bundle_version,
               'bundleContractSha256', root.bundle_contract_sha256,
               'runtimeTargetSetSha256', root.runtime_target_set_sha256
@@ -1136,7 +1130,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           select 1
           from public.ai_service_runtime_contract_targets as membership
           where membership.runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}'
-            and membership.runtime_contract_sha256 = '${SEED.runtime.contract.runtimeContractSha256}'
             and membership.runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}'
             and membership.runtime_target_sha256 = '${SEED.runtime.targets[0].runtimeTargetSha256}'
             and membership.profile_key = '${SEED.runtime.targets[0].profileKey}'
@@ -1333,15 +1326,11 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       for (const statement of [
         String.raw`insert into public.ai_service_runtime_contract_versions (
           runtime_contract_id,
-          runtime_contract_sha256,
-          reviewed_source_commit_oid,
           legal_bundle_version,
           bundle_contract_sha256,
           runtime_target_set_sha256
         ) values (
           'blocked.${role}',
-          '${"0".repeat(64)}',
-          'sha1:${"0".repeat(40)}',
           '${SEED.legalBundle.version}',
           '${SEED.legalBundle.contractSha256}',
           '${"0".repeat(64)}'
@@ -1549,18 +1538,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
       expectedError: "DeepSeek V2 runtime target mismatch",
     },
     {
-      name: "runtime root source is rebound",
-      precondition: withUserTriggersDisabled(
-        ["ai_service_runtime_contract_versions"],
-        String.raw`
-          update public.ai_service_runtime_contract_versions
-          set reviewed_source_commit_oid = 'sha1:0000000000000000000000000000000000000000'
-          where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}';
-        `,
-      ),
-      expectedError: "DeepSeek V2 runtime contract mismatch",
-    },
-    {
       name: "existing runtime root is missing its seal",
       precondition: withUserTriggersDisabled(
         ["ai_service_runtime_contract_versions"],
@@ -1620,7 +1597,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           );
           insert into public.ai_service_runtime_contract_targets (
             runtime_contract_id,
-            runtime_contract_sha256,
             runtime_target_id,
             runtime_target_sha256,
             profile_key,
@@ -1630,7 +1606,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             route_descriptor_sha256
           ) values (
             '${SEED.runtime.contract.runtimeContractId}',
-            '${SEED.runtime.contract.runtimeContractSha256}',
             'runtime-target.hostile.additional.v1',
             repeat('1', 64),
             'hostile.additional.runtime-profile.v1',
@@ -2090,13 +2065,11 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
               and version = ${SEED.policy.version}
               and status = '${SEED.policy.status}'
               and runtime_contract_id = '${SEED.policy.runtimeContractId}'
-              and runtime_contract_sha256 = '${SEED.policy.runtimeContractSha256}'
           ),
           'legacyRoot', (
             select count(*)
             from public.ai_service_runtime_contract_versions
             where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}'
-              and runtime_contract_sha256 = '${SEED.runtime.contract.runtimeContractSha256}'
               and sealed_at is not null
           ),
           'sharedDeepseekTarget', (
@@ -2114,7 +2087,6 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
             select count(*)
             from public.ai_service_runtime_contract_targets
             where runtime_contract_id = '${SEED.runtime.contract.runtimeContractId}'
-              and runtime_contract_sha256 = '${SEED.runtime.contract.runtimeContractSha256}'
               and runtime_target_id = '${SEED.runtime.targets[0].runtimeTargetId}'
               and runtime_target_sha256 = '${SEED.runtime.targets[0].runtimeTargetSha256}'
               and profile_key = '${SEED.runtime.targets[0].profileKey}'
@@ -2127,7 +2099,6 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
             select pg_catalog.jsonb_agg(runtime_target_id order by runtime_target_id)
             from public.ai_service_runtime_contract_targets
             where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
-              and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
           ),
           'cfg003Policies', (
             select coalesce(
@@ -2142,7 +2113,6 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
                   'default', default_profile_version_id,
                   'legal', legal_bundle_version,
                   'runtime', runtime_contract_id,
-                  'hash', runtime_contract_sha256,
                   'config', config_sha256,
                   'validated', validated_at,
                   'active', activated_at,
@@ -2211,7 +2181,6 @@ describe.skipIf(!RUN_DB_TESTS || !RUN_CFG001_FRESH_RESET)(
           default: policy.defaultProfileVersionId,
           legal: G4_SEED.legalBundleVersion,
           runtime: policy.runtimeContractId,
-          hash: policy.runtimeContractSha256,
           config: policy.configSha256,
           validated: null,
           active: null,

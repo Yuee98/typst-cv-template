@@ -29,12 +29,8 @@ const PG_APPLICATION_NAME_MAX_BYTES = 63;
 const LATE_COLLISION_ADVISORY_LOCK_KEY = 702002;
 const IDENTICAL_REAPPLY_ADVISORY_LOCK_KEY = 702003;
 const OLD_CONTRACT_ID = "runtime.deepseek-v2.v1";
-const OLD_CONTRACT_SHA256 =
-  "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9";
 const SUPERSEDED_COMBINED_CONTRACT_ID =
   "runtime.deepseek-v2-mimo-v2.5-pro.v1";
-const SUPERSEDED_COMBINED_CONTRACT_SHA256 =
-  "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d";
 const SNAPSHOT_TABLES = [
   "ai_provider_profiles",
   "ai_provider_profile_versions",
@@ -386,11 +382,10 @@ function installReapplyBarrier(): void {
 
 function membershipValues(
   rootId: string,
-  rootHash: string,
   target: (typeof TARGETS)[number],
 ): string {
   return String.raw`(
-    '${rootId}', '${rootHash}',
+    '${rootId}',
     '${target.runtimeTargetId}', '${target.runtimeTargetSha256}',
     '${target.profileKey}', '${target.legalManifestId}', '${target.manifestSha256}',
     '${target.routeDescriptorId}', '${target.routeDescriptorSha256}'
@@ -400,25 +395,24 @@ function membershipValues(
 function createUnsealedRaceRoot(
   label: string,
   initialTargets: ReadonlyArray<(typeof TARGETS)[number]>,
-): { id: string; hash: string } {
+): { id: string } {
   const id = `cfg002.race.${label}.${randomUUID()}`;
-  const hash = createHash("sha256").update(id, "utf8").digest("hex");
   const initialMemberships = initialTargets.length === 0
     ? ""
     : String.raw`
       insert into public.ai_service_runtime_contract_targets (
-        runtime_contract_id, runtime_contract_sha256,
+        runtime_contract_id,
         runtime_target_id, runtime_target_sha256, profile_key,
         legal_manifest_id, manifest_sha256, route_descriptor_id, route_descriptor_sha256
-      ) values ${initialTargets.map((target) => membershipValues(id, hash, target)).join(",")};`;
+      ) values ${initialTargets.map((target) => membershipValues(id, target)).join(",")};`;
   const result = runOwnerSql(String.raw`
     \set ON_ERROR_STOP on
     begin;
     insert into public.ai_service_runtime_contract_versions (
-      runtime_contract_id, runtime_contract_sha256, reviewed_source_commit_oid,
+      runtime_contract_id,
       legal_bundle_version, bundle_contract_sha256, runtime_target_set_sha256
     ) values (
-      '${id}', '${hash}', '${CONTRACT.reviewedSourceCommitOid}',
+      '${id}',
       '${CONTRACT.legalBundleVersion}', '${CONTRACT.bundleContractSha256}',
       '${CONTRACT.runtimeTargetSetSha256}'
     );
@@ -426,7 +420,7 @@ function createUnsealedRaceRoot(
     commit;
   `);
   expect(result.status, result.stderr).toBe(0);
-  return { id, hash };
+  return { id };
 }
 
 function removeRaceRoot(rootId: string): void {
@@ -442,13 +436,13 @@ function removeRaceRoot(rootId: string): void {
   expect(result.status, result.stderr).toBe(0);
 }
 
-function expectExactSealedRaceRoot(rootId: string, rootHash: string): void {
+function expectExactSealedRaceRoot(rootId: string): void {
   const actual = ownerJson(String.raw`
     select pg_catalog.jsonb_build_object(
       'root', (
         select pg_catalog.to_jsonb(row_value)
         from public.ai_service_runtime_contract_versions as row_value
-        where runtime_contract_id='${rootId}' and runtime_contract_sha256='${rootHash}'
+        where runtime_contract_id='${rootId}'
       ),
       'memberships', (
         select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row_value)
@@ -463,7 +457,6 @@ function expectExactSealedRaceRoot(rootId: string, rootHash: string): void {
   };
   expect(actual.root).toMatchObject({
     runtime_contract_id: rootId,
-    runtime_contract_sha256: rootHash,
     runtime_target_set_sha256: CONTRACT.runtimeTargetSetSha256,
   });
   expect(actual.root.sealed_at).not.toBeNull();
@@ -497,11 +490,9 @@ describe("CFG-002 MiMo V2 seed static contract", () => {
       .toEqual(["deepseek.official.deepseek-v4-flash.chat.v1", profile.profileKey]);
     expect(CONTRACT).toMatchObject({
       runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v2",
-      reviewedSourceCommitOid:
-        "sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba",
     });
     expect(migration.match(/runtime\.deepseek-v2-mimo-v2\.5-pro\.v1/gu)).toHaveLength(2);
-    expect(migration.match(/049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d/gu)).toHaveLength(2);
+    expect(migration).not.toContain("049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d");
   });
 
   it("freezes current-rate evidence and its separate upstream effective date", () => {
@@ -558,7 +549,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     expect(actual.components.map((row) => [row.component, Number(row.nanos_per_million)])).toEqual([
       ["input_cache_read", 25000000], ["input_cache_write", 0], ["input_standard", 3000000000], ["output", 6000000000],
     ]);
-    expect(actual.root).toMatchObject({ runtime_contract_id: CONTRACT.runtimeContractId, runtime_contract_sha256: CONTRACT.runtimeContractSha256, runtime_target_set_sha256: CONTRACT.runtimeTargetSetSha256 });
+    expect(actual.root).toMatchObject({ runtime_contract_id: CONTRACT.runtimeContractId, runtime_target_set_sha256: CONTRACT.runtimeTargetSetSha256 });
     expect(actual.root.sealed_at).not.toBeNull();
     expect(actual.counts).toEqual({ profiles: 2, profileVersions: 2, prices: 4, components: 13, policies: 1, runtimeRoots: 2, runtimeTargets: 2, runtimeMemberships: 3, audit: 0, sealIntents: 1 });
     expect(actual.feature).toEqual({ enabled: false, pointer: null, generation: 0 });
@@ -570,7 +561,6 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       profileVersionId: null,
       routingPolicyVersionId: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       legalBundleVersion: null,
       displayDisclosureKey: null,
       configGeneration: null,
@@ -593,21 +583,16 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
     expect(catalog.tables.ai_service_runtime_contract_versions)
       .toEqual(expect.arrayContaining([expect.objectContaining({
         runtime_contract_id: OLD_CONTRACT_ID,
-        runtime_contract_sha256: OLD_CONTRACT_SHA256,
         sealed_at: expect.any(String),
       })]));
     expect(
       catalog.tables.ai_service_runtime_contract_versions.some(
-        (row) =>
-          row.runtime_contract_id === SUPERSEDED_COMBINED_CONTRACT_ID ||
-          row.runtime_contract_sha256 === SUPERSEDED_COMBINED_CONTRACT_SHA256,
+        (row) => row.runtime_contract_id === SUPERSEDED_COMBINED_CONTRACT_ID,
       ),
     ).toBe(false);
     expect(
       catalog.tables.ai_service_runtime_contract_targets.some(
-        (row) =>
-          row.runtime_contract_id === SUPERSEDED_COMBINED_CONTRACT_ID ||
-          row.runtime_contract_sha256 === SUPERSEDED_COMBINED_CONTRACT_SHA256,
+        (row) => row.runtime_contract_id === SUPERSEDED_COMBINED_CONTRACT_ID,
       ),
     ).toBe(false);
     for (const table of [
@@ -796,10 +781,10 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         begin;
         set local statement_timeout='10s';
         insert into public.ai_service_runtime_contract_targets (
-          runtime_contract_id, runtime_contract_sha256,
+          runtime_contract_id,
           runtime_target_id, runtime_target_sha256, profile_key,
           legal_manifest_id, manifest_sha256, route_descriptor_id, route_descriptor_sha256
-        ) values ${membershipValues(root.id, root.hash, TARGETS[1])};
+        ) values ${membershipValues(root.id, TARGETS[1])};
         \echo ${marker}
       `,
       marker,
@@ -815,7 +800,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         set local statement_timeout='10s';
         update public.ai_service_runtime_contract_versions
         set sealed_at=greatest(pg_catalog.clock_timestamp(), created_at)
-        where runtime_contract_id='${root.id}' and runtime_contract_sha256='${root.hash}';
+        where runtime_contract_id='${root.id}';
         commit;
       `);
       await waitForDatabaseLock(contenderApplication, contender, "transactionid");
@@ -824,7 +809,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       expect(authored.status, authored.stderr).toBe(0);
       expect(sealed.status, sealed.stderr).toBe(0);
       assertNoDeadlockOrLockTimeout(sealed);
-      expectExactSealedRaceRoot(root.id, root.hash);
+      expectExactSealedRaceRoot(root.id);
     } finally {
       holder.release();
       await holder.result.catch(() => undefined);
@@ -846,7 +831,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
         set local statement_timeout='10s';
         update public.ai_service_runtime_contract_versions
         set sealed_at=greatest(pg_catalog.clock_timestamp(), created_at)
-        where runtime_contract_id='${root.id}' and runtime_contract_sha256='${root.hash}';
+        where runtime_contract_id='${root.id}';
         \echo ${marker}
       `,
       marker,
@@ -874,7 +859,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       expect(rejected.status).not.toBe(0);
       assertNoDeadlockOrLockTimeout(rejected);
       expect(rejected.stderr).toMatch(/ERROR:\s+23514:.*sealed runtime contract target sets are immutable/i);
-      expectExactSealedRaceRoot(root.id, root.hash);
+      expectExactSealedRaceRoot(root.id);
     } finally {
       holder.release();
       await holder.result.catch(() => undefined);
@@ -902,8 +887,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-002 MiMo V2 seed (real DB)", () => {
       delete from public.ai_provider_profiles where id='${PROFILE_ID}'::uuid;
       update public.ai_service_runtime_contract_versions
       set runtime_target_set_sha256=repeat('0',64)
-      where runtime_contract_id='${OLD_CONTRACT_ID}'
-        and runtime_contract_sha256='${OLD_CONTRACT_SHA256}';
+      where runtime_contract_id='${OLD_CONTRACT_ID}';
       set local session_replication_role = origin;
       ${stableSnapshotSql("CFG002_ROLLBACK_BEFORE=")}
       savepoint cfg002_seed_body;

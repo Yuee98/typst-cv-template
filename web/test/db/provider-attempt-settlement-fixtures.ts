@@ -33,7 +33,6 @@ export interface SettlementRouteSnapshot {
   priceVersionId: string;
   legalBundleVersion: string;
   runtimeContractId: string;
-  runtimeContractSha256: string;
   gatewayKind: "direct_deepseek" | "direct_mimo";
   modelId: string;
   wireApiKind: "chat_completions_v1" | "responses_v1";
@@ -48,7 +47,6 @@ export interface SettlementRouteFixture {
   priceVersionId: string;
   policyVersionId: string;
   runtimeContractId: string;
-  runtimeContractSha256: string;
   modelId: string;
   displayDisclosureKey: string;
 }
@@ -192,18 +190,16 @@ export class SettlementHarness {
   ): Record<string, string> {
     const root = readLifecycleEvidenceRoot({
       runtimeContractId: fixture.runtimeContractId,
-      runtimeContractSha256: fixture.runtimeContractSha256,
       priceVersionIds: [fixture.priceVersionId],
     });
     return {
       p_runtime_contract_id: fixture.runtimeContractId,
-      p_runtime_contract_sha256: fixture.runtimeContractSha256,
       p_actor: "provider-attempt-settlement-test",
       p_reason: reason,
       p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
-      p_reviewed_source_sha256: fixture.runtimeContractSha256,
+      p_reviewed_source_sha256: root.reviewedSourceSha256,
       p_rechecked_at: root.recheckedAt,
-      p_rechecked_sha256: fixture.runtimeContractSha256,
+      p_rechecked_sha256: root.reviewedSourceSha256,
     };
   }
 
@@ -283,7 +279,6 @@ export class SettlementHarness {
         profile_version_id: this.fixture.profileVersionId,
         legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
         runtime_contract_id: this.fixture.runtimeContractId,
-        runtime_contract_sha256: this.fixture.runtimeContractSha256,
       },
     });
     expect(result.error).toBeNull();
@@ -383,7 +378,7 @@ export class SettlementHarness {
       update public.ai_provider_profile_versions set status='validated' where id='${profileVersionId}'::uuid;
       insert into public.ai_price_versions(id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,source_url,source_checked_at,source_snapshot_sha256,parameters) values ('${priceVersionId}','${profileVersionId}','default',1,'CNY','linear_token_v1',pg_catalog.clock_timestamp()-interval '1 hour','https://example.com/provider-attempt-settlement-price',pg_catalog.clock_timestamp(),'${"5".repeat(64)}','{}');
       insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ('${priceVersionId}','input_standard',1),('${priceVersionId}','input_cache_read',1),('${priceVersionId}','output',1);
-      insert into public.ai_routing_policy_versions(id,policy_key,version,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256) values ('${policyVersionId}','test.attempt-settlement.${suffix}',1,'Asia/Shanghai',pg_catalog.jsonb_build_object('schemaVersion','routing_rules_v1','defaultRoute',pg_catalog.jsonb_build_object('profileVersionId','${profileVersionId}','priceVersionId','${priceVersionId}'),'windows','[]'::jsonb),'${profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${runtime.runtimeContractId}','${runtime.runtimeContractSha256}','${"6".repeat(64)}');
+      insert into public.ai_routing_policy_versions(id,policy_key,version,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,config_sha256) values ('${policyVersionId}','test.attempt-settlement.${suffix}',1,'Asia/Shanghai',pg_catalog.jsonb_build_object('schemaVersion','routing_rules_v1','defaultRoute',pg_catalog.jsonb_build_object('profileVersionId','${profileVersionId}','priceVersionId','${priceVersionId}'),'windows','[]'::jsonb),'${profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${runtime.runtimeContractId}','${"6".repeat(64)}');
       commit;`);
     expect(authored.status).toBe(0);
     sealPriceAsDatabaseOwner(priceVersionId);
@@ -393,7 +388,6 @@ export class SettlementHarness {
       priceVersionId,
       policyVersionId,
       runtimeContractId: runtime.runtimeContractId,
-      runtimeContractSha256: runtime.runtimeContractSha256,
       modelId,
       displayDisclosureKey,
     };

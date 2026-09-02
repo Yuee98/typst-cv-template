@@ -142,7 +142,7 @@ AI API 路由（`POST /api/polish`、`GET /api/polish/quota`、`GET /api/polish/
 
 #### 多 Provider 运行时权威与凭据
 
-provider/profile version、精确的 price version、routing policy、legal bundle 和 runtime contract ID/hash 都是 **DB 权威的版本化快照**。服务端在传输前冻结该精确 route；经审核的代码 registry 会约束 adapter、endpoint、credential alias、cache policy 和 legal manifest 引用。环境变量只为这些 alias 提供凭据，不是 provider 或 model 选择器。不得把 `AI_PROVIDER`、`AI_MODEL` 或 `AI_BASE_URL` 加为应用路由变量：这会绕过 DB 验证、审计、canary 和 legal gate。
+provider/profile version、精确的 price version、routing policy、legal bundle 和不可重新解释的带版本 runtime contract ID 都是 **DB 权威快照**。服务端在传输前冻结该精确 route；经审核的代码 registry 会约束 adapter、endpoint、credential alias、cache policy 和 legal manifest 引用。环境变量只为这些 alias 提供凭据，不是 provider 或 model 选择器。不得把 `AI_PROVIDER`、`AI_MODEL` 或 `AI_BASE_URL` 加为应用路由变量：这会绕过 DB 验证、审计、canary 和 legal gate。
 
 `DEEPSEEK_API_KEY` 与 `MIMO_API_KEY` 是当前官方 gateway 的 server-only credential alias。存在 key 不会启用初版 route；仍须有已批准且 active 的 DB profile 与 policy。`OPENROUTER_API_KEY` 仅是后续可选 alias，不属于初版 route；必须另行完成精确 upstream、profile、披露和 activation 审核。任何 provider key 都不得进入浏览器 bundle、数据库、应用日志、ledger 或 error payload。
 

@@ -19,7 +19,6 @@ export const DEEPSEEK_INTEGRATION_PROFILE = Object.freeze({
   routeSchemaVersion: ROUTE_SCHEMA_VERSION,
   legalBundleVersion: LEGAL_BUNDLE_VERSION,
   runtimeContractId: "runtime.deepseek-v2.v1",
-  runtimeContractSha256: "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
   gatewayKind: "direct_deepseek",
   wireApiKind: "chat_completions_v1",
   endpointAlias: "deepseek_official",
@@ -42,7 +41,6 @@ export const MIMO_INTEGRATION_PROFILE = Object.freeze({
   routeSchemaVersion: ROUTE_SCHEMA_VERSION,
   legalBundleVersion: LEGAL_BUNDLE_VERSION,
   runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v2",
-  runtimeContractSha256: "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c",
   gatewayKind: "direct_mimo",
   wireApiKind: "responses_v1",
   endpointAlias: "mimo_cn_official",
@@ -68,7 +66,7 @@ const TERMINAL_ATTEMPT_STATUSES = new Set([
 
 const PARENT_CHILD_ROUTE_FIELDS = [
   "route_schema_version", "config_generation", "routing_policy_version_id", "profile_version_id",
-  "price_version_id", "legal_bundle_version", "runtime_contract_id", "runtime_contract_sha256",
+  "price_version_id", "legal_bundle_version", "runtime_contract_id",
   "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key",
 ];
 
@@ -78,7 +76,7 @@ export const ATTEMPT_EVIDENCE_FIELDS = Object.freeze([
   "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
   "output_tokens", "reasoning_tokens", "route_schema_version", "config_generation",
   "routing_policy_version_id", "profile_version_id", "price_version_id", "legal_bundle_version",
-  "runtime_contract_id", "runtime_contract_sha256", "gateway_kind", "model_id", "wire_api_kind",
+  "runtime_contract_id", "gateway_kind", "model_id", "wire_api_kind",
   "display_disclosure_key", "endpoint_alias", "actual_upstream_endpoint", "actual_model_id",
   "billing_currency", "estimated_currency", "estimated_cost_nanos", "provider_reported_currency",
   "provider_reported_cost_nanos",
@@ -139,7 +137,6 @@ export function buildExpectedRouteV1(availability, profile = DEEPSEEK_INTEGRATIO
     profileVersionId: profile.profileVersionId,
     legalBundleVersion: profile.legalBundleVersion,
     runtimeContractId: profile.runtimeContractId,
-    runtimeContractSha256: profile.runtimeContractSha256,
   };
   for (const [field, value] of Object.entries(expected)) {
     if (availability[field] !== value) {
@@ -155,7 +152,6 @@ export function buildExpectedRouteV1(availability, profile = DEEPSEEK_INTEGRATIO
     profileVersionId: availability.profileVersionId,
     legalBundleVersion: availability.legalBundleVersion,
     runtimeContractId: availability.runtimeContractId,
-    runtimeContractSha256: availability.runtimeContractSha256,
   });
 }
 
@@ -165,8 +161,7 @@ export function sameExpectedRouteV1(left, right) {
     left.configGeneration === right.configGeneration &&
     left.profileVersionId === right.profileVersionId &&
     left.legalBundleVersion === right.legalBundleVersion &&
-    left.runtimeContractId === right.runtimeContractId &&
-    left.runtimeContractSha256 === right.runtimeContractSha256;
+    left.runtimeContractId === right.runtimeContractId;
 }
 
 function sumKnown(rows, field) {
@@ -236,7 +231,6 @@ export function evaluateRequestLedgerEvidence(parent, attempts, profile = DEEPSE
   push(issues, profile.priceVersionIds.includes(parent?.price_version_id), "parent_price_version_mismatch");
   push(issues, parent?.legal_bundle_version === profile.legalBundleVersion, "parent_legal_bundle_mismatch");
   push(issues, parent?.runtime_contract_id === profile.runtimeContractId, "parent_runtime_contract_mismatch");
-  push(issues, parent?.runtime_contract_sha256 === profile.runtimeContractSha256, "parent_runtime_contract_hash_mismatch");
   push(issues, parent?.gateway_kind === profile.gatewayKind, "parent_gateway_mismatch");
   push(issues, parent?.wire_api_kind === profile.wireApiKind, "parent_wire_api_mismatch");
   push(issues, parent?.model_id === profile.modelId, "parent_model_mismatch");

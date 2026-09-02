@@ -60,7 +60,6 @@ interface ExpectedRoute {
   profile_version_id: string;
   legal_bundle_version: string;
   runtime_contract_id: string;
-  runtime_contract_sha256: string;
 }
 
 interface ReserveV2Result {
@@ -308,13 +307,13 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     ownerSql(String.raw`
       insert into public.ai_routing_policy_versions(
         id,policy_key,version,status,timezone,rules,default_profile_version_id,
-        legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256
+        legal_bundle_version,runtime_contract_id,config_sha256
       ) values (
         '${policyId}','test.reserve-v2.policy.${options.label}.${crypto.randomUUID()}',1,
         'draft','Asia/Shanghai',
          '${rulesJson}'::jsonb,
         '${defaultNode.profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}',
-        '${runtime.runtimeContractId}','${runtime.runtimeContractSha256}','${"3".repeat(64)}'
+        '${runtime.runtimeContractId}','${"3".repeat(64)}'
       );
     `);
 
@@ -354,7 +353,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       profile_version_id: fixture.selectedNode.profileVersionId,
       legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
       runtime_contract_id: fixture.runtime.runtimeContractId,
-      runtime_contract_sha256: fixture.runtime.runtimeContractSha256,
     };
   }
 
@@ -565,7 +563,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         profileVersionId: fixture.selectedNode.profileVersionId,
         legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
         runtimeContractId: fixture.runtime.runtimeContractId,
-        runtimeContractSha256: fixture.runtime.runtimeContractSha256,
         displayDisclosureKey: fixture.selectedNode.displayDisclosureKey,
         termsAccepted: false,
       });
@@ -650,7 +647,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         priceVersionId: fixture.selectedNode.priceVersionId,
         legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
         runtimeContractId: fixture.runtime.runtimeContractId,
-        runtimeContractSha256: fixture.runtime.runtimeContractSha256,
         gatewayKind: fixture.selectedNode.gatewayKind,
         modelId: fixture.selectedNode.modelId,
         wireApiKind: fixture.selectedNode.wireApiKind,
@@ -670,7 +666,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         price_version_id: fixture.selectedNode.priceVersionId,
         legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
         runtime_contract_id: fixture.runtime.runtimeContractId,
-        runtime_contract_sha256: fixture.runtime.runtimeContractSha256,
         gateway_kind: fixture.selectedNode.gatewayKind,
         model_id: fixture.selectedNode.modelId,
         wire_api_kind: fixture.selectedNode.wireApiKind,
@@ -837,18 +832,8 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         ...expected,
         profile_version_id: expected.profile_version_id.toUpperCase(),
       },
-      {
-        ...expected,
-        runtime_contract_sha256:
-          expected.runtime_contract_sha256.toUpperCase(),
-      },
       Object.fromEntries(
         Object.entries(expected).filter(([key]) => key !== "runtime_contract_id"),
-      ),
-      Object.fromEntries(
-        Object.entries(expected).filter(
-          ([key]) => key !== "runtime_contract_sha256",
-        ),
       ),
     ];
 
@@ -944,7 +929,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       { ...expected, profile_version_id: crypto.randomUUID() },
       { ...expected, legal_bundle_version: "other-legal-v1" },
       { ...expected, runtime_contract_id: "other-runtime-v1" },
-      { ...expected, runtime_contract_sha256: "f".repeat(64) },
     ];
 
     try {
@@ -1058,7 +1042,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       expect(v1Row).toMatchObject({
         route_schema_version: null,
         runtime_contract_id: null,
-        runtime_contract_sha256: null,
       });
 
       await configureFeature(service, { enabled: false });
@@ -1216,7 +1199,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       const expectedBeforeClear = await expectedRoute(fixture);
       const runtimeRoot = readLifecycleEvidenceRoot({
         runtimeContractId: fixture.runtime.runtimeContractId,
-        runtimeContractSha256: fixture.runtime.runtimeContractSha256,
         priceVersionIds: [
           ...new Set([
             fixture.defaultNode.priceVersionId,
@@ -1226,13 +1208,12 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       });
       const lifecycleEvidence = {
         p_runtime_contract_id: fixture.runtime.runtimeContractId,
-        p_runtime_contract_sha256: fixture.runtime.runtimeContractSha256,
         p_actor: "reserve-v2-test",
         p_reason: `test pointer lifecycle ${crypto.randomUUID()}`,
         p_reviewed_source_commit_oid: runtimeRoot.reviewedSourceCommitOid,
-        p_reviewed_source_sha256: fixture.runtime.runtimeContractSha256,
+        p_reviewed_source_sha256: runtimeRoot.reviewedSourceSha256,
         p_rechecked_at: runtimeRoot.recheckedAt,
-        p_rechecked_sha256: fixture.runtime.runtimeContractSha256,
+        p_rechecked_sha256: runtimeRoot.reviewedSourceSha256,
       };
 
       ownerReplica("delete from public.ai_feature_config where id = true;");
@@ -1316,13 +1297,12 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
          where runtime_contract_id = '${fixture.runtime.runtimeContractId}'
            and runtime_target_id = '${target.runtimeTargetId}';`,
         `insert into public.ai_service_runtime_contract_targets (
-           runtime_contract_id, runtime_contract_sha256,
+           runtime_contract_id,
            runtime_target_id, runtime_target_sha256, profile_key,
            legal_manifest_id, manifest_sha256,
            route_descriptor_id, route_descriptor_sha256
          ) values (
            '${fixture.runtime.runtimeContractId}',
-           '${fixture.runtime.runtimeContractSha256}',
            '${target.runtimeTargetId}', '${target.runtimeTargetSha256}',
            '${target.profileKey}', '${target.legalManifestId}',
            '${target.manifestSha256}', '${target.routeDescriptorId}',

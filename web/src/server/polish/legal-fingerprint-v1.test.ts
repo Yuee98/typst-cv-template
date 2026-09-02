@@ -242,7 +242,6 @@ describe("legal fingerprint v1 canonicalizer", () => {
       supported_fact_id: "fact.test.v1",
       supported_fact_sha256: "a".repeat(64),
       source_repo_path,
-      source_git_blob_sha256: "b".repeat(64),
     })).not.toThrow();
   });
 
@@ -258,7 +257,6 @@ describe("legal fingerprint v1 canonicalizer", () => {
       supported_fact_id: "fact.test.v1",
       supported_fact_sha256: "a".repeat(64),
       source_repo_path,
-      source_git_blob_sha256: "b".repeat(64),
     })).toThrow(LegalFingerprintV1Error);
   });
 });

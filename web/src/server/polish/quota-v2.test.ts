@@ -64,7 +64,6 @@ const EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
   profileVersionId: ROUTE.profileVersionId,
   legalBundleVersion: ROUTE.legalBundleVersion,
   runtimeContractId: ROUTE.runtimeContractId,
-  runtimeContractSha256: ROUTE.runtimeContractSha256,
 });
 const FINALIZE_METADATA: PolishFinalizeMetadataV2 = Object.freeze({
   granularity: "group",
@@ -203,7 +202,6 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
         profile_version_id: ROUTE.profileVersionId,
         legal_bundle_version: ROUTE.legalBundleVersion,
         runtime_contract_id: ROUTE.runtimeContractId,
-        runtime_contract_sha256: ROUTE.runtimeContractSha256,
       },
     });
   });

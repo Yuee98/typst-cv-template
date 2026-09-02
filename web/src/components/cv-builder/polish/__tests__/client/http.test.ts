@@ -264,12 +264,12 @@ describe("createPolishHttpClient", () => {
       },
     ],
     [
-      "uppercase runtime hash",
+      "malformed runtime ID",
       {
         ...ENABLED_AVAILABILITY_BODY,
         availability: {
           ...ENABLED_AVAILABILITY_BODY.availability,
-          runtimeContractSha256: "A".repeat(64),
+          runtimeContractId: "invalid runtime id",
         },
       },
     ],

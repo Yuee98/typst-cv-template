@@ -55,7 +55,7 @@ start when `CI=true`.
 | `AI_USER_ID_HMAC_SECRET` | generate locally, e.g. `openssl rand -hex 32` |
 | `AI_POLISH_ENABLED` | set to `true` (deployment switch checked by the smoke) |
 
-The database is the runtime authority for the provider/profile version, exact price version, routing policy, legal bundle, and runtime-contract ID/hash; the server freezes that route before a transmission. `DEEPSEEK_API_KEY` and `MIMO_API_KEY` only satisfy code-registered credential aliases and cannot activate a route by themselves. `OPENROUTER_API_KEY` is deliberately future optional, not initial-route enablement. Never add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing switches: those would bypass DB validation, audit, canary, and legal controls. No key belongs in browser code, database rows, logs, ledger data, or error payloads.
+The database is the runtime authority for the provider/profile version, exact price version, routing policy, legal bundle, and immutable versioned runtime-contract ID; the server freezes that route before a transmission. `DEEPSEEK_API_KEY` and `MIMO_API_KEY` only satisfy code-registered credential aliases and cannot activate a route by themselves. `OPENROUTER_API_KEY` is deliberately future optional, not initial-route enablement. Never add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing switches: those would bypass DB validation, audit, canary, and legal controls. No key belongs in browser code, database rows, logs, ledger data, or error payloads.
 
 The DB-side runtime switch and the exact selected route must already be
 prepared by a separate local driver. The smoke never activates a profile,

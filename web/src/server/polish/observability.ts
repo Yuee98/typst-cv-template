@@ -10,7 +10,6 @@
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const CODE_ID = /^[a-z0-9][a-z0-9._-]{0,199}$/u;
-const SHA256 = /^[0-9a-f]{64}$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const CURRENCY = /^[A-Z]{3}$/u;
 const HMAC_TAG = /^hmac-sha256:[0-9a-f]{64}$/u;
@@ -70,7 +69,6 @@ export interface PolishObservabilityPolicyV1 {
   readonly priceVersionId: string;
   readonly legalBundleVersion: string;
   readonly runtimeContractId: string;
-  readonly runtimeContractSha256: string;
 }
 
 export interface PolishObservabilityUsageV1 {
@@ -298,18 +296,13 @@ function policy(value: unknown): PolishObservabilityPolicyV1 {
     "priceVersionId",
     "legalBundleVersion",
     "runtimeContractId",
-    "runtimeContractSha256",
   ]);
-  if (typeof source.runtimeContractSha256 !== "string" || !SHA256.test(source.runtimeContractSha256)) {
-    invalid();
-  }
   return Object.freeze({
     configGeneration: decimal(source.configGeneration),
     routingPolicyVersionId: uuid(source.routingPolicyVersionId),
     priceVersionId: uuid(source.priceVersionId),
     legalBundleVersion: codeId(source.legalBundleVersion),
     runtimeContractId: codeId(source.runtimeContractId),
-    runtimeContractSha256: source.runtimeContractSha256,
   });
 }
 

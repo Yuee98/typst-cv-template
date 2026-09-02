@@ -30,8 +30,6 @@ alter table public.ai_legal_bundle_versions
 
 create table public.ai_service_runtime_contract_versions (
   runtime_contract_id text primary key,
-  runtime_contract_sha256 text not null,
-  reviewed_source_commit_oid text not null,
   legal_bundle_version text not null,
   bundle_contract_sha256 text not null,
   runtime_target_set_sha256 text not null,
@@ -40,18 +38,12 @@ create table public.ai_service_runtime_contract_versions (
 
   constraint ai_service_runtime_contract_versions_id_check
     check (runtime_contract_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'),
-  constraint ai_service_runtime_contract_versions_hash_check
-    check (runtime_contract_sha256 ~ '^[0-9a-f]{64}$'),
-  constraint ai_service_runtime_contract_versions_source_commit_check
-    check (reviewed_source_commit_oid ~ '^sha1:[0-9a-f]{40}$'),
   constraint ai_service_runtime_contract_versions_bundle_hash_check
     check (bundle_contract_sha256 ~ '^[0-9a-f]{64}$'),
   constraint ai_service_runtime_contract_versions_target_set_hash_check
     check (runtime_target_set_sha256 ~ '^[0-9a-f]{64}$'),
   constraint ai_service_runtime_contract_versions_sealed_at_check
     check (sealed_at is null or sealed_at >= created_at),
-  constraint ai_service_runtime_contract_versions_identity_unique
-    unique (runtime_contract_id, runtime_contract_sha256),
   constraint ai_service_runtime_contract_versions_legal_bundle_fkey
     foreign key (legal_bundle_version, bundle_contract_sha256)
     references public.ai_legal_bundle_versions(
@@ -108,7 +100,6 @@ create table public.ai_service_runtime_target_versions (
 
 create table public.ai_service_runtime_contract_targets (
   runtime_contract_id text not null,
-  runtime_contract_sha256 text not null,
   runtime_target_id text not null,
   runtime_target_sha256 text not null,
   profile_key text not null,
@@ -123,8 +114,6 @@ create table public.ai_service_runtime_contract_targets (
     unique (runtime_contract_id, profile_key),
   constraint ai_service_runtime_contract_targets_contract_id_check
     check (runtime_contract_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'),
-  constraint ai_service_runtime_contract_targets_contract_hash_check
-    check (runtime_contract_sha256 ~ '^[0-9a-f]{64}$'),
   constraint ai_service_runtime_contract_targets_target_id_check
     check (runtime_target_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'),
   constraint ai_service_runtime_contract_targets_target_hash_check
@@ -140,12 +129,8 @@ create table public.ai_service_runtime_contract_targets (
   constraint ai_service_runtime_contract_targets_route_hash_check
     check (route_descriptor_sha256 ~ '^[0-9a-f]{64}$'),
   constraint ai_service_runtime_contract_targets_contract_fkey
-    foreign key (runtime_contract_id, runtime_contract_sha256)
-    references public.ai_service_runtime_contract_versions(
-      runtime_contract_id,
-      runtime_contract_sha256
-    )
-    match full,
+    foreign key (runtime_contract_id)
+    references public.ai_service_runtime_contract_versions(runtime_contract_id),
   constraint ai_service_runtime_contract_targets_projection_fkey
     foreign key (
       runtime_target_id,
@@ -262,8 +247,7 @@ begin
     )
   into v_target_count, v_target_set_sha256
   from public.ai_service_runtime_contract_targets
-  where runtime_contract_id = new.runtime_contract_id
-    and runtime_contract_sha256 = new.runtime_contract_sha256;
+  where runtime_contract_id = new.runtime_contract_id;
 
   if v_target_count = 0 then
     raise exception 'runtime contract cannot seal an empty target set'
@@ -274,7 +258,6 @@ begin
     select 1
     from public.ai_service_runtime_contract_targets as membership
     where membership.runtime_contract_id = new.runtime_contract_id
-      and membership.runtime_contract_sha256 = new.runtime_contract_sha256
       and not exists (
         select 1
         from public.ai_legal_bundle_manifests as bundle_manifest
@@ -307,13 +290,11 @@ set search_path = ''
 as $$
 declare
   v_runtime_contract_id text;
-  v_runtime_contract_sha256 text;
   v_sealed_at timestamptz;
 begin
   if tg_op = 'UPDATE' then
-    if new.runtime_contract_id is distinct from old.runtime_contract_id
-       or new.runtime_contract_sha256 is distinct from old.runtime_contract_sha256 then
-      raise exception 'runtime contract membership parent pair is immutable'
+    if new.runtime_contract_id is distinct from old.runtime_contract_id then
+      raise exception 'runtime contract membership parent id is immutable'
         using errcode = '23514';
     end if;
     if new.created_at is distinct from old.created_at then
@@ -324,13 +305,10 @@ begin
 
   v_runtime_contract_id := case when tg_op = 'INSERT'
     then new.runtime_contract_id else old.runtime_contract_id end;
-  v_runtime_contract_sha256 := case when tg_op = 'INSERT'
-    then new.runtime_contract_sha256 else old.runtime_contract_sha256 end;
 
   select sealed_at into v_sealed_at
   from public.ai_service_runtime_contract_versions
   where runtime_contract_id = v_runtime_contract_id
-    and runtime_contract_sha256 = v_runtime_contract_sha256
   for update;
 
   if not found then
@@ -375,36 +353,19 @@ revoke execute on function public.guard_ai_service_runtime_contract_target()
 
 alter table public.ai_routing_policy_versions
   add column runtime_contract_id text,
-  add column runtime_contract_sha256 text,
-  add constraint ai_routing_policy_versions_runtime_pair_check check (
-    num_nonnulls(runtime_contract_id, runtime_contract_sha256) in (0, 2)
-    and (
-      runtime_contract_id is null
-      or runtime_contract_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'
-    )
-    and (
-      runtime_contract_sha256 is null
-      or runtime_contract_sha256 ~ '^[0-9a-f]{64}$'
-    )
+  add constraint ai_routing_policy_versions_runtime_contract_check check (
+    runtime_contract_id is null
+    or runtime_contract_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'
   ),
   add constraint ai_routing_policy_versions_runtime_contract_fkey
-    foreign key (runtime_contract_id, runtime_contract_sha256)
-    references public.ai_service_runtime_contract_versions(
-      runtime_contract_id,
-      runtime_contract_sha256
-    )
-    match full;
+    foreign key (runtime_contract_id)
+    references public.ai_service_runtime_contract_versions(runtime_contract_id);
 
 alter table public.ai_request_ledger
   add column runtime_contract_id text,
-  add column runtime_contract_sha256 text,
   add constraint ai_request_ledger_runtime_contract_fkey
-    foreign key (runtime_contract_id, runtime_contract_sha256)
-    references public.ai_service_runtime_contract_versions(
-      runtime_contract_id,
-      runtime_contract_sha256
-    )
-    match full;
+    foreign key (runtime_contract_id)
+    references public.ai_service_runtime_contract_versions(runtime_contract_id);
 
 alter table public.ai_request_ledger
   drop constraint ai_request_ledger_route_snapshot_check;
@@ -420,7 +381,6 @@ alter table public.ai_request_ledger
         price_version_id,
         legal_bundle_version,
         runtime_contract_id,
-        runtime_contract_sha256,
         gateway_kind,
         model_id,
         wire_api_kind,
@@ -437,16 +397,14 @@ alter table public.ai_request_ledger
         price_version_id,
         legal_bundle_version,
         runtime_contract_id,
-        runtime_contract_sha256,
         gateway_kind,
         model_id,
         wire_api_kind,
         display_disclosure_key
-      ) = 11
+      ) = 10
       and config_generation >= 0
       and legal_bundle_version ~ '^[a-z0-9][a-z0-9._-]{0,199}$'
       and runtime_contract_id ~ '^[a-z0-9][a-z0-9._-]{0,199}$'
-      and runtime_contract_sha256 ~ '^[0-9a-f]{64}$'
       and gateway_kind in ('direct_deepseek', 'direct_mimo', 'openrouter')
       and length(btrim(model_id)) between 1 and 200
       and wire_api_kind in ('chat_completions_v1', 'responses_v1')
@@ -462,7 +420,6 @@ alter table public.ai_request_ledger
         routing_policy_version_id,
         legal_bundle_version,
         runtime_contract_id,
-        runtime_contract_sha256,
         gateway_kind,
         model_id,
         wire_api_kind,
@@ -489,7 +446,6 @@ begin
     new.price_version_id,
     new.legal_bundle_version,
     new.runtime_contract_id,
-    new.runtime_contract_sha256,
     new.gateway_kind,
     new.model_id,
     new.wire_api_kind,
@@ -502,7 +458,6 @@ begin
     old.price_version_id,
     old.legal_bundle_version,
     old.runtime_contract_id,
-    old.runtime_contract_sha256,
     old.gateway_kind,
     old.model_id,
     old.wire_api_kind,
@@ -527,7 +482,6 @@ begin
          new.routing_policy_version_id,
          new.legal_bundle_version,
          new.runtime_contract_id,
-         new.runtime_contract_sha256,
          new.gateway_kind,
          new.model_id,
          new.wire_api_kind,
@@ -1044,16 +998,14 @@ begin
   end if;
 
   if p_policy.legal_bundle_version is distinct from public.current_ai_terms_version()
-     or p_policy.runtime_contract_id is null
-     or p_policy.runtime_contract_sha256 is null then
-    raise exception 'routing policy requires the current legal bundle and exact runtime pair'
+     or p_policy.runtime_contract_id is null then
+    raise exception 'routing policy requires the current legal bundle and runtime contract id'
       using errcode = '23514';
   end if;
 
   select * into v_runtime
   from public.ai_service_runtime_contract_versions
-  where runtime_contract_id = p_policy.runtime_contract_id
-    and runtime_contract_sha256 = p_policy.runtime_contract_sha256;
+  where runtime_contract_id = p_policy.runtime_contract_id;
 
   if not found
      or v_runtime.sealed_at is null
@@ -1155,7 +1107,6 @@ begin
        and manifest.manifest_sha256 = bundle_manifest.manifest_sha256
       join public.ai_service_runtime_contract_targets as membership
         on membership.runtime_contract_id = p_policy.runtime_contract_id
-       and membership.runtime_contract_sha256 = p_policy.runtime_contract_sha256
        and membership.profile_key = v_profile.profile_key
        and membership.legal_manifest_id = bundle_manifest.legal_manifest_id
        and membership.manifest_sha256 = bundle_manifest.manifest_sha256
@@ -1309,7 +1260,6 @@ begin
   perform 1
   from public.ai_service_runtime_contract_versions
   where runtime_contract_id = p_policy.runtime_contract_id
-    and runtime_contract_sha256 = p_policy.runtime_contract_sha256
   for share;
 
   perform 1

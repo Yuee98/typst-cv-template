@@ -140,7 +140,6 @@ const expectedRoute =
         profileVersionId: candidate.profileVersionId,
         legalBundleVersion: candidate.legalBundleVersion,
         runtimeContractId: candidate.runtimeContractId,
-        runtimeContractSha256: candidate.runtimeContractSha256,
       }
     : null;
 

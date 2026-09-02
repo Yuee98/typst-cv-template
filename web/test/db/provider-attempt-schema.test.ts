@@ -143,9 +143,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
   let policyVersionId: string;
   let legalBundleVersion: string;
   let runtimeContractId: string;
-  let runtimeContractSha256: string;
   let secondRuntimeContractId: string;
-  let secondRuntimeContractSha256: string;
 
   beforeAll(async () => {
     service = createServiceClient();
@@ -203,22 +201,19 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
     const runtime = authorSyntheticRuntimeContract({ profileKey });
     runtimeContractId = runtime.runtimeContractId;
-    runtimeContractSha256 = runtime.runtimeContractSha256;
     const secondRuntime = authorSyntheticRuntimeContract({ profileKey });
     secondRuntimeContractId = secondRuntime.runtimeContractId;
-    secondRuntimeContractSha256 = secondRuntime.runtimeContractSha256;
     expect(secondRuntimeContractId).not.toBe(runtimeContractId);
-    expect(secondRuntimeContractSha256).not.toBe(runtimeContractSha256);
 
     policyVersionId = crypto.randomUUID();
     expect(runOwnerSql(String.raw`
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, timezone, rules, default_profile_version_id,
-        legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+        legal_bundle_version, runtime_contract_id, config_sha256
       ) values (
         '${policyVersionId}', 'test.attempt.${crypto.randomUUID()}', 1, 'Asia/Shanghai',
         '{"kind":"fixture_default_only_v1"}'::jsonb, '${profileVersionId}',
-        '${legalBundleVersion}', '${runtimeContractId}', '${runtimeContractSha256}', '${"c".repeat(64)}'
+        '${legalBundleVersion}', '${runtimeContractId}', '${"c".repeat(64)}'
       );
     `).status).toBe(0);
   });
@@ -236,7 +231,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       price_version_id: priceVersionId,
       legal_bundle_version: legalBundleVersion,
       runtime_contract_id: runtimeContractId,
-      runtime_contract_sha256: runtimeContractSha256,
       gateway_kind: "direct_deepseek",
       model_id: "deepseek-v4-flash",
       wire_api_kind: "chat_completions_v1",
@@ -320,11 +314,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(runOwnerSql(String.raw`
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, timezone, rules, default_profile_version_id,
-        legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+        legal_bundle_version, runtime_contract_id, config_sha256
       ) values (
         '${policyVersionId}', 'test.attempt.${input.key}.${crypto.randomUUID()}', 1, 'Asia/Shanghai',
         '{"kind":"fixture_default_only_v1"}'::jsonb, '${profileVersionId}',
-        '${legalBundleVersion}', '${runtime.runtimeContractId}', '${runtime.runtimeContractSha256}', '${"f".repeat(64)}'
+        '${legalBundleVersion}', '${runtime.runtimeContractId}', '${"f".repeat(64)}'
       );
     `).status).toBe(0);
 
@@ -336,7 +330,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       price_version_id: priceVersionId,
       legal_bundle_version: legalBundleVersion,
       runtime_contract_id: runtime.runtimeContractId,
-      runtime_contract_sha256: runtime.runtimeContractSha256,
       gateway_kind: input.gatewayKind,
       model_id: input.modelId,
       wire_api_kind: input.wireApiKind,
@@ -467,7 +460,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(finalized.data?.state).toBe("finalized");
   }
 
-  it("defines a not-null shaped MATCH FULL runtime pair without changing temporary grants", () => {
+  it("defines a not-null versioned runtime ID foreign key without changing temporary grants", () => {
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
       do $assertions$
@@ -480,12 +473,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
           select count(*)
           from pg_catalog.pg_attribute
           where attrelid = 'public.ai_provider_attempt_ledger'::regclass
-            and attname in ('runtime_contract_id', 'runtime_contract_sha256')
+            and attname = 'runtime_contract_id'
             and attnotnull
             and not atthasdef
             and not attisdropped
-        ) <> 2 then
-          raise exception 'attempt runtime pair must be not-null with no defaults';
+        ) <> 1 then
+          raise exception 'attempt runtime ID must be not-null with no default';
         end if;
 
         if not exists (
@@ -495,9 +488,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
             and confrelid = 'public.ai_service_runtime_contract_versions'::regclass
             and conname = 'ai_provider_attempt_ledger_runtime_contract_fkey'
             and contype = 'f'
-            and confmatchtype = 'f'
+            and confmatchtype = 's'
         ) then
-          raise exception 'attempt runtime pair must use a MATCH FULL composite FK';
+          raise exception 'attempt runtime ID must use a simple FK';
         end if;
 
         if not (
@@ -694,35 +687,21 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(first.data).toMatchObject({
       status: "started",
       runtime_contract_id: runtimeContractId,
-      runtime_contract_sha256: runtimeContractSha256,
     });
 
     const duplicate = ownerInsertAttempt(startedAttempt(fixture), true);
     expect(duplicate.error?.code).toBe(UNIQUE_VIOLATION);
   });
 
-  it("rejects missing, null, one-sided, and malformed runtime identities at row boundaries", async () => {
+  it("rejects missing, null, and malformed runtime IDs at row boundaries", async () => {
     const fixture = await createReservation();
     const exact = startedAttempt(fixture) as Record<string, unknown>;
     const withoutId = { ...exact };
-    const withoutHash = { ...exact };
-    const withoutPair = { ...exact };
     delete withoutId.runtime_contract_id;
-    delete withoutHash.runtime_contract_sha256;
-    delete withoutPair.runtime_contract_id;
-    delete withoutPair.runtime_contract_sha256;
 
     const notNullCases = [
       ["missing id", withoutId],
-      ["missing hash", withoutHash],
-      ["missing pair", withoutPair],
       ["null id", { ...exact, runtime_contract_id: null }],
-      ["null hash", { ...exact, runtime_contract_sha256: null }],
-      ["null pair", {
-        ...exact,
-        runtime_contract_id: null,
-        runtime_contract_sha256: null,
-      }],
     ] as const;
 
     for (const [label, attempt] of notNullCases) {
@@ -735,9 +714,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
       ["invalid first id character", { runtime_contract_id: "-bad-runtime" }],
       ["empty id", { runtime_contract_id: "" }],
       ["oversized id", { runtime_contract_id: `a${"b".repeat(200)}` }],
-      ["uppercase hash", { runtime_contract_sha256: "A".repeat(64) }],
-      ["short hash", { runtime_contract_sha256: "a".repeat(63) }],
-      ["non-hex hash", { runtime_contract_sha256: "g".repeat(64) }],
     ] as const;
 
     for (const [label, drift] of malformedCases) {
@@ -749,15 +725,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     }
   });
 
-  it("enforces the runtime composite FK independently of the parent guard", async () => {
+  it("enforces the runtime ID FK independently of the parent guard", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
     expect(started.error).toBeNull();
     const attemptId = started.data!.attempt_id as string;
     const unknownRuntimeId = `unknown-runtime.${crypto.randomUUID()}`;
-    const unknownRuntimeHash = "0".repeat(64);
-    const wrongHash = secondRuntimeContractSha256;
-    expect(wrongHash).not.toBe(runtimeContractSha256);
 
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
@@ -771,27 +744,13 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         rejected := false;
         begin
           update public.ai_provider_attempt_ledger
-          set runtime_contract_id = ${sqlLiteral(unknownRuntimeId)},
-              runtime_contract_sha256 = ${sqlLiteral(unknownRuntimeHash)}
+          set runtime_contract_id = ${sqlLiteral(unknownRuntimeId)}
           where attempt_id = ${sqlLiteral(attemptId)}::uuid;
         exception when foreign_key_violation then
           rejected := true;
         end;
         if not rejected then
-          raise exception 'unknown runtime pair bypassed composite FK';
-        end if;
-
-        rejected := false;
-        begin
-          update public.ai_provider_attempt_ledger
-          set runtime_contract_id = ${sqlLiteral(runtimeContractId)},
-              runtime_contract_sha256 = ${sqlLiteral(wrongHash)}
-          where attempt_id = ${sqlLiteral(attemptId)}::uuid;
-        exception when foreign_key_violation then
-          rejected := true;
-        end;
-        if not rejected then
-          raise exception 'right runtime id with wrong hash bypassed composite FK';
+          raise exception 'unknown runtime ID bypassed FK';
         end if;
       end;
       $assertions$;
@@ -801,12 +760,11 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     `);
   });
 
-  it("rejects a different known sealed runtime pair at the parent equality guard", async () => {
+  it("rejects a different known sealed runtime ID at the parent equality guard", async () => {
     const fixture = await createReservation();
     const knownPairDrift = ownerInsertAttempt({
       ...startedAttempt(fixture),
       runtime_contract_id: secondRuntimeContractId,
-      runtime_contract_sha256: secondRuntimeContractSha256,
     }, true);
     expect(knownPairDrift.error?.code).toBe(CHECK_VIOLATION);
     expect(knownPairDrift.error?.message).toContain(
@@ -814,19 +772,16 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     );
   });
 
-  it("rejects runtime pair clear, swap, and drift on started and terminal rows", async () => {
+  it("rejects runtime ID clear and swap on started and terminal rows", async () => {
     const fixture = await createReservation();
     const started = await insertStarted(fixture);
     expect(started.error).toBeNull();
 
     for (const [label, drift] of [
       ["clear started id", { runtime_contract_id: null }],
-      ["clear started hash", { runtime_contract_sha256: null }],
-      ["swap started pair", {
+      ["swap started ID", {
         runtime_contract_id: secondRuntimeContractId,
-        runtime_contract_sha256: secondRuntimeContractSha256,
       }],
-      ["drift started hash", { runtime_contract_sha256: "f".repeat(64) }],
     ] as const) {
       const update = ownerUpdateAttempt(
         started.data!.attempt_id as string,
@@ -844,12 +799,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
     for (const [label, drift] of [
       ["clear terminal id", { runtime_contract_id: null }],
-      ["clear terminal hash", { runtime_contract_sha256: null }],
-      ["swap terminal pair", {
+      ["swap terminal ID", {
         runtime_contract_id: secondRuntimeContractId,
-        runtime_contract_sha256: secondRuntimeContractSha256,
       }],
-      ["drift terminal hash", { runtime_contract_sha256: "f".repeat(64) }],
       ["mutate terminal observation", { latency_ms: 9999 }],
     ] as const) {
       const update = ownerUpdateAttempt(
@@ -862,13 +814,12 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
 
     const unchanged = await service
       .from("ai_provider_attempt_ledger")
-      .select("runtime_contract_id,runtime_contract_sha256,latency_ms")
+      .select("runtime_contract_id,latency_ms")
       .eq("attempt_id", started.data!.attempt_id)
       .single();
     expect(unchanged.error).toBeNull();
     expect(unchanged.data).toEqual({
       runtime_contract_id: runtimeContractId,
-      runtime_contract_sha256: runtimeContractSha256,
       latency_ms: 1234,
     });
   });
@@ -938,7 +889,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     expect(completed.error).toBeNull();
     expect(completed.data).toMatchObject({
       runtime_contract_id: runtimeContractId,
-      runtime_contract_sha256: runtimeContractSha256,
       usage_observation_kind: "observed",
       input_total_tokens: 100,
       input_cache_read_tokens: 60,
@@ -1469,7 +1419,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     );
     expect(columns).toContain("output_tokens");
     expect(columns).toContain("runtime_contract_id");
-    expect(columns).toContain("runtime_contract_sha256");
+    expect(columns).not.toContain("runtime_contract_sha256");
     expect(columns.filter((column) =>
       /(^|_)(prompt|cv|content|body|message|raw|text)($|_)/.test(column),
     )).toEqual([]);

@@ -27,17 +27,17 @@ begin
     select * from (values
       ('33333333-3333-4333-8333-333333333333'::uuid, 'polish.deepseek-mimo.daily.g4.v1'::text, 1::integer, 'draft'::text, 'Asia/Shanghai'::text,
        '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5,6,7],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}},{"weekdays":[1,2,3,4,5,6,7],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}}]}'::jsonb,
-       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2-mimo-v2.5-pro.v2'::text, '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'::text, '8c64daa9d7e9165417294e2d854b6ca77a2c7ba1db0611f15f9af7a67682bbe3'::text),
+       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2-mimo-v2.5-pro.v2'::text, '04116440df484a3d3cd24ba7cd093311f8f43565958bb05605b88fa6545b6e15'::text),
       ('33333333-3333-4333-8333-333333333334'::uuid, 'polish.deepseek-only.daily.rollback.v1'::text, 1::integer, 'draft'::text, 'Asia/Shanghai'::text,
        '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5,6,7],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}},{"weekdays":[1,2,3,4,5,6,7],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}}]}'::jsonb,
-       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2.v1'::text, '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'::text, '4bd1a83446b0b19903f9c08aece54e2418cb3f880b49b63f30cbea6c7b4e40dd'::text),
+       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2.v1'::text, 'cbe6e77cf90bb142ccf112c6c7409f71af62da9005f94b5958cdc2bb1ac67d2e'::text),
       ('33333333-3333-4333-8333-333333333335'::uuid, 'polish.deepseek-mimo.weekday.g4.v1'::text, 1::integer, 'draft'::text, 'Asia/Shanghai'::text,
        '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}}]}'::jsonb,
-       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2-mimo-v2.5-pro.v2'::text, '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'::text, '7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567'::text),
+       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2-mimo-v2.5-pro.v2'::text, '1c5aeb412e4e75f4452cae4a97c76a405cfeb6d081017564cd19decb0d271523'::text),
       ('33333333-3333-4333-8333-333333333336'::uuid, 'polish.deepseek-only.weekday.rollback.v1'::text, 1::integer, 'draft'::text, 'Asia/Shanghai'::text,
        '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}}]}'::jsonb,
-       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2.v1'::text, '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'::text, 'c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418'::text)
-    ) as rows(id, policy_key, version, status, timezone, rules, default_profile_version_id, legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256)
+       '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2.v1'::text, '5db0f3d5850a0836a476ee76cb47b73e28741ee19017e5f23c9f51c3adaa9f3b'::text)
+    ) as rows(id, policy_key, version, status, timezone, rules, default_profile_version_id, legal_bundle_version, runtime_contract_id, config_sha256)
   loop
     select count(*) into actual_count from public.ai_routing_policy_versions
     where id = expected.id or (policy_key = expected.policy_key and version = expected.version);
@@ -48,7 +48,6 @@ begin
         and default_profile_version_id = expected.default_profile_version_id
         and legal_bundle_version = expected.legal_bundle_version
         and runtime_contract_id = expected.runtime_contract_id
-        and runtime_contract_sha256 = expected.runtime_contract_sha256
         and config_sha256 = expected.config_sha256
         and validated_at is null and activated_at is null and retired_at is null
     )) then
@@ -95,9 +94,9 @@ begin
         ) as expected(component, nanos_per_million) using (component, nanos_per_million)
         where actual.price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
     or (select count(*) from public.ai_price_components where price_version_id = '22222222-2222-4222-8222-222222222222'::uuid) <> 4
-    or not exists (select 1 from public.ai_service_runtime_contract_versions where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c' and legal_bundle_version = '2026-08-23-multi-provider-v1' and sealed_at is not null)
-    or not exists (select 1 from public.ai_service_runtime_contract_targets where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c' and runtime_target_id = 'runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1' and profile_key = 'mimo.cn.mimo-v2.5-pro.responses.v1' and legal_manifest_id = 'mimo-cn-2026-08-23-v1')
-    or not exists (select 1 from public.ai_service_runtime_contract_versions where runtime_contract_id = 'runtime.deepseek-v2.v1' and runtime_contract_sha256 = '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9' and legal_bundle_version = '2026-08-23-multi-provider-v1' and sealed_at is not null)
+    or not exists (select 1 from public.ai_service_runtime_contract_versions where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2' and legal_bundle_version = '2026-08-23-multi-provider-v1' and sealed_at is not null)
+    or not exists (select 1 from public.ai_service_runtime_contract_targets where runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2' and runtime_target_id = 'runtime-target.mimo.cn.mimo-v2.5-pro.responses.v1' and profile_key = 'mimo.cn.mimo-v2.5-pro.responses.v1' and legal_manifest_id = 'mimo-cn-2026-08-23-v1')
+    or not exists (select 1 from public.ai_service_runtime_contract_versions where runtime_contract_id = 'runtime.deepseek-v2.v1' and legal_bundle_version = '2026-08-23-multi-provider-v1' and sealed_at is not null)
   then
     raise exception 'CFG-003 weekday predecessor identity, darkness, or forbidden daily selection mismatch' using errcode = '23514';
   end if;
@@ -201,16 +200,16 @@ $$;
 
 insert into public.ai_routing_policy_versions (
   id, policy_key, version, status, timezone, rules, default_profile_version_id,
-  legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+  legal_bundle_version, runtime_contract_id, config_sha256
 )
 select * from (values
   ('33333333-3333-4333-8333-333333333335'::uuid, 'polish.deepseek-mimo.weekday.g4.v1'::text, 1::integer, 'draft'::text, 'Asia/Shanghai'::text,
    '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}}]}'::jsonb,
-   '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2-mimo-v2.5-pro.v2'::text, '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'::text, '7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567'::text),
+   '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2-mimo-v2.5-pro.v2'::text, '1c5aeb412e4e75f4452cae4a97c76a405cfeb6d081017564cd19decb0d271523'::text),
   ('33333333-3333-4333-8333-333333333336'::uuid, 'polish.deepseek-only.weekday.rollback.v1'::text, 1::integer, 'draft'::text, 'Asia/Shanghai'::text,
    '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}}]}'::jsonb,
-   '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2.v1'::text, '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'::text, 'c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418'::text)
-) as expected(id, policy_key, version, status, timezone, rules, default_profile_version_id, legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256)
+   '11111111-1111-4111-8111-111111111111'::uuid, '2026-08-23-multi-provider-v1'::text, 'runtime.deepseek-v2.v1'::text, '5db0f3d5850a0836a476ee76cb47b73e28741ee19017e5f23c9f51c3adaa9f3b'::text)
+) as expected(id, policy_key, version, status, timezone, rules, default_profile_version_id, legal_bundle_version, runtime_contract_id, config_sha256)
 where not exists (select 1 from public.ai_routing_policy_versions as actual where actual.id = expected.id);
 
 do $$
@@ -269,22 +268,20 @@ begin
     or not exists (select 1 from public.ai_routing_policy_versions where
         id = '33333333-3333-4333-8333-333333333335'::uuid
         and policy_key = 'polish.deepseek-mimo.weekday.g4.v1' and version = 1
-        and config_sha256 = '7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567'
+        and config_sha256 = '1c5aeb412e4e75f4452cae4a97c76a405cfeb6d081017564cd19decb0d271523'
         and timezone = 'Asia/Shanghai'
         and default_profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
         and legal_bundle_version = '2026-08-23-multi-provider-v1'
         and runtime_contract_id = 'runtime.deepseek-v2-mimo-v2.5-pro.v2'
-        and runtime_contract_sha256 = '510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c'
         and rules = '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"22222222-2222-4222-8222-222222222221","priceVersionId":"22222222-2222-4222-8222-222222222222"}}]}'::jsonb)
     or not exists (select 1 from public.ai_routing_policy_versions where
         id = '33333333-3333-4333-8333-333333333336'::uuid
         and policy_key = 'polish.deepseek-only.weekday.rollback.v1' and version = 1
-        and config_sha256 = 'c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418'
+        and config_sha256 = '5db0f3d5850a0836a476ee76cb47b73e28741ee19017e5f23c9f51c3adaa9f3b'
         and timezone = 'Asia/Shanghai'
         and default_profile_version_id = '11111111-1111-4111-8111-111111111111'::uuid
         and legal_bundle_version = '2026-08-23-multi-provider-v1'
         and runtime_contract_id = 'runtime.deepseek-v2.v1'
-        and runtime_contract_sha256 = '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
         and rules = '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111112"},"windows":[{"weekdays":[1,2,3,4,5],"startMinute":540,"endMinute":720,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}},{"weekdays":[1,2,3,4,5],"startMinute":840,"endMinute":1080,"route":{"profileVersionId":"11111111-1111-4111-8111-111111111111","priceVersionId":"11111111-1111-4111-8111-111111111113"}}]}'::jsonb)
     or not exists (select 1 from pg_constraint where conrelid = 'public.ai_routing_policy_versions'::regclass and conname = 'ai_routing_policy_versions_cfg003_daily_dark_check' and convalidated and pg_get_constraintdef(oid, true) = expected_policy_constraint)
     or not exists (select 1 from pg_constraint where conrelid = 'public.ai_feature_config'::regclass and conname = 'ai_feature_config_cfg003_daily_pointer_check' and convalidated and pg_get_constraintdef(oid, true) = expected_pointer_constraint)

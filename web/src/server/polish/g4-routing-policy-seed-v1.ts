@@ -77,7 +77,6 @@ function policyJcsInput(
   policyKey: string,
   rules: typeof G4_RULES | typeof ROLLBACK_RULES,
   runtimeContractId: string,
-  runtimeContractSha256: string,
 ) {
   return {
     schemaVersion: "routing_policy_config_v1",
@@ -88,7 +87,6 @@ function policyJcsInput(
     defaultProfileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
     legalBundleVersion: "2026-08-23-multi-provider-v1",
     runtimeContractId,
-    runtimeContractSha256,
   } as const;
 }
 
@@ -105,16 +103,13 @@ export const G4_ROUTING_POLICY_SEED_V1 = deepFreeze({
       rules: G4_RULES,
       defaultProfileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
       runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v2",
-      runtimeContractSha256:
-        "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c",
       jcsInput: policyJcsInput(
         "polish.deepseek-mimo.weekday.g4.v1",
         G4_RULES,
         "runtime.deepseek-v2-mimo-v2.5-pro.v2",
-        "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c",
       ),
       configSha256:
-        "7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567",
+        "1c5aeb412e4e75f4452cae4a97c76a405cfeb6d081017564cd19decb0d271523",
     },
     rollback: {
       id: "33333333-3333-4333-8333-333333333336",
@@ -125,16 +120,13 @@ export const G4_ROUTING_POLICY_SEED_V1 = deepFreeze({
       rules: ROLLBACK_RULES,
       defaultProfileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
       runtimeContractId: "runtime.deepseek-v2.v1",
-      runtimeContractSha256:
-        "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
       jcsInput: policyJcsInput(
         "polish.deepseek-only.weekday.rollback.v1",
         ROLLBACK_RULES,
         "runtime.deepseek-v2.v1",
-        "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
       ),
       configSha256:
-        "c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418",
+        "5db0f3d5850a0836a476ee76cb47b73e28741ee19017e5f23c9f51c3adaa9f3b",
     },
   },
 });

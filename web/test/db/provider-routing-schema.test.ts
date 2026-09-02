@@ -190,7 +190,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, status, timezone, rules,
         default_profile_version_id, legal_bundle_version,
-        runtime_contract_id, runtime_contract_sha256, config_sha256
+        runtime_contract_id, config_sha256
       ) values (
         '${policyId}'::uuid,
         ${sqlLiteral(`test.routing.${label}.${crypto.randomUUID()}`)},
@@ -201,7 +201,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         '${target.id}'::uuid,
         ${sqlLiteral(legalVersion)},
         ${sqlLiteral(target.runtime.runtimeContractId)},
-        ${sqlLiteral(target.runtime.runtimeContractSha256)},
         '${"e".repeat(64)}'
       );
     `);
@@ -249,7 +248,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         insert into public.ai_routing_policy_versions (
           id, policy_key, version, status, timezone, rules,
           default_profile_version_id, legal_bundle_version,
-          runtime_contract_id, runtime_contract_sha256, config_sha256
+          runtime_contract_id, config_sha256
         ) values (
           '${crypto.randomUUID()}'::uuid,
           ${sqlLiteral(`test.routing.domain.${crypto.randomUUID()}`)},
@@ -260,7 +259,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
           '${profile.id}'::uuid,
           ${sqlLiteral(legalBundleVersion)},
           ${sqlLiteral(profile.runtime.runtimeContractId)},
-          ${sqlLiteral(profile.runtime.runtimeContractSha256)},
           '${"e".repeat(64)}'
         );
       `,
@@ -296,7 +294,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       default_profile_version_id: profile.id,
       legal_bundle_version: legalBundleVersion,
       runtime_contract_id: profile.runtime.runtimeContractId,
-      runtime_contract_sha256: profile.runtime.runtimeContractSha256,
       config_sha256: "e".repeat(64),
     });
     expect(insert.error?.code).toBe(PERMISSION_DENIED);
@@ -487,7 +484,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, status, timezone, rules,
         default_profile_version_id, legal_bundle_version,
-        runtime_contract_id, runtime_contract_sha256, config_sha256,
+        runtime_contract_id, config_sha256,
         created_at
       ) values (
         '${policyId}'::uuid,
@@ -499,7 +496,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         '${profile.id}'::uuid,
         ${sqlLiteral(legalBundleVersion)},
         ${sqlLiteral(profile.runtime.runtimeContractId)},
-        ${sqlLiteral(profile.runtime.runtimeContractSha256)},
         '${"f".repeat(64)}',
         ${sqlLiteral(futureCreatedAt)}::timestamptz
       );

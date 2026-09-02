@@ -24,7 +24,6 @@ const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const SAFE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,199}$/u;
 const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
 const URI_SCHEME_PREFIX = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
-const SAFE_HASH = /^[0-9a-f]{64}$/u;
 const MAX_PG_BIGINT = 9223372036854775807n;
 const MAX_LATENCY_MS = 2147483647;
 const ROUTE_SCHEMA = "route_snapshot_v1";
@@ -38,7 +37,6 @@ const ROUTE_TUPLE_FIELDS = [
   "price_version_id",
   "legal_bundle_version",
   "runtime_contract_id",
-  "runtime_contract_sha256",
   "gateway_kind",
   "model_id",
   "wire_api_kind",
@@ -66,10 +64,6 @@ function safeModel(value) {
     : null;
 }
 
-function safeHash(value) {
-  return typeof value === "string" && SAFE_HASH.test(value) ? value : null;
-}
-
 function decimal(value) {
   if (typeof value === "bigint") return value >= 0n && value <= MAX_PG_BIGINT ? value : null;
   if (typeof value === "number") {
@@ -95,7 +89,6 @@ function routeKind(row) {
       "config_generation",
       "routing_policy_version_id",
       "runtime_contract_id",
-      "runtime_contract_sha256",
       "legal_bundle_version",
       "gateway_kind",
       "model_id",
@@ -116,7 +109,6 @@ function routeKind(row) {
       "price_version_id",
       "legal_bundle_version",
       "runtime_contract_id",
-      "runtime_contract_sha256",
       "gateway_kind",
       "model_id",
       "wire_api_kind",
@@ -132,7 +124,6 @@ function routeKind(row) {
     && safeUuid(row.price_version_id) !== null
     && safeToken(row.legal_bundle_version) !== null
     && safeToken(row.runtime_contract_id) !== null
-    && safeHash(row.runtime_contract_sha256) !== null
     && gatewayDimension(row.gateway_kind) !== null
     && safeModel(row.model_id) !== null
     && ["chat_completions_v1", "responses_v1"].includes(row.wire_api_kind)
@@ -159,7 +150,6 @@ function groupKey(row) {
       priceVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       gatewayKind: null,
       modelId: null,
       wireApiKind: null,
@@ -174,7 +164,6 @@ function groupKey(row) {
       routingPolicyVersionId: null,
       priceVersionId: safeUuid(row.price_version_id),
       runtimeContractId: null,
-      runtimeContractSha256: null,
       gatewayKind: null,
       currency: safeCurrency(row.billing_currency),
     };
@@ -188,7 +177,6 @@ function groupKey(row) {
       priceVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       gatewayKind: null,
       modelId: null,
       wireApiKind: null,
@@ -204,7 +192,6 @@ function groupKey(row) {
     priceVersionId: safeUuid(row.price_version_id),
     legalBundleVersion: safeToken(row.legal_bundle_version),
     runtimeContractId: safeToken(row.runtime_contract_id),
-    runtimeContractSha256: safeHash(row.runtime_contract_sha256),
     gatewayKind: gatewayDimension(row.gateway_kind),
     modelId: safeModel(row.model_id),
     wireApiKind: row.wire_api_kind,

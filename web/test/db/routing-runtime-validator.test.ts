@@ -32,9 +32,8 @@ function sqlJson(value: unknown): string {
   return `${sqlLiteral(JSON.stringify(value))}::jsonb`;
 }
 
-interface RuntimeContractPair {
+interface RuntimeContractIdentity {
   runtimeContractId: string;
-  runtimeContractSha256: string;
 }
 
 interface RouteFixture {
@@ -42,7 +41,7 @@ interface RouteFixture {
   profileKey: string;
   profileVersionId: string;
   priceVersionId: string;
-  runtime: RuntimeContractPair;
+  runtime: RuntimeContractIdentity;
 }
 
 interface SharedRoutingFixtureGraph {
@@ -108,24 +107,22 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
   });
 
   function lifecycleEvidence(
-    runtime: RuntimeContractPair,
+    runtime: RuntimeContractIdentity,
     reason: string,
     priceVersionIds: readonly string[],
   ): Record<string, string> {
     const root = readLifecycleEvidenceRoot({
       runtimeContractId: runtime.runtimeContractId,
-      runtimeContractSha256: runtime.runtimeContractSha256,
       priceVersionIds,
     });
     return {
       p_runtime_contract_id: runtime.runtimeContractId,
-      p_runtime_contract_sha256: runtime.runtimeContractSha256,
       p_actor: "routing-runtime-validator",
       p_reason: reason,
       p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
-      p_reviewed_source_sha256: runtime.runtimeContractSha256,
+      p_reviewed_source_sha256: root.reviewedSourceSha256,
       p_rechecked_at: root.recheckedAt,
-      p_rechecked_sha256: runtime.runtimeContractSha256,
+      p_rechecked_sha256: root.reviewedSourceSha256,
     };
   }
 
@@ -451,7 +448,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
     route: RouteFixture,
     rules: Record<string, unknown> = validRules(route),
     options: {
-      runtime?: RuntimeContractPair;
+      runtime?: RuntimeContractIdentity;
       missingDefaultProfileVersionId?: string;
     } = {},
   ) {
@@ -474,7 +471,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, timezone, rules,
         default_profile_version_id, legal_bundle_version,
-        runtime_contract_id, runtime_contract_sha256, config_sha256
+        runtime_contract_id, config_sha256
       ) values (
         '${policyId}'::uuid,
         ${sqlLiteral(`test.validator.policy.${crypto.randomUUID()}`)},
@@ -484,7 +481,6 @@ describe.skipIf(!RUN_DB_TESTS)("routing runtime validator (real DB)", () => {
         '${mappedDefaultProfileVersionId}'::uuid,
         ${sqlLiteral(INITIAL_LEGAL_BUNDLE_VERSION)},
         ${sqlLiteral(runtime.runtimeContractId)},
-        ${sqlLiteral(runtime.runtimeContractSha256)},
         '${"3".repeat(64)}'
       );
     `);

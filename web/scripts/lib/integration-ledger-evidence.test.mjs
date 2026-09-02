@@ -23,7 +23,6 @@ function availability(profile, overrides = {}) {
     profileVersionId: profile.profileVersionId,
     legalBundleVersion: profile.legalBundleVersion,
     runtimeContractId: profile.runtimeContractId,
-    runtimeContractSha256: profile.runtimeContractSha256,
     displayDisclosure: { ...profile.displayDisclosure },
     termsAccepted: false,
     ...overrides,
@@ -40,7 +39,6 @@ function attempt(profile = DEEPSEEK_INTEGRATION_PROFILE, overrides = {}) {
     price_version_id: profile.priceVersionIds[0],
     legal_bundle_version: profile.legalBundleVersion,
     runtime_contract_id: profile.runtimeContractId,
-    runtime_contract_sha256: profile.runtimeContractSha256,
     gateway_kind: profile.gatewayKind,
     model_id: profile.modelId,
     wire_api_kind: profile.wireApiKind,
@@ -95,7 +93,6 @@ function parent(profile, rows, overrides = {}) {
     price_version_id: profile.priceVersionIds[0],
     legal_bundle_version: profile.legalBundleVersion,
     runtime_contract_id: profile.runtimeContractId,
-    runtime_contract_sha256: profile.runtimeContractSha256,
     gateway_kind: profile.gatewayKind,
     model_id: profile.modelId,
     wire_api_kind: profile.wireApiKind,
@@ -147,7 +144,6 @@ describe("integration ledger evidence", () => {
       profileVersionId: MIMO_INTEGRATION_PROFILE.profileVersionId,
       legalBundleVersion: MIMO_INTEGRATION_PROFILE.legalBundleVersion,
       runtimeContractId: MIMO_INTEGRATION_PROFILE.runtimeContractId,
-      runtimeContractSha256: MIMO_INTEGRATION_PROFILE.runtimeContractSha256,
     });
     expect(Object.isFrozen(expected)).toBe(true);
     expect(sameExpectedRouteV1(expected, buildExpectedRouteV1(candidate, MIMO_INTEGRATION_PROFILE))).toBe(true);
@@ -161,7 +157,6 @@ describe("integration ledger evidence", () => {
       availability(profile, { configGeneration: "07" }),
       availability(profile, { profileVersionId: DEEPSEEK_INTEGRATION_PROFILE.profileVersionId }),
       availability(profile, { runtimeContractId: DEEPSEEK_INTEGRATION_PROFILE.runtimeContractId }),
-      availability(profile, { runtimeContractSha256: DEEPSEEK_INTEGRATION_PROFILE.runtimeContractSha256 }),
       availability(profile, { displayDisclosure: DEEPSEEK_INTEGRATION_PROFILE.displayDisclosure }),
     ];
     for (const candidate of cases) {
@@ -175,7 +170,7 @@ describe("integration ledger evidence", () => {
     expect(evaluateRequestLedgerEvidence(parent(DEEPSEEK_INTEGRATION_PROFILE, []), []).issues).toContain("child_count_out_of_range");
   });
 
-  it("accepts the complete frozen pair for either selected profile", () => {
+  it("accepts the complete frozen identity for either selected profile", () => {
     for (const profile of [DEEPSEEK_INTEGRATION_PROFILE, MIMO_INTEGRATION_PROFILE]) {
       const row = attempt(profile);
       expect(evaluateRequestLedgerEvidence(parent(profile, [row]), [row], profile)).toEqual(

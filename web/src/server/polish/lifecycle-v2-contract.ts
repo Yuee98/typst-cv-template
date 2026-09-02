@@ -15,7 +15,6 @@ const MAX_POSTGRES_BIGINT = BigInt("9223372036854775807");
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-const LOWER_HEX_64_PATTERN = /^[0-9a-f]{64}$/u;
 const CANONICAL_DECIMAL_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
 const CODE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,199}$/u;
 
@@ -25,7 +24,6 @@ const EXPECTED_ROUTE_KEYS = [
   "profileVersionId",
   "legalBundleVersion",
   "runtimeContractId",
-  "runtimeContractSha256",
 ] as const;
 
 const ROUTE_SNAPSHOT_KEYS = [
@@ -36,7 +34,6 @@ const ROUTE_SNAPSHOT_KEYS = [
   "priceVersionId",
   "legalBundleVersion",
   "runtimeContractId",
-  "runtimeContractSha256",
   "gatewayKind",
   "modelId",
   "wireApiKind",
@@ -224,7 +221,6 @@ export interface ExpectedRouteV1 {
   readonly profileVersionId: string;
   readonly legalBundleVersion: string;
   readonly runtimeContractId: string;
-  readonly runtimeContractSha256: string;
 }
 
 export interface RouteSnapshotV1 {
@@ -235,7 +231,6 @@ export interface RouteSnapshotV1 {
   readonly priceVersionId: string;
   readonly legalBundleVersion: string;
   readonly runtimeContractId: string;
-  readonly runtimeContractSha256: string;
   readonly gatewayKind: string;
   readonly modelId: string;
   readonly wireApiKind: string;
@@ -273,7 +268,6 @@ export interface RuntimeRouteDescriptorV1 {
 export interface RuntimeExecutionTargetV1 {
   readonly schemaVersion: "runtime_execution_target_v1";
   readonly runtimeContractId: string;
-  readonly runtimeContractSha256: string;
   readonly legalBundleVersion: string;
   readonly profileVersionId: string;
   readonly profileKey: string;
@@ -413,14 +407,6 @@ function requireCodeId(value: unknown, label: string): string {
   return result;
 }
 
-function requireLowerHex64(value: unknown, label: string): string {
-  const result = requireString(value, label);
-  if (!LOWER_HEX_64_PATTERN.test(result)) {
-    fail(`${label} must be lowercase hex64`);
-  }
-  return result;
-}
-
 function requirePostgresBigint(value: unknown, label: string): string {
   const result = requireString(value, label);
   if (
@@ -502,10 +488,6 @@ export function parseExpectedRouteV1(value: unknown): ExpectedRouteV1 {
       route.runtimeContractId,
       "expected route runtime id",
     ),
-    runtimeContractSha256: requireLowerHex64(
-      route.runtimeContractSha256,
-      "expected route runtime hash",
-    ),
   });
 }
 
@@ -540,10 +522,6 @@ export function parseRouteSnapshotV1(value: unknown): RouteSnapshotV1 {
     runtimeContractId: requireCodeId(
       route.runtimeContractId,
       "route snapshot runtime id",
-    ),
-    runtimeContractSha256: requireLowerHex64(
-      route.runtimeContractSha256,
-      "route snapshot runtime hash",
     ),
     gatewayKind: requireNonEmptyString(
       route.gatewayKind,
@@ -610,7 +588,6 @@ function buildRuntimeExecutionTargetV1(
   return deepFreeze({
     schemaVersion: "runtime_execution_target_v1" as const,
     runtimeContractId: route.runtimeContractId,
-    runtimeContractSha256: route.runtimeContractSha256,
     legalBundleVersion: route.legalBundleVersion,
     profileVersionId: route.profileVersionId,
     profileKey: profile.profileKey,

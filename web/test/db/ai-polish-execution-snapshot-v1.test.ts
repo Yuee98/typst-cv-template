@@ -42,7 +42,6 @@ const ROUTE_KEYS = [
   "profileVersionId",
   "routingPolicyVersionId",
   "runtimeContractId",
-  "runtimeContractSha256",
   "schemaVersion",
   "wireApiKind",
 ].sort();

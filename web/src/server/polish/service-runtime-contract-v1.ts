@@ -26,8 +26,6 @@ export const DEEPSEEK_PROFILE_KEY =
   "deepseek.official.deepseek-v4-flash.chat.v1" as const;
 export const DEEPSEEK_PROFILE_VERSION_ID =
   "11111111-1111-4111-8111-111111111111" as const;
-export const DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID =
-  "sha1:b2390ff817612df7e3eed40aa775ff4cd4228085" as const;
 export const DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID =
   MIMO_V2_SEED_IDENTITY_V1.runtime.runtimeContractId;
 export const MIMO_SERVICE_RUNTIME_TARGET_ID =
@@ -36,10 +34,6 @@ export const MIMO_PROFILE_KEY =
   MIMO_V2_SEED_IDENTITY_V1.profile.profileKey;
 export const MIMO_PROFILE_VERSION_ID =
   MIMO_V2_SEED_IDENTITY_V1.profile.profileVersionId;
-export const DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID =
-  "sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba" as const;
-export const MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID =
-  "sha1:600caeb322b2f0e829c370a55b2f1813f8ffa175" as const;
 
 const DEEPSEEK_ROUTE_DESCRIPTOR_ID = "route.deepseek.official.v1" as const;
 const DEEPSEEK_DISPLAY_DISCLOSURE_KEY = "deepseek-official-v1" as const;
@@ -49,14 +43,12 @@ const MIMO_DISPLAY_DISCLOSURE_KEY =
   MIMO_V2_SEED_IDENTITY_V1.profile.displayDisclosureKey;
 const SERVICE_RUNTIME_REGISTRY_KEYS = [
   "schemaVersion",
-  "reviewedSourceCommitOid",
   "legalBundleVersion",
   "bundleContractSha256",
   "requiredServiceFacts",
   "evidence",
   "targets",
   "contract",
-  "contractSha256",
   "runtimeTargetSetSha256",
 ] as const;
 const FACT_PAIR_KEYS = ["id", "sha256"] as const;
@@ -74,7 +66,6 @@ const EVIDENCE_DESCRIPTOR_KEYS = [
   "supported_fact_id",
   "supported_fact_sha256",
   "source_repo_path",
-  "source_git_blob_sha256",
 ] as const;
 const TARGET_DESCRIPTOR_KEYS = [
   "schema_version",
@@ -88,20 +79,16 @@ const TARGET_DESCRIPTOR_KEYS = [
 const CONTRACT_DESCRIPTOR_KEYS = [
   "schema_version",
   "runtime_contract_id",
-  "reviewed_source_commit_oid",
   "legal_bundle_version",
   "bundle_contract_sha256",
   "runtime_target_ids",
   "runtime_target_sha256s",
   "service_fact_ids",
   "service_fact_sha256s",
-  "runtime_evidence_ids",
-  "runtime_evidence_sha256s",
 ] as const;
 const EXECUTION_TARGET_KEYS = [
   "schemaVersion",
   "runtimeContractId",
-  "runtimeContractSha256",
   "legalBundleVersion",
   "profileVersionId",
   "profileKey",
@@ -144,7 +131,6 @@ export interface ServiceRuntimeEvidenceDescriptorV1 {
   readonly supported_fact_id: string;
   readonly supported_fact_sha256: string;
   readonly source_repo_path: string;
-  readonly source_git_blob_sha256: string;
 }
 
 export interface ServiceRuntimeTargetDescriptorV1 {
@@ -160,15 +146,12 @@ export interface ServiceRuntimeTargetDescriptorV1 {
 export interface ServiceRuntimeContractDescriptorV1 {
   readonly schema_version: "ai_service_runtime_contract_v1";
   readonly runtime_contract_id: string;
-  readonly reviewed_source_commit_oid: string;
   readonly legal_bundle_version: string;
   readonly bundle_contract_sha256: string;
   readonly runtime_target_ids: readonly string[];
   readonly runtime_target_sha256s: readonly string[];
   readonly service_fact_ids: readonly string[];
   readonly service_fact_sha256s: readonly string[];
-  readonly runtime_evidence_ids: readonly string[];
-  readonly runtime_evidence_sha256s: readonly string[];
 }
 
 export interface ServiceRuntimeFactPairV1 {
@@ -190,14 +173,12 @@ export interface HashedServiceRuntimeTargetV1 {
 
 export interface ServiceRuntimeContractRegistryV1 {
   readonly schemaVersion: "service_runtime_contract_registry_v1";
-  readonly reviewedSourceCommitOid: string;
   readonly legalBundleVersion: string;
   readonly bundleContractSha256: string;
   readonly requiredServiceFacts: readonly Readonly<ServiceRuntimeFactPairV1>[];
   readonly evidence: readonly Readonly<HashedServiceRuntimeEvidenceV1>[];
   readonly targets: readonly Readonly<HashedServiceRuntimeTargetV1>[];
   readonly contract: Readonly<ServiceRuntimeContractDescriptorV1>;
-  readonly contractSha256: string;
   readonly runtimeTargetSetSha256: string;
 }
 
@@ -212,7 +193,6 @@ interface RuntimeTargetAuthorityV1 {
 
 interface ServiceRuntimeRegistryAuthorityV1 {
   readonly contractId: string;
-  readonly reviewedSourceCommitOid: string;
   readonly profileKeys: readonly string[];
   readonly targets: readonly Readonly<RuntimeTargetAuthorityV1>[];
   readonly registry: Readonly<ServiceRuntimeContractRegistryV1>;
@@ -220,7 +200,6 @@ interface ServiceRuntimeRegistryAuthorityV1 {
 
 interface SourceBlobV1 {
   readonly path: string;
-  readonly sha256: string;
 }
 
 interface FactEvidenceRouteV1 {
@@ -229,300 +208,93 @@ interface FactEvidenceRouteV1 {
   readonly test: readonly SourceBlobV1[];
 }
 
-const source = (
-  path: string,
-  sha256: string,
-): Readonly<SourceBlobV1> => Object.freeze({ path, sha256 });
+const source = (path: string): Readonly<SourceBlobV1> => Object.freeze({ path });
 
 const sourceSet = (
   ...entries: readonly Readonly<SourceBlobV1>[]
 ): readonly Readonly<SourceBlobV1>[] => Object.freeze(entries);
 
 const SOURCE_BLOBS = Object.freeze({
-  reserve: source(
-    "supabase/migrations/20260823234000_reserve_ai_polish_v2.sql",
-    "79a9f42b08ede44337a2c054cc89d3f25c0285c4940208745232cd968d5f6e1b",
-  ),
-  reserveTest: source(
-    "web/test/db/reserve-v2-route-snapshot.test.ts",
-    "dd8b3c394c20e7e04dfdfda760ceeb2b036db060cd64c4205cd2fcfef6662f8c",
-  ),
-  adapterRegistry: source(
-    "web/src/server/polish/adapter-registry.ts",
-    "51dacd9e8a2d5721036294c4af609a36415cd47f50a1982f2b13e4deac969b15",
-  ),
-  adapterRegistryTest: source(
-    "web/src/server/polish/adapter-registry.test.ts",
-    "757afb31b8ce7773e8570a67ab2240771f194fe311e3e22dfd56ff377b424287",
-  ),
-  availabilityTest: source(
-    "web/src/server/polish/lifecycle-availability.test.ts",
-    "43a5d667d37313b428823066f1f0218c11f774d9048e09a2acbd143035a7bbf5",
-  ),
-  availabilityDbTest: source(
-    "web/test/db/ai-polish-availability-v1.test.ts",
-    "25efda681c279adcfb18cdce607fb1e045f128c1769bd6f36afd08cb6f5286db",
-  ),
-  availabilityServer: source(
-    "web/src/server/polish/lifecycle-availability.ts",
-    "ea09dde773e91f1ec71b6be5894674a6f58cfc877fe452a94f44e87b4317f346",
-  ),
-  profileRegistry: source(
-    "web/src/server/polish/profile-registry.ts",
-    "b379ba9f9907360f76ac50c8f676e009d194dadd49707afd24732fc6c9e326b6",
-  ),
-  profileRegistryTest: source(
-    "web/src/server/polish/profile-registry.test.ts",
-    "00499529d6dc9cf2f9226d4ac9eef646dac76d8cd876ab225824a62bfc1f9993",
-  ),
+  reserve: source("supabase/migrations/20260823234000_reserve_ai_polish_v2.sql"),
+  reserveTest: source("web/test/db/reserve-v2-route-snapshot.test.ts"),
+  adapterRegistry: source("web/src/server/polish/adapter-registry.ts"),
+  adapterRegistryTest: source("web/src/server/polish/adapter-registry.test.ts"),
+  availabilityTest: source("web/src/server/polish/lifecycle-availability.test.ts"),
+  availabilityDbTest: source("web/test/db/ai-polish-availability-v1.test.ts"),
+  availabilityServer: source("web/src/server/polish/lifecycle-availability.ts"),
+  profileRegistry: source("web/src/server/polish/profile-registry.ts"),
+  profileRegistryTest: source("web/src/server/polish/profile-registry.test.ts"),
   executionContractTest: source(
     "web/src/server/polish/ai-runtime-execution-contract-v1.test.ts",
-    "c70f74b498ebdd4bb5c423513c926faff06089dfea548dbe07be872a3d340392",
   ),
-  providerSubject: source(
-    "web/src/server/polish/provider-subject-v2.ts",
-    "785281d70c7f4cf42234d13597e9d0b1422dbdcc5ca64dc3addd3bb4f37ffad4",
-  ),
-  providerSubjectTest: source(
-    "web/src/server/polish/provider-subject-v2.test.ts",
-    "47eae5f28de31c2ee86b1ad5ed90a83360267f07ab2ded03a570fae5fa459a86",
-  ),
-  deepseek: source(
-    "web/src/server/polish/deepseek.ts",
-    "8e92348f8471bb0806bc1a86a66326d697c08f62986e15e85c087b6e34dcdd74",
-  ),
-  deepseekTest: source(
-    "web/src/server/polish/deepseek.test.ts",
-    "40627e2935c03c38d6f3978048f5ca19cfda6f0b49d7f82f4159a1fa930d8eae",
-  ),
-  mimo: source(
-    "web/src/server/polish/mimo.ts",
-    "04ae724182275084db6d5f219b85fd57675ffc98fe9b469a3ea1855920f8394e",
-  ),
-  mimoTest: source(
-    "web/src/server/polish/mimo.test.ts",
-    "20ea4dc646666f173071eb030938c257f675a2ec0bfeda2b907bfd3570b5bc1a",
-  ),
-  mimoLiveTest: source(
-    "web/src/server/polish/mimo.live.test.ts",
-    "9d0cf8cab62ad202a5864cbf93e54394826cf9743130eded0f1cf6fbfd6a8d79",
-  ),
+  providerSubject: source("web/src/server/polish/provider-subject-v2.ts"),
+  providerSubjectTest: source("web/src/server/polish/provider-subject-v2.test.ts"),
+  deepseek: source("web/src/server/polish/deepseek.ts"),
+  deepseekTest: source("web/src/server/polish/deepseek.test.ts"),
+  mimo: source("web/src/server/polish/mimo.ts"),
+  mimoTest: source("web/src/server/polish/mimo.test.ts"),
+  mimoLiveTest: source("web/src/server/polish/mimo.live.test.ts"),
   mimoContentFilterFixture: source(
     "web/test/fixtures/mimo-responses/content-filter.json",
-    "b9072aa330de6ee6f67bfc0681a36b802b4a8b13715cbe037a124e49fdac8436",
   ),
   mimoIncompleteFixture: source(
     "web/test/fixtures/mimo-responses/incomplete-max-output.json",
-    "c6475a7c431afd980ddd3baaf6b91b10b9b354d4d54cbfb6a6abefb88c3741c1",
   ),
-  mimoSuccessFixture: source(
-    "web/test/fixtures/mimo-responses/success.json",
-    "fd34f6dcdd4a08d8fdc8a226bb04a6749d9dfa1d5273a9094a5e613f923426a5",
-  ),
-  quota: source(
-    "web/src/server/polish/quota.ts",
-    "00cfc0bf32b40e7726a8e6426cd20d6fd7af201f824a6cd4610f3c3f54efb271",
-  ),
-  quotaTest: source(
-    "web/src/server/polish/quota-v2.test.ts",
-    "b79ea98a972b67fd005091b075e394db65d693eca82ede889fc075270a8cfc3d",
-  ),
-  handler: source(
-    "web/src/server/polish/handler.ts",
-    "8fc828a6670a0d0f24a78031408ac6220cd6c524f5f97fd737fafb26cf761c84",
-  ),
-  handlerTest: source(
-    "web/src/server/polish/handler.test.ts",
-    "10c5a0923a2fe817a623799e992ee9d647f32af1ab1ef3b813d94e98a37e3fa1",
-  ),
+  mimoSuccessFixture: source("web/test/fixtures/mimo-responses/success.json"),
+  quota: source("web/src/server/polish/quota.ts"),
+  quotaTest: source("web/src/server/polish/quota-v2.test.ts"),
+  handler: source("web/src/server/polish/handler.ts"),
+  handlerTest: source("web/src/server/polish/handler.test.ts"),
   ledgerRequest: source(
     "supabase/migrations/20260823231000_ai_provider_ledger_legal_expand.sql",
-    "3df36029fb38b296dbc198d6dd3cc54555cf1fc63b9aa063d72235dd57d47101",
   ),
-  ledgerRequestTest: source(
-    "web/test/db/provider-ledger-expand.test.ts",
-    "8eaf85e09c352b61280638cabfa9459de1feec8016a84544c0188d8138aee087",
-  ),
+  ledgerRequestTest: source("web/test/db/provider-ledger-expand.test.ts"),
   attemptLedger: source(
     "supabase/migrations/20260823234500_add_ai_provider_attempt_ledger.sql",
-    "2f8d70000112b0ef4f0769a7b6f5b04fa594e6d3a129910da759affea316fe52",
   ),
-  attemptLedgerTest: source(
-    "web/test/db/provider-attempt-schema.test.ts",
-    "b74e0d63644e001f0975fab9d1e9e36f4fd56d2e5a712d99fb592ce243cdfb5a",
-  ),
-  lifecycleV2: source(
-    "web/src/server/polish/lifecycle-v2.ts",
-    "ee01910e11617bd28f1490538f21b90e5aa3be4e3ed470e4d1e07801029b4e10",
-  ),
-  lifecycleV2Test: source(
-    "web/src/server/polish/__tests__/lifecycle/v2.test.ts",
-    "e84c75f1c96c76700d757ce5c52405e49076af5a08e875f5cdcb4b185071d173",
-  ),
+  attemptLedgerTest: source("web/test/db/provider-attempt-schema.test.ts"),
+  lifecycleV2: source("web/src/server/polish/lifecycle-v2.ts"),
+  lifecycleV2Test: source("web/src/server/polish/__tests__/lifecycle/v2.test.ts"),
   attemptComplete: source(
     "supabase/migrations/20260824000000_complete_ai_polish_provider_attempt.sql",
-    "d6e9e8f83d56e75333a2d6649d5da7941d55ca4510948467056ba2d85cc56c01",
   ),
-  attemptCompleteTest: source(
-    "web/test/db/provider-attempt-complete.test.ts",
-    "405019a43de2c60f4ebb7019a44a2ad1c343728380b41499f113bd5fbbf254a4",
-  ),
-  attemptStartTest: source(
-    "web/test/db/provider-attempt-start.test.ts",
-    "33299870fc394e74ffb00d410d5d701576e9553a650227cc2235b5d0c54bc4ce",
-  ),
-  attemptFinalizeTest: source(
-    "web/test/db/provider-attempt-finalize.test.ts",
-    "606161a35db9fed4c2c5e063a8d4999f6271423f13318ccb6a3d6c189a36ec78",
-  ),
+  attemptCompleteTest: source("web/test/db/provider-attempt-complete.test.ts"),
+  attemptStartTest: source("web/test/db/provider-attempt-start.test.ts"),
+  attemptFinalizeTest: source("web/test/db/provider-attempt-finalize.test.ts"),
   attemptReconcile: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
-    "18b4e398df8b9915796e7d01ac71f555003d027adc73a6dbd58d0032be2a2dc2",
   ),
-  attemptReconcileTest: source(
-    "web/test/db/provider-attempt-reconcile.test.ts",
-    "20bc28790a1edf9fc4ba94e24797dfa7d3b8f756c95f379582eb7728917d56b2",
-  ),
+  attemptReconcileTest: source("web/test/db/provider-attempt-reconcile.test.ts"),
   durableTransmission: source(
     "supabase/migrations/20260824001500_durable_attempt_transmission_quota.sql",
-    "0552ee6226e89fdafd2bb6e1b26b3ee588a46df93d3852b0fc125fdea849672a",
   ),
   durableTransmissionTest: source(
     "web/test/db/provider-attempt-transmission.test.ts",
-    "d01e166070927e13d68a352f04a57ebf72e3324d08217323037b22d418e1fb12",
   ),
   durableCancellationSequence: source(
     "supabase/migrations/20260824001600_durable_request_cancellation_sequence.sql",
-    "f6f2fcf7146529b16357b2b92711390581c8c240accd0b758fbceddf2d35008c",
   ),
   retention: source(
     "supabase/migrations/20260824001000_secure_reconcile_ai_provider_attempts.sql",
-    "18b4e398df8b9915796e7d01ac71f555003d027adc73a6dbd58d0032be2a2dc2",
   ),
-  retentionTest: source(
-    "web/test/db/reconcile-cleanup.test.ts",
-    "deb3a02590c3fac78d5fa02ca120bd4eb5ad10a8118d6352c2584649b6d7b4be",
-  ),
-  orchestrator: source(
-    "web/src/server/polish/orchestrator.ts",
-    "d7d14dc420629ec6234a373c70ac35d79410605fc18926740badc5127901dba4",
-  ),
-  orchestratorTest: source(
-    "web/src/server/polish/orchestrator.test.ts",
-    "eba96c7b6034b71d3e57ec7176026ce55e93df2dcaed28ffd8583bdcab94d61d",
-  ),
-  scopeBuilder: source(
-    "web/src/components/cv-builder/polish/scope-builder.ts",
-    "6e971fe30b7ed1d2f2d1e7da4ff8e6047546f32975f4fc24235070106ff37f7e",
-  ),
+  retentionTest: source("web/test/db/reconcile-cleanup.test.ts"),
+  orchestrator: source("web/src/server/polish/orchestrator.ts"),
+  orchestratorTest: source("web/src/server/polish/orchestrator.test.ts"),
+  scopeBuilder: source("web/src/components/cv-builder/polish/scope-builder.ts"),
   scopeBuilderTest: source(
     "web/src/components/cv-builder/polish/scope-builder.test.ts",
-    "59165cb8531f4fde00f6187c19fcda2d5232b0a9964c813dc1c76ef2550e2396",
   ),
-  legalEn: source(
-    "web/src/content/legal/en.ts",
-    "6ae774d66dcd2a43c9d33c10cb09e55c9eec835e2e5e1952618b9834580caba7",
-  ),
-  legalTest: source(
-    "web/src/content/legal/legal.test.ts",
-    "552887a885ac9700e50c48267a9802fea573a2c1463013b48f14d114d01e1a05",
-  ),
-  flow: source(
-    "web/src/components/cv-builder/polish/use-polish-flow.ts",
-    "4d7a9fc7507c0fcc8a30f30e5234e623fb17a41f9b7081060d4ca6a25958ad11",
-  ),
+  legalEn: source("web/src/content/legal/en.ts"),
+  legalTest: source("web/src/content/legal/legal.test.ts"),
+  flow: source("web/src/components/cv-builder/polish/use-polish-flow.ts"),
   routeAssertionTest: source(
     "web/src/components/cv-builder/polish/__tests__/use-polish-flow/route-assertion.test.tsx",
-    "1774dfea2839d61c2db3ae592a800cb4f42599055c87a58a476d6d99de53becc",
   ),
   configPhase: source(
     "web/src/components/cv-builder/polish/polish-config-phase.tsx",
-    "d06c23f4d0f0cfb4d4af6e773860475148624b7e5ae2c136274f165a1bdc9293",
   ),
-  dialogTest: source(
-    "web/src/components/cv-builder/polish/polish-dialog.test.tsx",
-    "9d2795b58d69506e461df6f135f67b02bacbd6eae3efd81141c23215efc07cae",
-  ),
+  dialogTest: source("web/src/components/cv-builder/polish/polish-dialog.test.tsx"),
 });
-
-// The legacy DeepSeek registry remains byte-for-byte bound to SOURCE_BLOBS.
-// The combined v2 registry independently rebinds only the lifecycle adapter
-// selection seam to the reviewed Phase A source checkpoint.
-const DEEPSEEK_MIMO_SOURCE_BLOBS = Object.freeze({
-  reserveTest: source(
-    "web/test/db/reserve-v2-route-snapshot.test.ts",
-    "f34eae80629b394ed937a61a0b770b81bcab1bad922766a34a191236bf320791",
-  ),
-  ledgerRequestTest: source(
-    "web/test/db/provider-ledger-expand.test.ts",
-    "fe51db9553ef3d426f39bc2ee340a1fb1503a82cf101d3cb318a09afc09b415d",
-  ),
-  attemptLedgerTest: source(
-    "web/test/db/provider-attempt-schema.test.ts",
-    "b016c62af4541d2b6f39e0a4f29aed0111cefd8015d71ca43d5c4043247d3c4d",
-  ),
-  lifecycleV2: source(
-    "web/src/server/polish/lifecycle-v2.ts",
-    "778a2271ac9ab47ff60dc372c57e8f3e5b41b98ee9cd50b58e6c46ff9ce94b21",
-  ),
-  lifecycleV2Test: source(
-    "web/src/server/polish/__tests__/lifecycle/v2.test.ts",
-    "bb5391bdea9c4dcebdef78683379d0f7a1d5f430dc1095c34814bb0b3a2163dd",
-  ),
-  attemptStartTest: source(
-    "web/test/db/provider-attempt-start.test.ts",
-    "2797bd62815308c675f07a9ac9ca328b45905ccc3ff0be4719ec82119cf903b6",
-  ),
-  attemptFinalizeTest: source(
-    "web/test/db/provider-attempt-finalize.test.ts",
-    "a76d989d37cad3450f1890b4f2a462ba1759bbfe625ddba86251feef5791a1b9",
-  ),
-  durableTransmissionTest: source(
-    "web/test/db/provider-attempt-transmission.test.ts",
-    "4bec6c0568a9f9ff3d64d3b32f6147a3b360b53d57929367873662ec3e057775",
-  ),
-  retentionTest: source(
-    "web/test/db/reconcile-cleanup.test.ts",
-    "08b5e296e6e563bbf4470099cd7346f6e08b6a86b1d1993b1962dd790ea81c3d",
-  ),
-  configPhase: source(
-    "web/src/components/cv-builder/polish/polish-config-phase.tsx",
-    "fbb96f978c20176aee3d149c168ded01d616496da5e61690a56025e55085abb3",
-  ),
-  dialogTest: source(
-    "web/src/components/cv-builder/polish/polish-dialog.test.tsx",
-    "7aa41b73a2bd826770f1dde9837e162c1335389aceea2b5b56c8e36adcbadcfd",
-  ),
-});
-
-const DEEPSEEK_MIMO_SOURCE_REBINDS = Object.freeze([
-  [SOURCE_BLOBS.reserveTest, DEEPSEEK_MIMO_SOURCE_BLOBS.reserveTest],
-  [
-    SOURCE_BLOBS.ledgerRequestTest,
-    DEEPSEEK_MIMO_SOURCE_BLOBS.ledgerRequestTest,
-  ],
-  [
-    SOURCE_BLOBS.attemptLedgerTest,
-    DEEPSEEK_MIMO_SOURCE_BLOBS.attemptLedgerTest,
-  ],
-  [SOURCE_BLOBS.lifecycleV2, DEEPSEEK_MIMO_SOURCE_BLOBS.lifecycleV2],
-  [SOURCE_BLOBS.lifecycleV2Test, DEEPSEEK_MIMO_SOURCE_BLOBS.lifecycleV2Test],
-  [
-    SOURCE_BLOBS.attemptStartTest,
-    DEEPSEEK_MIMO_SOURCE_BLOBS.attemptStartTest,
-  ],
-  [
-    SOURCE_BLOBS.attemptFinalizeTest,
-    DEEPSEEK_MIMO_SOURCE_BLOBS.attemptFinalizeTest,
-  ],
-  [
-    SOURCE_BLOBS.durableTransmissionTest,
-    DEEPSEEK_MIMO_SOURCE_BLOBS.durableTransmissionTest,
-  ],
-  [SOURCE_BLOBS.retentionTest, DEEPSEEK_MIMO_SOURCE_BLOBS.retentionTest],
-  [SOURCE_BLOBS.configPhase, DEEPSEEK_MIMO_SOURCE_BLOBS.configPhase],
-  [SOURCE_BLOBS.dialogTest, DEEPSEEK_MIMO_SOURCE_BLOBS.dialogTest],
-] as const);
 
 const FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
   Object.freeze([
@@ -814,32 +586,19 @@ const MIMO_FACT_EVIDENCE_ROUTES: readonly Readonly<FactEvidenceRouteV1>[] =
     }),
   ]);
 
-function rebindCombinedReviewedSource(
-  blob: Readonly<SourceBlobV1>,
-): Readonly<SourceBlobV1> {
-  return (
-    DEEPSEEK_MIMO_SOURCE_REBINDS.find(([legacy]) => blob === legacy)?.[1] ??
-    blob
-  );
-}
-
-function rebindCombinedReviewedRoute(
+function extendCombinedEvidenceRoute(
   route: Readonly<FactEvidenceRouteV1>,
 ): Readonly<FactEvidenceRouteV1> {
-  const implementation = route.implementation.map(
-    rebindCombinedReviewedSource,
-  );
-  const test = route.test.map(rebindCombinedReviewedSource);
   return Object.freeze({
     factId: route.factId,
     implementation: sourceSet(
-      ...implementation,
+      ...route.implementation,
       ...(route.factId === "fact.neutral.plaintext.v1"
         ? [SOURCE_BLOBS.mimo]
         : []),
     ),
     test: sourceSet(
-      ...test,
+      ...route.test,
       ...(route.factId === "fact.neutral.plaintext.v1"
         ? [SOURCE_BLOBS.mimoTest]
         : []),
@@ -848,8 +607,8 @@ function rebindCombinedReviewedRoute(
 }
 
 const DEEPSEEK_MIMO_FACT_EVIDENCE_ROUTES = Object.freeze([
-  ...FACT_EVIDENCE_ROUTES.map(rebindCombinedReviewedRoute),
-  ...MIMO_FACT_EVIDENCE_ROUTES.map(rebindCombinedReviewedRoute),
+  ...FACT_EVIDENCE_ROUTES.map(extendCombinedEvidenceRoute),
+  ...MIMO_FACT_EVIDENCE_ROUTES.map(extendCombinedEvidenceRoute),
 ]);
 
 function compareUtf8(left: string, right: string): number {
@@ -914,7 +673,6 @@ function buildRuntimeEvidence(
           supported_fact_id: pair.id,
           supported_fact_sha256: pair.sha256,
           source_repo_path: blob.path,
-          source_git_blob_sha256: blob.sha256,
         });
         return deepFreeze<HashedServiceRuntimeEvidenceV1>({
           descriptor,
@@ -956,7 +714,6 @@ if (TARGET_SHA256 !== EXPECTED_TARGET_SHA256) {
 const CONTRACT_DESCRIPTOR = deepFreeze<ServiceRuntimeContractDescriptorV1>({
   schema_version: "ai_service_runtime_contract_v1",
   runtime_contract_id: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-  reviewed_source_commit_oid: DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID,
   legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
   bundle_contract_sha256:
     LEGAL_FINGERPRINT_V1_EXPECTED_SHA256[INITIAL_LEGAL_BUNDLE_VERSION],
@@ -970,20 +727,7 @@ const CONTRACT_DESCRIPTOR = deepFreeze<ServiceRuntimeContractDescriptorV1>({
   service_fact_sha256s: Object.freeze(
     REQUIRED_SERVICE_FACTS.map((pair) => pair.sha256),
   ),
-  runtime_evidence_ids: Object.freeze(
-    EVIDENCE.map((item) => item.descriptor.runtime_evidence_id),
-  ),
-  runtime_evidence_sha256s: Object.freeze(
-    EVIDENCE.map((item) => item.sha256),
-  ),
 });
-const CONTRACT_SHA256 = fingerprintLegalDescriptorV1(CONTRACT_DESCRIPTOR).sha256;
-const EXPECTED_CONTRACT_SHA256 =
-  "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9";
-if (CONTRACT_SHA256 !== EXPECTED_CONTRACT_SHA256) {
-  throw new Error("reviewed DeepSeek runtime contract hash drift");
-}
-
 const RUNTIME_ROUTE_DESCRIPTOR = deepFreeze<RuntimeRouteDescriptorV1>({
   gatewayKind: "direct_deepseek",
   adapterKind: "deepseek_chat_v1",
@@ -1001,7 +745,6 @@ export const DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1 =
   deepFreeze<RuntimeExecutionTargetV1>({
     schemaVersion: "runtime_execution_target_v1",
     runtimeContractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-    runtimeContractSha256: CONTRACT_SHA256,
     legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
     profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
     profileKey: DEEPSEEK_PROFILE_KEY,
@@ -1036,7 +779,6 @@ function runtimeTargetSetSha256(
 
 const REGISTRY = deepFreeze<ServiceRuntimeContractRegistryV1>({
   schemaVersion: "service_runtime_contract_registry_v1",
-  reviewedSourceCommitOid: DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID,
   legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
   bundleContractSha256:
     LEGAL_FINGERPRINT_V1_EXPECTED_SHA256[INITIAL_LEGAL_BUNDLE_VERSION],
@@ -1044,7 +786,6 @@ const REGISTRY = deepFreeze<ServiceRuntimeContractRegistryV1>({
   evidence: EVIDENCE,
   targets: Object.freeze([HASHED_TARGET]),
   contract: CONTRACT_DESCRIPTOR,
-  contractSha256: CONTRACT_SHA256,
   runtimeTargetSetSha256: runtimeTargetSetSha256([HASHED_TARGET]),
 });
 const EXPECTED_TARGET_SET_SHA256 =
@@ -1086,7 +827,6 @@ const DEEPSEEK_MIMO_CONTRACT_DESCRIPTOR =
   deepFreeze<ServiceRuntimeContractDescriptorV1>({
     schema_version: "ai_service_runtime_contract_v1",
     runtime_contract_id: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-    reviewed_source_commit_oid: DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
     legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
     bundle_contract_sha256:
       LEGAL_FINGERPRINT_V1_EXPECTED_SHA256[INITIAL_LEGAL_BUNDLE_VERSION],
@@ -1104,29 +844,7 @@ const DEEPSEEK_MIMO_CONTRACT_DESCRIPTOR =
     service_fact_sha256s: Object.freeze(
       DEEPSEEK_MIMO_REQUIRED_SERVICE_FACTS.map((pair) => pair.sha256),
     ),
-    runtime_evidence_ids: Object.freeze(
-      DEEPSEEK_MIMO_EVIDENCE.map(
-        (item) => item.descriptor.runtime_evidence_id,
-      ),
-    ),
-    runtime_evidence_sha256s: Object.freeze(
-      DEEPSEEK_MIMO_EVIDENCE.map((item) => item.sha256),
-    ),
   });
-const DEEPSEEK_MIMO_CONTRACT_SHA256 = fingerprintLegalDescriptorV1(
-  DEEPSEEK_MIMO_CONTRACT_DESCRIPTOR,
-).sha256;
-const EXPECTED_DEEPSEEK_MIMO_CONTRACT_SHA256 =
-  "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c";
-if (
-  DEEPSEEK_MIMO_CONTRACT_SHA256 !==
-  EXPECTED_DEEPSEEK_MIMO_CONTRACT_SHA256
-) {
-  throw new Error(
-    `reviewed DeepSeek+MiMo runtime contract hash drift: ${DEEPSEEK_MIMO_CONTRACT_SHA256}`,
-  );
-}
-
 const MIMO_RUNTIME_ROUTE_DESCRIPTOR = deepFreeze<RuntimeRouteDescriptorV1>({
   gatewayKind: MIMO_V2_SEED_IDENTITY_V1.profile.gatewayKind,
   adapterKind: MIMO_V2_SEED_IDENTITY_V1.profile.adapterKind,
@@ -1145,7 +863,6 @@ export const DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1 =
   deepFreeze<RuntimeExecutionTargetV1>({
     schemaVersion: "runtime_execution_target_v1",
     runtimeContractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-    runtimeContractSha256: DEEPSEEK_MIMO_CONTRACT_SHA256,
     legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
     profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
     profileKey: DEEPSEEK_PROFILE_KEY,
@@ -1157,7 +874,6 @@ export const DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1 =
   deepFreeze<RuntimeExecutionTargetV1>({
     schemaVersion: "runtime_execution_target_v1",
     runtimeContractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-    runtimeContractSha256: DEEPSEEK_MIMO_CONTRACT_SHA256,
     legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
     profileVersionId: MIMO_PROFILE_VERSION_ID,
     profileKey: MIMO_PROFILE_KEY,
@@ -1186,7 +902,6 @@ const DEEPSEEK_MIMO_TARGETS = Object.freeze([
 
 const DEEPSEEK_MIMO_REGISTRY = deepFreeze<ServiceRuntimeContractRegistryV1>({
   schemaVersion: "service_runtime_contract_registry_v1",
-  reviewedSourceCommitOid: DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
   legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
   bundleContractSha256:
     LEGAL_FINGERPRINT_V1_EXPECTED_SHA256[INITIAL_LEGAL_BUNDLE_VERSION],
@@ -1194,7 +909,6 @@ const DEEPSEEK_MIMO_REGISTRY = deepFreeze<ServiceRuntimeContractRegistryV1>({
   evidence: DEEPSEEK_MIMO_EVIDENCE,
   targets: DEEPSEEK_MIMO_TARGETS,
   contract: DEEPSEEK_MIMO_CONTRACT_DESCRIPTOR,
-  contractSha256: DEEPSEEK_MIMO_CONTRACT_SHA256,
   runtimeTargetSetSha256: runtimeTargetSetSha256(DEEPSEEK_MIMO_TARGETS),
 });
 const EXPECTED_DEEPSEEK_MIMO_TARGET_SET_SHA256 =
@@ -1227,7 +941,6 @@ const MIMO_TARGET_AUTHORITY = deepFreeze<RuntimeTargetAuthorityV1>({
 const DEEPSEEK_REGISTRY_AUTHORITY =
   deepFreeze<ServiceRuntimeRegistryAuthorityV1>({
     contractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-    reviewedSourceCommitOid: DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID,
     profileKeys: Object.freeze([DEEPSEEK_PROFILE_KEY]),
     targets: Object.freeze([DEEPSEEK_TARGET_AUTHORITY]),
     registry: REGISTRY,
@@ -1235,7 +948,6 @@ const DEEPSEEK_REGISTRY_AUTHORITY =
 const DEEPSEEK_MIMO_REGISTRY_AUTHORITY =
   deepFreeze<ServiceRuntimeRegistryAuthorityV1>({
     contractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-    reviewedSourceCommitOid: DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
     profileKeys: Object.freeze([DEEPSEEK_PROFILE_KEY, MIMO_PROFILE_KEY]),
     targets: Object.freeze([
       DEEPSEEK_TARGET_AUTHORITY,
@@ -1430,7 +1142,6 @@ function assertPortableEvidencePath(path: string): void {
 function validateExecutionTarget(
   value: unknown,
   contractId: string,
-  contractSha256: string,
   authority: Readonly<RuntimeTargetAuthorityV1>,
 ): asserts value is RuntimeExecutionTargetV1 {
   assertPlainRecord(value, "execution target");
@@ -1438,7 +1149,6 @@ function validateExecutionTarget(
   if (
     value.schemaVersion !== "runtime_execution_target_v1" ||
     value.runtimeContractId !== contractId ||
-    value.runtimeContractSha256 !== contractSha256 ||
     value.legalBundleVersion !== INITIAL_LEGAL_BUNDLE_VERSION ||
     value.profileVersionId !== authority.profileVersionId ||
     value.profileKey !== authority.profileKey ||
@@ -1468,12 +1178,11 @@ function validateServiceRuntimeRegistryAgainstAuthority(
   assertDeepFrozen(input, "registry");
   if (
     input.schemaVersion !== "service_runtime_contract_registry_v1" ||
-    input.reviewedSourceCommitOid !== authority.reviewedSourceCommitOid ||
     input.legalBundleVersion !== INITIAL_LEGAL_BUNDLE_VERSION ||
     input.bundleContractSha256 !==
       LEGAL_FINGERPRINT_V1_EXPECTED_SHA256[INITIAL_LEGAL_BUNDLE_VERSION]
   ) {
-    fail("registry root identity does not match the reviewed source and legal bundle");
+    fail("registry root identity does not match the legal bundle");
   }
 
   const bundleHash = fingerprintLegalDescriptorV1(
@@ -1533,7 +1242,6 @@ function validateServiceRuntimeRegistryAgainstAuthority(
 
   assertExactArray(input.evidence, "evidence");
   const evidenceIds: string[] = [];
-  const evidenceHashes: string[] = [];
   const authorities = new Map(
     requiredPairs.map((pair) => [pair.id, new Set<RuntimeEvidenceAuthorityKind>()]),
   );
@@ -1578,17 +1286,12 @@ function validateServiceRuntimeRegistryAgainstAuthority(
         `evidence.${index}.source path`,
       ),
     );
-    requireHash(
-      item.descriptor.source_git_blob_sha256,
-      `evidence.${index}.source blob`,
-    );
     if (fingerprintLegalDescriptorV1(item.descriptor).sha256 !== hash) {
       fail(`evidence.${index} descriptor hash does not match`);
     }
     if (immutableIds.has(id)) fail(`duplicate or rebound evidence ID: ${id}`);
     immutableIds.set(id, hash);
     evidenceIds.push(id);
-    evidenceHashes.push(hash);
     authorities.get(factId)!.add(item.descriptor.authority_kind);
   }
   assertSortedUnique(evidenceIds, "runtime evidence IDs");
@@ -1605,7 +1308,6 @@ function validateServiceRuntimeRegistryAgainstAuthority(
   if (input.targets.length !== authority.targets.length) {
     fail(`reviewed registry must contain ${authority.targets.length} targets`);
   }
-  const contractSha256 = requireHash(input.contractSha256, "contract SHA-256");
   const validatedTargets: Readonly<HashedServiceRuntimeTargetV1>[] = [];
   const targetIds: string[] = [];
   const targetHashes: string[] = [];
@@ -1673,7 +1375,6 @@ function validateServiceRuntimeRegistryAgainstAuthority(
     validateExecutionTarget(
       rawTarget.executionTarget,
       authority.contractId,
-      contractSha256,
       expectedTarget,
     );
     const profile = resolveProfile(expectedTarget.profileKey);
@@ -1695,7 +1396,6 @@ function validateServiceRuntimeRegistryAgainstAuthority(
   if (
     input.contract.schema_version !== "ai_service_runtime_contract_v1" ||
     input.contract.runtime_contract_id !== authority.contractId ||
-    input.contract.reviewed_source_commit_oid !== input.reviewedSourceCommitOid ||
     input.contract.legal_bundle_version !== input.legalBundleVersion ||
     input.contract.bundle_contract_sha256 !== input.bundleContractSha256
   ) {
@@ -1717,14 +1417,6 @@ function validateServiceRuntimeRegistryAgainstAuthority(
     input.contract.service_fact_sha256s,
     "contract fact hashes",
   ).map((hash, index) => requireHash(hash, `contract fact hashes.${index}`));
-  const rootEvidenceIds = requireStringArray(
-    input.contract.runtime_evidence_ids,
-    "contract evidence IDs",
-  );
-  const rootEvidenceHashes = requireStringArray(
-    input.contract.runtime_evidence_sha256s,
-    "contract evidence hashes",
-  ).map((hash, index) => requireHash(hash, `contract evidence hashes.${index}`));
   assertSameStrings(contractTargetIds, targetIds, "contract targets");
   assertSameStrings(contractTargetHashes, targetHashes, "contract target hashes");
   assertSameStrings(
@@ -1737,14 +1429,8 @@ function validateServiceRuntimeRegistryAgainstAuthority(
     requiredPairs.map((pair) => pair.sha256),
     "contract fact hashes",
   );
-  assertSameStrings(rootEvidenceIds, evidenceIds, "contract evidence");
-  assertSameStrings(rootEvidenceHashes, evidenceHashes, "contract evidence hashes");
   assertSortedUnique(contractTargetIds, "contract target IDs");
   assertSortedUnique(serviceFactIds, "contract fact IDs");
-  assertSortedUnique(rootEvidenceIds, "contract evidence IDs");
-  if (fingerprintLegalDescriptorV1(input.contract).sha256 !== contractSha256) {
-    fail("runtime contract root hash does not match");
-  }
   if (
     requireHash(input.runtimeTargetSetSha256, "runtime target-set hash") !==
     runtimeTargetSetSha256(validatedTargets)
@@ -1754,7 +1440,7 @@ function validateServiceRuntimeRegistryAgainstAuthority(
 
   // Structural/hash validation above establishes a sound candidate. This last
   // comparison is intentionally stricter: callers may validate only the one
-  // reviewed authority, never a coherent re-sign of a different source path,
+  // declared authority, never a coherent re-sign of a different source path,
   // descriptor ID, target, root, order, or evidence cardinality.
   assertExactReviewedValue(input, authority.registry, "registry");
 }
@@ -1779,13 +1465,10 @@ validateDeepSeekMiMoServiceRuntimeContractV1Registry(DEEPSEEK_MIMO_REGISTRY);
 
 export const DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1 = REGISTRY;
 export const DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256 = TARGET_SHA256;
-export const DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256 = CONTRACT_SHA256;
 export const DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256 =
   REGISTRY.runtimeTargetSetSha256;
 export const DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1 = DEEPSEEK_MIMO_REGISTRY;
 export const MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256 = MIMO_TARGET_SHA256;
-export const DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256 =
-  DEEPSEEK_MIMO_CONTRACT_SHA256;
 export const DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256 =
   DEEPSEEK_MIMO_REGISTRY.runtimeTargetSetSha256;
 
@@ -1793,8 +1476,6 @@ export const DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1 = deepFreeze({
   schemaVersion: "service_runtime_contract_db_fixture_v1" as const,
   contract: {
     runtimeContractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-    runtimeContractSha256: CONTRACT_SHA256,
-    reviewedSourceCommitOid: DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID,
     legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
     bundleContractSha256:
       LEGAL_FINGERPRINT_V1_EXPECTED_SHA256[INITIAL_LEGAL_BUNDLE_VERSION],
@@ -1820,8 +1501,6 @@ export const DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1 = deepFreeze({
   schemaVersion: "service_runtime_contract_db_fixture_v1" as const,
   contract: {
     runtimeContractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-    runtimeContractSha256: DEEPSEEK_MIMO_CONTRACT_SHA256,
-    reviewedSourceCommitOid: DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
     legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
     bundleContractSha256:
       LEGAL_FINGERPRINT_V1_EXPECTED_SHA256[INITIAL_LEGAL_BUNDLE_VERSION],
@@ -1857,11 +1536,10 @@ export const DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1 = deepFreeze({
 function exactRuntimeTargetMatchesAuthority(
   value: unknown,
   contractId: string,
-  contractSha256: string,
   authority: Readonly<RuntimeTargetAuthorityV1>,
 ): boolean {
   try {
-    validateExecutionTarget(value, contractId, contractSha256, authority);
+    validateExecutionTarget(value, contractId, authority);
     const target = value as RuntimeExecutionTargetV1;
     for (const key of RUNTIME_ROUTE_DESCRIPTOR_KEYS) {
       if (target.routeDescriptor[key] !== authority.routeDescriptor[key]) {
@@ -1879,7 +1557,6 @@ export const DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1: RuntimeTargetResolverV1 =
     exactRuntimeTargetMatchesAuthority(
       value,
       DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-      CONTRACT_SHA256,
       DEEPSEEK_TARGET_AUTHORITY,
     );
 
@@ -1889,7 +1566,6 @@ export const DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1: RuntimeTargetResolverV1 =
       exactRuntimeTargetMatchesAuthority(
         value,
         DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-        DEEPSEEK_MIMO_CONTRACT_SHA256,
         targetAuthority,
       ),
     );

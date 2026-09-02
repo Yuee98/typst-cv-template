@@ -29,7 +29,6 @@ interface RouteFixture {
   priceVersionId: string;
   policyVersionId: string;
   runtimeContractId: string;
-  runtimeContractSha256: string;
   displayDisclosureKey: string;
 }
 
@@ -107,7 +106,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
     expect(runOwnerSql(String.raw`
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, timezone, rules, default_profile_version_id,
-        legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+        legal_bundle_version, runtime_contract_id, config_sha256
       ) values (
         '${policyVersionId}', 'test.ledger.${label}.${crypto.randomUUID()}', 1, 'Asia/Shanghai',
         pg_catalog.jsonb_build_object(
@@ -115,7 +114,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
           'defaultRoute', pg_catalog.jsonb_build_object('profileVersionId', '${profileVersionId}', 'priceVersionId', '${priceVersionId}'),
           'windows', '[]'::jsonb
         ), '${profileVersionId}', '${LEGAL_BUNDLE_VERSION}',
-        '${runtime.runtimeContractId}', '${runtime.runtimeContractSha256}', '${"2".repeat(64)}'
+        '${runtime.runtimeContractId}', '${"2".repeat(64)}'
       );
     `).status).toBe(0);
     if (sealPrice) {
@@ -127,7 +126,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       priceVersionId,
       policyVersionId,
       runtimeContractId: runtime.runtimeContractId,
-      runtimeContractSha256: runtime.runtimeContractSha256,
       displayDisclosureKey: "mimo.official",
     };
   }
@@ -149,7 +147,6 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
       price_version_id: fixture.priceVersionId,
       legal_bundle_version: LEGAL_BUNDLE_VERSION,
       runtime_contract_id: fixture.runtimeContractId,
-      runtime_contract_sha256: fixture.runtimeContractSha256,
       gateway_kind: "direct_mimo",
       model_id: "fixture-model",
       wire_api_kind: "responses_v1",

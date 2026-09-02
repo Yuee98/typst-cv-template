@@ -52,7 +52,6 @@ describe("terms-acceptance window", () => {
       profileVersionId: "11111111-1111-4111-8111-111111111111",
       legalBundleVersion: "2026-08-23-multi-provider-v1",
       runtimeContractId: "runtime.deepseek-v2.v1",
-      runtimeContractSha256: "a".repeat(64),
     });
     expect(h.acceptCalls[0].legalBundleVersion).toBe(expectedRoute.legalBundleVersion);
     expect(h.flow().state.phase).toBe("loading");

@@ -32,7 +32,6 @@ const MIMO_AVAILABILITY_BODY: PolishAvailabilityResponse = {
     profileVersionId: "22222222-2222-4222-8222-222222222222",
     legalBundleVersion: "2026-08-23-multi-provider-v1",
     runtimeContractId: "runtime.mimo-v2.v1",
-    runtimeContractSha256: "b".repeat(64),
     displayDisclosure: {
       key: "mimo-cn-v1",
       providerName: "MiMo",
@@ -166,7 +165,6 @@ describe("usePolishFlow exact route assertion", () => {
       "legalBundleVersion",
       "profileVersionId",
       "runtimeContractId",
-      "runtimeContractSha256",
       "schemaVersion",
     ]);
     expect(request.expectedRoute).toEqual(

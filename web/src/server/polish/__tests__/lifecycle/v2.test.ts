@@ -16,7 +16,7 @@ import {
   parseRouteSnapshotV1,
   type ExpectedRouteV1,
 } from "../../lifecycle-v2-contract";
-import { DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1 } from "../../service-runtime-contract-v1";
+import { DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1 } from "../../service-runtime-contract-v1";
 import type { PolishInferenceRequestV2, PolishInferenceResultV2 } from "../../inference-v2";
 import type { PolishInferenceProviderV2 } from "../../orchestrator";
 import {
@@ -54,7 +54,6 @@ const EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
   profileVersionId: ROUTE.profileVersionId,
   legalBundleVersion: ROUTE.legalBundleVersion,
   runtimeContractId: ROUTE.runtimeContractId,
-  runtimeContractSha256: ROUTE.runtimeContractSha256,
 });
 const REQUEST: PolishRequest = {
   clientRequestId: CLIENT_REQUEST_ID,
@@ -612,9 +611,9 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
     });
   });
 
-  it("zero-child releases a route that mismatches the reviewed runtime authority", async () => {
+  it("zero-child releases a route bound to a different reviewed runtime ID", async () => {
     const harness = createHarness({
-      runtimeTargetResolver: DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
+      runtimeTargetResolver: DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1,
     });
 
     const result = await executePolishLifecycleV2(input(harness.controller), harness.deps);

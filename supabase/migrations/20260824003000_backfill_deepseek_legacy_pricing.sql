@@ -265,7 +265,7 @@ begin
         v_request.config_generation, v_request.routing_policy_version_id,
         v_request.profile_version_id, v_request.price_version_id,
         v_request.legal_bundle_version, v_request.runtime_contract_id,
-        v_request.runtime_contract_sha256, v_request.gateway_kind,
+        v_request.gateway_kind,
         v_request.model_id, v_request.wire_api_kind,
         v_request.display_disclosure_key, v_request.usage_schema_version,
         v_request.cost_basis, v_request.input_total_tokens,
@@ -431,7 +431,7 @@ begin
        or pg_catalog.num_nonnulls(
          v_request.config_generation, v_request.routing_policy_version_id,
          v_request.legal_bundle_version, v_request.runtime_contract_id,
-         v_request.runtime_contract_sha256, v_request.gateway_kind,
+         v_request.gateway_kind,
          v_request.model_id, v_request.wire_api_kind,
          v_request.display_disclosure_key
        ) <> 0
@@ -498,12 +498,12 @@ begin
   if tg_op = 'UPDATE' and old.route_schema_version is not null and (
     new.route_schema_version, new.config_generation,
     new.routing_policy_version_id, new.profile_version_id, new.price_version_id,
-    new.legal_bundle_version, new.runtime_contract_id, new.runtime_contract_sha256,
+    new.legal_bundle_version, new.runtime_contract_id,
     new.gateway_kind, new.model_id, new.wire_api_kind, new.display_disclosure_key
   ) is distinct from (
     old.route_schema_version, old.config_generation,
     old.routing_policy_version_id, old.profile_version_id, old.price_version_id,
-    old.legal_bundle_version, old.runtime_contract_id, old.runtime_contract_sha256,
+    old.legal_bundle_version, old.runtime_contract_id,
     old.gateway_kind, old.model_id, old.wire_api_kind, old.display_disclosure_key
   ) then
     raise exception 'ai_request_ledger route binding is immutable once frozen'
@@ -520,7 +520,7 @@ begin
      and new.price_version_id is not null
      and pg_catalog.num_nonnulls(
        new.config_generation, new.routing_policy_version_id,
-       new.legal_bundle_version, new.runtime_contract_id, new.runtime_contract_sha256,
+       new.legal_bundle_version, new.runtime_contract_id,
        new.gateway_kind, new.model_id, new.wire_api_kind, new.display_disclosure_key
      ) = 0
      and new.usage_schema_version is not distinct from 'legacy_v1'

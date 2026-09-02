@@ -43,8 +43,8 @@ describe("CFG-003 G4 weekday routing policy seed", () => {
     expect(rollback.policyKey).toBe("polish.deepseek-only.weekday.rollback.v1");
     expect(g4.rules.windows.flatMap((window) => window.weekdays)).toEqual([1, 2, 3, 4, 5, 1, 2, 3, 4, 5]);
     expect(rollback.rules.windows.flatMap((window) => window.weekdays)).toEqual([1, 2, 3, 4, 5, 1, 2, 3, 4, 5]);
-    expect(g4.configSha256).toBe("7580342cc3c61695d1c57e8c57b320acb3e54a471f4e848b0632afd1191c0567");
-    expect(rollback.configSha256).toBe("c98c1aa90df26e1392ae0258c99d284e273d4e519c13356fcfd4a7d7fe67b418");
+    expect(g4.configSha256).toBe("1c5aeb412e4e75f4452cae4a97c76a405cfeb6d081017564cd19decb0d271523");
+    expect(rollback.configSha256).toBe("5db0f3d5850a0836a476ee76cb47b73e28741ee19017e5f23c9f51c3adaa9f3b");
   });
 
   it.each(Array.from({ length: 7 }, (_, index) => index))(

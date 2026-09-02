@@ -29,7 +29,6 @@ const EXPECTED_ROUTE = {
   profileVersionId: "00000000-0000-4000-8000-000000000011",
   legalBundleVersion: "2026-08-23-multi-provider-v1",
   runtimeContractId: "deepseek-g2-runtime-v1",
-  runtimeContractSha256: "a".repeat(64),
 } as const;
 
 function requestBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -207,7 +206,7 @@ describe("POST /api/polish — V2 HTTP boundary", () => {
         },
       }),
       requestBody({
-        expectedRoute: { ...EXPECTED_ROUTE, runtimeContractSha256: null },
+        expectedRoute: { ...EXPECTED_ROUTE, runtimeContractId: null },
       }),
       requestBody({
         expectedRoute: { ...EXPECTED_ROUTE, provider: "deepseek" },

@@ -324,8 +324,6 @@ export const polishRouteIdentifierSchema = z
   .string()
   .regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
 
-export const polishRuntimeContractSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
-
 /** Canonical lowercase UUID text used by every V2 route identity. */
 export const polishCanonicalUuidSchema = z
   .string()
@@ -342,7 +340,6 @@ export const polishExpectedRouteSchema = z.strictObject({
   profileVersionId: polishCanonicalUuidSchema,
   legalBundleVersion: polishRouteIdentifierSchema,
   runtimeContractId: polishRouteIdentifierSchema,
-  runtimeContractSha256: polishRuntimeContractSha256Schema,
 });
 
 /** Exact POST /api/polish wire body for the DB-authoritative V2 lifecycle. */
@@ -364,7 +361,6 @@ const polishAvailabilityEnabledSchema = z.strictObject({
   profileVersionId: polishCanonicalUuidSchema,
   legalBundleVersion: polishRouteIdentifierSchema,
   runtimeContractId: polishRouteIdentifierSchema,
-  runtimeContractSha256: polishRuntimeContractSha256Schema,
   displayDisclosure: polishAvailabilityDisplayDisclosureSchema,
   termsAccepted: z.boolean(),
 });
@@ -376,7 +372,6 @@ const polishAvailabilityDisabledSchema = z.strictObject({
   profileVersionId: z.null(),
   legalBundleVersion: z.null(),
   runtimeContractId: z.null(),
-  runtimeContractSha256: z.null(),
   displayDisclosure: z.null(),
   termsAccepted: z.literal(false),
 });
@@ -402,7 +397,6 @@ export function polishExpectedRouteFromAvailability(
     profileVersionId: availability.profileVersionId,
     legalBundleVersion: availability.legalBundleVersion,
     runtimeContractId: availability.runtimeContractId,
-    runtimeContractSha256: availability.runtimeContractSha256,
   });
 }
 

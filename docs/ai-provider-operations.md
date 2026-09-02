@@ -27,8 +27,8 @@ redeploy is delayed, while the DB switch is evaluated by the request lifecycle.
 ## 2. Authority boundaries
 
 The database route snapshot is the authority for the selected immutable
-profile version, price version, routing policy, legal bundle, and runtime
-contract ID/hash. A retry inherits its reservation snapshot; it does not look
+profile version, price version, routing policy, legal bundle, and versioned
+runtime contract ID. A retry inherits its reservation snapshot; it does not look
 up a newer route. A request start rechecks the kill switch, allowlist, global
 capacity, and frozen-profile availability and fails closed when any is
 unavailable.
@@ -47,15 +47,16 @@ different provider.
 ## 3. Preconditions before any lifecycle promotion
 
 Before an authorized operator considers a new provider, profile, price, or
-policy edge, obtain a current reviewed source commit and record the exact
-runtime-contract ID/hash that covers the proposed profile's legal manifest.
+policy edge, obtain current reviewed-source audit evidence and record the exact
+versioned runtime-contract ID that covers the proposed profile's legal manifest.
 Lifecycle operations collectively require the following checks where their
 operation applies:
 
 - `assert_ai_routing_lifecycle_evidence_v1` requires a sealed matching runtime
-  root; a `sha1:` reviewed source commit OID whose recorded source SHA-256
-  matches the runtime-contract SHA-256; a nonempty actor and reason; and a
-  non-future recheck timestamp plus its SHA-256;
+  root; syntactically valid reviewed source commit/SHA audit metadata; a
+  nonempty actor and reason; and a non-future recheck timestamp plus its
+  SHA-256. Reviewed-source metadata records the operator's evidence but is not
+  the runtime identity and does not impose Git ancestry;
 - operation-specific profile, price, policy, and runtime/legal validators
   require an unretired profile/version, current source evidence, exact
   price/component facts where sealing applies, sealed legal/runtime coverage,
@@ -85,23 +86,23 @@ invocation payload or direct table-update recipe.
 
 | Function | Exact signature |
 | --- | --- |
-| Policy transition | `public.transition_ai_routing_policy_v2(uuid,text,text,text,text,text,text,text,timestamptz,text)` |
-| Set active policy pointer | `public.set_ai_routing_policy_pointer_v1(uuid,text,text,text,text,text,text,timestamptz,text)` |
-| Clear active policy pointer | `public.clear_ai_routing_policy_pointer_v1(uuid,text,text,text,text,text,text,timestamptz,text)` |
-| Retire profile version | `public.retire_ai_provider_profile_version_v1(uuid,text,text,text,text,text,text,timestamptz,text)` |
-| Retire profile | `public.retire_ai_provider_profile_v1(uuid,text,text,text,text,text,text,timestamptz,text)` |
-| Close price version | `public.close_ai_price_version_v1(uuid,timestamptz,uuid,text,text,text,text,text,text,timestamptz,text)` |
-| Seal price for activation | `public.seal_ai_price_for_activation_v1(uuid,text,text,text,timestamptz,timestamptz,jsonb,jsonb,text,text,text,text,text,text,timestamptz,text)` |
-| Profile-version transition | `public.transition_ai_provider_profile_version_v1(uuid,text,text,text,text,text,text,text,timestamptz,text)` |
-| Create routing-policy version | `public.create_ai_routing_policy_version_v1(uuid,text,integer,text,jsonb,uuid,text,text,text,text,text,text,text,text,timestamptz,text)` |
+| Policy transition | `public.transition_ai_routing_policy_v2(uuid,text,text,text,text,text,text,timestamptz,text)` |
+| Set active policy pointer | `public.set_ai_routing_policy_pointer_v1(uuid,text,text,text,text,text,timestamptz,text)` |
+| Clear active policy pointer | `public.clear_ai_routing_policy_pointer_v1(uuid,text,text,text,text,text,timestamptz,text)` |
+| Retire profile version | `public.retire_ai_provider_profile_version_v1(uuid,text,text,text,text,text,timestamptz,text)` |
+| Retire profile | `public.retire_ai_provider_profile_v1(uuid,text,text,text,text,text,timestamptz,text)` |
+| Close price version | `public.close_ai_price_version_v1(uuid,timestamptz,uuid,text,text,text,text,text,timestamptz,text)` |
+| Seal price for activation | `public.seal_ai_price_for_activation_v1(uuid,text,text,text,timestamptz,timestamptz,jsonb,jsonb,text,text,text,text,text,timestamptz,text)` |
+| Profile-version transition | `public.transition_ai_provider_profile_version_v1(uuid,text,text,text,text,text,text,timestamptz,text)` |
+| Create routing-policy version | `public.create_ai_routing_policy_version_v1(uuid,text,integer,text,jsonb,uuid,text,text,text,text,text,text,text,timestamptz,text)` |
 
 Every public lifecycle operation returns an audit UUID. The append-only audit
 records the operation, the affected policy/profile/profile-version/price IDs,
 status or pointer/generation/retirement/price-seal deltas as applicable, the
-runtime ID/hash, actor, reason, reviewed source commit OID, reviewed source
+runtime ID, actor, reason, reviewed source commit OID, reviewed source
 SHA-256, rechecked timestamp/SHA-256, occurrence timestamp, and transaction
 ID. The shared evidence inputs are therefore:
-`runtime_contract_id`, `runtime_contract_sha256`, `actor`, `reason`,
+`runtime_contract_id`, `actor`, `reason`,
 `reviewed_source_commit_oid`, `reviewed_source_sha256`, `rechecked_at`, and
 `rechecked_sha256`.
 
@@ -111,9 +112,8 @@ the post-change runtime checks below.
 
 ## 5. Current runtime and external evidence
 
-The executable combined runtime is
-`runtime.deepseek-v2-mimo-v2.5-pro.v2`, hash
-`510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c`. Its
+The executable combined runtime is the immutable, versioned code ID
+`runtime.deepseek-v2-mimo-v2.5-pro.v2`. Its
 code-owned MiMo Responses adapter is available, but MiMo
 (`mimo.cn.mimo-v2.5-pro.responses.v1`) remains a dark, unsealed draft and is
 not active by default. A qualified DB-013 operator may promote it only after
@@ -121,11 +121,12 @@ the current evidence, seal, validation, and human-approval gates below have
 passed. There is no automatic fallback and no hosted activation authorization.
 
 `docs/ai-provider-contract.md` is an immutable reviewed service/legal evidence
-blob for the current manifest and runtime roots. Its embedded price prose is a
-historical snapshot and is not activation-price authority; do not edit it in
-place or infer current rates/windows from it. Current activation facts come
-only from the official recheck below, the exact seeded price row, and DB-013's
-matching seal evidence.
+blob for the current manifest and runtime roots. Its embedded price prose and
+legacy runtime-hash mechanics are historical snapshots; do not edit it in
+place or treat either as current activation/runtime authority. The successor
+ID-only identity contract is `docs/ai-runtime-execution-contract.md`. Current
+activation facts come only from the official recheck below, the exact seeded
+price row, and DB-013's matching seal evidence.
 
 The current external price evidence that must be rechecked before local
 activation is:
@@ -223,12 +224,12 @@ and preserve evidence for all of the following before asking a human to enable
 or promote anything:
 
 1. The returned append-only audit row, including its audit ID, operation,
-   actor/reason, reviewed source commit/SHA, recheck time/SHA, runtime pair,
+   actor/reason, reviewed source commit/SHA, recheck time/SHA, runtime ID,
    and transaction ID.
 2. The active `ai_feature_config` snapshot: `ai_polish_enabled`, active policy
    pointer, configuration generation, allowlist, and global daily limit.
 3. The selected policy projection: status, timezone/rules, exact profile and
-   price references, legal bundle, runtime ID/hash, and policy config hash.
+   price references, legal bundle, runtime ID, and policy config hash.
 4. The selected profile projection: status/not-retired state, code-registered
    aliases and adapter/wire API/model, capability/cache/calculator/legal and
    disclosure identifiers, plus its immutable config hash.
@@ -237,9 +238,9 @@ or promote anything:
    `components_sealed_at` where activation requires it.
 6. The sealed legal-bundle and runtime-root/target membership projections,
    proving the selected profile's manifest and route descriptor are covered by
-   the exact runtime ID/hash.
+   the exact runtime ID.
 7. A fresh authenticated availability read and, when separately approved, an
-   API smoke that proves the returned route, disclosure, runtime pair, and
+   API smoke that proves the returned route, disclosure, runtime ID, and
    accounting observations match the selected snapshot. Do not expose
    credentials, raw provider bodies, or user content in that evidence.
 

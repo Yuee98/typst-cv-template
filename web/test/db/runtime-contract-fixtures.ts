@@ -35,12 +35,14 @@ export interface OwnerSqlResult {
 
 export interface LifecycleEvidenceRoot {
   reviewedSourceCommitOid: string;
+  reviewedSourceSha256: string;
   recheckedAt: string;
 }
 
 export interface LifecycleEvidenceRootInput {
   runtimeContractId: string;
-  runtimeContractSha256: string;
+  reviewedSourceCommitOid?: string;
+  reviewedSourceSha256?: string;
   priceVersionIds?: readonly string[];
 }
 
@@ -85,8 +87,16 @@ export function readLifecycleEvidenceRoot(
   if (!CODE_ID.test(input.runtimeContractId)) {
     throw new Error("lifecycle evidence runtime contract id is invalid");
   }
-  if (!LOWER_HEX_64.test(input.runtimeContractSha256)) {
-    throw new Error("lifecycle evidence runtime contract hash is invalid");
+  const reviewedSourceCommitOid =
+    input.reviewedSourceCommitOid ??
+    "sha1:0123456789abcdef0123456789abcdef01234567";
+  if (!/^sha1:[0-9a-f]{40}$/u.test(reviewedSourceCommitOid)) {
+    throw new Error("lifecycle reviewed source commit oid is invalid");
+  }
+  const reviewedSourceSha256 =
+    input.reviewedSourceSha256 ?? sha256(reviewedSourceCommitOid);
+  if (!LOWER_HEX_64.test(reviewedSourceSha256)) {
+    throw new Error("lifecycle reviewed source hash is invalid");
   }
   const requestedPriceVersionIds = input.priceVersionIds ?? [];
   const priceVersionIds = [...new Set(requestedPriceVersionIds)];
@@ -123,11 +133,10 @@ export function readLifecycleEvidenceRoot(
     \pset tuples_only on
     with evidence as materialized (
       select
-        root.reviewed_source_commit_oid,
+        ${sqlLiteral(reviewedSourceCommitOid)}::text as reviewed_source_commit_oid,
         ${recheckedAt} as rechecked_at
       from public.ai_service_runtime_contract_versions as root${priceJoin}
       where root.runtime_contract_id = ${sqlLiteral(input.runtimeContractId)}
-        and root.runtime_contract_sha256 = ${sqlLiteral(input.runtimeContractSha256)}
     ), waited as materialized (
       select pg_catalog.pg_sleep(
         case
@@ -146,6 +155,7 @@ export function readLifecycleEvidenceRoot(
     )
     select pg_catalog.jsonb_build_object(
       'reviewedSourceCommitOid', evidence.reviewed_source_commit_oid,
+      'reviewedSourceSha256', ${sqlLiteral(reviewedSourceSha256)},
       'recheckedAt', evidence.rechecked_at,
       'observedAt', pg_catalog.clock_timestamp(),
       'ready', evidence.rechecked_at <= pg_catalog.clock_timestamp()
@@ -166,10 +176,13 @@ export function readLifecycleEvidenceRoot(
     ready?: unknown;
     recheckedAt?: unknown;
     reviewedSourceCommitOid?: unknown;
+    reviewedSourceSha256?: unknown;
   };
   if (
     typeof parsed.reviewedSourceCommitOid !== "string" ||
     !/^sha1:[0-9a-f]{40}$/u.test(parsed.reviewedSourceCommitOid) ||
+    typeof parsed.reviewedSourceSha256 !== "string" ||
+    !LOWER_HEX_64.test(parsed.reviewedSourceSha256) ||
     typeof parsed.recheckedAt !== "string" ||
     Number.isNaN(Date.parse(parsed.recheckedAt)) ||
     typeof parsed.observedAt !== "string" ||
@@ -181,6 +194,7 @@ export function readLifecycleEvidenceRoot(
 
   return {
     reviewedSourceCommitOid: parsed.reviewedSourceCommitOid,
+    reviewedSourceSha256: parsed.reviewedSourceSha256,
     recheckedAt: parsed.recheckedAt,
   };
 }
@@ -270,7 +284,7 @@ export function transitionPolicyAsDatabaseOwner(
 
 export interface SyntheticRuntimeContract {
   runtimeContractId: string;
-  runtimeContractSha256: string;
+  reviewedSourceSha256: string;
   runtimeTargetId: string;
   runtimeTargetSha256: string;
   profileKey: string;
@@ -294,8 +308,8 @@ export function authorSyntheticRuntimeContract(options: {
   const runtimeContractId = `test-runtime-contract.${suffix}`;
   const runtimeTargetId = `test-runtime-target.${suffix}`;
   const routeDescriptorId = `test-route-descriptor.${suffix}`;
-  const runtimeContractSha256 = sha256(runtimeContractId);
   const runtimeTargetSha256 = sha256(runtimeTargetId);
+  const reviewedSourceSha256 = sha256(`reviewed-source:${runtimeContractId}`);
   const routeDescriptorSha256 = sha256(routeDescriptorId);
   const runtimeTargetSetSha256 = sha256(
     `${Buffer.byteLength(runtimeTargetId, "utf8")}:${runtimeTargetId}:${runtimeTargetSha256}`,
@@ -314,13 +328,13 @@ export function authorSyntheticRuntimeContract(options: {
   }
   for (const value of [
     manifestSha256,
-    runtimeContractSha256,
+    reviewedSourceSha256,
     runtimeTargetSha256,
     routeDescriptorSha256,
     runtimeTargetSetSha256,
   ]) {
     if (!LOWER_HEX_64.test(value)) {
-      throw new Error("synthetic runtime hash is invalid");
+      throw new Error("synthetic descriptor or audit hash is invalid");
     }
   }
 
@@ -347,15 +361,11 @@ export function authorSyntheticRuntimeContract(options: {
 
     insert into public.ai_service_runtime_contract_versions (
       runtime_contract_id,
-      runtime_contract_sha256,
-      reviewed_source_commit_oid,
       legal_bundle_version,
       bundle_contract_sha256,
       runtime_target_set_sha256
     ) values (
       ${sqlLiteral(runtimeContractId)},
-      ${sqlLiteral(runtimeContractSha256)},
-      'sha1:0123456789abcdef0123456789abcdef01234567',
       ${sqlLiteral(INITIAL_LEGAL_BUNDLE_VERSION)},
       ${sqlLiteral(INITIAL_LEGAL_BUNDLE_SHA256)},
       ${sqlLiteral(runtimeTargetSetSha256)}
@@ -363,7 +373,6 @@ export function authorSyntheticRuntimeContract(options: {
 
     insert into public.ai_service_runtime_contract_targets (
       runtime_contract_id,
-      runtime_contract_sha256,
       runtime_target_id,
       runtime_target_sha256,
       profile_key,
@@ -373,7 +382,6 @@ export function authorSyntheticRuntimeContract(options: {
       route_descriptor_sha256
     ) values (
       ${sqlLiteral(runtimeContractId)},
-      ${sqlLiteral(runtimeContractSha256)},
       ${sqlLiteral(runtimeTargetId)},
       ${sqlLiteral(runtimeTargetSha256)},
       ${sqlLiteral(profileKey)},
@@ -385,14 +393,13 @@ export function authorSyntheticRuntimeContract(options: {
 
     update public.ai_service_runtime_contract_versions
     set sealed_at = greatest(clock_timestamp(), created_at)
-    where runtime_contract_id = ${sqlLiteral(runtimeContractId)}
-      and runtime_contract_sha256 = ${sqlLiteral(runtimeContractSha256)};
+    where runtime_contract_id = ${sqlLiteral(runtimeContractId)};
     commit;
   `);
 
   return {
     runtimeContractId,
-    runtimeContractSha256,
+    reviewedSourceSha256,
     runtimeTargetId,
     runtimeTargetSha256,
     profileKey,
@@ -411,9 +418,9 @@ export interface SyntheticRuntimeTargetInput {
 
 export interface SyntheticRuntimeContractSet {
   runtimeContractId: string;
-  runtimeContractSha256: string;
+  reviewedSourceSha256: string;
   targets: ReadonlyArray<
-    Omit<SyntheticRuntimeContract, "runtimeContractId" | "runtimeContractSha256">
+    Omit<SyntheticRuntimeContract, "runtimeContractId" | "reviewedSourceSha256">
   >;
 }
 
@@ -429,7 +436,7 @@ export function authorSyntheticRuntimeContractSet(
 
   const suffix = crypto.randomUUID();
   const runtimeContractId = `test-runtime-contract-set.${suffix}`;
-  const runtimeContractSha256 = sha256(runtimeContractId);
+  const reviewedSourceSha256 = sha256(`reviewed-source:${runtimeContractId}`);
   const targets = inputs.map((input, index) => {
     const runtimeTargetId = `test-runtime-target-set.${index}.${suffix}`;
     const routeDescriptorId = `test-route-descriptor-set.${index}.${suffix}`;
@@ -471,8 +478,8 @@ export function authorSyntheticRuntimeContractSet(
     }
   }
   for (const value of [
-    runtimeContractSha256,
     runtimeTargetSetSha256,
+    reviewedSourceSha256,
     ...targets.flatMap(
       ({ manifestSha256, runtimeTargetSha256, routeDescriptorSha256 }) => [
         manifestSha256,
@@ -482,7 +489,7 @@ export function authorSyntheticRuntimeContractSet(
     ),
   ]) {
     if (!LOWER_HEX_64.test(value)) {
-      throw new Error("synthetic runtime hash is invalid");
+      throw new Error("synthetic descriptor or audit hash is invalid");
     }
   }
 
@@ -503,7 +510,6 @@ export function authorSyntheticRuntimeContractSet(
     .map(
       (target) => String.raw`(
         ${sqlLiteral(runtimeContractId)},
-        ${sqlLiteral(runtimeContractSha256)},
         ${sqlLiteral(target.runtimeTargetId)},
         ${sqlLiteral(target.runtimeTargetSha256)},
         ${sqlLiteral(target.profileKey)},
@@ -530,15 +536,11 @@ export function authorSyntheticRuntimeContractSet(
 
     insert into public.ai_service_runtime_contract_versions (
       runtime_contract_id,
-      runtime_contract_sha256,
-      reviewed_source_commit_oid,
       legal_bundle_version,
       bundle_contract_sha256,
       runtime_target_set_sha256
     ) values (
       ${sqlLiteral(runtimeContractId)},
-      ${sqlLiteral(runtimeContractSha256)},
-      'sha1:0123456789abcdef0123456789abcdef01234567',
       ${sqlLiteral(INITIAL_LEGAL_BUNDLE_VERSION)},
       ${sqlLiteral(INITIAL_LEGAL_BUNDLE_SHA256)},
       ${sqlLiteral(runtimeTargetSetSha256)}
@@ -546,7 +548,6 @@ export function authorSyntheticRuntimeContractSet(
 
     insert into public.ai_service_runtime_contract_targets (
       runtime_contract_id,
-      runtime_contract_sha256,
       runtime_target_id,
       runtime_target_sha256,
       profile_key,
@@ -558,14 +559,13 @@ export function authorSyntheticRuntimeContractSet(
 
     update public.ai_service_runtime_contract_versions
     set sealed_at = greatest(clock_timestamp(), created_at)
-    where runtime_contract_id = ${sqlLiteral(runtimeContractId)}
-      and runtime_contract_sha256 = ${sqlLiteral(runtimeContractSha256)};
+    where runtime_contract_id = ${sqlLiteral(runtimeContractId)};
     commit;
   `);
 
   return {
     runtimeContractId,
-    runtimeContractSha256,
+    reviewedSourceSha256,
     targets,
   };
 }

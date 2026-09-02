@@ -59,7 +59,6 @@ interface Fixture {
   priceVersionId: string;
   policyVersionId: string;
   runtimeContractId: string;
-  runtimeContractSha256: string;
   runtimeTargetId: string;
   sourceUrl: string;
   createdPolicyIds: string[];
@@ -178,11 +177,11 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       values ('${priceVersionId}', 'input_standard', 1), ('${priceVersionId}', 'input_cache_read', 1), ('${priceVersionId}', 'output', 1);
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, status, timezone, rules, default_profile_version_id,
-        legal_bundle_version, runtime_contract_id, runtime_contract_sha256, config_sha256
+        legal_bundle_version, runtime_contract_id, config_sha256
       ) values (
         '${policyVersionId}', 'db013.control.${suffix}', 1, 'draft', 'Asia/Shanghai',
         ${rulesSql}, '${profileVersionId}', '${INITIAL_LEGAL_BUNDLE_VERSION}',
-        '${runtime.runtimeContractId}', '${runtime.runtimeContractSha256}', '${"d".repeat(64)}'
+        '${runtime.runtimeContractId}', '${"d".repeat(64)}'
       );
       commit;`);
     expect(result.status).toBe(0);
@@ -193,7 +192,6 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       priceVersionId,
       policyVersionId,
       runtimeContractId: runtime.runtimeContractId,
-      runtimeContractSha256: runtime.runtimeContractSha256,
       runtimeTargetId: runtime.runtimeTargetId,
       sourceUrl,
       createdPolicyIds: [],
@@ -207,14 +205,12 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
   async function evidence(f: Fixture): Promise<Record<string, string>> {
     const root = readLifecycleEvidenceRoot({
       runtimeContractId: f.runtimeContractId,
-      runtimeContractSha256: f.runtimeContractSha256,
       priceVersionIds: [f.priceVersionId],
     });
     return {
       p_runtime_contract_id: f.runtimeContractId,
-      p_runtime_contract_sha256: f.runtimeContractSha256,
       p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
-      p_reviewed_source_sha256: f.runtimeContractSha256,
+      p_reviewed_source_sha256: root.reviewedSourceSha256,
       p_rechecked_at: root.recheckedAt,
       ...EVIDENCE,
     };
@@ -392,12 +388,12 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
         'serviceHotColumns', (select pg_catalog.jsonb_object_agg(column_name, pg_catalog.has_column_privilege('service_role', 'public.ai_feature_config', column_name, 'update')) from information_schema.columns where table_schema='public' and table_name='ai_feature_config' and column_name in ('ai_polish_enabled','global_daily_limit','enabled_user_allowlist','active_routing_policy_version_id','config_generation','routing_updated_at','routing_updated_by','routing_change_reason','updated_at','id')),
         'servicePrivateExecute', pg_catalog.jsonb_build_object(
           'guard_ai_routing_lifecycle_audit', pg_catalog.has_function_privilege('service_role', 'public.guard_ai_routing_lifecycle_audit()'::regprocedure, 'execute'),
-          'assert_ai_routing_lifecycle_evidence_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_evidence_v1(text,text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute'),
+          'assert_ai_routing_lifecycle_evidence_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_evidence_v1(text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute'),
           'assert_ai_routing_lifecycle_no_policy_reference_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_no_policy_reference_v1(text,uuid,timestamptz)'::regprocedure, 'execute'),
           'assert_ai_routing_lifecycle_selected_price_evidence_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_selected_price_evidence_v1(public.ai_routing_policy_versions,timestamptz)'::regprocedure, 'execute'),
           'lock_ai_routing_lifecycle_profile_prices_v1', pg_catalog.has_function_privilege('service_role', 'public.lock_ai_routing_lifecycle_profile_prices_v1(uuid,uuid,timestamptz)'::regprocedure, 'execute'),
-          'assert_ai_routing_lifecycle_runtime_profile_coverage_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_runtime_profile_coverage_v1(text,text,uuid,uuid)'::regprocedure, 'execute'),
-          'insert_ai_routing_lifecycle_audit_v1', pg_catalog.has_function_privilege('service_role', 'public.insert_ai_routing_lifecycle_audit_v1(text,uuid,uuid,uuid,uuid,text,text,uuid,uuid,bigint,bigint,timestamptz,timestamptz,timestamptz,timestamptz,text,text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute')
+          'assert_ai_routing_lifecycle_runtime_profile_coverage_v1', pg_catalog.has_function_privilege('service_role', 'public.assert_ai_routing_lifecycle_runtime_profile_coverage_v1(text,uuid,uuid)'::regprocedure, 'execute'),
+          'insert_ai_routing_lifecycle_audit_v1', pg_catalog.has_function_privilege('service_role', 'public.insert_ai_routing_lifecycle_audit_v1(text,uuid,uuid,uuid,uuid,text,text,uuid,uuid,bigint,bigint,timestamptz,timestamptz,timestamptz,timestamptz,text,text,text,text,text,timestamptz,text,timestamptz)'::regprocedure, 'execute')
         )
       )::text;
     `) as Record<string, unknown>;
@@ -455,47 +451,47 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
       {
         name: "clear_ai_routing_policy_pointer_v1",
         arguments:
-          "p_expected_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_expected_policy_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "close_ai_price_version_v1",
         arguments:
-          "p_price_version_id uuid, p_valid_to timestamp with time zone, p_successor_price_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_price_version_id uuid, p_valid_to timestamp with time zone, p_successor_price_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "create_ai_routing_policy_version_v1",
         arguments:
-          "p_policy_version_id uuid, p_policy_key text, p_version integer, p_timezone text, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_config_sha256 text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_policy_version_id uuid, p_policy_key text, p_version integer, p_timezone text, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_config_sha256 text, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "retire_ai_provider_profile_v1",
         arguments:
-          "p_profile_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_profile_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "retire_ai_provider_profile_version_v1",
         arguments:
-          "p_profile_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_profile_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "seal_ai_price_for_activation_v1",
         arguments:
-          "p_price_version_id uuid, p_rechecked_source_url text, p_rechecked_currency text, p_rechecked_calculator_kind text, p_rechecked_provider_effective_from timestamp with time zone, p_rechecked_provider_effective_to timestamp with time zone, p_rechecked_parameters jsonb, p_rechecked_components jsonb, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_price_version_id uuid, p_rechecked_source_url text, p_rechecked_currency text, p_rechecked_calculator_kind text, p_rechecked_provider_effective_from timestamp with time zone, p_rechecked_provider_effective_to timestamp with time zone, p_rechecked_parameters jsonb, p_rechecked_components jsonb, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "set_ai_routing_policy_pointer_v1",
         arguments:
-          "p_policy_version_id uuid, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_policy_version_id uuid, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "transition_ai_provider_profile_version_v1",
         arguments:
-          "p_profile_version_id uuid, p_to_status text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_profile_version_id uuid, p_to_status text, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
       {
         name: "transition_ai_routing_policy_v2",
         arguments:
-          "p_policy_version_id uuid, p_to_status text, p_runtime_contract_id text, p_runtime_contract_sha256 text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
+          "p_policy_version_id uuid, p_to_status text, p_runtime_contract_id text, p_actor text, p_reason text, p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_rechecked_at timestamp with time zone, p_rechecked_sha256 text",
       },
     ]);
     expect(actual.servicePrivateExecute).toEqual({
@@ -818,11 +814,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
               and audit.old_components_sealed_at is null
               and audit.new_components_sealed_at = price.components_sealed_at
               and audit.runtime_contract_id = '${f.runtimeContractId}'
-              and audit.runtime_contract_sha256 = '${f.runtimeContractSha256}'
               and audit.actor = '${EVIDENCE.p_actor}'
               and audit.reason = '${EVIDENCE.p_reason}'
               and audit.reviewed_source_commit_oid = '${ev.p_reviewed_source_commit_oid}'
-              and audit.reviewed_source_sha256 = '${f.runtimeContractSha256}'
+              and audit.reviewed_source_sha256 = '${ev.p_reviewed_source_sha256}'
               and audit.rechecked_at = '${ev.p_rechecked_at}'::timestamptz
               and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
               and audit.occurred_at is not null
@@ -853,14 +848,12 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     f.additionalRuntimeTargetIds.push(uncoveredRuntime.runtimeTargetId);
     const root = readLifecycleEvidenceRoot({
       runtimeContractId: uncoveredRuntime.runtimeContractId,
-      runtimeContractSha256: uncoveredRuntime.runtimeContractSha256,
       priceVersionIds: [f.priceVersionId],
     });
     const uncoveredEvidence = {
       p_runtime_contract_id: uncoveredRuntime.runtimeContractId,
-      p_runtime_contract_sha256: uncoveredRuntime.runtimeContractSha256,
       p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
-      p_reviewed_source_sha256: uncoveredRuntime.runtimeContractSha256,
+      p_reviewed_source_sha256: root.reviewedSourceSha256,
       p_rechecked_at: root.recheckedAt,
       ...EVIDENCE,
     };
@@ -951,7 +944,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
     expect((await lifecycleRpc("set_ai_routing_policy_pointer_v1", { p_policy_version_id: f.policyVersionId, ...ev, p_reason: `DB-013 pointer set ${crypto.randomUUID()}` })).error).toBeNull();
     expect((await lifecycleRpc("clear_ai_routing_policy_pointer_v1", { p_expected_policy_version_id: f.policyVersionId, ...ev, p_reason: `DB-013 pointer clear ${crypto.randomUUID()}` })).error).toBeNull();
 
-    const audit = ownerJson(`select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('operation', operation, 'old', old_config_generation, 'new', new_config_generation, 'runtime', runtime_contract_sha256, 'actor', actor) order by occurred_at) from public.ai_routing_lifecycle_audit where policy_version_id='${f.policyVersionId}'::uuid;`) as unknown[];
+    const audit = ownerJson(`select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('operation', operation, 'old', old_config_generation, 'new', new_config_generation, 'runtime', runtime_contract_id, 'actor', actor) order by occurred_at) from public.ai_routing_lifecycle_audit where policy_version_id='${f.policyVersionId}'::uuid;`) as unknown[];
     expect(audit).toHaveLength(4);
     expect(audit).toContainEqual(expect.objectContaining({ operation: "pointer_set", actor: EVIDENCE.p_actor }));
     expect(audit).toContainEqual(expect.objectContaining({ operation: "pointer_clear" }));
@@ -1030,11 +1023,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
             and audit.old_valid_to is null
             and audit.new_valid_to is null
             and audit.runtime_contract_id = '${profileFixture.runtimeContractId}'
-            and audit.runtime_contract_sha256 = '${profileFixture.runtimeContractSha256}'
             and audit.actor = '${EVIDENCE.p_actor}'
             and audit.reason = '${profileVersionReason}'
             and audit.reviewed_source_commit_oid = '${profileEvidence.p_reviewed_source_commit_oid}'
-            and audit.reviewed_source_sha256 = '${profileFixture.runtimeContractSha256}'
+            and audit.reviewed_source_sha256 = '${profileEvidence.p_reviewed_source_sha256}'
             and audit.rechecked_at = '${profileEvidence.p_rechecked_at}'::timestamptz
             and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
             and audit.occurred_at is not null
@@ -1061,11 +1053,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
             and audit.old_valid_to is null
             and audit.new_valid_to is null
             and audit.runtime_contract_id = '${profileFixture.runtimeContractId}'
-            and audit.runtime_contract_sha256 = '${profileFixture.runtimeContractSha256}'
             and audit.actor = '${EVIDENCE.p_actor}'
             and audit.reason = '${profileReason}'
             and audit.reviewed_source_commit_oid = '${profileEvidence.p_reviewed_source_commit_oid}'
-            and audit.reviewed_source_sha256 = '${profileFixture.runtimeContractSha256}'
+            and audit.reviewed_source_sha256 = '${profileEvidence.p_reviewed_source_sha256}'
             and audit.rechecked_at = '${profileEvidence.p_rechecked_at}'::timestamptz
             and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
             and audit.occurred_at is not null
@@ -1158,11 +1149,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle control (real DB)", () 
             and audit.old_valid_to is null
             and audit.new_valid_to = price.valid_to
             and audit.runtime_contract_id = '${priceFixture.runtimeContractId}'
-            and audit.runtime_contract_sha256 = '${priceFixture.runtimeContractSha256}'
             and audit.actor = '${EVIDENCE.p_actor}'
             and audit.reason = '${priceReason}'
             and audit.reviewed_source_commit_oid = '${priceEvidence.p_reviewed_source_commit_oid}'
-            and audit.reviewed_source_sha256 = '${priceFixture.runtimeContractSha256}'
+            and audit.reviewed_source_sha256 = '${priceEvidence.p_reviewed_source_sha256}'
             and audit.rechecked_at = '${priceEvidence.p_rechecked_at}'::timestamptz
             and audit.rechecked_sha256 = '${EVIDENCE.p_rechecked_sha256}'
             and audit.occurred_at is not null

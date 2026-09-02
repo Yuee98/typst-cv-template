@@ -37,7 +37,6 @@ const SENSITIVE_PREFIXES = [
 const MAX_POSTGRES_BIGINT = BigInt("9223372036854775807");
 const CANONICAL_DECIMAL_PATTERN = /^(0|[1-9][0-9]*)$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const LOWER_HEX_64_PATTERN = /^[0-9a-f]{64}$/;
 const TAG_PATTERN = /^hmac-sha256:[0-9a-f]{64}$/;
 
 const SUCCESS_KEYS = [
@@ -57,7 +56,6 @@ const ROUTE_KEYS = [
   "priceVersionId",
   "legalBundleVersion",
   "runtimeContractId",
-  "runtimeContractSha256",
   "gatewayKind",
   "modelId",
   "wireApiKind",
@@ -382,8 +380,6 @@ function validateRouteSnapshot(value: unknown): ReferenceRecord {
   requireCanonicalUuid(route.priceVersionId, "route_price_id");
   requireNonEmptyString(route.legalBundleVersion, "route_legal_bundle");
   requireNonEmptyString(route.runtimeContractId, "route_runtime_id");
-  const runtimeHash = requireString(route.runtimeContractSha256, "route_runtime_hash");
-  assertCondition(LOWER_HEX_64_PATTERN.test(runtimeHash), "route_runtime_hash");
   requireNonEmptyString(route.gatewayKind, "route_gateway");
   requireNonEmptyString(route.modelId, "route_model");
   requireNonEmptyString(route.wireApiKind, "route_wire_api");
@@ -964,12 +960,6 @@ describe("CTRL-010 execution-snapshot contract vectors", () => {
     requireRecord(leadingGenerationZero.routeSnapshot, "route").configGeneration = "042";
     expect(caughtCode(() => validateExecutionSnapshot(leadingGenerationZero))).toBe(
       "route_generation",
-    );
-
-    const uppercaseHash = deepseekSuccess();
-    requireRecord(uppercaseHash.routeSnapshot, "route").runtimeContractSha256 = "A".repeat(64);
-    expect(caughtCode(() => validateExecutionSnapshot(uppercaseHash))).toBe(
-      "route_runtime_hash",
     );
 
     const unknownReason = {

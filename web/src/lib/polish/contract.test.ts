@@ -577,7 +577,6 @@ describe("GET /api/polish/availability response schema", () => {
       profileVersionId: "223e4567-e89b-42d3-a456-426614174000",
       legalBundleVersion: "2026-08-23-multi-provider-v1",
       runtimeContractId: "deepseek-g2-runtime-v1",
-      runtimeContractSha256: "a".repeat(64),
       displayDisclosure: {
         key: "deepseek-official-v1",
         providerName: "DeepSeek",
@@ -596,7 +595,6 @@ describe("GET /api/polish/availability response schema", () => {
       profileVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       displayDisclosure: null,
       termsAccepted: false,
     },
@@ -666,7 +664,7 @@ describe("GET /api/polish/availability response schema", () => {
     }
   });
 
-  it("rejects malformed route identity, hash and disclosure values", () => {
+  it("rejects malformed route identity and disclosure values", () => {
     const variants = [
       { routingPolicyVersionId: "not-a-uuid" },
       { routingPolicyVersionId: VALID_UUID.toUpperCase() },
@@ -674,8 +672,6 @@ describe("GET /api/polish/availability response schema", () => {
       { profileVersionId: "223E4567-E89B-42D3-A456-426614174000" },
       { legalBundleVersion: "Uppercase" },
       { runtimeContractId: " contains-space" },
-      { runtimeContractSha256: "A".repeat(64) },
-      { runtimeContractSha256: "a".repeat(63) },
       { displayDisclosure: { ...ENABLED.availability.displayDisclosure, key: "unknown key" } },
       { displayDisclosure: { ...ENABLED.availability.displayDisclosure, providerName: "   " } },
       { displayDisclosure: { ...ENABLED.availability.displayDisclosure, modelName: "" } },
@@ -699,7 +695,6 @@ describe("GET /api/polish/availability response schema", () => {
       ["profileVersionId", VALID_UUID],
       ["legalBundleVersion", "bundle-v1"],
       ["runtimeContractId", "runtime-v1"],
-      ["runtimeContractSha256", "a".repeat(64)],
       ["displayDisclosure", ENABLED.availability.displayDisclosure],
       ["termsAccepted", true],
     ] as const) {
@@ -731,14 +726,13 @@ describe("GET /api/polish/availability response schema", () => {
       profileVersionId: "223e4567-e89b-42d3-a456-426614174000",
       legalBundleVersion: "2026-08-23-multi-provider-v1",
       runtimeContractId: "deepseek-g2-runtime-v1",
-      runtimeContractSha256: "a".repeat(64),
     });
     expect(expected).not.toHaveProperty("routingPolicyVersionId");
     expect(expected).not.toHaveProperty("displayDisclosure");
     expect(polishExpectedRouteFromAvailability(DISABLED.availability)).toBeNull();
   });
 
-  it("requires the exact six-field expected route on the V2 POST body", () => {
+  it("requires the exact five-field expected route on the V2 POST body", () => {
     const expectedRoute = polishExpectedRouteFromAvailability(ENABLED.availability);
     if (expectedRoute === null) throw new Error("enabled fixture did not project a route");
     const post = polishPostRequestSchema.parse({
@@ -764,7 +758,6 @@ describe("GET /api/polish/availability response schema", () => {
       { routingPolicyVersionId: VALID_UUID },
       { profileVersionId: expectedRoute.profileVersionId.toUpperCase() },
       { runtimeContractId: null },
-      { runtimeContractSha256: null },
     ]) {
       expect(
         polishExpectedRouteSchema.safeParse({ ...expectedRoute, ...forbidden }).success,

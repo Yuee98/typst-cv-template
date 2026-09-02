@@ -65,7 +65,6 @@ describe("createMockPolishClient", () => {
       profileVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       displayDisclosure: null,
       termsAccepted: false,
     });

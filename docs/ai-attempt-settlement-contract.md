@@ -7,11 +7,11 @@
 
 ## 0. 与 frozen provider contract 的关系
 
-`docs/ai-provider-contract.md` 是当前 legal bundle 的 repo-path evidence，冻结字节为 85,222 bytes、SHA-256 `f2cf21f68a93451ea157a954ec57a8872cf1220d28bc013fa2dbc1b6b3ebcccd`。在不轮换 manifest、bundle、terms 与 runtime pair 的情况下，内部实现细节不得再次写入该 evidence 文件。
+`docs/ai-provider-contract.md` 是当前 legal bundle 的 repo-path evidence，冻结字节为 85,222 bytes、SHA-256 `f2cf21f68a93451ea157a954ec57a8872cf1220d28bc013fa2dbc1b6b3ebcccd`。在不轮换 manifest、bundle、terms 与 runtime contract ID 的情况下，内部实现细节不得再次写入该 evidence 文件。
 
 本文是其 §4、§5.5、§5.6 的 attempt/request settlement 技术补充。若两者在 attempt source selection、聚合、成本 reconciliation、daily ledger、checked arithmetic 或锁序细节上存在差异，后续 DB-010、DB-011 与 RT-009 以本文为准；provider、recipient、submitted data、subject、region/transfer、cache/retention/training、terms acceptance、route disclosure 与用户显示等 legal/user-facing facts 仍只由 frozen provider contract、legal descriptors 与 terms authority 管理。
 
-本文不得加入当前 legal evidence graph。本文的纯内部 settlement 规则本身不轮换 legal descriptors、manifest、bundle 或 terms；但任何 descriptor/subdescriptor/referent、fact/evidence graph 或 bundle composition/hash 变化，都必须在独立 governance gate 中按 frozen provider contract §8.1 创建新的 immutable ID/hash；bundle graph/composition/hash 变化必须创建新的 `legal_bundle_version`/root 与 exact-equal `ai_terms_version`，旧 acceptance 不授权，任何 material change 必须重新接受。runtime pair 遵循 frozen runtime-attestation contract：会改变 attested runtime contract 的 code-only implementation change，即使 legal bundle 不变，也必须按其规则创建新 runtime contract/pair。事实未变化的复核只记 audit；不得改写旧 hash 或旧 immutable ID。
+本文不得加入当前 legal evidence graph。本文的纯内部 settlement 规则本身不轮换 legal descriptors、manifest、bundle 或 terms；但任何 descriptor/subdescriptor/referent、fact/evidence graph 或 bundle composition/hash 变化，都必须在独立 governance gate 中按 frozen provider contract §8.1 创建新的 immutable ID/hash；bundle graph/composition/hash 变化必须创建新的 `legal_bundle_version`/root 与 exact-equal `ai_terms_version`，旧 acceptance 不授权，任何 material change 必须重新接受。runtime identity 遵循后继 runtime execution contract：会改变执行语义的 code-only implementation change，即使 legal bundle 不变，也必须创建新的不可重新解释的 versioned runtime contract ID。事实未变化的复核只记 audit；不得改写旧 hash 或重新解释旧 immutable ID。
 
 ## 1. 目的与边界
 

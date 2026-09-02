@@ -33,7 +33,6 @@ function policy() {
     priceVersionId: PRICE_VERSION_ID,
     legalBundleVersion: "2026-08-23-multi-provider-v1",
     runtimeContractId: "ai-polish-runtime-v1",
-    runtimeContractSha256: "b".repeat(64),
   };
 }
 

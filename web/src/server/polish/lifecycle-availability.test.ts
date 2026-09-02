@@ -23,7 +23,6 @@ const ENABLED = {
   profileVersionId: "00000000-0000-4000-8000-000000000012",
   legalBundleVersion: "2026-08-23-multi-provider-v1",
   runtimeContractId: "deepseek-g2-runtime-v1",
-  runtimeContractSha256: "a".repeat(64),
   displayDisclosureKey: "deepseek-official-v1",
   termsAccepted: true,
 } as const;
@@ -35,7 +34,6 @@ const DISABLED = {
   profileVersionId: null,
   legalBundleVersion: null,
   runtimeContractId: null,
-  runtimeContractSha256: null,
   displayDisclosureKey: null,
   termsAccepted: false,
 } as const;
@@ -100,8 +98,6 @@ describe("availability DB codec", () => {
       { profileVersionId: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBB2" },
       { legalBundleVersion: "UPPERCASE" },
       { runtimeContractId: "contains space" },
-      { runtimeContractSha256: "A".repeat(64) },
-      { runtimeContractSha256: "a".repeat(63) },
       { displayDisclosureKey: "bad key" },
     ]) {
       expect(() =>
@@ -111,7 +107,6 @@ describe("availability DB codec", () => {
 
     for (const variant of [
       { runtimeContractId: "runtime-v1" },
-      { runtimeContractSha256: "a".repeat(64) },
       { configGeneration: "0" },
       { termsAccepted: true },
     ]) {
@@ -132,7 +127,6 @@ describe("availability disclosure projection", () => {
       profileVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       displayDisclosure: null,
       termsAccepted: false,
     });
@@ -274,7 +268,6 @@ describe("GET /api/polish/availability", () => {
         profileVersionId: null,
         legalBundleVersion: null,
         runtimeContractId: null,
-        runtimeContractSha256: null,
         displayDisclosure: null,
         termsAccepted: false,
       },
@@ -284,7 +277,7 @@ describe("GET /api/polish/availability", () => {
   it("maps malformed DB data, unknown disclosure and RPC rejection to one safe 500", async () => {
     for (const raw of [
       { ...ENABLED, endpointAlias: "secret" },
-      { ...ENABLED, runtimeContractSha256: null },
+      { ...ENABLED, runtimeContractId: null },
       { ...ENABLED, displayDisclosureKey: "unregistered-provider-v1" },
     ]) {
       const mocks = makeDeps(raw);

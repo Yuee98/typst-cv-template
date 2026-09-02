@@ -31,7 +31,6 @@ declare
   v_expected_profile_version_id uuid;
   v_expected_legal_bundle_version text;
   v_expected_runtime_contract_id text;
-  v_expected_runtime_contract_sha256 text;
 
   v_route_at timestamptz;
   v_local_route_at timestamp without time zone;
@@ -68,8 +67,7 @@ begin
          'config_generation',
          'profile_version_id',
          'legal_bundle_version',
-         'runtime_contract_id',
-         'runtime_contract_sha256'
+         'runtime_contract_id'
        ]
      )
      or (
@@ -78,8 +76,7 @@ begin
          'config_generation',
          'profile_version_id',
          'legal_bundle_version',
-         'runtime_contract_id',
-         'runtime_contract_sha256'
+         'runtime_contract_id'
        ]
      ) is distinct from '{}'::jsonb
      or jsonb_typeof(p_expected_route->'schema_version') is distinct from 'string'
@@ -87,7 +84,6 @@ begin
      or jsonb_typeof(p_expected_route->'profile_version_id') is distinct from 'string'
      or jsonb_typeof(p_expected_route->'legal_bundle_version') is distinct from 'string'
      or jsonb_typeof(p_expected_route->'runtime_contract_id') is distinct from 'string'
-     or jsonb_typeof(p_expected_route->'runtime_contract_sha256') is distinct from 'string'
      or p_expected_route->>'schema_version' is distinct from 'expected_route_v1'
      or p_expected_route->>'config_generation' !~ '^(0|[1-9][0-9]*)$'
      or p_expected_route->>'profile_version_id'
@@ -95,8 +91,7 @@ begin
      or p_expected_route->>'legal_bundle_version'
        !~ '^[a-z0-9][a-z0-9._-]{0,199}$'
      or p_expected_route->>'runtime_contract_id'
-       !~ '^[a-z0-9][a-z0-9._-]{0,199}$'
-     or p_expected_route->>'runtime_contract_sha256' !~ '^[0-9a-f]{64}$' then
+       !~ '^[a-z0-9][a-z0-9._-]{0,199}$' then
     return jsonb_build_object(
       'allowed', false,
       'reason', 'AI_ROUTE_CHANGED',
@@ -127,8 +122,6 @@ begin
     p_expected_route->>'legal_bundle_version';
   v_expected_runtime_contract_id :=
     p_expected_route->>'runtime_contract_id';
-  v_expected_runtime_contract_sha256 :=
-    p_expected_route->>'runtime_contract_sha256';
 
   -- Identity values are server facts, but NULL still must fail closed before
   -- advisory, quota, rate, or ledger state.  Malformed route precedence above
@@ -245,7 +238,6 @@ begin
     select * into v_runtime
     from public.ai_service_runtime_contract_versions
     where runtime_contract_id = v_policy.runtime_contract_id
-      and runtime_contract_sha256 = v_policy.runtime_contract_sha256
     for share;
 
     if not found or v_runtime.sealed_at is null then
@@ -263,8 +255,7 @@ begin
      and target.manifest_sha256 = membership.manifest_sha256
      and target.route_descriptor_id = membership.route_descriptor_id
      and target.route_descriptor_sha256 = membership.route_descriptor_sha256
-    where membership.runtime_contract_id = v_runtime.runtime_contract_id
-      and membership.runtime_contract_sha256 = v_runtime.runtime_contract_sha256;
+    where membership.runtime_contract_id = v_runtime.runtime_contract_id;
 
     if not found then
       raise exception 'reserve runtime contract has no exact target projection'
@@ -350,9 +341,7 @@ begin
     if v_expected_generation_text is distinct from v_config.config_generation::text
        or v_expected_profile_version_id is distinct from v_selected_profile_version_id
        or v_expected_legal_bundle_version is distinct from v_policy.legal_bundle_version
-       or v_expected_runtime_contract_id is distinct from v_runtime.runtime_contract_id
-       or v_expected_runtime_contract_sha256
-         is distinct from v_runtime.runtime_contract_sha256 then
+       or v_expected_runtime_contract_id is distinct from v_runtime.runtime_contract_id then
       return jsonb_build_object(
         'allowed', false,
         'reason', 'AI_ROUTE_CHANGED',
@@ -495,7 +484,6 @@ begin
       price_version_id,
       legal_bundle_version,
       runtime_contract_id,
-      runtime_contract_sha256,
       gateway_kind,
       model_id,
       wire_api_kind,
@@ -512,7 +500,6 @@ begin
       v_selected_price_version_id,
       v_policy.legal_bundle_version,
       v_runtime.runtime_contract_id,
-      v_runtime.runtime_contract_sha256,
       v_selected_profile.gateway_kind,
       v_selected_profile.model_id,
       v_selected_profile.wire_api_kind,
@@ -542,7 +529,6 @@ begin
       'priceVersionId', v_ledger.price_version_id,
       'legalBundleVersion', v_ledger.legal_bundle_version,
       'runtimeContractId', v_ledger.runtime_contract_id,
-      'runtimeContractSha256', v_ledger.runtime_contract_sha256,
       'gatewayKind', v_ledger.gateway_kind,
       'modelId', v_ledger.model_id,
       'wireApiKind', v_ledger.wire_api_kind,
@@ -608,7 +594,6 @@ begin
        or v_request.price_version_id is null
        or v_request.legal_bundle_version is null
        or v_request.runtime_contract_id is null
-       or v_request.runtime_contract_sha256 is null
        or v_request.gateway_kind is null
        or v_request.model_id is null
        or v_request.wire_api_kind is null
@@ -708,8 +693,7 @@ begin
 
     select * into v_runtime
     from public.ai_service_runtime_contract_versions
-    where runtime_contract_id = v_request.runtime_contract_id
-      and runtime_contract_sha256 = v_request.runtime_contract_sha256;
+    where runtime_contract_id = v_request.runtime_contract_id;
 
     if not found
        or v_runtime.sealed_at is null
@@ -736,7 +720,6 @@ begin
         'priceVersionId', v_request.price_version_id,
         'legalBundleVersion', v_request.legal_bundle_version,
         'runtimeContractId', v_request.runtime_contract_id,
-        'runtimeContractSha256', v_request.runtime_contract_sha256,
         'gatewayKind', v_request.gateway_kind,
         'modelId', v_request.model_id,
         'wireApiKind', v_request.wire_api_kind,
@@ -811,7 +794,6 @@ begin
     'profileVersionId', null,
     'legalBundleVersion', null,
     'runtimeContractId', null,
-    'runtimeContractSha256', null,
     'displayDisclosureKey', null,
     'termsAccepted', false
   );
@@ -892,7 +874,6 @@ begin
     select * into v_runtime
     from public.ai_service_runtime_contract_versions
     where runtime_contract_id = v_policy.runtime_contract_id
-      and runtime_contract_sha256 = v_policy.runtime_contract_sha256
     for share;
 
     if not found or v_runtime.sealed_at is null then
@@ -909,8 +890,7 @@ begin
      and target.manifest_sha256 = membership.manifest_sha256
      and target.route_descriptor_id = membership.route_descriptor_id
      and target.route_descriptor_sha256 = membership.route_descriptor_sha256
-    where membership.runtime_contract_id = v_runtime.runtime_contract_id
-      and membership.runtime_contract_sha256 = v_runtime.runtime_contract_sha256;
+    where membership.runtime_contract_id = v_runtime.runtime_contract_id;
 
     if not found then
       return v_disabled;
@@ -991,7 +971,6 @@ begin
       'profileVersionId', v_selected_profile_version_id,
       'legalBundleVersion', v_policy.legal_bundle_version,
       'runtimeContractId', v_runtime.runtime_contract_id,
-      'runtimeContractSha256', v_runtime.runtime_contract_sha256,
       'displayDisclosureKey', v_selected_profile.display_disclosure_key,
       'termsAccepted', v_terms_accepted
     );

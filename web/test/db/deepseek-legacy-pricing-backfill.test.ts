@@ -227,11 +227,9 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
       delete from public.ai_price_versions
       where id = '${fixture.priceVersionId}'::uuid;
       delete from public.ai_service_runtime_contract_targets
-      where runtime_contract_id = '${fixture.runtime.runtimeContractId}'
-        and runtime_contract_sha256 = '${fixture.runtime.runtimeContractSha256}';
+      where runtime_contract_id = '${fixture.runtime.runtimeContractId}';
       delete from public.ai_service_runtime_contract_versions
-      where runtime_contract_id = '${fixture.runtime.runtimeContractId}'
-        and runtime_contract_sha256 = '${fixture.runtime.runtimeContractSha256}';
+      where runtime_contract_id = '${fixture.runtime.runtimeContractId}';
       delete from public.ai_service_runtime_target_versions
       where runtime_target_id = '${fixture.runtime.runtimeTargetId}'
         and runtime_target_sha256 = '${fixture.runtime.runtimeTargetSha256}';
@@ -265,7 +263,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
         insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ('${fixture.priceVersionId}','input_cache_read',20000000),('${fixture.priceVersionId}','input_standard',1000000000),('${fixture.priceVersionId}','output',2000000000); commit;`);
       sealPriceAsDatabaseOwner(fixture.priceVersionId);
 
-      runOwnerSql(String.raw`insert into public.ai_routing_policy_versions(id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256) values ('${fixture.policyVersionId}','test.db012.current.${crypto.randomUUID()}',1,'draft','Asia/Shanghai','{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"${fixture.profileVersionId}","priceVersionId":"${fixture.priceVersionId}"},"windows":[]}'::jsonb,'${fixture.profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${fixture.runtime.runtimeContractId}','${fixture.runtime.runtimeContractSha256}','${"3".repeat(64)}');`);
+      runOwnerSql(String.raw`insert into public.ai_routing_policy_versions(id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,config_sha256) values ('${fixture.policyVersionId}','test.db012.current.${crypto.randomUUID()}',1,'draft','Asia/Shanghai','{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"${fixture.profileVersionId}","priceVersionId":"${fixture.priceVersionId}"},"windows":[]}'::jsonb,'${fixture.profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${fixture.runtime.runtimeContractId}','${"3".repeat(64)}');`);
 
       const request = await service.from("ai_request_ledger").insert({
         reservation_id: fixture.reservationId,
@@ -279,7 +277,6 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
         price_version_id: fixture.priceVersionId,
         legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
         runtime_contract_id: fixture.runtime.runtimeContractId,
-        runtime_contract_sha256: fixture.runtime.runtimeContractSha256,
         gateway_kind: "direct_deepseek",
         model_id: "db012-current-model",
         wire_api_kind: "chat_completions_v1",
@@ -318,12 +315,10 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
             where id = '${fixture.policyVersionId}'::uuid),
           'runtimeContract', (select pg_catalog.to_jsonb(row_value)
             from public.ai_service_runtime_contract_versions as row_value
-            where runtime_contract_id = '${fixture.runtime.runtimeContractId}'
-              and runtime_contract_sha256 = '${fixture.runtime.runtimeContractSha256}'),
+            where runtime_contract_id = '${fixture.runtime.runtimeContractId}'),
           'runtimeMembership', (select pg_catalog.to_jsonb(row_value)
             from public.ai_service_runtime_contract_targets as row_value
-            where runtime_contract_id = '${fixture.runtime.runtimeContractId}'
-              and runtime_contract_sha256 = '${fixture.runtime.runtimeContractSha256}'),
+            where runtime_contract_id = '${fixture.runtime.runtimeContractId}'),
           'runtimeTarget', (select pg_catalog.to_jsonb(row_value)
             from public.ai_service_runtime_target_versions as row_value
             where runtime_target_id = '${fixture.runtime.runtimeTargetId}'
@@ -340,7 +335,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
       insert into public.ai_provider_attempt_ledger (
         reservation_id, attempt_no, route_schema_version, config_generation,
         routing_policy_version_id, profile_version_id, price_version_id,
-        legal_bundle_version, runtime_contract_id, runtime_contract_sha256,
+        legal_bundle_version, runtime_contract_id,
         gateway_kind, model_id, wire_api_kind, display_disclosure_key,
         adapter_kind, credential_alias, endpoint_alias, capability_contract_id,
         cache_policy_id, legal_manifest_id, calculator_kind, billing_currency
@@ -350,7 +345,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
         request.config_generation, request.routing_policy_version_id,
         request.profile_version_id, request.price_version_id,
         request.legal_bundle_version, request.runtime_contract_id,
-        request.runtime_contract_sha256, request.gateway_kind, request.model_id,
+        request.gateway_kind, request.model_id,
         request.wire_api_kind, request.display_disclosure_key,
         profile.adapter_kind, profile.credential_alias, profile.endpoint_alias,
         profile.capability_contract_id, profile.cache_policy_id,
@@ -563,7 +558,6 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
       expect(row.routing_policy_version_id).toBeNull();
       expect(row.legal_bundle_version).toBeNull();
       expect(row.runtime_contract_id).toBeNull();
-      expect(row.runtime_contract_sha256).toBeNull();
       expect(row.gateway_kind).toBeNull();
       expect(row.model_id).toBeNull();
       expect(row.wire_api_kind).toBeNull();
@@ -803,7 +797,6 @@ describe.skipIf(!RUN_DB_TESTS)("DB-012 DeepSeek legacy pricing backfill (real DB
             price_version_id = null,
             legal_bundle_version = null,
             runtime_contract_id = null,
-            runtime_contract_sha256 = null,
             gateway_kind = null,
             model_id = null,
             wire_api_kind = null,

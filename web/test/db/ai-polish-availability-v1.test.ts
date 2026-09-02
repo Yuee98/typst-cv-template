@@ -21,7 +21,6 @@ const DISABLED = {
   profileVersionId: null,
   legalBundleVersion: null,
   runtimeContractId: null,
-  runtimeContractSha256: null,
   displayDisclosureKey: null,
   termsAccepted: false,
 } as const;

@@ -263,7 +263,6 @@ describe("handler.ts — valid configurations boot", () => {
         profileVersionId: FAKE_V2_EXPECTED_ROUTE.profileVersionId,
         legalBundleVersion: FAKE_V2_EXPECTED_ROUTE.legalBundleVersion,
         runtimeContractId: FAKE_V2_EXPECTED_ROUTE.runtimeContractId,
-        runtimeContractSha256: FAKE_V2_EXPECTED_ROUTE.runtimeContractSha256,
         displayDisclosure: {
           key: "deepseek-official-v1",
           providerName: "DeepSeek",

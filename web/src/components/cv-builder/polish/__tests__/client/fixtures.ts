@@ -12,7 +12,6 @@ export const EXPECTED_ROUTE = {
   profileVersionId: "11111111-1111-4111-8111-111111111111",
   legalBundleVersion: "2026-08-23-multi-provider-v1",
   runtimeContractId: "runtime.deepseek-v2.v1",
-  runtimeContractSha256: "a".repeat(64),
 } satisfies PolishExpectedRoute;
 
 export function makeRequest(overrides: Partial<PolishPostRequest> = {}): PolishPostRequest {
@@ -43,7 +42,6 @@ export const ENABLED_AVAILABILITY_BODY = {
     profileVersionId: EXPECTED_ROUTE.profileVersionId,
     legalBundleVersion: EXPECTED_ROUTE.legalBundleVersion,
     runtimeContractId: EXPECTED_ROUTE.runtimeContractId,
-    runtimeContractSha256: EXPECTED_ROUTE.runtimeContractSha256,
     displayDisclosure: {
       key: "deepseek-official-v1",
       providerName: "DeepSeek",
@@ -62,7 +60,6 @@ export const DISABLED_AVAILABILITY_BODY = {
     profileVersionId: null,
     legalBundleVersion: null,
     runtimeContractId: null,
-    runtimeContractSha256: null,
     displayDisclosure: null,
     termsAccepted: false,
   },

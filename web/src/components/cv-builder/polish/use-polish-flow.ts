@@ -260,8 +260,7 @@ function sameExpectedRoute(left: PolishExpectedRoute, right: PolishExpectedRoute
     left.configGeneration === right.configGeneration &&
     left.profileVersionId === right.profileVersionId &&
     left.legalBundleVersion === right.legalBundleVersion &&
-    left.runtimeContractId === right.runtimeContractId &&
-    left.runtimeContractSha256 === right.runtimeContractSha256
+    left.runtimeContractId === right.runtimeContractId
   );
 }
 

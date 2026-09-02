@@ -58,7 +58,6 @@ describe("metrics logic", () => {
     price_version_id: "33333333-3333-4333-8333-333333333333",
     legal_bundle_version: "legal-v1",
     runtime_contract_id: "runtime-v1",
-    runtime_contract_sha256: "a".repeat(64),
     gateway_kind: "direct_deepseek",
     model_id: "deepseek-v4-flash",
     wire_api_kind: "responses_v1",
@@ -157,7 +156,6 @@ describe("metrics logic", () => {
           routing_policy_version_id: null,
           legal_bundle_version: null,
           runtime_contract_id: null,
-          runtime_contract_sha256: null,
           gateway_kind: null,
           model_id: null,
           wire_api_kind: null,
@@ -172,7 +170,6 @@ describe("metrics logic", () => {
           price_version_id: null,
           legal_bundle_version: null,
           runtime_contract_id: null,
-          runtime_contract_sha256: null,
           gateway_kind: null,
           model_id: null,
           wire_api_kind: null,
@@ -208,7 +205,6 @@ describe("metrics logic", () => {
       priceVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       gatewayKind: null,
       modelId: null,
       wireApiKind: null,
@@ -224,7 +220,6 @@ describe("metrics logic", () => {
       routingPolicyVersionId: null,
       priceVersionId: CURRENT_ROUTE.price_version_id,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       gatewayKind: null,
       currency: "CNY",
     });
@@ -267,7 +262,6 @@ describe("metrics logic", () => {
         price_version_id: null,
         legal_bundle_version: null,
         runtime_contract_id: null,
-        runtime_contract_sha256: null,
         gateway_kind: null,
         model_id: null,
         wire_api_kind: null,
@@ -291,7 +285,6 @@ describe("metrics logic", () => {
       priceVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       gatewayKind: null,
       modelId: null,
       wireApiKind: null,
@@ -301,9 +294,7 @@ describe("metrics logic", () => {
   });
 
   it("buildMetrics alerts on malformed V2 tuples and route-only drift", () => {
-    const malformed = requestRow({
-      runtime_contract_sha256: "not-a-hash",
-    });
+    const malformed = requestRow({ runtime_contract_id: "not a runtime id" });
     const driftedAttempt = attemptRow({
       wire_api_kind: "chat_completions_v1",
       display_disclosure_key: "deepseek.other",

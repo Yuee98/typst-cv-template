@@ -22,7 +22,7 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
     anon = createAnonClient();
   });
 
-  it("freezes the exact additive columns, composite relations, and private grants", () => {
+  it("freezes the exact additive columns, ID relations, and private grants", () => {
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
       do $$
@@ -43,7 +43,7 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
           from pg_constraint
           where conrelid = 'public.ai_service_runtime_contract_targets'::regclass
             and conname = 'ai_service_runtime_contract_targets_contract_fkey'
-            and confmatchtype = 'f'
+            and confmatchtype = 's'
         ) or not exists (
           select 1
           from pg_constraint
@@ -55,15 +55,15 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
           from pg_constraint
           where conrelid = 'public.ai_routing_policy_versions'::regclass
             and conname = 'ai_routing_policy_versions_runtime_contract_fkey'
-            and confmatchtype = 'f'
+            and confmatchtype = 's'
         ) or not exists (
           select 1
           from pg_constraint
           where conrelid = 'public.ai_request_ledger'::regclass
             and conname = 'ai_request_ledger_runtime_contract_fkey'
-            and confmatchtype = 'f'
+            and confmatchtype = 's'
         ) then
-          raise exception 'runtime composite FK is not MATCH FULL';
+          raise exception 'runtime ID FK or target projection FK is not exact';
         end if;
 
         if has_table_privilege(
@@ -109,22 +109,17 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
   it("binds full target projection and seals one exact immutable target set", () => {
     const runtime = authorSyntheticRuntimeContract();
     const secondContractId = `test-runtime-contract.${crypto.randomUUID()}`;
-    const secondContractHash = "7".repeat(64);
 
     runOwnerSql(String.raw`
       \set ON_ERROR_STOP on
       begin;
       insert into public.ai_service_runtime_contract_versions (
         runtime_contract_id,
-        runtime_contract_sha256,
-        reviewed_source_commit_oid,
         legal_bundle_version,
         bundle_contract_sha256,
         runtime_target_set_sha256
       ) values (
         '${secondContractId}',
-        '${secondContractHash}',
-        'sha1:0123456789abcdef0123456789abcdef01234567',
         '${INITIAL_LEGAL_BUNDLE_VERSION}',
         '${INITIAL_LEGAL_BUNDLE_SHA256}',
         encode(
@@ -145,7 +140,6 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
         begin
           insert into public.ai_service_runtime_contract_targets (
             runtime_contract_id,
-            runtime_contract_sha256,
             runtime_target_id,
             runtime_target_sha256,
             profile_key,
@@ -155,7 +149,6 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
             route_descriptor_sha256
           ) values (
             '${secondContractId}',
-            '${secondContractHash}',
             '${runtime.runtimeTargetId}',
             '${runtime.runtimeTargetSha256}',
             '${runtime.profileKey}',
@@ -173,7 +166,6 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
 
       insert into public.ai_service_runtime_contract_targets (
         runtime_contract_id,
-        runtime_contract_sha256,
         runtime_target_id,
         runtime_target_sha256,
         profile_key,
@@ -183,7 +175,6 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
         route_descriptor_sha256
       ) values (
         '${secondContractId}',
-        '${secondContractHash}',
         '${runtime.runtimeTargetId}',
         '${runtime.runtimeTargetSha256}',
         '${runtime.profileKey}',
@@ -199,15 +190,6 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
 
       do $$
       begin
-        begin
-          update public.ai_service_runtime_contract_targets
-          set runtime_contract_sha256 = repeat('8', 64)
-          where runtime_contract_id = '${secondContractId}';
-          raise exception 'membership parent pair mutation was accepted';
-        exception when check_violation then
-          null;
-        end;
-
         begin
           delete from public.ai_service_runtime_contract_targets
           where runtime_contract_id = '${secondContractId}';
@@ -273,15 +255,11 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
 
         insert into public.ai_service_runtime_contract_versions (
           runtime_contract_id,
-          runtime_contract_sha256,
-          reviewed_source_commit_oid,
           legal_bundle_version,
           bundle_contract_sha256,
           runtime_target_set_sha256
         ) values (
           'test-empty-root.${suffix}',
-          repeat('c', 64),
-          'sha1:0123456789abcdef0123456789abcdef01234567',
           v_bundle,
           repeat('b', 64),
           repeat('d', 64)
@@ -320,15 +298,11 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
 
         insert into public.ai_service_runtime_contract_versions (
           runtime_contract_id,
-          runtime_contract_sha256,
-          reviewed_source_commit_oid,
           legal_bundle_version,
           bundle_contract_sha256,
           runtime_target_set_sha256
         ) values (
           v_root,
-          repeat('f', 64),
-          'sha1:0123456789abcdef0123456789abcdef01234567',
           v_bundle,
           repeat('b', 64),
           encode(
@@ -345,7 +319,6 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
         );
         insert into public.ai_service_runtime_contract_targets (
           runtime_contract_id,
-          runtime_contract_sha256,
           runtime_target_id,
           runtime_target_sha256,
           profile_key,
@@ -355,7 +328,6 @@ describe.skipIf(!RUN_DB_TESTS)("runtime contract schema (real DB)", () => {
           route_descriptor_sha256
         ) values (
           v_root,
-          repeat('f', 64),
           v_target,
           v_target_hash,
           'test.runtime.mimo.${suffix}',

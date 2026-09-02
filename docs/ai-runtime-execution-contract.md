@@ -108,6 +108,8 @@ Implementations MUST reproduce every byte/key/tag vector in `web/test/fixtures/a
 
 ## 2. Execution snapshot JSON
 
+`runtimeContractId` is the sole runtime-execution identity shared by code, policy, reservation, attempt, and operator lifecycle records. The ID includes its own revision suffix and is immutable: an incompatible adapter, wire API, model, endpoint, capability, cache, calculator, or legal-target change MUST publish a new ID and MUST NOT reinterpret an existing ID. No whole-source hash, whole-contract hash, or Git ancestry relationship is part of this runtime identity. Profile, price, routing-policy, legal-descriptor, and runtime-target hashes remain authoritative for their own independently authored data.
+
 `get_ai_polish_execution_snapshot_v1(reservation_id, user_id)` returns the request-frozen execution facts needed before an attempt can start. It MUST be service-role-only, `SECURITY DEFINER` with an empty search path, and perform no persistent mutation.
 
 The DB implementation MUST first resolve `(reservation_id, verified_user_id)` and lock only the matching request ledger row `FOR SHARE`. After that lock is held, it MUST use later plain `SELECT` statements to read the request-frozen profile parent/version and exact sealed price parent/components. It MUST NOT lock profile, profile-version, price, or price-component rows. Those later plain reads are safe only while schema constraints and guards prove the referenced history immutable and the price sealed; absent or drifted proof returns `SERVICE_UNAVAILABLE`.
@@ -161,14 +163,13 @@ profileVersionId
 priceVersionId
 legalBundleVersion
 runtimeContractId
-runtimeContractSha256
 gatewayKind
 modelId
 wireApiKind
 displayDisclosureKey
 ```
 
-`schemaVersion` is `route_snapshot_v1`. `configGeneration` is a canonical non-negative decimal string within PostgreSQL `bigint`. IDs read from UUID columns use canonical lowercase UUID text. `runtimeContractSha256` is exactly 64 lowercase hexadecimal characters. All other identity strings are non-empty registry or frozen-ledger values; none is a display name, URL, or secret.
+`schemaVersion` is `route_snapshot_v1`. `configGeneration` is a canonical non-negative decimal string within PostgreSQL `bigint`. IDs read from UUID columns use canonical lowercase UUID text. `runtimeContractId` is a versioned, immutable code ID: an incompatible execution-semantic change publishes a new ID and never reinterprets an existing one. All other identity strings are non-empty registry or frozen-ledger values; none is a display name, URL, or secret.
 
 The object MUST be reconstructed from the locked request row, not mutable current configuration.
 
@@ -228,7 +229,7 @@ Before attempt start or network transmission, all of the following MUST hold:
 - profile and price `calculatorKind` are equal;
 - the profile version belongs to its locked profile parent and the price belongs to that same profile;
 - the legal manifest belongs to the route's exact sealed legal bundle;
-- the route runtime ID/hash pair resolves to one exact code-owned RT-009A runtime contract with no substitution, latest lookup, or fallback;
+- the route runtime ID resolves to one exact code-owned RT-009A runtime contract with no substitution, latest lookup, or fallback;
 - that resolved runtime contract is bound to the route's exact legal bundle and contains a target for the selected `profileExecutionConfig.profileKey`;
 - that target's legal-manifest identity exactly equals `profileExecutionConfig.legalManifestId`, and its route descriptor exactly equals the code-owned descriptor derived from the complete validated profile execution config;
 - the profile execution config and price snapshot each pass their code-owned exact validators.
@@ -241,6 +242,6 @@ Any failure is fail-closed and causes no provider transmission. Start-attempt se
 
 The current execution-snapshot success vectors cover DeepSeek off-peak pricing with an omitted cache-write component, MiMo peak pricing with an explicit free cache-write component, and the exact PostgreSQL `bigint` maximum for `configGeneration`. An independent price registry freezes every sample price field, and separate price-shape vectors cover the complete current calculator union and that same maximum for component nanos. They are contract examples, not activation, current-price authority, legal evidence, or permission to call any provider.
 
-The runtime IDs and hashes in those portable examples are synthetic shape values. The independent revision-1 reference validates their encoding and the snapshot's intra-object bindings; it does not and cannot attest membership in the future RT-009A runtime registry. Production acceptance MUST layer exact target-scoped resolution on top: known pair plus correct target is accepted, while a known DeepSeek-only pair with a MiMo target, right runtime ID with wrong hash, wrong bundle/manifest/route descriptor, and an unknown pair all fail before attempt start or network transmission without fallback. Passing this fixture alone can never authorize either action.
+The runtime IDs in those portable examples are synthetic shape values. The independent revision-1 reference validates their encoding and the snapshot's intra-object bindings; it does not and cannot attest membership in the future RT-009A runtime registry. Production acceptance MUST layer exact target-scoped resolution on top: a known immutable ID plus the correct target is accepted, while a known DeepSeek-only ID with a MiMo target, wrong bundle/manifest/route descriptor, and an unknown ID all fail before attempt start or network transmission without fallback. Passing this fixture alone can never authorize either action.
 
 A change that only adds a new profile example may append a vector when it uses an already-supported revision-1 profile and price shape. Adding a calculator or changing a calculator's component/parameter shape, or any widening or reinterpretation of fields, whitespace, bytes, denylist behavior, result vocabulary, or JSON shape, requires a new domain/schema version and a separately reviewed migration path.

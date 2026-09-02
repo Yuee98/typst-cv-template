@@ -255,10 +255,6 @@ begin
     select 1
     from public.ai_service_runtime_contract_versions
     where runtime_contract_id = 'runtime.deepseek-v2.v1'
-      and runtime_contract_sha256 =
-        '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
-      and reviewed_source_commit_oid =
-        'sha1:b2390ff817612df7e3eed40aa775ff4cd4228085'
       and legal_bundle_version = '2026-08-23-multi-provider-v1'
       and bundle_contract_sha256 =
         'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18'
@@ -455,16 +451,12 @@ where not exists (
 
 insert into public.ai_service_runtime_contract_versions (
   runtime_contract_id,
-  runtime_contract_sha256,
-  reviewed_source_commit_oid,
   legal_bundle_version,
   bundle_contract_sha256,
   runtime_target_set_sha256
 )
 select
   'runtime.deepseek-v2.v1',
-  '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9',
-  'sha1:b2390ff817612df7e3eed40aa775ff4cd4228085',
   '2026-08-23-multi-provider-v1',
   'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18',
   '5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340'
@@ -476,7 +468,6 @@ where not exists (
 
 insert into public.ai_service_runtime_contract_targets (
   runtime_contract_id,
-  runtime_contract_sha256,
   runtime_target_id,
   runtime_target_sha256,
   profile_key,
@@ -487,7 +478,6 @@ insert into public.ai_service_runtime_contract_targets (
 )
 select
   'runtime.deepseek-v2.v1',
-  '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9',
   'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1',
   'aa4948f6f0060a08ada1d0b831babd17c37287be02a9a8f2f9ec69c0f2bed119',
   'deepseek.official.deepseek-v4-flash.chat.v1',
@@ -506,10 +496,6 @@ where not exists (
 update public.ai_service_runtime_contract_versions
 set sealed_at = greatest(clock_timestamp(), created_at)
 where runtime_contract_id = 'runtime.deepseek-v2.v1'
-  and runtime_contract_sha256 =
-    '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
-  and reviewed_source_commit_oid =
-    'sha1:b2390ff817612df7e3eed40aa775ff4cd4228085'
   and legal_bundle_version = '2026-08-23-multi-provider-v1'
   and bundle_contract_sha256 =
     'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18'
@@ -527,7 +513,6 @@ insert into public.ai_routing_policy_versions (
   default_profile_version_id,
   legal_bundle_version,
   runtime_contract_id,
-  runtime_contract_sha256,
   config_sha256
 )
 select
@@ -540,8 +525,7 @@ select
   '11111111-1111-4111-8111-111111111111'::uuid,
   '2026-08-23-multi-provider-v1',
   'runtime.deepseek-v2.v1',
-  '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9',
-  '5f9abca4c3315f05a779d1a5c88ae55a182c5e4c0f0caf84f54a9d2a6a6ff556'
+  '40c9be17c5ad25e60640adc537526d2e6bf9e38424a344967ba6e5b2ceaf9cc4'
 where not exists (
   select 1
   from public.ai_routing_policy_versions
@@ -700,10 +684,6 @@ begin
     select 1
     from public.ai_service_runtime_contract_versions
     where runtime_contract_id = 'runtime.deepseek-v2.v1'
-      and runtime_contract_sha256 =
-        '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
-      and reviewed_source_commit_oid =
-        'sha1:b2390ff817612df7e3eed40aa775ff4cd4228085'
       and legal_bundle_version = '2026-08-23-multi-provider-v1'
       and bundle_contract_sha256 =
         'fc26d1e1a016fda055fbe6a0b79b48d804fd7610e03bd5aa29389be37359ca18'
@@ -724,8 +704,6 @@ begin
     select 1
     from public.ai_service_runtime_contract_targets
     where runtime_contract_id = 'runtime.deepseek-v2.v1'
-      and runtime_contract_sha256 =
-        '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
       and runtime_target_id =
         'runtime-target.deepseek.official.deepseek-v4-flash.chat.v1'
       and runtime_target_sha256 =
@@ -764,10 +742,8 @@ begin
         '11111111-1111-4111-8111-111111111111'::uuid
       and legal_bundle_version = '2026-08-23-multi-provider-v1'
       and runtime_contract_id = 'runtime.deepseek-v2.v1'
-      and runtime_contract_sha256 =
-        '229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9'
       and config_sha256 =
-        '5f9abca4c3315f05a779d1a5c88ae55a182c5e4c0f0caf84f54a9d2a6a6ff556'
+        '40c9be17c5ad25e60640adc537526d2e6bf9e38424a344967ba6e5b2ceaf9cc4'
       and validated_at is null
       and activated_at is null
       and retired_at is null

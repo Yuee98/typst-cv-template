@@ -136,7 +136,6 @@ interface LiveRoute {
   priceVersionId: string;
   policyVersionId: string;
   runtimeContractId: string;
-  runtimeContractSha256: string;
   configGeneration: string | null;
 }
 
@@ -248,7 +247,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       insert into public.ai_routing_policy_versions (
         id, policy_key, version, status, timezone, rules,
         default_profile_version_id, legal_bundle_version,
-        runtime_contract_id, runtime_contract_sha256, config_sha256
+        runtime_contract_id, config_sha256
       ) values (
         '${policyVersionId}', 'test.concurrent.policy.${suffix}', 1, 'draft',
         'Asia/Shanghai', jsonb_build_object(
@@ -258,7 +257,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
             'priceVersionId', '${priceVersionId}'
           ), 'windows', '[]'::jsonb
         ), '${profileVersionId}', '${INITIAL_LEGAL_BUNDLE_VERSION}',
-        '${runtime.runtimeContractId}', '${runtime.runtimeContractSha256}',
+        '${runtime.runtimeContractId}',
         '${"c".repeat(64)}'
       );
       commit;`);
@@ -300,7 +299,6 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       priceVersionId,
       policyVersionId,
       runtimeContractId: runtime.runtimeContractId,
-      runtimeContractSha256: runtime.runtimeContractSha256,
       configGeneration,
     };
   }
@@ -325,7 +323,6 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       profile_version_id: route.profileVersionId,
       legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
       runtime_contract_id: route.runtimeContractId,
-      runtime_contract_sha256: route.runtimeContractSha256,
     });
     return String.raw`
       \set ON_ERROR_STOP on
@@ -372,7 +369,6 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       price_version_id: route.priceVersionId,
       legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
       runtime_contract_id: route.runtimeContractId,
-      runtime_contract_sha256: route.runtimeContractSha256,
     });
   }
 
@@ -609,7 +605,6 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
         profile_version_id: route.profileVersionId,
         legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
         runtime_contract_id: route.runtimeContractId,
-        runtime_contract_sha256: route.runtimeContractSha256,
       },
     });
     expect(result.error).toBeNull();
@@ -1246,7 +1241,6 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
   ) {
     const suffix = crypto.randomUUID();
     const rootId = `test-race-root.${label}.${suffix}`;
-    const rootHash = hash(rootId);
     const allTargets = new Map(
       [...initialTargets, ...expectedFinalTargets, ...catalogTargets].map((target) => [
         target.id,
@@ -1265,7 +1259,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
     const membershipValues = initialTargets
       .map(
         (target) => String.raw`(
-          '${rootId}', '${rootHash}', '${target.id}', '${target.hash}',
+          '${rootId}', '${target.id}', '${target.hash}',
           '${target.profileKey}', '${DEEPSEEK_LEGAL_MANIFEST_ID}',
           '${DEEPSEEK_LEGAL_MANIFEST_SHA256}', '${target.routeId}',
           '${target.routeHash}'
@@ -1284,15 +1278,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       on conflict (runtime_target_id) do nothing;
       insert into public.ai_service_runtime_contract_versions (
         runtime_contract_id,
-        runtime_contract_sha256,
-        reviewed_source_commit_oid,
         legal_bundle_version,
         bundle_contract_sha256,
         runtime_target_set_sha256
       ) values (
         '${rootId}',
-        '${rootHash}',
-        'sha1:0123456789abcdef0123456789abcdef01234567',
         '${INITIAL_LEGAL_BUNDLE_VERSION}',
         '${INITIAL_LEGAL_BUNDLE_SHA256}',
         '${targetSetHash(expectedFinalTargets)}'
@@ -1300,7 +1290,7 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       ${
         initialTargets.length > 0
           ? String.raw`insert into public.ai_service_runtime_contract_targets (
-              runtime_contract_id, runtime_contract_sha256,
+              runtime_contract_id,
               runtime_target_id, runtime_target_sha256, profile_key,
               legal_manifest_id, manifest_sha256,
               route_descriptor_id, route_descriptor_sha256
@@ -1309,12 +1299,12 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       }
       commit;
     `);
-    return { rootId, rootHash };
+    return { rootId };
   }
 
-  function membershipValues(rootId: string, rootHash: string, target: RuntimeRaceTarget) {
+  function membershipValues(rootId: string, target: RuntimeRaceTarget) {
     return String.raw`(
-      '${rootId}', '${rootHash}', '${target.id}', '${target.hash}',
+      '${rootId}', '${target.id}', '${target.hash}',
       '${target.profileKey}', '${DEEPSEEK_LEGAL_MANIFEST_ID}',
       '${DEEPSEEK_LEGAL_MANIFEST_SHA256}', '${target.routeId}',
       '${target.routeHash}'
@@ -1362,11 +1352,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       const mutationSql =
         operation === "insert"
           ? String.raw`insert into public.ai_service_runtime_contract_targets (
-              runtime_contract_id, runtime_contract_sha256,
+              runtime_contract_id,
               runtime_target_id, runtime_target_sha256, profile_key,
               legal_manifest_id, manifest_sha256,
               route_descriptor_id, route_descriptor_sha256
-            ) values ${membershipValues(mutationFirstRoot.rootId, mutationFirstRoot.rootHash, first)};`
+            ) values ${membershipValues(mutationFirstRoot.rootId, first)};`
           : operation === "update"
             ? String.raw`update public.ai_service_runtime_contract_targets
                 set runtime_target_id = '${second.id}',
@@ -1409,11 +1399,11 @@ describe.skipIf(!RUN_DB_TESTS)("routing/runtime lock concurrency (real DB)", () 
       const sealFirstMutation =
         operation === "insert"
           ? String.raw`insert into public.ai_service_runtime_contract_targets (
-              runtime_contract_id, runtime_contract_sha256,
+              runtime_contract_id,
               runtime_target_id, runtime_target_sha256, profile_key,
               legal_manifest_id, manifest_sha256,
               route_descriptor_id, route_descriptor_sha256
-            ) values ${membershipValues(sealFirstRoot.rootId, sealFirstRoot.rootHash, third)};`
+            ) values ${membershipValues(sealFirstRoot.rootId, third)};`
           : operation === "update"
             ? String.raw`update public.ai_service_runtime_contract_targets
                 set runtime_target_id = '${second.id}',

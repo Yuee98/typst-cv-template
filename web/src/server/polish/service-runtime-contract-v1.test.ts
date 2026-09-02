@@ -1,415 +1,67 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { RuntimeExecutionTargetV1 } from "./lifecycle-v2-contract";
+import { fingerprintLegalDescriptorV1 } from "./legal-fingerprint-v1";
 import { MIMO_V2_SEED_IDENTITY_V1 } from "./mimo-v2-seed-identity-v1";
 import {
   DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
   DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
-  DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
   DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1,
   DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1,
   DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
   DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
-  DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
   DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256,
   DEEPSEEK_PROFILE_KEY,
   DEEPSEEK_PROFILE_VERSION_ID,
-  DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID,
   DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1,
   DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
   DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
   DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
   DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-  DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
   DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
   DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256,
   DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256,
-  MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID,
   MIMO_PROFILE_KEY,
   MIMO_PROFILE_VERSION_ID,
   MIMO_SERVICE_RUNTIME_TARGET_ID,
   MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256,
+  type HashedServiceRuntimeTargetV1,
+  type ServiceRuntimeContractRegistryV1,
   validateDeepSeekMiMoServiceRuntimeContractV1Registry,
   validateServiceRuntimeContractV1Registry,
 } from "./service-runtime-contract-v1";
 
-const EXPECTED_FACT_IDS = [
-  "fact.acceptance.authorization.v1",
-  "fact.deepseek.adapter.wire.v1",
-  "fact.deepseek.display.registration.v1",
-  "fact.deepseek.display.selection.v1",
-  "fact.deepseek.endpoint.resolution.v1",
-  "fact.deepseek.endpoint.selection.v1",
-  "fact.deepseek.gateway.service.v1",
-  "fact.deepseek.model.selection.v1",
-  "fact.deepseek.subject.derivation.v1",
-  "fact.deepseek.subject.send.v1",
-  "fact.deepseek.submitted.v1",
-  "fact.deepseek.wire.selection.v1",
-  "fact.material.reaccept.v1",
-  "fact.neutral.ledger.v1",
-  "fact.neutral.plaintext.v1",
-  "fact.neutral.quota.v1",
-  "fact.neutral.retention.v1",
-  "fact.neutral.retry.v1",
-  "fact.neutral.scope.v1",
-  "fact.privacy.recipient.deepseek.v1",
-  "fact.route.change-gate.v1",
-  "fact.route.no-fallback.deepseek.v1",
-  "fact.route.no-selector.v1",
-  "fact.route.readonly.v1",
-] as const;
-
-const EXPECTED_DEEPSEEK_MIMO_FACT_IDS = [
-  "fact.acceptance.authorization.v1",
-  "fact.deepseek.adapter.wire.v1",
-  "fact.deepseek.display.registration.v1",
-  "fact.deepseek.display.selection.v1",
-  "fact.deepseek.endpoint.resolution.v1",
-  "fact.deepseek.endpoint.selection.v1",
-  "fact.deepseek.gateway.service.v1",
-  "fact.deepseek.model.selection.v1",
-  "fact.deepseek.subject.derivation.v1",
-  "fact.deepseek.subject.send.v1",
-  "fact.deepseek.submitted.v1",
-  "fact.deepseek.wire.selection.v1",
-  "fact.material.reaccept.v1",
-  "fact.mimo.adapter.wire.v1",
-  "fact.mimo.display.registration.v1",
-  "fact.mimo.display.selection.v1",
-  "fact.mimo.endpoint.resolution.v1",
-  "fact.mimo.endpoint.selection.v1",
-  "fact.mimo.gateway.service.v1",
-  "fact.mimo.model.selection.v1",
-  "fact.mimo.subject.none.v1",
-  "fact.mimo.submitted.v1",
-  "fact.mimo.wire.selection.v1",
-  "fact.neutral.ledger.v1",
-  "fact.neutral.plaintext.v1",
-  "fact.neutral.quota.v1",
-  "fact.neutral.retention.v1",
-  "fact.neutral.retry.v1",
-  "fact.neutral.scope.v1",
-  "fact.privacy.recipient.deepseek.v1",
-  "fact.privacy.recipient.mimo.v1",
-  "fact.route.change-gate.v1",
-  "fact.route.no-fallback.deepseek.v1",
-  "fact.route.no-fallback.mimo.v1",
-  "fact.route.no-selector.v1",
-  "fact.route.readonly.v1",
-] as const;
-
-const MIMO_REVIEWED_SOURCE_PATHS = Object.freeze([
+const MIMO_EVIDENCE_PATHS = [
   "web/src/server/polish/mimo.ts",
   "web/src/server/polish/mimo.test.ts",
   "web/src/server/polish/mimo.live.test.ts",
   "web/test/fixtures/mimo-responses/content-filter.json",
   "web/test/fixtures/mimo-responses/incomplete-max-output.json",
   "web/test/fixtures/mimo-responses/success.json",
-]);
+] as const;
 
-const READONLY_ROUTE_AUTHORITY = Object.freeze({
-  implementation: Object.freeze([
-    "supabase/migrations/20260823234000_reserve_ai_polish_v2.sql",
-    "web/src/server/polish/lifecycle-availability.ts",
-    "web/src/components/cv-builder/polish/use-polish-flow.ts",
-    "web/src/components/cv-builder/polish/polish-config-phase.tsx",
-  ]),
-  test: Object.freeze([
-    "web/test/db/ai-polish-availability-v1.test.ts",
-    "web/src/server/polish/lifecycle-availability.test.ts",
-    "web/src/components/cv-builder/polish/__tests__/use-polish-flow/route-assertion.test.tsx",
-    "web/src/components/cv-builder/polish/polish-dialog.test.tsx",
-  ]),
-});
-
-const RUNTIME_SCHEMA_FIELDS = Object.freeze({
-  ai_service_runtime_evidence_v1: Object.freeze([
-    "schema_version",
-    "runtime_evidence_id",
-    "authority_kind",
-    "supported_fact_id",
-    "supported_fact_sha256",
-    "source_repo_path",
-    "source_git_blob_sha256",
-  ]),
-  ai_service_runtime_target_v1: Object.freeze([
-    "schema_version",
-    "runtime_target_id",
-    "profile_key",
-    "legal_manifest_id",
-    "legal_manifest_sha256",
-    "route_descriptor_id",
-    "route_descriptor_sha256",
-  ]),
-  ai_service_runtime_contract_v1: Object.freeze([
-    "schema_version",
-    "runtime_contract_id",
-    "reviewed_source_commit_oid",
-    "legal_bundle_version",
-    "bundle_contract_sha256",
-    "runtime_target_ids",
-    "runtime_target_sha256s",
-    "service_fact_ids",
-    "service_fact_sha256s",
-    "runtime_evidence_ids",
-    "runtime_evidence_sha256s",
-  ]),
-});
-
-type Mutable<T> = T extends readonly (infer Item)[]
-  ? Mutable<Item>[]
-  : T extends object
-    ? { -readonly [Key in keyof T]: Mutable<T[Key]> }
-    : T;
-type MutableRegistry = Mutable<typeof DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1>;
-type MutableCombinedRegistry = Mutable<
-  typeof DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1
->;
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (
-    (typeof value !== "object" && typeof value !== "function") ||
-    value === null ||
-    seen.has(value as object)
-  ) {
-    return value;
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
   }
-  seen.add(value as object);
-  for (const key of Reflect.ownKeys(value as object)) {
-    deepFreeze(Reflect.get(value as object, key), seen);
-  }
-  return Object.freeze(value);
+  return value;
 }
 
-function frozenCandidate(
-  mutate: (candidate: MutableRegistry) => void,
-): MutableRegistry {
-  const candidate = structuredClone(
-    DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-  ) as MutableRegistry;
-  mutate(candidate);
-  return deepFreeze(candidate);
+function expectDeeplyFrozen(value: unknown): void {
+  if (typeof value !== "object" || value === null) return;
+  expect(Object.isFrozen(value)).toBe(true);
+  for (const child of Object.values(value)) expectDeeplyFrozen(child);
 }
 
-function resignCandidate(
-  mutate: (candidate: MutableRegistry) => void,
-): MutableRegistry {
-  const candidate = structuredClone(
-    DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-  ) as MutableRegistry;
-  mutate(candidate);
-
-  candidate.evidence.sort((left, right) =>
-    Buffer.compare(
-      Buffer.from(left.descriptor.runtime_evidence_id, "utf8"),
-      Buffer.from(right.descriptor.runtime_evidence_id, "utf8"),
-    ),
-  );
-  for (const evidence of candidate.evidence) {
-    evidence.sha256 = independentRuntimeFingerprint(
-      evidence.descriptor as unknown as Readonly<Record<string, unknown>>,
-    );
-  }
-  candidate.contract.runtime_evidence_ids = candidate.evidence.map(
-    (evidence) => evidence.descriptor.runtime_evidence_id,
-  );
-  candidate.contract.runtime_evidence_sha256s = candidate.evidence.map(
-    (evidence) => evidence.sha256,
-  );
-  candidate.contractSha256 = independentRuntimeFingerprint(
-    candidate.contract as unknown as Readonly<Record<string, unknown>>,
-  );
-  for (const target of candidate.targets) {
-    target.executionTarget.runtimeContractSha256 = candidate.contractSha256;
-  }
-  candidate.runtimeTargetSetSha256 = independentRuntimeTargetSetFingerprint(
-    candidate.targets,
-  );
-  return deepFreeze(candidate);
-}
-
-function expectRegistryRejection(
-  mutate: (candidate: MutableRegistry) => void,
-  pattern?: RegExp,
-): void {
-  const action = () =>
-    validateServiceRuntimeContractV1Registry(frozenCandidate(mutate));
-  if (pattern === undefined) expect(action).toThrow();
-  else expect(action).toThrow(pattern);
-}
-
-function expectResignedRegistryRejection(
-  mutate: (candidate: MutableRegistry) => void,
-): void {
-  const candidate = resignCandidate(mutate);
-  expect(candidate.contract.runtime_contract_id).toBe(
-    DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-  );
-  expect(candidate.contractSha256).not.toBe(
-    DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
-  );
-  expect(candidate.contract.runtime_evidence_ids).toEqual(
-    candidate.evidence.map((evidence) => evidence.descriptor.runtime_evidence_id),
-  );
-  expect(candidate.contract.runtime_evidence_sha256s).toEqual(
-    candidate.evidence.map((evidence) => evidence.sha256),
-  );
-  expect(candidate.targets.every(
-    (target) => target.executionTarget.runtimeContractSha256 === candidate.contractSha256,
-  )).toBe(true);
-  expect(candidate.runtimeTargetSetSha256).toBe(
-    independentRuntimeTargetSetFingerprint(candidate.targets),
-  );
-  expect(() =>
-    validateServiceRuntimeContractV1Registry(candidate),
-  ).toThrow(/frozen reviewed tuple/u);
-}
-
-function frozenCombinedCandidate(
-  mutate: (candidate: MutableCombinedRegistry) => void,
-): MutableCombinedRegistry {
-  const candidate = structuredClone(
-    DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
-  ) as MutableCombinedRegistry;
-  mutate(candidate);
-  return deepFreeze(candidate);
-}
-
-function resignCombinedCandidate(
-  mutate: (candidate: MutableCombinedRegistry) => void,
-): MutableCombinedRegistry {
-  const candidate = structuredClone(
-    DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
-  ) as MutableCombinedRegistry;
-  mutate(candidate);
-
-  candidate.requiredServiceFacts.sort((left, right) =>
-    Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8")),
-  );
-  candidate.evidence.sort((left, right) =>
-    Buffer.compare(
-      Buffer.from(left.descriptor.runtime_evidence_id, "utf8"),
-      Buffer.from(right.descriptor.runtime_evidence_id, "utf8"),
-    ),
-  );
-  for (const evidence of candidate.evidence) {
-    evidence.sha256 = independentRuntimeFingerprint(
-      evidence.descriptor as unknown as Readonly<Record<string, unknown>>,
-    );
-  }
-  for (const target of candidate.targets) {
-    target.sha256 = independentRuntimeFingerprint(
-      target.descriptor as unknown as Readonly<Record<string, unknown>>,
-    );
-  }
-  candidate.contract.runtime_target_ids = candidate.targets.map(
-    (target) => target.descriptor.runtime_target_id,
-  );
-  candidate.contract.runtime_target_sha256s = candidate.targets.map(
-    (target) => target.sha256,
-  );
-  candidate.contract.service_fact_ids = candidate.requiredServiceFacts.map(
-    (pair) => pair.id,
-  );
-  candidate.contract.service_fact_sha256s = candidate.requiredServiceFacts.map(
-    (pair) => pair.sha256,
-  );
-  candidate.contract.runtime_evidence_ids = candidate.evidence.map(
-    (evidence) => evidence.descriptor.runtime_evidence_id,
-  );
-  candidate.contract.runtime_evidence_sha256s = candidate.evidence.map(
-    (evidence) => evidence.sha256,
-  );
-  candidate.contractSha256 = independentRuntimeFingerprint(
-    candidate.contract as unknown as Readonly<Record<string, unknown>>,
-  );
-  for (const target of candidate.targets) {
-    target.executionTarget.runtimeContractSha256 = candidate.contractSha256;
-  }
-  candidate.runtimeTargetSetSha256 = independentRuntimeTargetSetFingerprint(
-    candidate.targets,
-  );
-  return deepFreeze(candidate);
-}
-
-function expectCombinedRegistryRejection(
-  mutate: (candidate: MutableCombinedRegistry) => void,
-  pattern?: RegExp,
-): void {
-  const action = () =>
-    validateDeepSeekMiMoServiceRuntimeContractV1Registry(
-      frozenCombinedCandidate(mutate),
-    );
-  if (pattern === undefined) expect(action).toThrow();
-  else expect(action).toThrow(pattern);
-}
-
-function expectResignedCombinedRegistryRejection(
-  mutate: (candidate: MutableCombinedRegistry) => void,
-): void {
-  const candidate = resignCombinedCandidate(mutate);
-  expect(candidate.contract.runtime_contract_id).toBe(
-    DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-  );
-  expect(candidate.runtimeTargetSetSha256).toBe(
-    independentRuntimeTargetSetFingerprint(candidate.targets),
-  );
-  expect(() =>
-    validateDeepSeekMiMoServiceRuntimeContractV1Registry(candidate),
-  ).toThrow(/frozen reviewed tuple/u);
-}
-
-function independentRuntimeFingerprint(
-  descriptor: Readonly<Record<string, unknown>>,
+function runtimeTargetSetSha256(
+  targets: readonly Readonly<HashedServiceRuntimeTargetV1>[],
 ): string {
-  const schemaVersion = descriptor.schema_version;
-  if (
-    typeof schemaVersion !== "string" ||
-    !Object.hasOwn(RUNTIME_SCHEMA_FIELDS, schemaVersion)
-  ) {
-    throw new Error("unknown independent runtime schema");
-  }
-  const fields =
-    RUNTIME_SCHEMA_FIELDS[
-      schemaVersion as keyof typeof RUNTIME_SCHEMA_FIELDS
-    ];
-  const records = ["ai_fingerprint_record_v1\n"];
-  const append = (key: string, scalar: string): void => {
-    records.push(
-      `${Buffer.byteLength(key, "utf8")}:${key}:${Buffer.byteLength(scalar, "utf8")}:${scalar}\n`,
-    );
-  };
-  for (const field of fields) {
-    const value = descriptor[field];
-    if (Array.isArray(value)) {
-      append(`${field}.count`, String(value.length));
-      value.forEach((item, index) => {
-        if (typeof item !== "string") throw new Error("non-string array item");
-        append(`${field}.${index}`, item);
-      });
-    } else {
-      if (typeof value !== "string") throw new Error("non-string scalar");
-      append(field, value);
-    }
-  }
-  return createHash("sha256").update(records.join(""), "utf8").digest("hex");
-}
-
-function independentRuntimeTargetSetFingerprint(
-  targets: readonly {
-    readonly descriptor: { readonly runtime_target_id: string };
-    readonly sha256: string;
-  }[],
-): string {
-  const bytes = [...targets]
+  const body = [...targets]
     .sort((left, right) =>
-      Buffer.compare(
-        Buffer.from(left.descriptor.runtime_target_id, "utf8"),
-        Buffer.from(right.descriptor.runtime_target_id, "utf8"),
+      Buffer.from(left.descriptor.runtime_target_id).compare(
+        Buffer.from(right.descriptor.runtime_target_id),
       ),
     )
     .map(
@@ -417,1061 +69,232 @@ function independentRuntimeTargetSetFingerprint(
         `${Buffer.byteLength(target.descriptor.runtime_target_id, "utf8")}:${target.descriptor.runtime_target_id}:${target.sha256}`,
     )
     .join("\n");
-  return createHash("sha256").update(bytes, "utf8").digest("hex");
+  return createHash("sha256").update(body, "utf8").digest("hex");
 }
 
-interface GitResult {
-  readonly status: number;
-  readonly stdout: Buffer;
-  readonly stderr: Buffer;
+function expectRejectedMutation(
+  source: Readonly<ServiceRuntimeContractRegistryV1>,
+  validate: (value: unknown) => void,
+  mutate: (candidate: Record<string, unknown>) => void,
+): void {
+  const candidate = structuredClone(source) as unknown as Record<string, unknown>;
+  mutate(candidate);
+  deepFreeze(candidate);
+  expect(() => validate(candidate)).toThrow(/invalid DeepSeek service runtime contract/u);
 }
 
-const REPO_ROOT_RESULT = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-  cwd: process.cwd(),
-  encoding: "utf8",
-  windowsHide: true,
-});
-if (REPO_ROOT_RESULT.status !== 0 || !REPO_ROOT_RESULT.stdout) {
-  throw new Error("cannot resolve repository root for runtime source evidence");
-}
-const REPO_ROOT = REPO_ROOT_RESULT.stdout.trim();
+function expectEvidenceClosure(registry: Readonly<ServiceRuntimeContractRegistryV1>): void {
+  const expectedFacts = registry.requiredServiceFacts.map((fact) => fact.id);
+  expect(expectedFacts).toEqual([...expectedFacts].sort());
+  expect(new Set(expectedFacts).size).toBe(expectedFacts.length);
 
-function git(args: readonly string[]): GitResult {
-  const result = spawnSync("git", args, {
-    cwd: REPO_ROOT,
-    encoding: null,
-    windowsHide: true,
-  });
-  return {
-    status: result.status ?? -1,
-    stdout: result.stdout ?? Buffer.alloc(0),
-    stderr: result.stderr ?? Buffer.alloc(0),
-  };
-}
-
-interface ReviewedTreeEntry {
-  readonly mode: "100644" | "100755";
-  readonly objectId: string;
-  readonly path: string;
-}
-
-function parseReviewedTreeEntry(line: string, expectedPath: string): ReviewedTreeEntry {
-  const tab = line.indexOf("\t");
-  if (tab < 0) throw new Error("unresolved reviewed source path");
-  const [mode, type, objectId, ...extra] = line.slice(0, tab).split(" ");
-  const path = line.slice(tab + 1);
-  if (
-    extra.length > 0 ||
-    (mode !== "100644" && mode !== "100755") ||
-    type !== "blob" ||
-    !/^[0-9a-f]{40}$/u.test(objectId ?? "") ||
-    path !== expectedPath
-  ) {
-    throw new Error("reviewed source must resolve to one exact regular Git blob");
+  for (const factId of expectedFacts) {
+    const kinds = new Set(
+      registry.evidence
+        .filter((item) => item.descriptor.supported_fact_id === factId)
+        .map((item) => item.descriptor.authority_kind),
+    );
+    expect(kinds, factId).toEqual(
+      new Set(["service-implementation", "service-test"]),
+    );
   }
-  return { mode, objectId, path };
 }
 
-const REVIEWED_TREE_LINES_BY_COMMIT = new Map<
-  string,
-  ReadonlyMap<string, string>
->();
-
-function reviewedTreeLineAtCommit(commitOid: string, path: string): string {
-  const commit = commitOid.slice("sha1:".length);
-  let reviewedTreeLines = REVIEWED_TREE_LINES_BY_COMMIT.get(commit);
-  if (reviewedTreeLines === undefined) {
-    const listing = git(["ls-tree", "-r", "--full-tree", commit]);
-    if (listing.status !== 0) throw new Error("reviewed source tree lookup failed");
-    const entries = new Map<string, string>();
-    for (const line of listing.stdout.toString("utf8").split("\n")) {
-      if (line.length === 0) continue;
-      const tab = line.indexOf("\t");
-      if (tab >= 0) entries.set(line.slice(tab + 1), line);
-    }
-    reviewedTreeLines = entries;
-    REVIEWED_TREE_LINES_BY_COMMIT.set(commit, entries);
-  }
-  const line = reviewedTreeLines.get(path);
-  if (line === undefined) throw new Error("unresolved reviewed source path");
-  return line;
-}
-
-function readReviewedBlobAtCommit(commitOid: string, path: string): Buffer {
-  const entry = parseReviewedTreeEntry(
-    reviewedTreeLineAtCommit(commitOid, path),
-    path,
-  );
-  const blob = git(["cat-file", "blob", entry.objectId]);
-  if (blob.status !== 0) throw new Error("reviewed source blob cannot be read");
-  return blob.stdout;
-}
-
-function readReviewedBlob(path: string): Buffer {
-  return readReviewedBlobAtCommit(DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID, path);
-}
-
-function cloneExecutionTarget(): Mutable<RuntimeExecutionTargetV1> {
-  return structuredClone(
-    DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
-  ) as Mutable<RuntimeExecutionTargetV1>;
-}
-
-function cloneCombinedExecutionTarget(
-  target: Readonly<RuntimeExecutionTargetV1>,
-): Mutable<RuntimeExecutionTargetV1> {
-  return structuredClone(target) as Mutable<RuntimeExecutionTargetV1>;
-}
-
-describe("DeepSeek service runtime contract V1", () => {
-  it("freezes exact reviewed roots, DB projection, and the 24-fact authority", () => {
-    expect(() =>
-      validateServiceRuntimeContractV1Registry(
-        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-      ),
-    ).not.toThrow();
-    expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256).toBe(
-      "aa4948f6f0060a08ada1d0b831babd17c37287be02a9a8f2f9ec69c0f2bed119",
+describe("versioned service runtime contract registry", () => {
+  it("keeps runtime identity ID-only and immutable in code", () => {
+    validateServiceRuntimeContractV1Registry(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1);
+    validateDeepSeekMiMoServiceRuntimeContractV1Registry(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
     );
-    expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
-      "5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340",
-    );
-    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
-      "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
-    );
-    expect(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
-        (pair) => pair.id,
-      ),
-    ).toEqual(EXPECTED_FACT_IDS);
-    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence).toHaveLength(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.contract.runtime_evidence_ids.length,
-    );
-    expect(DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1).toMatchObject({
-      contract: {
-        runtimeContractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-        runtimeContractSha256: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
-        reviewedSourceCommitOid: DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID,
-        runtimeTargetSetSha256:
-          DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256,
-      },
-      targets: [
-        {
-          runtimeTargetId: DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
-          runtimeTargetSha256: DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256,
-          profileKey: DEEPSEEK_PROFILE_KEY,
-        },
-      ],
-    });
-    expect(Object.isFrozen(DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1)).toBe(true);
-    expect(Object.isFrozen(DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets)).toBe(
-      true,
-    );
-  });
+    expectDeeplyFrozen(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1);
+    expectDeeplyFrozen(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1);
 
-  it("independently reproduces every evidence, target, and contract fingerprint", () => {
-    for (const item of DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
-      expect(
-        independentRuntimeFingerprint(
-          item.descriptor as unknown as Readonly<Record<string, unknown>>,
-        ),
-        item.descriptor.runtime_evidence_id,
-      ).toBe(item.sha256);
-    }
-    const target = DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.targets[0];
-    expect(
-      independentRuntimeFingerprint(
-        target.descriptor as unknown as Readonly<Record<string, unknown>>,
-      ),
-    ).toBe(target.sha256);
-    expect(
-      independentRuntimeFingerprint(
-        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.contract as unknown as Readonly<
-          Record<string, unknown>
-        >,
-      ),
-    ).toBe(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.contractSha256);
-    expect(
-      independentRuntimeTargetSetFingerprint(
-        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.targets,
-      ),
-    ).toBe(DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256);
-  });
-
-  it("binds each required fact to one or more deterministic implementation and test descriptors", () => {
-    const authority = new Map<string, string[]>();
-    for (const item of DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
-      const descriptor = item.descriptor;
-      expect(Object.keys(descriptor).sort()).toEqual(
-        [
-          "authority_kind",
-          "runtime_evidence_id",
-          "schema_version",
-          "source_git_blob_sha256",
-          "source_repo_path",
-          "supported_fact_id",
-          "supported_fact_sha256",
-        ].sort(),
-      );
-      const current = authority.get(descriptor.supported_fact_id) ?? [];
-      current.push(descriptor.authority_kind);
-      authority.set(descriptor.supported_fact_id, current);
-    }
-    expect([...authority.keys()].sort()).toEqual([...EXPECTED_FACT_IDS].sort());
-    for (const factId of EXPECTED_FACT_IDS) {
-      expect(authority.get(factId), factId).toContain("service-implementation");
-      expect(authority.get(factId), factId).toContain("service-test");
-    }
-    expect(
-      new Set(
-        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence.map(
-          (item) => item.descriptor.runtime_evidence_id,
-        ),
-      ).size,
-    ).toBe(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence.length);
-  });
-
-  it("binds readonly routing to DB availability, strict server projection, a fresh client candidate, and rendered disclosure", () => {
-    const readonlyEvidence = DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence.filter(
-      (item) => item.descriptor.supported_fact_id === "fact.route.readonly.v1",
-    );
-    for (const authorityKind of ["service-implementation", "service-test"] as const) {
-      const paths = readonlyEvidence
-        .filter((item) => item.descriptor.authority_kind === authorityKind)
-        .map((item) => item.descriptor.source_repo_path);
-      expect(paths).toEqual(
-        READONLY_ROUTE_AUTHORITY[
-          authorityKind === "service-implementation" ? "implementation" : "test"
-        ],
-      );
-    }
-  });
-
-  it("resolves every source to exact regular blob bytes at the reviewed commit", () => {
-    const cache = new Map<string, string>();
-    for (const item of DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
-      const { source_repo_path: path, source_git_blob_sha256: expected } =
-        item.descriptor;
-      let actual = cache.get(path);
-      if (actual === undefined) {
-        actual = createHash("sha256").update(readReviewedBlob(path)).digest("hex");
-        cache.set(path, actual);
-      }
-      expect(actual, path).toBe(expected);
-    }
-  }, 60_000);
-
-  it("keeps the reviewed source as a proper ancestor of the attestation refresh", () => {
-    const reviewed = DEEPSEEK_REVIEWED_SOURCE_COMMIT_OID.slice("sha1:".length);
-    const type = git(["cat-file", "-t", reviewed]);
-    expect(type.status).toBe(0);
-    expect(type.stdout.toString("utf8").trim()).toBe("commit");
-    const head = git(["rev-parse", "HEAD"]);
-    expect(head.status).toBe(0);
-    const headOid = head.stdout.toString("utf8").trim();
-    const ancestor = git(["merge-base", "--is-ancestor", reviewed, headOid]);
-    expect(ancestor.status).toBe(0);
-    expect(headOid).not.toBe(reviewed);
-  });
-
-  it("rejects unresolved, tree, symlink, and submodule source identities", () => {
-    expect(() => readReviewedBlob("does/not/exist.ts")).toThrow(/unresolved/u);
-    expect(() =>
-      parseReviewedTreeEntry(
-        `040000 tree ${"a".repeat(40)}\tweb/src/server/polish`,
-        "web/src/server/polish",
-      ),
-    ).toThrow(/regular Git blob/u);
-    expect(() =>
-      parseReviewedTreeEntry(
-        `120000 blob ${"a".repeat(40)}\tlink.ts`,
-        "link.ts",
-      ),
-    ).toThrow(/regular Git blob/u);
-    expect(() =>
-      parseReviewedTreeEntry(
-        `160000 commit ${"a".repeat(40)}\tvendor/repo`,
-        "vendor/repo",
-      ),
-    ).toThrow(/regular Git blob/u);
-  });
-
-  it("rejects missing, extra, reordered, wrong-hash, and wrong-scope fact authority", () => {
-    expectRegistryRejection((candidate) => {
-      candidate.requiredServiceFacts.pop();
-    }, /required service fact IDs/u);
-    expectRegistryRejection((candidate) => {
-      candidate.requiredServiceFacts.push({
-        id: "fact.mimo.gateway.service.v1",
-        sha256: "a".repeat(64),
-      });
-    }, /required service fact IDs/u);
-    expectRegistryRejection((candidate) => {
-      candidate.requiredServiceFacts.reverse();
-    }, /required service fact IDs/u);
-    expectRegistryRejection((candidate) => {
-      candidate.requiredServiceFacts[0].sha256 = "a".repeat(64);
-    }, /required service fact hashes/u);
-    expectRegistryRejection((candidate) => {
-      candidate.requiredServiceFacts[0].id = "fact.privacy.recipient.mimo.v1";
-    }, /required service fact IDs/u);
-  });
-
-  it("rejects legal bundle, manifest, route, profile, and target identity drift", () => {
-    expectRegistryRejection((candidate) => {
-      candidate.legalBundleVersion = "future-bundle";
-    }, /root identity/u);
-    expectRegistryRejection((candidate) => {
-      candidate.targets[0].descriptor.legal_manifest_id =
-        "mimo-cn-2026-08-23-v1";
-    }, /reviewed profile\/legal route/u);
-    expectRegistryRejection((candidate) => {
-      candidate.targets[0].descriptor.route_descriptor_id =
-        "route.mimo.cn.official.v1";
-    }, /reviewed profile\/legal route/u);
-    expectRegistryRejection((candidate) => {
-      candidate.targets[0].descriptor.profile_key =
-        "mimo.cn.mimo-v2.5-pro.responses.v1";
-    }, /reviewed profile\/legal route/u);
-    expectRegistryRejection((candidate) => {
-      candidate.targets[0].descriptor.runtime_target_id =
-        "runtime-target.deepseek.rebound.v1";
-    }, /reviewed profile\/legal route/u);
-  });
-
-  it("rejects evidence ID rebinding, hash drift, duplicates, and authority substitution", () => {
-    expectRegistryRejection((candidate) => {
-      candidate.evidence[0].descriptor.runtime_evidence_id =
-        "runtime-evidence.rebound.v1";
-    });
-    expectRegistryRejection((candidate) => {
-      candidate.evidence[0].sha256 = "a".repeat(64);
-    }, /descriptor hash/u);
-    expectRegistryRejection((candidate) => {
-      candidate.evidence.push(structuredClone(candidate.evidence[0]));
-    }, /sorted and unique|duplicate or rebound/u);
-    for (const authority of ["provider-external", "service-display"] as const) {
-      expectRegistryRejection((candidate) => {
-        (
-          candidate.evidence[0].descriptor as unknown as Record<string, unknown>
-        ).authority_kind = authority;
-      }, /forbidden authority/u);
-    }
-  });
-
-  it("rejects a coherent re-sign of a source tuple, even with the same evidence ID", () => {
-    expectResignedRegistryRejection((candidate) => {
-      const evidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.runtime_evidence_id ===
-          "runtime-evidence.acceptance.authorization.v1.implementation.01.v1",
-      );
-      if (evidence === undefined) throw new Error("missing acceptance evidence");
-      evidence.descriptor.source_repo_path = "web/src/server/polish/other.ts";
-      evidence.descriptor.source_git_blob_sha256 = "a".repeat(64);
-    });
-  });
-
-  it("rejects every coherently re-signed evidence metamorphic class", () => {
-    expectResignedRegistryRejection((candidate) => {
-      const evidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.runtime_evidence_id ===
-          "runtime-evidence.acceptance.authorization.v1.implementation.01.v1",
-      );
-      if (evidence === undefined) throw new Error("missing acceptance evidence");
-      evidence.descriptor.runtime_evidence_id =
-        "runtime-evidence.acceptance.authorization.v1.implementation.00.v1";
-    });
-
-    expectResignedRegistryRejection((candidate) => {
-      const implementation = candidate.evidence.find(
-        (item) =>
-          item.descriptor.runtime_evidence_id ===
-          "runtime-evidence.acceptance.authorization.v1.implementation.01.v1",
-      );
-      const test = candidate.evidence.find(
-        (item) =>
-          item.descriptor.runtime_evidence_id ===
-          "runtime-evidence.acceptance.authorization.v1.test.01.v1",
-      );
-      if (implementation === undefined || test === undefined) {
-        throw new Error("missing acceptance authority pair");
-      }
-      implementation.descriptor.authority_kind = "service-test";
-      test.descriptor.authority_kind = "service-implementation";
-    });
-
-    expectResignedRegistryRejection((candidate) => {
-      const extra = structuredClone(candidate.evidence[0]);
-      extra.descriptor.runtime_evidence_id =
-        "runtime-evidence.acceptance.authorization.v1.implementation.03.v1";
-      candidate.evidence.push(extra);
-    });
-
-    expectResignedRegistryRejection((candidate) => {
-      const index = candidate.evidence.findIndex(
-        (item) =>
-          item.descriptor.runtime_evidence_id ===
-          "runtime-evidence.neutral.quota.v1.implementation.05.v1",
-      );
-      if (index < 0) throw new Error("missing redundant quota authority");
-      candidate.evidence.splice(index, 1);
-    });
-
-    expectResignedRegistryRejection((candidate) => {
-      const first = candidate.evidence.find(
-        (item) =>
-          item.descriptor.runtime_evidence_id ===
-          "runtime-evidence.neutral.quota.v1.implementation.01.v1",
-      );
-      const second = candidate.evidence.find(
-        (item) =>
-          item.descriptor.runtime_evidence_id ===
-          "runtime-evidence.neutral.quota.v1.implementation.02.v1",
-      );
-      if (first === undefined || second === undefined) {
-        throw new Error("missing quota source permutation pair");
-      }
-      [
-        first.descriptor.source_repo_path,
-        second.descriptor.source_repo_path,
-      ] = [
-        second.descriptor.source_repo_path,
-        first.descriptor.source_repo_path,
-      ];
-      [
-        first.descriptor.source_git_blob_sha256,
-        second.descriptor.source_git_blob_sha256,
-      ] = [
-        second.descriptor.source_git_blob_sha256,
-        first.descriptor.source_git_blob_sha256,
-      ];
-    });
-  });
-
-  it("rejects a coherently re-signed readonly fact backed only by static UI evidence", () => {
-    expectResignedRegistryRejection((candidate) => {
-      candidate.evidence = candidate.evidence.filter((item) =>
-        item.descriptor.supported_fact_id !== "fact.route.readonly.v1" ||
-        item.descriptor.source_repo_path ===
-          "web/src/components/cv-builder/polish/polish-config-phase.tsx" ||
-        item.descriptor.source_repo_path ===
-          "web/src/components/cv-builder/polish/polish-dialog.test.tsx",
-      );
-    });
-  });
-
-  it.each([
-    "../outside.ts",
-    "web/src/../secret.ts",
-    "web\\src\\server.ts",
-    "C:/repo/file.ts",
-    "//server/share/file.ts",
-    "/absolute/file.ts",
-    "web//src/file.ts",
-  ])("rejects non-portable evidence path %s", (path) => {
-    expectRegistryRejection((candidate) => {
-      candidate.evidence[0].descriptor.source_repo_path = path;
-    }, /portable repo-relative ASCII/u);
-  });
-
-  it.each([
-    "web/src/server/polish/service-runtime-contract-v1.ts",
-    "web/src/server/polish/service-runtime-contract-v1.test.ts",
-    "web/src/server/polish/handler-runtime-authority.ts",
-    "web/src/server/polish/handler-runtime-authority.test.ts",
-  ])("rejects self or future evidence path %s", (path) => {
-    expectRegistryRejection((candidate) => {
-      candidate.evidence[0].descriptor.source_repo_path = path;
-    }, /future binding files/u);
-  });
-
-  it("rejects root and pair-array hash drift instead of silently normalizing it", () => {
-    expectRegistryRejection((candidate) => {
-      candidate.contractSha256 = "a".repeat(64);
-    }, /execution target identity|root hash/u);
-    expectRegistryRejection((candidate) => {
-      candidate.contract.runtime_target_sha256s[0] = "a".repeat(64);
-    }, /contract target hashes/u);
-    expectRegistryRejection((candidate) => {
-      candidate.contract.runtime_evidence_sha256s.reverse();
-    }, /contract evidence hashes/u);
-    expectRegistryRejection((candidate) => {
-      candidate.runtimeTargetSetSha256 = "a".repeat(64);
-    }, /target-set hash/u);
-  });
-
-  it("requires deep freeze, exact prototypes, own data properties, and dense arrays", () => {
-    const unfrozen = structuredClone(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1);
-    expect(() => validateServiceRuntimeContractV1Registry(unfrozen)).toThrow(
-      /deeply frozen/u,
-    );
-
-    const customPrototype = structuredClone(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-    ) as MutableRegistry;
-    Object.setPrototypeOf(customPrototype, Object.freeze({ inherited: true }));
-    deepFreeze(customPrototype);
-    expect(() =>
-      validateServiceRuntimeContractV1Registry(customPrototype),
-    ).toThrow(/plain object/u);
-
-    const getterCandidate = structuredClone(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-    ) as MutableRegistry;
-    const root = getterCandidate as unknown as Record<string, unknown>;
-    delete root.schemaVersion;
-    Object.defineProperty(root, "schemaVersion", {
-      enumerable: true,
-      configurable: true,
-      get: () => "service_runtime_contract_registry_v1",
-    });
-    deepFreeze(getterCandidate);
-    expect(() =>
-      validateServiceRuntimeContractV1Registry(getterCandidate),
-    ).toThrow(/own data property/u);
-
-    const symbolCandidate = structuredClone(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-    ) as MutableRegistry;
-    (symbolCandidate as unknown as Record<PropertyKey, unknown>)[Symbol("extra")] =
-      true;
-    deepFreeze(symbolCandidate);
-    expect(() =>
-      validateServiceRuntimeContractV1Registry(symbolCandidate),
-    ).toThrow(/symbol key/u);
-
-    const sparse = structuredClone(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-    ) as MutableRegistry;
-    delete sparse.evidence[0];
-    deepFreeze(sparse);
-    expect(() => validateServiceRuntimeContractV1Registry(sparse)).toThrow(
-      /sparse index/u,
-    );
-
-    const customArray = structuredClone(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-    ) as MutableRegistry;
-    Object.setPrototypeOf(
-      customArray.evidence,
-      Object.freeze(Object.create(Array.prototype) as object),
-    );
-    deepFreeze(customArray);
-    expect(() => validateServiceRuntimeContractV1Registry(customArray)).toThrow(
-      /exact array/u,
-    );
-  });
-});
-
-describe("reviewed DeepSeek and MiMo service runtime contract V2", () => {
-  it("freezes the accepted two-target identity without changing the DeepSeek-only pair", () => {
-    expect(() =>
-      validateDeepSeekMiMoServiceRuntimeContractV1Registry(
-        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
-      ),
-    ).not.toThrow();
+    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID).toBe("runtime.deepseek-v2.v1");
     expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID).toBe(
       "runtime.deepseek-v2-mimo-v2.5-pro.v2",
     );
-    expect(DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID).toBe(
-      "sha1:9526be040a5a0b4764ac6012a0cd41d6e680f7ba",
-    );
-    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
-      "510fb411fdbbf2de5822e8becd508d7bb5da458392162f55244a5d3ab016721c",
-    );
-    expect(MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256).toBe(
-      "091416c8ff3d9c3b32c24d6906b8d618a70da91a9e3cd68132aadcfa964121a6",
-    );
-    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
-      "2ae3a6e969ceee2772d2863ffa23d11dd8e5e725b32df39969f5ade746b55878",
-    );
-    expect(
-      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
-        (pair) => pair.id,
-      ),
-    ).toEqual(EXPECTED_DEEPSEEK_MIMO_FACT_IDS);
-    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets).toHaveLength(2);
-    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets).toMatchObject([
-      {
-        descriptor: {
-          runtime_target_id: DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
-          profile_key: DEEPSEEK_PROFILE_KEY,
-        },
-        sha256: DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256,
-        profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
-      },
-      {
-        descriptor: {
-          runtime_target_id: MIMO_SERVICE_RUNTIME_TARGET_ID,
-          profile_key: MIMO_PROFILE_KEY,
-        },
-        sha256: MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256,
-        profileVersionId: MIMO_PROFILE_VERSION_ID,
-      },
-    ]);
-    expect(MIMO_PROFILE_VERSION_ID).toBe(
-      MIMO_V2_SEED_IDENTITY_V1.profile.profileVersionId,
-    );
-    expect(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1).toMatchObject({
-      contract: {
-        runtimeContractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
-        runtimeContractSha256:
-          DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
-        reviewedSourceCommitOid: DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
-        runtimeTargetSetSha256:
-          DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256,
-      },
-      targets: [
-        {
-          runtimeTargetId: DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
-          profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
-        },
-        {
-          runtimeTargetId: MIMO_SERVICE_RUNTIME_TARGET_ID,
-          profileVersionId: MIMO_V2_SEED_IDENTITY_V1.profile.profileVersionId,
-        },
-      ],
-    });
-    expect(Object.isFrozen(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1)).toBe(
-      true,
-    );
+    for (const registry of [
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+    ]) {
+      expect(registry).not.toHaveProperty("contractSha256");
+      expect(registry).not.toHaveProperty("reviewedSourceCommitOid");
+      expect(registry.contract).not.toHaveProperty("reviewed_source_commit_oid");
+      expect(registry.contract).not.toHaveProperty("runtime_evidence_sha256s");
+      for (const evidence of registry.evidence) {
+        expect(evidence.descriptor).not.toHaveProperty("source_git_blob_sha256");
+      }
+    }
+  });
 
-    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256).toBe(
-      "229ee6ca2b1ff78c81fc5748f01a285ac5936c1f8f06961c6c339ca808752ca9",
+  it("closes every legal service fact with implementation and test evidence", () => {
+    expectEvidenceClosure(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1);
+    expectEvidenceClosure(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1);
+
+    const combinedPaths = new Set(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence.map(
+        (item) => item.descriptor.source_repo_path,
+      ),
     );
-    expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256).toBe(
-      "aa4948f6f0060a08ada1d0b831babd17c37287be02a9a8f2f9ec69c0f2bed119",
+    for (const path of MIMO_EVIDENCE_PATHS) expect(combinedPaths).toContain(path);
+  });
+
+  it("retains content hashes only for DB-authored target and legal facts", () => {
+    for (const registry of [
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+    ]) {
+      for (const target of registry.targets) {
+        expect(fingerprintLegalDescriptorV1(target.descriptor).sha256).toBe(
+          target.sha256,
+        );
+      }
+      expect(runtimeTargetSetSha256(registry.targets)).toBe(
+        registry.runtimeTargetSetSha256,
+      );
+    }
+    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.targets[0].sha256).toBe(
+      DEEPSEEK_SERVICE_RUNTIME_TARGET_V1_SHA256,
+    );
+    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets[1].sha256).toBe(
+      MIMO_SERVICE_RUNTIME_TARGET_V1_SHA256,
     );
     expect(DEEPSEEK_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
-      "5b7f5f2cd9d21c3c7409f02d7b65eda03999309c0ba3939e50fb81caca2c9340",
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.runtimeTargetSetSha256,
     );
-    expect(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.reviewedSourceCommitOid).toBe(
-      "sha1:b2390ff817612df7e3eed40aa775ff4cd4228085",
-    );
-    expect(
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.requiredServiceFacts.map(
-        (pair) => pair.id,
-      ),
-    ).toEqual(EXPECTED_FACT_IDS);
-    const combinedIdentity = JSON.stringify(
-      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
-    );
-    expect(combinedIdentity).not.toContain(
-      "runtime.deepseek-v2-mimo-v2.5-pro.v1",
-    );
-    expect(combinedIdentity).not.toContain(
-      "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d",
+    expect(DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256).toBe(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.runtimeTargetSetSha256,
     );
   });
 
-  it("rebinds combined lifecycle evidence without mutating the legacy DeepSeek evidence", () => {
-    const lifecycleHashes = (
-      registry: typeof DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-      path: string,
-    ) =>
-      new Set(
-        registry.evidence
-          .filter((item) => item.descriptor.source_repo_path === path)
-          .map((item) => item.descriptor.source_git_blob_sha256),
-      );
-    const lifecyclePath = "web/src/server/polish/lifecycle-v2.ts";
-    const lifecycleTestPath =
-      "web/src/server/polish/__tests__/lifecycle/v2.test.ts";
-
-    expect(lifecycleHashes(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1, lifecyclePath)).toEqual(
-      new Set([
-        "ee01910e11617bd28f1490538f21b90e5aa3be4e3ed470e4d1e07801029b4e10",
-      ]),
-    );
-    expect(
-      lifecycleHashes(DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1, lifecycleTestPath),
-    ).toEqual(
-      new Set([
-        "e84c75f1c96c76700d757ce5c52405e49076af5a08e875f5cdcb4b185071d173",
-      ]),
-    );
-    expect(
-      lifecycleHashes(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1, lifecyclePath),
-    ).toEqual(
-      new Set([
-        "778a2271ac9ab47ff60dc372c57e8f3e5b41b98ee9cd50b58e6c46ff9ce94b21",
-      ]),
-    );
-    expect(
-      lifecycleHashes(
-        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
-        lifecycleTestPath,
-      ),
-    ).toEqual(
-      new Set([
-        "bb5391bdea9c4dcebdef78683379d0f7a1d5f430dc1095c34814bb0b3a2163dd",
-      ]),
-    );
+  it("publishes exact profile, adapter, wire, model and endpoint aliases per ID", () => {
+    expect(DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1).toMatchObject({
+      runtimeContractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
+      profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
+      profileKey: DEEPSEEK_PROFILE_KEY,
+      routeDescriptor: {
+        gatewayKind: "direct_deepseek",
+        adapterKind: "deepseek_chat_v1",
+        wireApiKind: "chat_completions_v1",
+        endpointAlias: "deepseek_official",
+        modelId: "deepseek-v4-flash",
+      },
+    });
+    expect(DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1).toMatchObject({
+      runtimeContractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
+      profileVersionId: MIMO_PROFILE_VERSION_ID,
+      profileKey: MIMO_PROFILE_KEY,
+      routeDescriptor: {
+        gatewayKind: MIMO_V2_SEED_IDENTITY_V1.profile.gatewayKind,
+        adapterKind: MIMO_V2_SEED_IDENTITY_V1.profile.adapterKind,
+        wireApiKind: MIMO_V2_SEED_IDENTITY_V1.profile.wireApiKind,
+        endpointAlias: MIMO_V2_SEED_IDENTITY_V1.profile.endpointAlias,
+        modelId: MIMO_V2_SEED_IDENTITY_V1.profile.modelId,
+      },
+    });
   });
 
-  it("independently reproduces every combined evidence, target, root, and target-set hash", () => {
-    for (const item of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
-      expect(
-        independentRuntimeFingerprint(
-          item.descriptor as unknown as Readonly<Record<string, unknown>>,
-        ),
-        item.descriptor.runtime_evidence_id,
-      ).toBe(item.sha256);
-    }
-    for (const target of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets) {
-      expect(
-        independentRuntimeFingerprint(
-          target.descriptor as unknown as Readonly<Record<string, unknown>>,
-        ),
-        target.descriptor.runtime_target_id,
-      ).toBe(target.sha256);
-    }
-    expect(
-      independentRuntimeFingerprint(
-        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.contract as unknown as Readonly<
-          Record<string, unknown>
-        >,
-      ),
-    ).toBe(DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256);
-    expect(
-      independentRuntimeTargetSetFingerprint(
-        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.targets,
-      ),
-    ).toBe(DEEPSEEK_MIMO_SERVICE_RUNTIME_TARGET_SET_V1_SHA256);
+  it("mirrors the ID-only roots and exact targets in DB seed fixtures", () => {
+    expect(DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1.contract).toEqual({
+      runtimeContractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
+      legalBundleVersion: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.legalBundleVersion,
+      bundleContractSha256:
+        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.bundleContractSha256,
+      runtimeTargetSetSha256:
+        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1.runtimeTargetSetSha256,
+    });
+    expect(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.contract).toEqual({
+      runtimeContractId: DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_ID,
+      legalBundleVersion:
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.legalBundleVersion,
+      bundleContractSha256:
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.bundleContractSha256,
+      runtimeTargetSetSha256:
+        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.runtimeTargetSetSha256,
+    });
+    expect(DEEPSEEK_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets[0]).toMatchObject({
+      runtimeTargetId: DEEPSEEK_SERVICE_RUNTIME_TARGET_ID,
+      profileVersionId: DEEPSEEK_PROFILE_VERSION_ID,
+      profileKey: DEEPSEEK_PROFILE_KEY,
+    });
+    expect(DEEPSEEK_MIMO_RUNTIME_CONTRACT_DB_FIXTURE_V1.targets[1]).toMatchObject({
+      runtimeTargetId: MIMO_SERVICE_RUNTIME_TARGET_ID,
+      profileVersionId: MIMO_PROFILE_VERSION_ID,
+      profileKey: MIMO_PROFILE_KEY,
+    });
   });
 
-  it("requires deterministic implementation and test evidence for all 36 exact facts", () => {
-    const authorities = new Map<string, Set<string>>();
-    for (const evidence of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
-      expect([
-        "service-implementation",
-        "service-test",
-      ]).toContain(evidence.descriptor.authority_kind);
-      const kinds = authorities.get(evidence.descriptor.supported_fact_id) ??
-        new Set<string>();
-      kinds.add(evidence.descriptor.authority_kind);
-      authorities.set(evidence.descriptor.supported_fact_id, kinds);
-    }
-    expect([...authorities.keys()].sort()).toEqual(
-      [...EXPECTED_DEEPSEEK_MIMO_FACT_IDS].sort(),
-    );
-    for (const factId of EXPECTED_DEEPSEEK_MIMO_FACT_IDS) {
-      expect(authorities.get(factId), factId).toEqual(
-        new Set(["service-implementation", "service-test"]),
-      );
-    }
-  });
-
-  it("resolves every combined source blob at the exact reviewed identity commit", () => {
-    const cache = new Map<string, Buffer>();
-    const evidencePaths = new Set<string>();
-    for (const evidence of DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence) {
-      const { source_repo_path: path, source_git_blob_sha256: expected } =
-        evidence.descriptor;
-      evidencePaths.add(path);
-      let bytes = cache.get(path);
-      if (bytes === undefined) {
-        bytes = readReviewedBlobAtCommit(
-          DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
-          path,
-        );
-        cache.set(path, bytes);
-      }
-      expect(createHash("sha256").update(bytes).digest("hex"), path).toBe(
-        expected,
-      );
-    }
+  it("resolves only exact targets belonging to the selected versioned ID", () => {
     expect(
-      MIMO_REVIEWED_SOURCE_PATHS.every((path) => evidencePaths.has(path)),
+      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
+        structuredClone(DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1),
+      ),
     ).toBe(true);
-  }, 20_000);
-
-  it("binds all six MiMo adapter artifacts byte-for-byte to the Relay-closed source snapshot", () => {
-    const evidenceHashByPath = new Map(
-      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1.evidence.map((evidence) => [
-        evidence.descriptor.source_repo_path,
-        evidence.descriptor.source_git_blob_sha256,
-      ]),
-    );
-    for (const path of MIMO_REVIEWED_SOURCE_PATHS) {
-      const reviewedBytes = readReviewedBlobAtCommit(
-        DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
-        path,
-      );
-      const relayClosedBytes = readReviewedBlobAtCommit(
-        MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID,
-        path,
-      );
-      expect(reviewedBytes, path).toEqual(relayClosedBytes);
-      expect(createHash("sha256").update(reviewedBytes).digest("hex"), path).toBe(
-        evidenceHashByPath.get(path),
-      );
-    }
-  }, 15_000);
-
-  it("keeps both exact reviewed commits and makes the combined source a proper ancestor", () => {
-    for (const oid of [
-      DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID,
-      MIMO_ADAPTER_RELAY_REVIEWED_COMMIT_OID,
-    ]) {
-      const commit = oid.slice("sha1:".length);
-      const type = git(["cat-file", "-t", commit]);
-      expect(type.status, oid).toBe(0);
-      expect(type.stdout.toString("utf8").trim(), oid).toBe("commit");
-    }
-    const reviewed = DEEPSEEK_MIMO_REVIEWED_SOURCE_COMMIT_OID.slice(
-      "sha1:".length,
-    );
-    const head = git(["rev-parse", "HEAD"]);
-    expect(head.status).toBe(0);
-    const headOid = head.stdout.toString("utf8").trim();
-    expect(git(["merge-base", "--is-ancestor", reviewed, headOid]).status).toBe(
-      0,
-    );
-    expect(headOid).not.toBe(reviewed);
-  });
-
-  it("rejects missing, extra, reordered, and cross-bound targets", () => {
-    expectCombinedRegistryRejection((candidate) => {
-      candidate.targets.pop();
-    }, /contain 2 targets/u);
-    expectCombinedRegistryRejection((candidate) => {
-      candidate.targets.push(structuredClone(candidate.targets[0]));
-    }, /contain 2 targets/u);
-    expectCombinedRegistryRejection((candidate) => {
-      candidate.targets.reverse();
-    }, /reviewed profile\/legal route/u);
-    expectCombinedRegistryRejection((candidate) => {
-      [candidate.targets[0].executionTarget, candidate.targets[1].executionTarget] =
-        [candidate.targets[1].executionTarget, candidate.targets[0].executionTarget];
-    }, /execution target identity/u);
-    expectCombinedRegistryRejection((candidate) => {
-      [candidate.targets[0].profileVersionId, candidate.targets[1].profileVersionId] =
-        [candidate.targets[1].profileVersionId, candidate.targets[0].profileVersionId];
-    }, /reviewed profile\/legal route/u);
-    expectCombinedRegistryRejection((candidate) => {
-      candidate.targets[1].descriptor.legal_manifest_id =
-        candidate.targets[0].descriptor.legal_manifest_id;
-      candidate.targets[1].descriptor.legal_manifest_sha256 =
-        candidate.targets[0].descriptor.legal_manifest_sha256;
-    }, /reviewed profile\/legal route/u);
-  });
-
-  it("rejects missing, extra, cross-bound, and coherently re-signed evidence blobs", () => {
-    expectCombinedRegistryRejection((candidate) => {
-      const index = candidate.evidence.findIndex(
-        (evidence) =>
-          evidence.descriptor.source_repo_path ===
-          "web/test/fixtures/mimo-responses/success.json",
-      );
-      if (index < 0) throw new Error("missing MiMo success evidence");
-      candidate.evidence.splice(index, 1);
-    });
-    expectCombinedRegistryRejection((candidate) => {
-      candidate.evidence.push(structuredClone(candidate.evidence[0]));
-    }, /sorted and unique|duplicate or rebound/u);
-    expectCombinedRegistryRejection((candidate) => {
-      const mimoEvidence = candidate.evidence.find(
-        (evidence) =>
-          evidence.descriptor.supported_fact_id === "fact.mimo.adapter.wire.v1",
-      );
-      const deepSeekFact = candidate.requiredServiceFacts.find(
-        (pair) => pair.id === "fact.deepseek.adapter.wire.v1",
-      );
-      if (mimoEvidence === undefined || deepSeekFact === undefined) {
-        throw new Error("missing cross-bound evidence authority");
-      }
-      mimoEvidence.descriptor.supported_fact_id = deepSeekFact.id;
-      mimoEvidence.descriptor.supported_fact_sha256 = deepSeekFact.sha256;
-    });
-    expectCombinedRegistryRejection((candidate) => {
-      const evidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
-      );
-      if (evidence === undefined) throw new Error("missing MiMo source evidence");
-      delete (
-        evidence.descriptor as unknown as Record<string, unknown>
-      ).source_git_blob_sha256;
-    }, /keys do not match/u);
-    expectCombinedRegistryRejection((candidate) => {
-      const evidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
-      );
-      if (evidence === undefined) throw new Error("missing MiMo source evidence");
-      (
-        evidence.descriptor as unknown as Record<string, unknown>
-      ).source_git_blob_sha256_extra = "a".repeat(64);
-    }, /keys do not match/u);
-    expectResignedCombinedRegistryRejection((candidate) => {
-      const mimoEvidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
-      );
-      const deepSeekEvidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.source_repo_path === "web/src/server/polish/deepseek.ts",
-      );
-      if (mimoEvidence === undefined || deepSeekEvidence === undefined) {
-        throw new Error("missing cross-bound source evidence");
-      }
-      mimoEvidence.descriptor.source_repo_path =
-        deepSeekEvidence.descriptor.source_repo_path;
-      mimoEvidence.descriptor.source_git_blob_sha256 =
-        deepSeekEvidence.descriptor.source_git_blob_sha256;
-    });
-    expectResignedCombinedRegistryRejection((candidate) => {
-      const evidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.source_repo_path === "web/src/server/polish/mimo.ts",
-      );
-      if (evidence === undefined) throw new Error("missing MiMo source evidence");
-      evidence.descriptor.source_git_blob_sha256 = "a".repeat(64);
-    });
-    expectResignedCombinedRegistryRejection((candidate) => {
-      const evidence = candidate.evidence.find(
-        (item) =>
-          item.descriptor.source_repo_path ===
-          "web/test/fixtures/mimo-responses/content-filter.json",
-      );
-      if (evidence === undefined) throw new Error("missing MiMo fixture evidence");
-      evidence.descriptor.source_repo_path =
-        "web/test/fixtures/mimo-responses/rebound.json";
-    });
-  });
-
-  it("keeps the validators and resolvers fail-closed across contract boundaries", () => {
-    expect(() =>
-      validateServiceRuntimeContractV1Registry(
-        DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
-      ),
-    ).toThrow();
-    expect(() =>
-      validateDeepSeekMiMoServiceRuntimeContractV1Registry(
-        DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
-      ),
-    ).toThrow();
-    expect(
-      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
-        DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
-      ),
-    ).toBe(false);
-    expect(
-      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
-        DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("DeepSeek and MiMo runtime target resolver V1", () => {
-  it("accepts only either exact reviewed combined target", () => {
     for (const target of [
       DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
       DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
     ]) {
-      expect(DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(target)).toBe(true);
-      expect(
-        DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(
-          cloneCombinedExecutionTarget(target),
-        ),
-      ).toBe(true);
-    }
-    expect(
-      DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(
-        DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
-      ),
-    ).toBe(false);
-  });
-
-  it("rejects profile/version/route crossing and every nested route drift", () => {
-    const crossed = cloneCombinedExecutionTarget(
-      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
-    );
-    crossed.profileVersionId = DEEPSEEK_PROFILE_VERSION_ID;
-    expect(DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(crossed)).toBe(false);
-
-    for (const key of Object.keys(
-      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1.routeDescriptor,
-    )) {
-      const target = cloneCombinedExecutionTarget(
-        DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
+      expect(DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(structuredClone(target))).toBe(
+        true,
       );
-      const route = target.routeDescriptor as unknown as Record<string, unknown>;
-      route[key] = `${String(route[key])}.drift`;
-      expect(DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(target), key).toBe(false);
+      expect(
+        DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1({
+          ...structuredClone(target),
+          runtimeContractId: "runtime.deepseek-v2-mimo-v2.5-pro.v1",
+        }),
+      ).toBe(false);
     }
-  });
-});
-
-describe("DeepSeek runtime target resolver V1", () => {
-  it("accepts only the exact reviewed runtime/profile/legal/route tuple", () => {
     expect(
-      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
-        DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
-      ),
-    ).toBe(true);
-    expect(DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(cloneExecutionTarget())).toBe(true);
-  });
-
-  it("rejects unknown contract, bundle, profile, manifest, version, and schema", () => {
-    for (const [key, value] of [
-      ["runtimeContractId", "runtime.unknown.v1"],
-      ["runtimeContractSha256", "a".repeat(64)],
-      ["legalBundleVersion", "future-bundle"],
-      ["profileVersionId", "22222222-2222-4222-8222-222222222221"],
-      ["profileKey", "mimo.cn.mimo-v2.5-pro.responses.v1"],
-      ["legalManifestId", "mimo-cn-2026-08-23-v1"],
-      ["schemaVersion", "RUNTIME_EXECUTION_TARGET_V1"],
-    ] as const) {
-      const target = cloneExecutionTarget();
-      (target as unknown as Record<string, unknown>)[key] = value;
-      expect(DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(target), key).toBe(false);
-    }
-  });
-
-  it("rejects every nested route field drift without a compatible fallback", () => {
-    for (const key of Object.keys(
-      DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1.routeDescriptor,
-    )) {
-      const target = cloneExecutionTarget();
-      const route = target.routeDescriptor as unknown as Record<string, unknown>;
-      route[key] = `${String(route[key])}.drift`;
-      expect(DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(target), key).toBe(false);
-    }
-  });
-
-  it("rejects missing, extra, inherited, partial, array, and null inputs", () => {
-    const missing = cloneExecutionTarget();
-    delete (missing as unknown as Record<string, unknown>).profileKey;
-    expect(DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(missing)).toBe(false);
-
-    const partial = {
-      runtimeContractId: DEEPSEEK_SERVICE_RUNTIME_CONTRACT_ID,
-      profileKey: DEEPSEEK_PROFILE_KEY,
-    } as unknown as RuntimeExecutionTargetV1;
-    expect(DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(partial)).toBe(false);
-
-    const extra = cloneExecutionTarget();
-    (extra as unknown as Record<string, unknown>).provider = "deepseek";
-    expect(DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(extra)).toBe(false);
-
-    const inherited = cloneExecutionTarget();
-    Object.setPrototypeOf(inherited, { provider: "deepseek" });
-    expect(DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(inherited)).toBe(false);
-
-    expect(
-      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
-        [] as unknown as RuntimeExecutionTargetV1,
-      ),
+      DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1({
+        ...structuredClone(DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1),
+        profileKey: DEEPSEEK_PROFILE_KEY,
+      }),
     ).toBe(false);
-    expect(
-      DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(
-        null as unknown as RuntimeExecutionTargetV1,
-      ),
-    ).toBe(false);
+  });
+
+  it("fails closed on root, evidence, route and cardinality drift", () => {
+    expectRejectedMutation(
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+      validateServiceRuntimeContractV1Registry,
+      (candidate) => {
+        candidate.extra = true;
+      },
+    );
+    expectRejectedMutation(
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+      validateServiceRuntimeContractV1Registry,
+      (candidate) => {
+        (candidate.contract as Record<string, unknown>).runtime_contract_id =
+          "runtime.deepseek-v2.v2";
+      },
+    );
+    expectRejectedMutation(
+      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1,
+      validateServiceRuntimeContractV1Registry,
+      (candidate) => {
+        const evidence = candidate.evidence as Array<{
+          descriptor: Record<string, unknown>;
+        }>;
+        evidence[0].descriptor.source_repo_path =
+          "web/src/server/polish/service-runtime-contract-v1.ts";
+      },
+    );
+    expectRejectedMutation(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+      validateDeepSeekMiMoServiceRuntimeContractV1Registry,
+      (candidate) => {
+        const targets = candidate.targets as Array<{
+          executionTarget: { routeDescriptor: Record<string, unknown> };
+        }>;
+        targets[1].executionTarget.routeDescriptor.modelId = "mimo-other";
+      },
+    );
+    expectRejectedMutation(
+      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1,
+      validateDeepSeekMiMoServiceRuntimeContractV1Registry,
+      (candidate) => {
+        (candidate.targets as unknown[]).pop();
+      },
+    );
   });
 });

@@ -110,7 +110,6 @@ export const FAKE_V2_EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
   profileVersionId: "11111111-1111-4111-8111-111111111111",
   legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
   runtimeContractId: "runtime.deepseek-v2.v1",
-  runtimeContractSha256: "a".repeat(64),
 });
 const FAKE_V2_PRICE = Object.freeze({
   schemaVersion: "price_snapshot_v1" as const,
@@ -131,8 +130,7 @@ function sameExpectedRoute(left: ExpectedRouteV1, right: ExpectedRouteV1): boole
     left.configGeneration === right.configGeneration &&
     left.profileVersionId === right.profileVersionId &&
     left.legalBundleVersion === right.legalBundleVersion &&
-    left.runtimeContractId === right.runtimeContractId &&
-    left.runtimeContractSha256 === right.runtimeContractSha256
+    left.runtimeContractId === right.runtimeContractId
   );
 }
 
@@ -146,7 +144,6 @@ function fakeV2Route(): RouteSnapshotV1 {
     priceVersionId: FAKE_V2_PRICE_VERSION_ID,
     legalBundleVersion: FAKE_V2_EXPECTED_ROUTE.legalBundleVersion,
     runtimeContractId: FAKE_V2_EXPECTED_ROUTE.runtimeContractId,
-    runtimeContractSha256: FAKE_V2_EXPECTED_ROUTE.runtimeContractSha256,
     gatewayKind: profile.gatewayKind,
     modelId: profile.modelId,
     wireApiKind: profile.wireApiKind,

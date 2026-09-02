@@ -246,7 +246,6 @@ const LEGAL_FINGERPRINT_SCHEMAS = Object.freeze({
       ["schema_version", "string"], ["runtime_evidence_id", "string"],
       ["authority_kind", "string"], ["supported_fact_id", "string"],
       ["supported_fact_sha256", "string"], ["source_repo_path", "string"],
-      ["source_git_blob_sha256", "string"],
     ],
     {
       allowEmpty: EMPTY, setLike: EMPTY, nonEmptyArrays: EMPTY,
@@ -265,17 +264,16 @@ const LEGAL_FINGERPRINT_SCHEMAS = Object.freeze({
   ai_service_runtime_contract_v1: schema(
     [
       ["schema_version", "string"], ["runtime_contract_id", "string"],
-      ["reviewed_source_commit_oid", "string"], ["legal_bundle_version", "string"],
+      ["legal_bundle_version", "string"],
       ["bundle_contract_sha256", "string"], ["runtime_target_ids", "string[]"],
       ["runtime_target_sha256s", "string[]"], ["service_fact_ids", "string[]"],
-      ["service_fact_sha256s", "string[]"], ["runtime_evidence_ids", "string[]"],
-      ["runtime_evidence_sha256s", "string[]"],
+      ["service_fact_sha256s", "string[]"],
     ],
     {
       allowEmpty: EMPTY, setLike: EMPTY,
       nonEmptyArrays: new Set([
         "runtime_target_ids", "runtime_target_sha256s", "service_fact_ids",
-        "service_fact_sha256s", "runtime_evidence_ids", "runtime_evidence_sha256s",
+        "service_fact_sha256s",
       ]),
     },
   ),
@@ -457,9 +455,6 @@ function validateSpecialFields(schemaVersion: LegalFingerprintSchemaVersion, val
     ) {
       throw new LegalFingerprintV1Error("bundle schema referents are not exact v1 schemas");
     }
-  }
-  if (schemaVersion === "ai_service_runtime_contract_v1" && !/^sha1:[0-9a-f]{40}$/.test(value.reviewed_source_commit_oid as string)) {
-    throw new LegalFingerprintV1Error("reviewed_source_commit_oid must be sha1:<40 lowercase hex>");
   }
   if (schemaVersion === "ai_service_runtime_evidence_v1" && !isPortableRepoPath(value.source_repo_path as string)) {
     throw new LegalFingerprintV1Error("source_repo_path must be a portable ASCII repo path");

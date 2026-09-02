@@ -53,8 +53,7 @@ begin
   -- Legacy or partially populated rows cannot enter the V2 attempt lifecycle.
   if v_request.state is distinct from 'reserved'
      or v_request.route_schema_version is distinct from 'route_snapshot_v1'
-     or v_request.runtime_contract_id is null
-     or v_request.runtime_contract_sha256 is null then
+     or v_request.runtime_contract_id is null then
     return jsonb_build_object('ok', false, 'reason', 'SERVICE_UNAVAILABLE');
   end if;
 
@@ -103,7 +102,6 @@ begin
       'priceVersionId', v_attempt.price_version_id,
       'legalBundleVersion', v_attempt.legal_bundle_version,
       'runtimeContractId', v_attempt.runtime_contract_id,
-      'runtimeContractSha256', v_attempt.runtime_contract_sha256,
       'gatewayKind', v_attempt.gateway_kind,
       'modelId', v_attempt.model_id,
       'wireApiKind', v_attempt.wire_api_kind,
@@ -224,7 +222,6 @@ begin
     price_version_id,
     legal_bundle_version,
     runtime_contract_id,
-    runtime_contract_sha256,
     gateway_kind,
     model_id,
     wire_api_kind,
@@ -248,7 +245,6 @@ begin
     v_request.price_version_id,
     v_request.legal_bundle_version,
     v_request.runtime_contract_id,
-    v_request.runtime_contract_sha256,
     v_request.gateway_kind,
     v_request.model_id,
     v_request.wire_api_kind,
@@ -281,7 +277,6 @@ begin
     'priceVersionId', v_attempt.price_version_id,
     'legalBundleVersion', v_attempt.legal_bundle_version,
     'runtimeContractId', v_attempt.runtime_contract_id,
-    'runtimeContractSha256', v_attempt.runtime_contract_sha256,
     'gatewayKind', v_attempt.gateway_kind,
     'modelId', v_attempt.model_id,
     'wireApiKind', v_attempt.wire_api_kind,

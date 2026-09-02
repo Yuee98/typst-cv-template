@@ -668,8 +668,7 @@ function routeMatchesExpectedV2(
     route.configGeneration === expected.configGeneration &&
     route.profileVersionId === expected.profileVersionId &&
     route.legalBundleVersion === expected.legalBundleVersion &&
-    route.runtimeContractId === expected.runtimeContractId &&
-    route.runtimeContractSha256 === expected.runtimeContractSha256
+    route.runtimeContractId === expected.runtimeContractId
   );
 }
 
@@ -694,7 +693,6 @@ export async function reservePolishRequestV2(
       profile_version_id: expectedRoute.profileVersionId,
       legal_bundle_version: expectedRoute.legalBundleVersion,
       runtime_contract_id: expectedRoute.runtimeContractId,
-      runtime_contract_sha256: expectedRoute.runtimeContractSha256,
     },
   });
   const observation = await observeRpcV2(client, "reserve_ai_polish_request_v2", args);

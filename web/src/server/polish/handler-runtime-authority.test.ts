@@ -5,15 +5,11 @@ import { resolveProfile } from "./profile-registry";
 import {
   DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
   DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
-  DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
   DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
-  DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
 } from "./service-runtime-contract-v1";
 
 const SUPERSEDED_COMBINED_CONTRACT_ID =
   "runtime.deepseek-v2-mimo-v2.5-pro.v1";
-const SUPERSEDED_COMBINED_CONTRACT_SHA256 =
-  "049fc8e626fc87656fa8bfda86951782f9e715b2728c09d765f24ff89e633b8d";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -86,48 +82,9 @@ describe("real V2 handler runtime authority", () => {
     const superseded = {
       ...structuredClone(target),
       runtimeContractId: SUPERSEDED_COMBINED_CONTRACT_ID,
-      runtimeContractSha256: SUPERSEDED_COMBINED_CONTRACT_SHA256,
     };
 
     expect(authority.runtimeTargetResolver(superseded)).toBe(false);
-  });
-
-  it.each([
-    [
-      "current ID with superseded hash",
-      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
-      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1.runtimeContractId,
-      SUPERSEDED_COMBINED_CONTRACT_SHA256,
-    ],
-    [
-      "superseded ID with current hash",
-      DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
-      SUPERSEDED_COMBINED_CONTRACT_ID,
-      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
-    ],
-    [
-      "legacy ID with combined-v2 hash",
-      DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
-      DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1.runtimeContractId,
-      DEEPSEEK_MIMO_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
-    ],
-    [
-      "combined-v2 ID with legacy hash",
-      DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
-      DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1.runtimeContractId,
-      DEEPSEEK_SERVICE_RUNTIME_CONTRACT_V1_SHA256,
-    ],
-  ])("rejects %s", (_label, target, runtimeContractId, runtimeContractSha256) => {
-    const authority = createRealPolishRuntimeAuthorityV2({
-      POLISH_FAKE_LLM: "false",
-    });
-    expect(
-      authority.runtimeTargetResolver({
-        ...structuredClone(target),
-        runtimeContractId,
-        runtimeContractSha256,
-      }),
-    ).toBe(false);
   });
 
   it("rejects crossed target/profile/route tuples and unknown targets", () => {

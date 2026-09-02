@@ -154,10 +154,10 @@ describe("CFG-001 DeepSeek V2 seed fixture", () => {
     });
   });
 
-  it("binds runtime identity into the policy hash", () => {
+  it("binds the versioned runtime contract ID into the policy hash", () => {
     const changed = {
       ...DEEPSEEK_V2_SEED_V1.policy.jcsInput,
-      runtimeContractSha256: "0".repeat(64),
+      runtimeContractId: "runtime.deepseek-v2.v2",
     };
 
     expect(jcsVector(changed).sha256).not.toBe(

@@ -45,7 +45,6 @@ interface RouteSnapshot {
   priceVersionId: string;
   legalBundleVersion: string;
   runtimeContractId: string;
-  runtimeContractSha256: string;
   gatewayKind: "direct_deepseek";
   modelId: string;
   wireApiKind: "chat_completions_v1";
@@ -58,7 +57,6 @@ interface RouteFixture {
   priceVersionId: string;
   policyVersionId: string;
   runtimeContractId: string;
-  runtimeContractSha256: string;
   modelId: string;
   displayDisclosureKey: string;
 }
@@ -312,7 +310,6 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       profile_version_id: target.profileVersionId,
       legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
       runtime_contract_id: target.runtimeContractId,
-      runtime_contract_sha256: target.runtimeContractSha256,
     };
   }
 
@@ -528,7 +525,6 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
         price_version_id,
         legal_bundle_version,
         runtime_contract_id,
-        runtime_contract_sha256,
         gateway_kind,
         model_id,
         wire_api_kind,
@@ -552,7 +548,6 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
         '${snapshot.priceVersionId}'::uuid,
         '${snapshot.legalBundleVersion}',
         '${snapshot.runtimeContractId}',
-        '${snapshot.runtimeContractSha256}',
         '${snapshot.gatewayKind}',
         '${snapshot.modelId}',
         '${snapshot.wireApiKind}',
@@ -771,7 +766,6 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
       price_version_id: reservation.routeSnapshot.priceVersionId,
       legal_bundle_version: reservation.routeSnapshot.legalBundleVersion,
       runtime_contract_id: reservation.routeSnapshot.runtimeContractId,
-      runtime_contract_sha256: reservation.routeSnapshot.runtimeContractSha256,
       gateway_kind: reservation.routeSnapshot.gatewayKind,
       model_id: reservation.routeSnapshot.modelId,
       wire_api_kind: reservation.routeSnapshot.wireApiKind,

@@ -111,7 +111,6 @@ describe("RT-009 strict V2 execution contract", () => {
       expect(captured).toMatchObject({
         schemaVersion: "runtime_execution_target_v1",
         runtimeContractId: route.runtimeContractId,
-        runtimeContractSha256: route.runtimeContractSha256,
         legalBundleVersion: route.legalBundleVersion,
         profileVersionId: route.profileVersionId,
       });
@@ -218,10 +217,6 @@ describe("RT-009 strict V2 execution contract", () => {
     record(overflowGeneration.routeSnapshot).configGeneration = "9223372036854775808";
     mutations.push(overflowGeneration);
 
-    const uppercaseHash = cloneRecord(deepseekRaw);
-    record(uppercaseHash.routeSnapshot).runtimeContractSha256 = "A".repeat(64);
-    mutations.push(uppercaseHash);
-
     const routePriceDrift = cloneRecord(deepseekRaw);
     record(routePriceDrift.routeSnapshot).priceVersionId =
       "99999999-9999-4999-8999-999999999999";
@@ -282,7 +277,6 @@ describe("RT-009 strict V2 execution contract", () => {
       profileVersionId: deepseekRoute.profileVersionId,
       legalBundleVersion: deepseekRoute.legalBundleVersion,
       runtimeContractId: deepseekRoute.runtimeContractId,
-      runtimeContractSha256: deepseekRoute.runtimeContractSha256,
     };
     expect(parseExpectedRouteV1(expected)).toEqual(expected);
     expect(() => parseExpectedRouteV1({ ...expected, extra: true })).toThrow(

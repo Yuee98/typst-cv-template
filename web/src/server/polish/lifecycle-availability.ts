@@ -9,7 +9,6 @@ import {
   polishCanonicalUuidSchema,
   polishConfigGenerationSchema,
   polishRouteIdentifierSchema,
-  polishRuntimeContractSha256Schema,
   type PolishAvailability,
   type PolishAvailabilityResponse,
   type PolishErrorCode,
@@ -25,7 +24,6 @@ const dbAvailabilityEnabledSchema = z.strictObject({
   profileVersionId: polishCanonicalUuidSchema,
   legalBundleVersion: polishRouteIdentifierSchema,
   runtimeContractId: polishRouteIdentifierSchema,
-  runtimeContractSha256: polishRuntimeContractSha256Schema,
   displayDisclosureKey: polishRouteIdentifierSchema,
   termsAccepted: z.boolean(),
 });
@@ -37,7 +35,6 @@ const dbAvailabilityDisabledSchema = z.strictObject({
   profileVersionId: z.null(),
   legalBundleVersion: z.null(),
   runtimeContractId: z.null(),
-  runtimeContractSha256: z.null(),
   displayDisclosureKey: z.null(),
   termsAccepted: z.literal(false),
 });
@@ -114,7 +111,6 @@ export function projectPolishAvailability(
       profileVersionId: null,
       legalBundleVersion: null,
       runtimeContractId: null,
-      runtimeContractSha256: null,
       displayDisclosure: null,
       termsAccepted: false,
     });
@@ -131,7 +127,6 @@ export function projectPolishAvailability(
     profileVersionId: availability.profileVersionId,
     legalBundleVersion: availability.legalBundleVersion,
     runtimeContractId: availability.runtimeContractId,
-    runtimeContractSha256: availability.runtimeContractSha256,
     displayDisclosure: {
       key: disclosure.key,
       providerName: disclosure.providerName,

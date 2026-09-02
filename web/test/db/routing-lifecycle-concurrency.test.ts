@@ -15,7 +15,7 @@ const EVIDENCE_RETRY_DELAY_MS = 200;
 const EVIDENCE_RETRY_TIMEOUT_MS = 10_000;
 
 interface Barrier { ready: Promise<void>; result: Promise<OwnerSqlResult>; release: () => void }
-interface Fixture { profileId: string; profileVersionId: string; priceVersionId: string; policyVersionId: string; policyVersionIds: string[]; profileKey: string; sourceUrl: string; runtimeContractId: string; runtimeContractSha256: string; runtimeTargetId: string; }
+interface Fixture { profileId: string; profileVersionId: string; priceVersionId: string; policyVersionId: string; policyVersionIds: string[]; profileKey: string; sourceUrl: string; runtimeContractId: string; runtimeTargetId: string; }
 
 function isPsqlEvidenceFailure(result: OwnerSqlResult): boolean {
   return result.status !== 0 && /(?:^|\r?\n)ERROR: {2}invalid routing lifecycle evidence(?:\r?\n|$)/u.test(`${result.stderr}\n${result.stdout}`);
@@ -92,8 +92,8 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
     const withPolicy = options.withPolicy ?? true;
     const runtime = authorSyntheticRuntimeContract({ profileKey });
     const policyInsert = withPolicy
-      ? `insert into public.ai_routing_policy_versions(id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,runtime_contract_sha256,config_sha256)
-        values ('${policyVersionId}','db013.concurrent.${suffix}',1,'draft','Asia/Shanghai',jsonb_build_object('schemaVersion','routing_rules_v1','defaultRoute',jsonb_build_object('profileVersionId','${profileVersionId}','priceVersionId','${priceVersionId}'),'windows','[]'::jsonb),'${profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${runtime.runtimeContractId}','${runtime.runtimeContractSha256}','${"c".repeat(64)}');`
+      ? `insert into public.ai_routing_policy_versions(id,policy_key,version,status,timezone,rules,default_profile_version_id,legal_bundle_version,runtime_contract_id,config_sha256)
+        values ('${policyVersionId}','db013.concurrent.${suffix}',1,'draft','Asia/Shanghai',jsonb_build_object('schemaVersion','routing_rules_v1','defaultRoute',jsonb_build_object('profileVersionId','${profileVersionId}','priceVersionId','${priceVersionId}'),'windows','[]'::jsonb),'${profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}','${runtime.runtimeContractId}','${"c".repeat(64)}');`
       : "";
     runOwnerSql(String.raw`begin;
       insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor) values ('${profileId}','${profileKey}','DB013 ${suffix}','direct_deepseek','deepseek');
@@ -105,7 +105,7 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
       insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ('${priceVersionId}','input_standard',1),('${priceVersionId}','input_cache_read',1),('${priceVersionId}','output',1);
       ${policyInsert} commit;`);
     if (options.sealed ?? true) sealPriceAsDatabaseOwner(priceVersionId);
-    const result = { profileId, profileVersionId, priceVersionId, policyVersionId, policyVersionIds: withPolicy ? [policyVersionId] : [], profileKey, sourceUrl, runtimeContractId: runtime.runtimeContractId, runtimeContractSha256: runtime.runtimeContractSha256, runtimeTargetId: runtime.runtimeTargetId };
+    const result = { profileId, profileVersionId, priceVersionId, policyVersionId, policyVersionIds: withPolicy ? [policyVersionId] : [], profileKey, sourceUrl, runtimeContractId: runtime.runtimeContractId, runtimeTargetId: runtime.runtimeTargetId };
     ownedFixtures.push(result); return result;
   }
 
@@ -115,9 +115,9 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
       set local session_replication_role=replica;
       update public.ai_feature_config set active_routing_policy_version_id=null,routing_updated_by=null,routing_change_reason=null where active_routing_policy_version_id=any(array[${policyIds}]);
       update public.ai_feature_config set ai_polish_enabled=false,enabled_user_allowlist='{}' where id=true;
-      delete from public.ai_routing_lifecycle_audit where policy_version_id=any(array[${policyIds}]) or old_active_policy_version_id=any(array[${policyIds}]) or new_active_policy_version_id=any(array[${policyIds}]) or profile_id='${f.profileId}' or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}');
-      delete from public.ai_provider_attempt_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}');
-      delete from public.ai_request_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}');
+      delete from public.ai_routing_lifecycle_audit where policy_version_id=any(array[${policyIds}]) or old_active_policy_version_id=any(array[${policyIds}]) or new_active_policy_version_id=any(array[${policyIds}]) or profile_id='${f.profileId}' or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or runtime_contract_id='${f.runtimeContractId}';
+      delete from public.ai_provider_attempt_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or runtime_contract_id='${f.runtimeContractId}';
+      delete from public.ai_request_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or runtime_contract_id='${f.runtimeContractId}';
       delete from public.ai_routing_policy_transition_intents where policy_version_id=any(array[${policyIds}]);
       delete from public.ai_routing_policy_versions where id=any(array[${policyIds}]);
       delete from public.ai_price_component_seal_intents where price_version_id='${f.priceVersionId}';
@@ -127,15 +127,15 @@ describe.skipIf(!RUN_DB_TESTS)("DB-013 routing lifecycle concurrency (real DB)",
       delete from public.ai_provider_profile_versions where id='${f.profileVersionId}';
       delete from public.ai_provider_profiles where id='${f.profileId}';
       delete from public.ai_service_runtime_contract_targets where runtime_contract_id='${f.runtimeContractId}' and runtime_target_id='${f.runtimeTargetId}';
-      delete from public.ai_service_runtime_contract_versions where runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}';
+      delete from public.ai_service_runtime_contract_versions where runtime_contract_id='${f.runtimeContractId}';
       delete from public.ai_service_runtime_target_versions where runtime_target_id='${f.runtimeTargetId}';
       commit;`);
     const residual = runOwnerSql(String.raw`\pset tuples_only on
 select pg_catalog.jsonb_build_object(
   'activePointers',(select count(*) from public.ai_feature_config where active_routing_policy_version_id=any(array[${policyIds}])),
-  'audit',(select count(*) from public.ai_routing_lifecycle_audit where policy_version_id=any(array[${policyIds}]) or old_active_policy_version_id=any(array[${policyIds}]) or new_active_policy_version_id=any(array[${policyIds}]) or profile_id='${f.profileId}' or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}')),
-  'attempts',(select count(*) from public.ai_provider_attempt_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}')),
-  'requests',(select count(*) from public.ai_request_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or (runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}')),
+  'audit',(select count(*) from public.ai_routing_lifecycle_audit where policy_version_id=any(array[${policyIds}]) or old_active_policy_version_id=any(array[${policyIds}]) or new_active_policy_version_id=any(array[${policyIds}]) or profile_id='${f.profileId}' or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or runtime_contract_id='${f.runtimeContractId}'),
+  'attempts',(select count(*) from public.ai_provider_attempt_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or runtime_contract_id='${f.runtimeContractId}'),
+  'requests',(select count(*) from public.ai_request_ledger where routing_policy_version_id=any(array[${policyIds}]) or profile_version_id='${f.profileVersionId}' or price_version_id='${f.priceVersionId}' or runtime_contract_id='${f.runtimeContractId}'),
   'transitionIntents',(select count(*) from public.ai_routing_policy_transition_intents where policy_version_id=any(array[${policyIds}])),
   'policies',(select count(*) from public.ai_routing_policy_versions where id=any(array[${policyIds}])),
   'sealIntents',(select count(*) from public.ai_price_component_seal_intents where price_version_id='${f.priceVersionId}'),
@@ -145,7 +145,7 @@ select pg_catalog.jsonb_build_object(
   'profileVersions',(select count(*) from public.ai_provider_profile_versions where id='${f.profileVersionId}'),
   'profiles',(select count(*) from public.ai_provider_profiles where id='${f.profileId}'),
   'memberships',(select count(*) from public.ai_service_runtime_contract_targets where runtime_contract_id='${f.runtimeContractId}' and runtime_target_id='${f.runtimeTargetId}'),
-  'roots',(select count(*) from public.ai_service_runtime_contract_versions where runtime_contract_id='${f.runtimeContractId}' and runtime_contract_sha256='${f.runtimeContractSha256}'),
+  'roots',(select count(*) from public.ai_service_runtime_contract_versions where runtime_contract_id='${f.runtimeContractId}'),
   'targets',(select count(*) from public.ai_service_runtime_target_versions where runtime_target_id='${f.runtimeTargetId}')
 )::text;`);
     expect(JSON.parse(residual.stdout.trim())).toEqual({ activePointers: 0, audit: 0, attempts: 0, requests: 0, transitionIntents: 0, policies: 0, sealIntents: 0, components: 0, prices: 0, dailyUsage: 0, profileVersions: 0, profiles: 0, memberships: 0, roots: 0, targets: 0 });
@@ -155,17 +155,15 @@ select pg_catalog.jsonb_build_object(
   async function evidence(f: Fixture) {
     const root = readLifecycleEvidenceRoot({
       runtimeContractId: f.runtimeContractId,
-      runtimeContractSha256: f.runtimeContractSha256,
       priceVersionIds: [f.priceVersionId],
     });
     return {
       ...EVIDENCE,
       p_runtime_contract_id: f.runtimeContractId,
-      p_runtime_contract_sha256: f.runtimeContractSha256,
       p_reviewed_source_commit_oid: root.reviewedSourceCommitOid,
-      p_reviewed_source_sha256: f.runtimeContractSha256,
+      p_reviewed_source_sha256: root.reviewedSourceSha256,
       p_rechecked_at: root.recheckedAt,
-      p_rechecked_sha256: f.runtimeContractSha256,
+      p_rechecked_sha256: root.reviewedSourceSha256,
     };
   }
 
@@ -371,7 +369,7 @@ select count(*) from public.ai_routing_lifecycle_audit where policy_version_id='
       const reserveApp = `db013-reserve-${crypto.randomUUID()}`; const clearApp = `db013-clear-${crypto.randomUUID()}`; const requestId = crypto.randomUUID(); const clientRequestId = crypto.randomUUID();
       let reserve: Barrier | undefined;
       try {
-        reserve = heldOwnerSql(`begin; set local application_name='${reserveApp}'; set local role service_role; select public.reserve_ai_polish_request_v2('${user.id}'::uuid,'${requestId}'::uuid,'${clientRequestId}'::uuid,jsonb_build_object('schema_version','expected_route_v1','config_generation','${config.data?.config_generation}','profile_version_id','${canary.profileVersionId}','legal_bundle_version','${INITIAL_LEGAL_BUNDLE_VERSION}','runtime_contract_id','${canary.runtimeContractId}','runtime_contract_sha256','${canary.runtimeContractSha256}')); reset role; \\echo DB013_RESERVE_HELD\n`, "DB013_RESERVE_HELD", "commit;");
+        reserve = heldOwnerSql(`begin; set local application_name='${reserveApp}'; set local role service_role; select public.reserve_ai_polish_request_v2('${user.id}'::uuid,'${requestId}'::uuid,'${clientRequestId}'::uuid,jsonb_build_object('schema_version','expected_route_v1','config_generation','${config.data?.config_generation}','profile_version_id','${canary.profileVersionId}','legal_bundle_version','${INITIAL_LEGAL_BUNDLE_VERSION}','runtime_contract_id','${canary.runtimeContractId}')); reset role; \\echo DB013_RESERVE_HELD\n`, "DB013_RESERVE_HELD", "commit;");
         await reserve.ready;
         const clearEvidence = { ...ev, p_reason: `DB-013 reserve pointer clear ${crypto.randomUUID()}` };
         const clear = startEvidenceStableOwnerSql(`begin; set local application_name='${clearApp}'; set local role service_role; select public.clear_ai_routing_policy_pointer_v1(p_expected_policy_version_id=>'${canary.policyVersionId}',${Object.entries(clearEvidence).map(([key, value]) => `${key}=>'${value}'`).join(", ")}); reset role; commit;`);
@@ -379,8 +377,8 @@ select count(*) from public.ai_routing_lifecycle_audit where policy_version_id='
         const [reserved, cleared] = await Promise.all([reserve.result, clear]);
         expect(reserved.status).toBe(0); expect(cleared.status).toBe(0); expect(reserved.stdout).toContain(canary.runtimeContractId);
       } finally { reserve?.release(); if (reserve) await reserve.result.catch(() => undefined); }
-      const ledger = await service.from("ai_request_ledger").select("routing_policy_version_id,profile_version_id,runtime_contract_id,runtime_contract_sha256").eq("user_id", user.id).eq("client_request_id", clientRequestId).single();
-      expect(ledger.data).toMatchObject({ routing_policy_version_id: canary.policyVersionId, profile_version_id: canary.profileVersionId, runtime_contract_id: canary.runtimeContractId, runtime_contract_sha256: canary.runtimeContractSha256 });
+      const ledger = await service.from("ai_request_ledger").select("routing_policy_version_id,profile_version_id,runtime_contract_id").eq("user_id", user.id).eq("client_request_id", clientRequestId).single();
+      expect(ledger.data).toMatchObject({ routing_policy_version_id: canary.policyVersionId, profile_version_id: canary.profileVersionId, runtime_contract_id: canary.runtimeContractId });
     } finally { await deleteTestUser(service, user.id); await configureFeature(service, { enabled: false, allowlist: [] }); }
   });
 
