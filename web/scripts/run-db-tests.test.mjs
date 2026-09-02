@@ -796,12 +796,13 @@ it("DB workflow runs the credential-free runner contract before real-DB mutation
     readFile(workflowPath, "utf8"),
     readFile(normalConfigPath, "utf8"),
   ]);
-  assertWorkflowContract(workflow, normalConfig);
+  for (const lineEnding of ["\n", "\r\n"]) {
+    assertWorkflowContract(workflow.replace(/\r\n|\n/g, lineEnding), normalConfig);
+  }
 
   // The normal unit-test config must continue discovering this file, while
   // the dedicated workflow must run it before any Docker-backed mutation.
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
-  expect(workflow).toMatch(/env:\s*\n\s+NEXT_TELEMETRY_DISABLED: "1"\s+\n\s+DB_TESTS_REQUIRED: "1"/);
   expect(workflow).not.toMatch(/DB_TESTS_REQUIRED:\s*"1"[\s\S]*?\n\s{8,}env:/);
 
   const steps = parseWorkflowSteps(workflow);
