@@ -4,11 +4,11 @@
  *
  * The request lifecycles live in lifecycle.ts / lifecycle-v2.ts
  * (dependency-injected, unit-tested); this module owns the production
- * dependencies and resolves
- * them AT MODULE SCOPE, which is what gives the routes their refuse-to-start
- * semantics (CP1 promise): importing this module throws — failing `next
- * build` / `next start` / the first request — instead of serving degraded
- * requests, when the configuration is invalid:
+ * dependencies and resolves them AT MODULE SCOPE when the deployment gate is
+ * enabled, which is what gives the live routes their refuse-to-start semantics
+ * (CP1 promise): importing this module throws — failing `next build` / `next
+ * start` / the first request — instead of serving degraded requests, when the
+ * enabled configuration is invalid:
  *
  * - POLISH_FAKE_LLM=true with NODE_ENV=production and no CI marker → throw
  * - real backend (POLISH_FAKE_BACKEND unset) without NEXT_PUBLIC_SUPABASE_URL
@@ -17,7 +17,9 @@
  * - POLISH_FAKE_BACKEND=true without POLISH_FAKE_LLM=true → throw
  * - POLISH_FAKE_LLM=true without POLISH_FAKE_BACKEND=true → throw for V2
  *
- * Provider credentials are profile-scoped and resolved only after DB reserve,
+ * When AI_POLISH_ENABLED is anything other than the exact string `true`, the
+ * module composes fixed 503 handlers without constructing auth, Supabase, or
+ * provider dependencies. Provider credentials are profile-scoped and resolved only after DB reserve,
  * immutable execution snapshot and runtime-target attestation. A missing
  * selected credential therefore releases before attempt admission/network;
  * an unselected provider never becomes a startup dependency.
@@ -75,6 +77,11 @@ import {
 } from "./provider-fake";
 import { assertFakeLlmDeploymentAllowed } from "./env";
 import {
+  isPolishDeploymentEnabled,
+  type PolishHttpHandler,
+  withPolishDeploymentGate,
+} from "./deployment-gate";
+import {
   completePolishProviderAttemptV2,
   finalizePolishRequestV2,
   getPolishExecutionSnapshotV1,
@@ -118,17 +125,11 @@ interface PolishHandlerDeps {
   readonly postV2: PolishPostV2Deps;
 }
 
-const FAKE_AVAILABILITY_DISABLED: PolishAvailabilityDbResult = Object.freeze({
-  enabled: false,
-  configGeneration: null,
-  routingPolicyVersionId: null,
-  profileVersionId: null,
-  legalBundleVersion: null,
-  runtimeContractId: null,
-  runtimeContractSha256: null,
-  displayDisclosureKey: null,
-  termsAccepted: false,
-});
+interface PolishHandlers {
+  readonly POST: PolishHttpHandler;
+  readonly GET: PolishHttpHandler;
+  readonly AVAILABILITY_GET: PolishHttpHandler;
+}
 
 const FAKE_AVAILABILITY_ENABLED: PolishAvailabilityDbResult = Object.freeze({
   enabled: true,
@@ -165,17 +166,14 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
     const quota: PolishQuotaRouteDeps = {
       verifyAccessToken: fakeV2.legacyV1.verifyAccessToken,
       getQuota: fakeV2.legacyV1.getQuota,
-      aiPolishEnabled: fakeV2.legacyV1.aiPolishEnabled,
+      aiPolishEnabled: true,
       logger: logPolishEvent,
     };
     return {
       quota,
       availability: {
         verifyAccessToken: fakeV2.legacyV1.verifyAccessToken,
-        readAvailability: async () =>
-          env.AI_POLISH_ENABLED === "true"
-            ? FAKE_AVAILABILITY_ENABLED
-            : FAKE_AVAILABILITY_DISABLED,
+        readAvailability: async () => FAKE_AVAILABILITY_ENABLED,
         logger: logPolishAvailabilityEvent,
       },
       postV2: {
@@ -217,8 +215,8 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
     quota: {
       verifyAccessToken: authDeps.verifyAccessToken,
       getQuota: (userId) => getPolishQuota(adminClient, userId),
-      // Availability/POST use the DB kill switch. Quota remains readable while
-      // the feature is dark so a stale build-time env flag cannot own runtime.
+      // The shared deployment gate owns this ceiling. Reaching the real quota
+      // handler proves the module-scope value was the exact string `true`.
       aiPolishEnabled: true,
       logger: logPolishEvent,
     },
@@ -235,10 +233,37 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
   };
 }
 
-// Module-scope resolution IS the refuse-to-start mechanism: any
-// misconfiguration above throws during import, before a request is served.
-const deps = buildPolishHandlerDeps();
+function composePolishHandlers(): PolishHandlers {
+  const deploymentAiEnabled = isPolishDeploymentEnabled(env.AI_POLISH_ENABLED);
+  if (!deploymentAiEnabled) {
+    const unreachable: PolishHttpHandler = async () => {
+      throw new Error("disabled polish deployment delegated downstream");
+    };
+    const disabled = withPolishDeploymentGate(false, unreachable);
+    return {
+      POST: disabled,
+      GET: disabled,
+      AVAILABILITY_GET: disabled,
+    };
+  }
 
-export const POST = createPolishPostV2Handler(deps.postV2);
-export const GET = (request: Request) => handleQuotaGet(request, deps.quota);
-export const AVAILABILITY_GET = createPolishAvailabilityHandler(deps.availability);
+  // Module-scope resolution is the enabled deployment's refuse-to-start
+  // mechanism: any live-backend misconfiguration throws before serving.
+  const deps = buildPolishHandlerDeps();
+  return {
+    POST: withPolishDeploymentGate(true, createPolishPostV2Handler(deps.postV2)),
+    GET: withPolishDeploymentGate(true, (request: Request) =>
+      handleQuotaGet(request, deps.quota),
+    ),
+    AVAILABILITY_GET: withPolishDeploymentGate(
+      true,
+      createPolishAvailabilityHandler(deps.availability),
+    ),
+  };
+}
+
+const handlers = composePolishHandlers();
+
+export const POST = handlers.POST;
+export const GET = handlers.GET;
+export const AVAILABILITY_GET = handlers.AVAILABILITY_GET;
