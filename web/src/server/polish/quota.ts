@@ -799,6 +799,13 @@ export async function getPolishExecutionSnapshotV2(
     reserveRoute: RouteSnapshotV1;
     runtimeTargetResolver: RuntimeTargetResolverV1;
     runtimeTargetResolverV2: RuntimeTargetResolverV2;
+    runtimeIdentity?: Readonly<{
+      environment: string;
+      projectRef: string;
+      runtimeBuildId: string;
+      bindingManifestRevision: string;
+      bindingManifestSha256: string;
+    }>;
   },
 ): Promise<ExecutionSnapshotSuccessV2> {
   const reservationId = requireCanonicalUuidV2(params.reservationId);
@@ -806,10 +813,22 @@ export async function getPolishExecutionSnapshotV2(
   const reserveRoute = parseRouteSnapshotInputV2(params.reserveRoute);
   const observation = await observeRpcV2(
     client,
-    "get_ai_polish_execution_snapshot_v3",
+    params.runtimeIdentity
+      ? "get_ai_polish_execution_snapshot_v4"
+      : "get_ai_polish_execution_snapshot_v3",
     freezeRpcValueV2({
       p_reservation_id: reservationId,
       p_user_id: userId,
+      ...(params.runtimeIdentity
+        ? {
+            p_environment: params.runtimeIdentity.environment,
+            p_project_ref: params.runtimeIdentity.projectRef,
+            p_runtime_build_id: params.runtimeIdentity.runtimeBuildId,
+            p_binding_manifest_revision:
+              params.runtimeIdentity.bindingManifestRevision,
+            p_binding_manifest_sha256: params.runtimeIdentity.bindingManifestSha256,
+          }
+        : {}),
     }),
   );
   if (observation.kind === "ambiguous") {

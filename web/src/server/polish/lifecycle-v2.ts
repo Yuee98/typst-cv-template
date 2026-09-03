@@ -171,6 +171,13 @@ export type PolishAdapterResolverV2 = (
 ) => PolishInferenceProviderV2 | PreparedProviderExecutionV2;
 
 export interface PolishRouteDepsV2 {
+  readonly runtimeDeploymentIdentity?: Readonly<{
+    environment: string;
+    projectRef: string;
+    runtimeBuildId: string;
+    bindingManifestRevision: string;
+    bindingManifestSha256: string;
+  }>;
   readonly reserve: (
     params: Parameters<typeof reservePolishRequestV2>[1],
   ) => ReturnType<typeof reservePolishRequestV2>;
@@ -734,6 +741,9 @@ export async function executePolishLifecycleV2(
       runtimeTargetResolver: deps.runtimeTargetResolver,
       runtimeTargetResolverV2:
         deps.runtimeTargetResolverV2 ?? EMPTY_RUNTIME_TARGET_RESOLVER_V2,
+      ...(deps.runtimeDeploymentIdentity
+        ? { runtimeIdentity: deps.runtimeDeploymentIdentity }
+        : {}),
     });
   } catch (error) {
     if (input.signal.aborted) {

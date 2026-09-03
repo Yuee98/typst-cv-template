@@ -435,6 +435,33 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
       reason: "RUNTIME_TARGET_UNAVAILABLE",
     });
   });
+
+  it("uses the exact admitted deployment identity for ordinary v2 snapshots", async () => {
+    const { client, rpc } = sequenceClient({ data: executionSuccessV2 });
+    await expect(
+      getPolishExecutionSnapshotV2(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE_V2,
+        runtimeTargetResolver: () => true,
+        runtimeTargetResolverV2: () => true,
+        runtimeIdentity: {
+          environment: "local",
+          projectRef: "local",
+          runtimeBuildId: "build-a",
+          bindingManifestRevision: "binding-a",
+          bindingManifestSha256: "a".repeat(64),
+        },
+      }),
+    ).resolves.toEqual(executionSuccessV2);
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v4", expect.objectContaining({
+      p_environment: "local",
+      p_project_ref: "local",
+      p_runtime_build_id: "build-a",
+      p_binding_manifest_revision: "binding-a",
+      p_binding_manifest_sha256: "a".repeat(64),
+    }));
+  });
 });
 
 describe("RT-009 V2 attempt admission", () => {

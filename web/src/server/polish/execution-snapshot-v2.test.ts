@@ -176,6 +176,69 @@ describe("versioned execution snapshot", () => {
     ).toThrow(/runtime target unavailable/u);
   });
 
+  it("uses durable admission without a request-time validation lease", () => {
+    const manifest = {
+      schemaVersion: "ai_provider_bindings_v1",
+      revision: "local-test-manifest",
+      bindings: [
+        {
+          credentialEnvName: v2Profile.credentialEnvName,
+          providerId: v2Profile.providerId,
+          recipientKey: runtimeEvidence.recipientKey,
+          origin: new URL(v2Profile.endpointUrl).origin,
+        },
+      ],
+    };
+    const environment = {
+      ADMIN_ENVIRONMENT: "local",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "local-test-key",
+      AI_RUNTIME_BUILD_ID: "local-test-build",
+      AI_PROVIDER_BINDING_MANIFEST: JSON.stringify(manifest),
+      [v2Profile.credentialEnvName]: "local-provider-secret",
+    };
+    const identity = parseRuntimeDeploymentIdentityV1(environment);
+    const admission = {
+      schemaVersion: "runtime_deployment_admission_v1",
+      environment: "local",
+      projectRef: "local",
+      runtimeBuildId: identity.buildId,
+      bindingManifestRevision: identity.manifest.revision,
+      bindingManifestSha256: identity.manifestSha256,
+      admissionRevision: "1",
+      runtimeContractId: runtimeEvidence.runtimeContractId,
+      runtimeTargetId: runtimeEvidence.runtimeTargetId,
+      runtimeTargetSha256: runtimeEvidence.runtimeTargetSha256,
+      profileVersionId: runtimeEvidence.profileVersionId,
+      priceVersionId: runtimeEvidence.priceVersionId,
+      providerId: runtimeEvidence.providerId,
+      codeCapabilityId: runtimeEvidence.codeCapabilityId,
+      codeCapabilitySha256: runtimeEvidence.codeCapabilitySha256,
+      legalBundleVersion: runtimeEvidence.legalBundleVersion,
+      legalManifestId: runtimeEvidence.legalManifestId,
+      displayDisclosureKey: runtimeEvidence.displayDisclosureKey,
+    };
+    const parse = (deployment: typeof admission) =>
+      parseVersionedExecutionSnapshot(
+        { ...v2, deploymentValidation: deployment },
+        {
+          ...expected,
+          runtimeTargetResolverV2:
+            createReportedRuntimeTargetResolverV2(environment),
+        },
+      );
+
+    expect(() => parse(admission)).not.toThrow();
+    expect(() => parse({
+      ...admission,
+      priceVersionId: "99999999-9999-4999-8999-999999999999",
+    })).toThrow(/frozen authority mismatch/u);
+    expect(() => parse({
+      ...admission,
+      legalManifestId: "provider-manifest.crossed-v2",
+    })).toThrow(/frozen authority mismatch/u);
+  });
+
   it("accepts a coherent successor legal bundle outside the frozen v1 catalog", () => {
     const successorBundle = "legal-bundle.successor-v2";
     const successorManifest = "provider-manifest.successor-v2";
