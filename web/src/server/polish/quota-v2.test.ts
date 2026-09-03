@@ -3,14 +3,17 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import fixture from "../../../test/fixtures/ai-runtime-execution-contract-v1.json";
+import profileV2Fixture from "../../../test/fixtures/profile-execution-v2.json";
 import { resolveEndpoint } from "./adapter-registry";
 import { parseRouteSnapshotV1, type ExpectedRouteV1 } from "./lifecycle-v2-contract";
 import type { PolishAttemptCompletedFactV2 } from "./orchestrator";
 import { resolveProfile } from "./profile-registry";
+import { validateProfileExecutionConfigV2 } from "./profile-execution-v2";
 import {
   completePolishProviderAttemptV2,
   finalizePolishRequestV2,
   getPolishExecutionSnapshotV1,
+  getPolishExecutionSnapshotV2,
   POLISH_ATTEMPT_FAILURE_STAGES_V2,
   PolishLifecycleV2RpcError,
   recordPolishRequestCancellationV2,
@@ -56,6 +59,21 @@ const executionSuccess = structuredClone(fixture.executionSnapshot.successes[0].
 const RESERVATION_ID = executionSuccess.reservationId;
 const ROUTE = parseRouteSnapshotV1(executionSuccess.routeSnapshot);
 const PROFILE = resolveProfile("deepseek.official.deepseek-v4-flash.chat.v1");
+const PROFILE_V2 = validateProfileExecutionConfigV2({
+  ...profileV2Fixture.deepseek,
+  legalManifestId: PROFILE.legalManifestId,
+  displayDisclosureKey: ROUTE.displayDisclosureKey,
+});
+const ROUTE_V2 = parseRouteSnapshotV1({
+  ...ROUTE,
+  modelId: PROFILE_V2.modelId,
+});
+const executionSuccessV2 = Object.freeze({
+  ...executionSuccess,
+  schemaVersion: "ai_polish_execution_snapshot_v2",
+  routeSnapshot: ROUTE_V2,
+  profileExecutionConfig: PROFILE_V2,
+});
 const MIMO_PROFILE = resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1");
 const DEEPSEEK_ENDPOINT = resolveEndpoint(PROFILE.endpointAlias).url;
 const EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
@@ -321,9 +339,65 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
       reason: "RUNTIME_TARGET_UNAVAILABLE",
     });
   });
+
+  it("reads a v2 snapshot through the versioned RPC and exact target resolver", async () => {
+    const { client, rpc } = sequenceClient({ data: executionSuccessV2 });
+    await expect(
+      getPolishExecutionSnapshotV2(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE_V2,
+        runtimeTargetResolver: () => true,
+        runtimeTargetResolverV2: (target) =>
+          target.profile.endpointUrl === PROFILE_V2.endpointUrl,
+      }),
+    ).resolves.toEqual(executionSuccessV2);
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v2", {
+      p_reservation_id: RESERVATION_ID,
+      p_user_id: USER_ID,
+    });
+  });
+
+  it("reports a rejected v2 runtime target as unavailable authority", async () => {
+    const { client } = sequenceClient({ data: executionSuccessV2 });
+    const error = await capturedError(
+      getPolishExecutionSnapshotV2(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE_V2,
+        runtimeTargetResolver: () => true,
+        runtimeTargetResolverV2: () => false,
+      }),
+    );
+    expect(error).toMatchObject({
+      kind: "SNAPSHOT_UNAVAILABLE",
+      reason: "RUNTIME_TARGET_UNAVAILABLE",
+    });
+  });
 });
 
 describe("RT-009 V2 attempt admission", () => {
+  it("freezes runtime provenance through the v2 start RPC", async () => {
+    const { client, rpc } = sequenceClient({ data: attemptStart() });
+    await expect(
+      startPolishProviderAttemptV2(client, {
+        reservationId: RESERVATION_ID,
+        attemptNo: 1,
+        expectedRoute: ROUTE,
+        runtimeProvenance: {
+          runtimeBuildId: "preview-build:abc123",
+          bindingManifestRevision: "binding-v1",
+        },
+      }),
+    ).resolves.toEqual(attemptStart());
+    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v2", {
+      p_reservation_id: RESERVATION_ID,
+      p_attempt_no: 1,
+      p_runtime_build_id: "preview-build:abc123",
+      p_binding_manifest_revision: "binding-v1",
+    });
+  });
+
   it("returns a fresh exact start receipt without replay", async () => {
     const { client, rpc } = sequenceClient({ data: attemptStart() });
     await expect(
@@ -476,6 +550,24 @@ describe("RT-009 V2 durable cancellation observation", () => {
 });
 
 describe("RT-009 V2 terminal attempt persistence", () => {
+  it("validates the frozen v2 endpoint without duplicating it into legacy observation", () => {
+    const payload = serializePolishAttemptCompletionV2({
+      attempt: attemptStart({ routeSnapshot: ROUTE_V2 }),
+      fact: completedFact({
+        route: {
+          ...completedFact().route,
+          actualUpstreamEndpoint: PROFILE_V2.endpointUrl,
+          actualModelId: PROFILE_V2.modelId,
+        },
+      }),
+      profileExecutionConfig: PROFILE_V2,
+      billingCurrency: "CNY",
+      routeObservationSecret: "route-secret",
+    });
+    expect(payload.p_route.actual_upstream_endpoint).toBeNull();
+    expect(payload.p_route.actual_model_id).toBe(PROFILE_V2.modelId);
+  });
+
   it("serializes exact usage, tagged route, cost reconciliation, and metadata", () => {
     const payload = serializePolishAttemptCompletionV2({
       attempt: attemptStart(),
