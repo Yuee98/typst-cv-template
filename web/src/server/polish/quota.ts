@@ -806,7 +806,7 @@ export async function getPolishExecutionSnapshotV2(
   const reserveRoute = parseRouteSnapshotInputV2(params.reserveRoute);
   const observation = await observeRpcV2(
     client,
-    "get_ai_polish_execution_snapshot_v2",
+    "get_ai_polish_execution_snapshot_v3",
     freezeRpcValueV2({
       p_reservation_id: reservationId,
       p_user_id: userId,

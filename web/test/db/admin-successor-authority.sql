@@ -40,5 +40,19 @@ where n.nspname = 'public'
     'accept_ai_legal_disclosure_v2',
     'get_ai_legal_display_v2',
     'get_ai_polish_availability_v2',
-    'guard_ai_request_legal_acceptance_v2'
+    'guard_ai_request_legal_acceptance_v2',
+    'admin_guard_committed_operation_v1',
+    'admin_canonical_operation_payload_sha256_v1',
+    'admin_has_recent_totp_v1',
+    'admin_assert_write_actor_v1',
+    'admin_lock_committed_operation_v1',
+    'admin_commit_operation_v1',
+    'admin_get_committed_operation_v1',
+    'admin_get_write_authority_v1',
+    'admin_guard_validation_evidence_v1',
+    'admin_import_reviewed_deployment_v1',
+    'get_admin_validation_candidate_v1',
+    'record_admin_validation_report_v1',
+    'get_admin_runtime_validation_v1',
+    'get_ai_polish_execution_snapshot_v3'
   );

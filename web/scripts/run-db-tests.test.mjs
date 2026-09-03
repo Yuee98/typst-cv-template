@@ -15,6 +15,7 @@ const GOOD_STATUS = [
   'API_URL="http://127.0.0.1:54321"',
   'PUBLISHABLE_KEY="publishable-test-key"',
   'SECRET_KEY="secret-test-key"',
+  'S3_PROTOCOL_REGION="local"',
 ].join("\n");
 
 const INVALID_SUPABASE_PROJECT_CONFIGS = [

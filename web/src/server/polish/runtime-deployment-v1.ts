@@ -1,0 +1,105 @@
+import "server-only";
+
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import {
+  parseProviderBindingManifest,
+  type ProviderBindingManifest,
+} from "./provider-binding-v2";
+
+const codeId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/u);
+const buildId = z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,199}$/u);
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
+const uuid = z.string().uuid();
+
+export const runtimeDeploymentValidationSchema = z.strictObject({
+  schemaVersion: z.literal("runtime_deployment_validation_v1"),
+  reportId: uuid,
+  reviewedDeploymentId: uuid,
+  environment: z.enum(["local", "preview", "production"]),
+  projectRef: z.string().min(1).max(100),
+  runtimeBuildId: buildId,
+  bindingManifestRevision: codeId,
+  bindingManifestSha256: sha256,
+  runtimeContractId: codeId,
+  runtimeTargetId: codeId,
+  runtimeTargetSha256: sha256,
+  profileVersionId: uuid,
+  priceVersionId: uuid,
+  providerId: uuid,
+  codeCapabilityId: codeId,
+  codeCapabilitySha256: sha256,
+  legalBundleVersion: codeId,
+  legalManifestId: codeId,
+  displayDisclosureKey: codeId,
+  checkedAt: z.string().datetime({ offset: true }),
+  expiresAt: z.string().datetime({ offset: true }),
+  reportSha256: sha256,
+}).superRefine((value, context) => {
+  const checkedAt = Date.parse(value.checkedAt);
+  const expiresAt = Date.parse(value.expiresAt);
+  if (expiresAt <= checkedAt || expiresAt - checkedAt > 10 * 60_000) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expiresAt"],
+      message: "invalid deployment validation window",
+    });
+  }
+});
+export type RuntimeDeploymentValidationV1 = z.infer<
+  typeof runtimeDeploymentValidationSchema
+>;
+
+export interface RuntimeDeploymentEnvironment {
+  readonly AI_RUNTIME_BUILD_ID?: string;
+  readonly AI_PROVIDER_BINDING_MANIFEST?: string;
+  readonly [key: string]: string | undefined;
+}
+
+export interface RuntimeDeploymentIdentityV1 {
+  readonly buildId: string;
+  readonly manifest: ProviderBindingManifest;
+  readonly manifestSha256: string;
+}
+
+export function canonicalProviderBindingManifest(
+  manifest: ProviderBindingManifest,
+): string {
+  return JSON.stringify({
+    schemaVersion: manifest.schemaVersion,
+    revision: manifest.revision,
+    bindings: [...manifest.bindings]
+      .sort((left, right) =>
+        left.credentialEnvName.localeCompare(right.credentialEnvName),
+      )
+      .map((binding) => ({
+        credentialEnvName: binding.credentialEnvName,
+        providerId: binding.providerId,
+        recipientKey: binding.recipientKey,
+        origin: binding.origin,
+      })),
+  });
+}
+
+export function parseRuntimeDeploymentIdentityV1(
+  env: RuntimeDeploymentEnvironment,
+): RuntimeDeploymentIdentityV1 {
+  const parsedBuildId = buildId.safeParse(env.AI_RUNTIME_BUILD_ID);
+  if (!parsedBuildId.success || !env.AI_PROVIDER_BINDING_MANIFEST) {
+    throw new Error("Runtime deployment identity is unavailable");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(env.AI_PROVIDER_BINDING_MANIFEST);
+  } catch {
+    throw new Error("Runtime deployment identity is unavailable");
+  }
+  const manifest = parseProviderBindingManifest(value);
+  return Object.freeze({
+    buildId: parsedBuildId.data,
+    manifest,
+    manifestSha256: createHash("sha256")
+      .update(canonicalProviderBindingManifest(manifest), "utf8")
+      .digest("hex"),
+  });
+}

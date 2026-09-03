@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createServiceClient, RUN_DB_TESTS } from "./helpers";
+import { createServiceClient, RUN_DB_TESTS, signInAsUser } from "./helpers";
 import {
   completePayload,
   SettlementHarness,
@@ -19,6 +19,8 @@ const credentialEnvName = "AI_PROVIDER_KEY_DEEPSEEK_PRIMARY";
 const runtimeBuildId = "local-test-build";
 const bindingRevision = "local-binding-v1";
 const displayDisclosureKey = `test-display.${profileVersionId.replaceAll("-", "")}`;
+const reviewedDeploymentId = crypto.randomUUID();
+const bindingManifestSha256 = "4".repeat(64);
 
 describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
   let service: SupabaseClient;
@@ -32,6 +34,20 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     await harness.setup();
     const user = await harness.makeUser("provider-execution-v2");
     userId = user.id;
+    const admin = await signInAsUser(user);
+    const accessToken = (await admin.auth.getSession()).data.session!.access_token;
+    const issuer = (JSON.parse(
+      Buffer.from(accessToken.split(".")[1], "base64url").toString(),
+    ) as { iss: string }).iss;
+    const environmentCount = runOwnerSql(
+      "select count(*) from public.admin_environment;",
+    ).stdout.match(/\n\s*(\d+)\s*\n/)?.[1];
+    if (environmentCount !== "0") {
+      throw new Error("v2 execution fixture requires an empty local Admin identity");
+    }
+    runOwnerSql(
+      `select public.admin_bootstrap_v1('${userId}','local','local','${issuer.replaceAll("'", "''")}','v2 execution report fixture');`,
+    );
     reservation = await harness.reserveV2(user);
 
     const result = runOwnerSql(String.raw`
@@ -207,12 +223,51 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
         displayDisclosureKey,
       },
     };
+    runOwnerSql(String.raw`
+      select public.admin_import_reviewed_deployment_v1(
+        '${reviewedDeploymentId}','local','local','${runtimeBuildId}',
+        '${bindingRevision}','${bindingManifestSha256}',
+        array['runtime-capability.deepseek-chat-v1.2026-09-04'],
+        array['evidence.local-v2-execution-build'],
+        'sha1:0123456789abcdef0123456789abcdef01234567','${"5".repeat(64)}',
+        clock_timestamp()+interval '1 day'
+      );
+    `);
+    const report = await service.rpc("record_admin_validation_report_v1", {
+      p_reviewed_deployment_id: reviewedDeploymentId,
+      p_runtime_contract_id: reservation.routeSnapshot.runtimeContractId,
+      p_runtime_target_id: (
+        runOwnerSql(String.raw`
+          \pset format unaligned
+          \pset tuples_only on
+          select runtime_target_id from public.ai_runtime_target_bindings_v2
+          where profile_version_id='${profileVersionId}';
+        `).stdout.split(/\r?\n/u).map(value => value.trim()).findLast(Boolean)
+      ),
+      p_observed_runtime_build_id: runtimeBuildId,
+      p_observed_binding_manifest_revision: bindingRevision,
+      p_observed_binding_manifest_sha256: bindingManifestSha256,
+      p_observed_code_capability_sha256:
+        "4e5a92750f77f148e6422dcf05b03d99333b357879dba5fdb7248d16dd08bdf2",
+      p_endpoint_policy_valid: true,
+      p_manifest_binding_valid: true,
+      p_credential_configured: true,
+      p_compiled_capability_valid: true,
+    });
+    expect(report.error).toBeNull();
+    expect(report.data?.passed).toBe(true);
   });
 
   afterAll(async () => {
     const restoredRuntimeTarget = runOwnerSql(String.raw`
       begin;
       set local session_replication_role = replica;
+      delete from public.admin_validation_reports_v1
+        where reviewed_deployment_id = '${reviewedDeploymentId}';
+      delete from public.admin_reviewed_deployment_capabilities_v1
+        where reviewed_deployment_id = '${reviewedDeploymentId}';
+      delete from public.admin_reviewed_deployments_v1
+        where id = '${reviewedDeploymentId}';
       delete from public.ai_runtime_target_bindings_v2
         where profile_version_id = '${profileVersionId}';
       update public.ai_service_runtime_target_versions as target
@@ -235,6 +290,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
       restoredRuntimeTarget.status,
       restoredRuntimeTarget.stderr,
     ).toBe(0);
+    runOwnerSql(`delete from public.admin_principals where user_id='${userId}';
+      delete from public.admin_environment where environment='local';`);
     await harness.cleanup();
     runOwnerSql(String.raw`
       begin;
@@ -372,6 +429,23 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
   });
 
   it("reads, admits, completes and settles one frozen v2 execution", async () => {
+    const reportedSnapshot = await service.rpc(
+      "get_ai_polish_execution_snapshot_v3",
+      {
+        p_reservation_id: reservation.reservationId,
+        p_user_id: userId,
+      },
+    );
+    expect(reportedSnapshot.error).toBeNull();
+    expect(reportedSnapshot.data).toMatchObject({
+      schemaVersion: "ai_polish_execution_snapshot_v2",
+      deploymentValidation: {
+        schemaVersion: "runtime_deployment_validation_v1",
+        reviewedDeploymentId,
+        runtimeBuildId,
+        bindingManifestRevision: bindingRevision,
+      },
+    });
     const snapshot = await service.rpc("get_ai_polish_execution_snapshot_v2", {
       p_reservation_id: reservation.reservationId,
       p_user_id: userId,

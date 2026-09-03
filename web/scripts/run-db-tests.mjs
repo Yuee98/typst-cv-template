@@ -57,8 +57,8 @@ export function validateLocalDatabaseUrl(rawUrl) {
 export function parseSupabaseStatus(stdout) {
   const values = {};
   for (const line of (stdout ?? "").split(/\r?\n/)) {
-    if (line.trim() && !/^[A-Z_]+="[^"]*"$/.test(line.trim())) return null;
-    const match = /^([A-Z_]+)="([^"]*)"$/.exec(line.trim());
+    if (line.trim() && !/^[A-Z][A-Z0-9_]*="[^"]*"$/.test(line.trim())) return null;
+    const match = /^([A-Z][A-Z0-9_]*)="([^"]*)"$/.exec(line.trim());
     if (match) {
       if (match[1] in values) return null;
       values[match[1]] = match[2].trim();
