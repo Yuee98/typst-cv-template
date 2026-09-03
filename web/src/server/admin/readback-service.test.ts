@@ -41,7 +41,17 @@ function report() {
       .update(JSON.stringify(manifest))
       .digest("hex"),
     validationReportIds: input.validationReportIds,
-    effectiveRoutes: [{ runtimeTargetId: "target.deepseek.v1" }],
+    effectiveRoutes: [{
+      profileVersionId: "77777777-7777-4777-8777-777777777777",
+      priceVersionId: "88888888-8888-4888-8888-888888888888",
+      runtimeTargetId: "target.deepseek.v1",
+      runtimeTargetSha256: "b".repeat(64),
+      providerId: "11111111-1111-4111-8111-111111111111",
+      codeCapabilityId: "capability.deepseek.v1",
+      codeCapabilitySha256: "c".repeat(64),
+      legalManifestId: "legal.deepseek.v1",
+      displayDisclosureKey: "display.deepseek.v1",
+    }],
     checkedAt: checkedAt.toISOString(),
     expiresAt: new Date(checkedAt.getTime() + 9 * 60_000).toISOString(),
     reportSha256: "a".repeat(64),
@@ -70,6 +80,15 @@ describe("trusted Admin runtime readback producer", () => {
     { name: "crossed deployment", patch: { reviewedDeploymentId: "77777777-7777-4777-8777-777777777777" } },
     { name: "crossed build", patch: { runtimeBuildId: "other-build" } },
     { name: "extra output", patch: { credential: "hidden-value" } },
+    {
+      name: "extra route output",
+      patch: {
+        effectiveRoutes: [{
+          ...report().effectiveRoutes[0],
+          endpointUrl: "https://should-not-reach-the-browser.example",
+        }],
+      },
+    },
     { name: "expired", patch: { expiresAt: new Date(Date.now() - 1_000).toISOString() } },
   ])("fails closed for $name", async ({ patch }) => {
     const rpc = vi.fn().mockResolvedValue({
