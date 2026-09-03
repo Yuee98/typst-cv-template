@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
 it("restricts DOM-provided destinations to the implemented local sections", () => {
   expect(adminNavigationPath("zh", "profiles")).toBe("/zh/admin/profiles");
+  expect(adminNavigationPath("zh", "providers")).toBe("/zh/admin/providers");
+  expect(adminNavigationPath("en", "controls")).toBe("/en/admin/controls");
   expect(adminNavigationPath("en", "overview")).toBe("/en/admin");
   for (const value of [
     "javascript:alert(1)",

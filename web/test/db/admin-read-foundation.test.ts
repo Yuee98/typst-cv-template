@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { adminContextSchema, adminPageSchema } from "@/lib/admin/contract";
+import { adminAnalyticsSchema, adminContextSchema, adminPageSchema } from "@/lib/admin/contract";
 import { createAdminRequestClient } from "@/server/admin/request-client";
 import { handleAdminGet } from "@/server/admin/handler";
 import { createAnonClient, createServiceClient, createTestUser, DB_TEST_ENV, deleteTestUser, RUN_DB_TESTS, signInAsUser, type TestUser } from "./helpers";
@@ -71,7 +71,7 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
   });
 
   it("validates every explicit projection and bounded cursor search", async () => {
-    for (const section of ["users", "profiles", "prices", "policies", "audit"]) {
+    for (const section of ["users", "providers", "profiles", "prices", "policies", "audit"]) {
       const { data, error } = await admin.rpc("admin_list_records_v1", { ...base, p_section: section, p_limit: 1 });
       expect(error, section).toBeNull();
       const page = adminPageSchema.parse(data);
@@ -101,6 +101,27 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
     expect(response.status).toBe(200);
     expect(adminContextSchema.parse(await response.json()).actor.userId).toBe(adminUser.id);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  it("returns a bounded content-free analytics projection", async () => {
+    const to = new Date();
+    const from = new Date(to.getTime() - 7 * 86_400_000);
+    const result = await admin.rpc("admin_get_ai_analytics_v1", {
+      ...base,
+      p_from: from.toISOString(),
+      p_to: to.toISOString(),
+    });
+    expect(result.error).toBeNull();
+    const analytics = adminAnalyticsSchema.parse(result.data);
+    expect(analytics.range.retentionDays).toBe(90);
+    expect(analytics.requests.total).toBeGreaterThanOrEqual(0);
+    expect(analytics.attempts.total).toBeGreaterThanOrEqual(0);
+    const invalid = await admin.rpc("admin_get_ai_analytics_v1", {
+      ...base,
+      p_from: new Date(to.getTime() - 32 * 86_400_000).toISOString(),
+      p_to: to.toISOString(),
+    });
+    expect(invalid.error?.code).toBe("22023");
   });
 
   it("rejects environment drift, revoked membership and banned accounts with the old token", async () => {

@@ -3,15 +3,19 @@ import { z } from "zod";
 export const ADMIN_SECTIONS = [
   "overview",
   "users",
+  "providers",
   "profiles",
   "prices",
   "policies",
+  "controls",
+  "analytics",
   "audit",
 ] as const;
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
 export const adminSectionSchema = z.enum(ADMIN_SECTIONS);
 export const adminRecordSectionSchema = z.enum([
   "users",
+  "providers",
   "profiles",
   "prices",
   "policies",
@@ -55,6 +59,20 @@ export const adminContextSchema = z.strictObject({
   capabilities: z.strictObject({ writes: z.boolean() }),
 });
 export type AdminContext = z.infer<typeof adminContextSchema>;
+
+export const adminControlStateSchema = z.strictObject({
+  schemaVersion: z.literal("admin_ai_control_state_v1"),
+  aiEnabled: z.boolean(),
+  globalDailyLimit: z.number().int().nonnegative(),
+  activePolicyVersionId: uuid.nullable(),
+  configGeneration: decimalRevisionSchema,
+  controlRevision: decimalRevisionSchema,
+  closingCycleId: uuid.nullable(),
+  closedAt: timestamp.nullable(),
+  reopenedAt: timestamp.nullable(),
+  writesEnabled: z.boolean(),
+});
+export type AdminControlState = z.infer<typeof adminControlStateSchema>;
 
 export const adminWriteAuthoritySchema = z.strictObject({
   schemaVersion: z.literal("admin_write_authority_v1"),
@@ -212,9 +230,54 @@ export type AdminValidationReport = z.infer<
   typeof adminValidationReportSchema
 >;
 
+export const adminRuntimeReadbackRequestSchema = z.strictObject({
+  operation: z.literal("record_runtime_readback"),
+  reviewedDeploymentId: uuid,
+  policyVersionId: uuid,
+  validationReportIds: z.array(uuid).min(1).max(32).refine(
+    (values) => new Set(values).size === values.length,
+    "IDs must be unique",
+  ),
+});
+export type AdminRuntimeReadbackRequest = z.infer<
+  typeof adminRuntimeReadbackRequestSchema
+>;
+
+export const adminRuntimeReadbackSchema = z.strictObject({
+  schemaVersion: z.literal("admin_runtime_readback_v1"),
+  reportId: uuid,
+  closingCycleId: uuid,
+  controlRevision: decimalRevisionSchema,
+  configGeneration: decimalRevisionSchema,
+  policyVersionId: uuid,
+  legalBundleVersion: codeId,
+  reviewedDeploymentId: uuid,
+  runtimeBuildId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,199}$/),
+  bindingManifestRevision: codeId,
+  bindingManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  validationReportIds: z.array(uuid).min(1).max(32),
+  effectiveRoutes: z.array(z.record(z.string(), z.unknown())).min(1).max(32),
+  checkedAt: timestamp,
+  expiresAt: timestamp,
+  reportSha256: z.string().regex(/^[0-9a-f]{64}$/),
+}).superRefine((value, context) => {
+  const checkedAt = Date.parse(value.checkedAt);
+  const expiresAt = Date.parse(value.expiresAt);
+  if (expiresAt <= checkedAt || expiresAt - checkedAt > 10 * 60_000) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expiresAt"],
+      message: "invalid readback validity window",
+    });
+  }
+});
+export type AdminRuntimeReadback = z.infer<typeof adminRuntimeReadbackSchema>;
+
 const mutationReason = z.string().refine((value) => value === value.trim(), "reason must be trimmed").min(1).max(500);
 const idempotencyKey = uuid;
-const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+// Preserve PostgreSQL bigint compare-and-swap identities without a lossy
+// JavaScript number round trip.
+const revision = decimalRevisionSchema;
 const ids = z.array(uuid).min(1).max(96).refine((values) => new Set(values).size === values.length, "IDs must be unique");
 const policyIds = z.array(uuid).min(1).max(32).refine((values) => new Set(values).size === values.length, "IDs must be unique");
 const codeText = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
@@ -253,32 +316,78 @@ export const adminUserSchema = z.strictObject({
   revision: decimalRevisionSchema.nullable(),
   banned: z.boolean(),
 });
+const adminAdapterOptionSchema = z.strictObject({
+  adapterId: codeId,
+  displayName: z.string().min(1).max(200),
+  wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]),
+});
+export const adminProviderSchema = z.strictObject({
+  id: uuid,
+  providerKey: codeId,
+  displayName: z.string().min(1).max(200),
+  recipientKey: codeId,
+  gatewayKind: codeId,
+  defaultAdapterId: codeId.nullable(),
+  defaultEndpointUrl: z.string().max(2048).nullable(),
+  defaultCredentialEnvName: z.string().max(200).nullable(),
+  defaultModelId: z.string().max(200).nullable(),
+  adapterOptions: z.array(adminAdapterOptionSchema).max(32),
+  revision: decimalRevisionSchema,
+  archived: z.boolean(),
+  createdAt: timestamp,
+});
 export const adminProfileSchema = z.strictObject({
   id: uuid,
   profileId: uuid,
+  providerId: uuid.nullable(),
   profileKey: codeId,
+  profileDisplayName: z.string().min(1).max(200),
+  modelVendor: z.string().min(1).max(200),
   version: z.number().int().positive(),
+  latestVersion: z.number().int().positive(),
   status: z.string().max(40),
+  executionSchemaVersion: z.enum([
+    "profile_execution_config_v1",
+    "profile_execution_config_v2",
+  ]),
   gatewayKind: codeId,
   adapterKind: codeId,
   wireApiKind: codeId,
   modelId: z.string().min(1).max(200),
+  capabilityContractId: codeId,
+  cachePolicyId: codeId,
   legalManifestId: codeId,
   displayDisclosureKey: codeId.nullable(),
   endpointAlias: codeId.nullable(),
   credentialAlias: codeId.nullable(),
   endpointUrl: z.string().max(2048).nullable(),
   credentialEnvName: z.string().max(200).nullable(),
+  suggestedAdapterId: codeId,
+  suggestedEndpointUrl: z.string().max(2048).nullable(),
+  suggestedCredentialEnvName: z.string().max(200).nullable(),
+  suggestedModelId: z.string().max(200),
+  adapterOptions: z.array(adminAdapterOptionSchema).max(32),
+  config: z.record(z.string(), z.unknown()),
   configSha256: z.string().regex(/^[0-9a-f]{64}$/),
   createdAt: timestamp,
 });
 export const adminPriceSchema = z.strictObject({
   id: uuid,
   profileVersionId: uuid,
+  pricingLane: codeId,
+  version: z.number().int().positive(),
+  latestVersion: z.number().int().positive(),
   currency: z.string().max(10),
   calculatorKind: codeId,
   validFrom: timestamp,
   validTo: timestamp.nullable(),
+  providerEffectiveFrom: timestamp.nullable(),
+  providerEffectiveTo: timestamp.nullable(),
+  sourceUrl: z.string().url(),
+  sourceCheckedAt: timestamp,
+  sourceSnapshotSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  parameters: z.record(z.string(), z.unknown()),
+  components: z.record(z.string(), z.string().regex(/^(0|[1-9][0-9]*)$/)),
   sealedAt: timestamp.nullable(),
   createdAt: timestamp,
 });
@@ -286,8 +395,10 @@ export const adminPolicySchema = z.strictObject({
   id: uuid,
   policyKey: codeId,
   version: z.number().int().positive(),
+  latestVersion: z.number().int().positive(),
   status: z.string().max(40),
   timezone: z.string().max(100),
+  rules: z.record(z.string(), z.unknown()),
   defaultProfileVersionId: uuid,
   legalBundleVersion: codeId,
   runtimeContractId: codeId.nullable(),
@@ -297,7 +408,14 @@ export const adminPolicySchema = z.strictObject({
 export const adminAuditSchema = z.strictObject({
   id: uuid,
   occurredAt: timestamp,
+  eventSchemaVersion: z.enum([
+    "admin_audit_event_v1",
+    "lifecycle_audit_event_v1",
+  ]),
+  eventType: z.string().min(1).max(100),
   source: z.enum(["admin", "lifecycle"]),
+  sourceId: uuid,
+  operationId: uuid.nullable(),
   operation: z.string().min(1).max(100),
   actor: z.string().max(200),
   targetId: uuid.nullable(),
@@ -315,6 +433,7 @@ const page = <const S extends AdminRecordSection, T extends z.ZodType>(
   });
 export const adminPageSchema = z.union([
   page("users", adminUserSchema),
+  page("providers", adminProviderSchema),
   page("profiles", adminProfileSchema),
   page("prices", adminPriceSchema),
   page("policies", adminPolicySchema),
@@ -322,6 +441,74 @@ export const adminPageSchema = z.union([
 ]);
 export type AdminPage = z.infer<typeof adminPageSchema>;
 export type AdminRecord = AdminPage["items"][number];
+const analyticsCount = z.number().int().nonnegative();
+const analyticsDecimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
+export const adminAnalyticsSchema = z.strictObject({
+  schemaVersion: z.literal("admin_ai_analytics_v1"),
+  range: z.strictObject({
+    from: timestamp,
+    to: timestamp,
+    timezone: z.literal("UTC"),
+    retentionDays: z.literal(90),
+    retentionBoundary: timestamp,
+    rangeMayBeTruncated: z.boolean(),
+    requestTimeField: z.literal("reserved_at"),
+    attemptTimeField: z.literal("started_at"),
+  }),
+  requests: z.strictObject({
+    total: analyticsCount,
+    finalized: analyticsCount,
+    succeeded: analyticsCount,
+    failedUpstream: analyticsCount,
+    invalidOutput: analyticsCount,
+    canceled: analyticsCount,
+    released: analyticsCount,
+    abandoned: analyticsCount,
+    retried: analyticsCount,
+    latencyP50Ms: analyticsCount.nullable(),
+    latencyP95Ms: analyticsCount.nullable(),
+  }),
+  attempts: z.strictObject({
+    total: analyticsCount,
+    transmitted: analyticsCount,
+    succeeded: analyticsCount,
+    failedUpstream: analyticsCount,
+    invalidOutput: analyticsCount,
+    timedOut: analyticsCount,
+    canceled: analyticsCount,
+    unknown: analyticsCount,
+    unsettled: analyticsCount,
+  }),
+  usage: z.strictObject({
+    completeRows: analyticsCount,
+    incompleteRows: analyticsCount,
+    inputCacheReadTokens: analyticsDecimal,
+    inputCacheWriteTokens: analyticsDecimal,
+    inputStandardTokens: analyticsDecimal,
+    outputTokens: analyticsDecimal,
+    reasoningTokens: analyticsDecimal,
+  }),
+  costsByCurrency: z.array(z.strictObject({
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    requestRows: analyticsCount,
+    knownEstimatedNanos: analyticsDecimal,
+    estimatedNanos: analyticsDecimal,
+    providerReportedNanos: analyticsDecimal,
+    matchedRows: analyticsCount,
+    mismatchRows: analyticsCount,
+    incompleteRows: analyticsCount,
+  })).max(16),
+  costGroupsTruncated: z.boolean(),
+  routes: z.array(z.strictObject({
+    gatewayKind: codeId,
+    modelId: z.string().min(1).max(200),
+    attempts: analyticsCount,
+    succeeded: analyticsCount,
+    transmitted: analyticsCount,
+  })).max(128),
+  routeGroupsTruncated: z.boolean(),
+});
+export type AdminAnalytics = z.infer<typeof adminAnalyticsSchema>;
 export const ADMIN_ERROR_CODES = [
   "UNAUTHORIZED",
   "FORBIDDEN",

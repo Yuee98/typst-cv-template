@@ -1,7 +1,7 @@
 import "server-only";
 import { notFound } from "next/navigation";
 import AdminApp from "@/features/admin/admin-app";
-import { adminRecordSectionSchema } from "@/lib/admin/contract";
+import { adminRecordSectionSchema, adminSectionSchema } from "@/lib/admin/contract";
 
 export default async function AdminPage({
   params,
@@ -11,14 +11,17 @@ export default async function AdminPage({
   const { locale, segments = [] } = await params;
   if (locale !== "zh" && locale !== "en") notFound();
   if (segments.length === 0) return <AdminApp locale={locale} />;
-  const section = adminRecordSectionSchema.safeParse(segments[0]);
+  const section = adminSectionSchema.safeParse(segments[0]);
+  const recordSection = adminRecordSectionSchema.safeParse(segments[0]);
   if (
     !section.success ||
+    section.data === "overview" ||
     segments.length > 2 ||
     (segments[1] &&
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
-        segments[1],
-      ))
+      (!recordSection.success ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          segments[1],
+        )))
   )
     notFound();
   return (

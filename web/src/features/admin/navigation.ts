@@ -10,12 +10,18 @@ export function adminNavigationPath(
       return prefix + "/admin";
     case "users":
       return prefix + "/admin/users";
+    case "providers":
+      return prefix + "/admin/providers";
     case "profiles":
       return prefix + "/admin/profiles";
     case "prices":
       return prefix + "/admin/prices";
     case "policies":
       return prefix + "/admin/policies";
+    case "controls":
+      return prefix + "/admin/controls";
+    case "analytics":
+      return prefix + "/admin/analytics";
     case "audit":
       return prefix + "/admin/audit";
     default:

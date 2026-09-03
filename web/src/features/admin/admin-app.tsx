@@ -10,9 +10,13 @@ import { ThemeToggle } from "@/components/layout/toolbar/theme-toggle";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   adminContextSchema,
+  adminControlStateSchema,
+  adminAnalyticsSchema,
   adminErrorSchema,
   adminPageSchema,
   type AdminContext,
+  type AdminControlState,
+  type AdminAnalytics,
   type AdminPage,
   type AdminRecordSection,
   type AdminSection,
@@ -20,12 +24,16 @@ import {
 import { adminMessages, type AdminMessages } from "./messages";
 import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
 import { AdminSecuritySettings } from "./security-settings";
+import { AdminRecordActions } from "./record-actions";
+import { AdminRuntimeControls } from "./runtime-controls";
 
 type Props = { locale: "zh" | "en"; section?: AdminSection; recordId?: string };
 type Query = { search: string; after: string; limit: number };
 type LoadState = {
   context: AdminContext | null;
   page: AdminPage | null;
+  analytics?: AdminAnalytics | null;
+  control?: AdminControlState | null;
   error: string | null;
   loading: boolean;
 };
@@ -58,6 +66,8 @@ export function localizedAdminValue(
     !Number.isNaN(Date.parse(value))
   )
     return date(value, locale);
+  if (typeof value === "object" && value !== null)
+    return JSON.stringify(value, null, 2);
   return value == null ? "—" : String(value);
 }
 export function buildAdminQuery(query: Query) {
@@ -87,6 +97,10 @@ export default function AdminApp({
       limit: Number.isInteger(limit) && limit >= 1 && limit <= 100 ? limit : 25,
     };
   });
+  const [analyticsDays, setAnalyticsDays] = useState(() => {
+    const days = initialQuery?.get("days") ?? "7";
+    return ["1", "7", "14", "31"].includes(days) ? Number(days) : 7;
+  });
   const [state, setState] = useState<LoadState>({
     context: null,
     page: null,
@@ -94,6 +108,7 @@ export default function AdminApp({
     loading: false,
   });
   const requestGeneration = useRef(0);
+  const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
     if (!client) return;
@@ -147,10 +162,14 @@ export default function AdminApp({
   }, [client, t.unavailable]);
   const load = useCallback(async () => {
     if (!session?.access_token) return null;
+    // Changing this token intentionally repeats the same no-store readback.
+    void refreshToken;
     try {
       const params = new URLSearchParams({ section });
       if (recordId) params.set("id", recordId);
-      if (section !== "overview" && !recordId) {
+      if (section === "analytics") {
+        params.set("days", String(analyticsDays));
+      } else if (section !== "overview" && section !== "controls" && !recordId) {
         if (query.search) params.set("search", query.search);
         if (query.after) params.set("after", query.after);
         params.set("limit", String(query.limit));
@@ -170,6 +189,50 @@ export default function AdminApp({
         return {
           context: parsed.data,
           page: null,
+          error: null,
+          loading: false,
+        };
+      } else if (section === "analytics") {
+        const parsed = adminAnalyticsSchema.safeParse(raw);
+        if (!parsed.success) throw new Error("SCHEMA");
+        const contextResponse = await fetch("/api/admin?section=overview", {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const contextRaw: unknown = await contextResponse.json();
+        if (!contextResponse.ok) {
+          const failure = adminErrorSchema.safeParse(contextRaw);
+          throw new Error(
+            failure.success ? failure.data.error.code : "UNKNOWN",
+          );
+        }
+        const context = adminContextSchema.safeParse(contextRaw);
+        if (!context.success) throw new Error("SCHEMA");
+        return {
+          context: context.data,
+          page: null,
+          analytics: parsed.data,
+          error: null,
+          loading: false,
+        };
+      } else if (section === "controls") {
+        const parsed = adminControlStateSchema.safeParse(raw);
+        if (!parsed.success) throw new Error("SCHEMA");
+        const contextResponse = await fetch("/api/admin?section=overview", {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const contextRaw: unknown = await contextResponse.json();
+        if (!contextResponse.ok) {
+          const failure = adminErrorSchema.safeParse(contextRaw);
+          throw new Error(failure.success ? failure.data.error.code : "UNKNOWN");
+        }
+        const context = adminContextSchema.safeParse(contextRaw);
+        if (!context.success) throw new Error("SCHEMA");
+        return {
+          context: context.data,
+          page: null,
+          control: parsed.data,
           error: null,
           loading: false,
         };
@@ -204,7 +267,7 @@ export default function AdminApp({
           loading: false,
         };
     }
-  }, [query, recordId, section, session, t]);
+  }, [analyticsDays, query, recordId, refreshToken, section, session, t]);
   useEffect(() => {
     const generation = ++requestGeneration.current;
     void load().then(result => {
@@ -282,15 +345,21 @@ export default function AdminApp({
     : section === "overview"
       ? `/${otherLocale}/admin`
       : `/${otherLocale}/admin/${section}`;
+  const translatedQuery = recordId || section === "overview" || section === "controls"
+    ? ""
+    : section === "analytics"
+      ? `?days=${analyticsDays}`
+      : buildAdminQuery(query);
   return (
     <Shell
       active={section}
       locale={locale}
-      translatedRoute={`${translatedRoute}${recordId || section === "overview" ? "" : buildAdminQuery(query)}`}
+      translatedRoute={`${translatedRoute}${translatedQuery}`}
       navigate={navigate}
       onSignOut={signOut}
       busy={busy}
       environment={state.context?.environment.name}
+      writesEnabled={state.context?.capabilities.writes === true}
       t={t}
     >
       <div className="mb-6 text-sm text-foreground-muted">
@@ -305,12 +374,43 @@ export default function AdminApp({
           <Overview context={state.context} t={t} />
           <AdminSecuritySettings key={session.user.id} client={client} t={t} />
         </div>
+      ) : section === "analytics" && state.analytics ? (
+        <Analytics
+          analytics={state.analytics}
+          days={analyticsDays}
+          locale={locale}
+          onDays={(days) => {
+            window.history.replaceState(
+              null,
+              "",
+              `${window.location.pathname}?days=${days}`,
+            );
+            setState((current) => ({ ...current, loading: true, error: null }));
+            setAnalyticsDays(days);
+          }}
+          t={t}
+        />
+      ) : section === "controls" && state.control && state.context ? (
+        <AdminRuntimeControls
+          state={state.control}
+          environment={state.context.environment.name}
+          locale={locale}
+          accessToken={session.access_token}
+          writesEnabled={state.context.capabilities.writes}
+          onRefresh={() => {
+            setRefreshToken((current) => current + 1);
+          }}
+          t={t}
+        />
       ) : state.page ? (
         <Page
           page={state.page}
           recordId={recordId}
           locale={locale}
           query={query}
+          accessToken={session.access_token}
+          writesEnabled={state.context?.capabilities.writes === true}
+          onRefresh={() => setRefreshToken((current) => current + 1)}
           onQuery={(next) => {
             setState(current => ({ ...current, loading: true, error: null }));
             window.history.replaceState(null, "", `${window.location.pathname}${buildAdminQuery(next)}`);
@@ -357,7 +457,7 @@ function LoginForm({
     ? `/${otherLocale}/admin/${section}/${encodeURIComponent(recordId)}`
     : section === "overview"
       ? `/${otherLocale}/admin`
-      : `/${otherLocale}/admin/${section}${buildAdminQuery(query)}`;
+      : `/${otherLocale}/admin/${section}${section === "controls" ? "" : buildAdminQuery(query)}`;
   return (
     <main className="mx-auto min-h-screen max-w-md px-6 pt-5">
       <UtilityBar locale={locale} localeHref={route} t={t} />
@@ -445,6 +545,7 @@ function Shell({
   onSignOut,
   busy,
   environment,
+  writesEnabled,
   t,
   children,
 }: {
@@ -455,6 +556,7 @@ function Shell({
   onSignOut: () => void;
   busy: boolean;
   environment?: string;
+  writesEnabled: boolean;
   t: AdminMessages;
   children: React.ReactNode;
 }) {
@@ -473,7 +575,7 @@ function Shell({
             {locale === "zh" ? "EN" : "中文"}
           </a>
           <span className="rounded-full border border-border px-2 py-1 text-xs text-foreground-muted">
-            {t.readOnly}
+            {writesEnabled ? t.writesEnabled : t.readOnly}
           </span>
           <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={onSignOut} disabled={busy}>
@@ -485,7 +587,7 @@ function Shell({
       <nav className="border-b border-border p-3 md:hidden" aria-label={t.breadcrumbs}>
         <select className="w-full rounded border border-border bg-surface p-2" aria-label={t.breadcrumbs}
           value={active} onChange={event => navigate(event.target.value as AdminSection)}>
-          {(["overview", "users", "profiles", "prices", "policies", "audit"] as const).map(section =>
+          {(["overview", "users", "providers", "profiles", "prices", "policies", "controls", "analytics", "audit"] as const).map(section =>
             <option key={section} value={section}>{t[section]}</option>)}
         </select>
       </nav>
@@ -515,6 +617,12 @@ function Shell({
             />
             <GroupLabel>{t.aiManagement}</GroupLabel>
             <NavButton
+              section="providers"
+              active={active}
+              navigate={navigate}
+              t={t}
+            />
+            <NavButton
               section="profiles"
               active={active}
               navigate={navigate}
@@ -528,6 +636,20 @@ function Shell({
             />
             <NavButton
               section="policies"
+              active={active}
+              navigate={navigate}
+              t={t}
+            />
+            <GroupLabel>{t.operations}</GroupLabel>
+            <NavButton
+              section="controls"
+              active={active}
+              navigate={navigate}
+              t={t}
+            />
+            <GroupLabel>{t.analytics}</GroupLabel>
+            <NavButton
+              section="analytics"
               active={active}
               navigate={navigate}
               t={t}
@@ -622,11 +744,171 @@ function Overview({ context, t }: { context: AdminContext; t: AdminMessages }) {
   );
 }
 
+function formatDecimal(value: string, locale: string) {
+  try {
+    return new Intl.NumberFormat(locale).format(BigInt(value));
+  } catch {
+    return value;
+  }
+}
+function formatNanos(value: string, currency: string) {
+  try {
+    const nanos = BigInt(value);
+    const unit = BigInt(1_000_000_000);
+    const whole = nanos / unit;
+    const fraction = (nanos % unit)
+      .toString()
+      .padStart(9, "0")
+      .replace(/0+$/u, "");
+    return `${currency} ${whole}${fraction ? `.${fraction}` : ""}`;
+  } catch {
+    return `${currency} ${value} ns`;
+  }
+}
+function Analytics({
+  analytics,
+  days,
+  locale,
+  onDays,
+  t,
+}: {
+  analytics: AdminAnalytics;
+  days: number;
+  locale: string;
+  onDays: (days: number) => void;
+  t: AdminMessages;
+}) {
+  const requestCards = [
+    [t.total, analytics.requests.total],
+    [t.finalized, analytics.requests.finalized],
+    [t.succeeded, analytics.requests.succeeded],
+    [t.retried, analytics.requests.retried],
+    [t.failed, analytics.requests.failedUpstream],
+    ["P95 ms", analytics.requests.latencyP95Ms ?? "—"],
+  ];
+  const attemptCards = [
+    [t.total, analytics.attempts.total],
+    [t.transmitted, analytics.attempts.transmitted],
+    [t.succeeded, analytics.attempts.succeeded],
+    [t.failed, analytics.attempts.failedUpstream],
+    [t.unsettled, analytics.attempts.unsettled],
+  ];
+  const maxRoute = Math.max(1, ...analytics.routes.map((route) => route.attempts));
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h1 className="text-2xl font-semibold">{t.analytics}</h1>
+          <label className="text-sm text-foreground-muted">
+            {t.range}
+            <select
+              className="ml-2 rounded border border-border bg-background px-3 py-2 text-foreground"
+              value={days}
+              onChange={(event) => onDays(Number(event.target.value))}
+            >
+              {[1, 7, 14, 31].map((value) => (
+                <option key={value} value={value}>
+                  {value} {t.days}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="mt-1 text-sm text-foreground-muted">
+          {t.range}: {date(analytics.range.from, locale)} – {date(analytics.range.to, locale)} · UTC
+        </p>
+        <p className="mt-1 text-xs text-foreground-subtle">{t.retentionNote}</p>
+        <p className="mt-1 text-xs text-foreground-subtle">
+          {t.analyticsTimeBasis}: {analytics.range.requestTimeField} / {analytics.range.attemptTimeField}
+        </p>
+        {analytics.range.rangeMayBeTruncated && (
+          <p className="mt-1 text-sm text-warning-foreground">{t.retentionTruncated}</p>
+        )}
+      </div>
+      <MetricSection title={t.requestMetrics} values={requestCards} />
+      <MetricSection title={t.attemptMetrics} values={attemptCards} />
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="font-semibold">{t.usageMetrics}</h2>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            [t.complete, analytics.usage.completeRows],
+            [t.incomplete, analytics.usage.incompleteRows],
+            [t.inputTokens, formatDecimal(analytics.usage.inputStandardTokens, locale)],
+            [t.cacheReadTokens, formatDecimal(analytics.usage.inputCacheReadTokens, locale)],
+            [t.cacheWriteTokens, formatDecimal(analytics.usage.inputCacheWriteTokens, locale)],
+            [t.outputTokens, formatDecimal(analytics.usage.outputTokens, locale)],
+            [t.reasoningTokens, formatDecimal(analytics.usage.reasoningTokens, locale)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded border border-border p-3">
+              <p className="text-xs text-foreground-muted">{label}</p>
+              <p className="mt-1 font-medium">{value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="font-semibold">{t.routeMetrics}</h2>
+        <div className="mt-4 space-y-3">
+          {analytics.routes.length === 0 && <p className="text-sm text-foreground-muted">{t.empty}</p>}
+          {analytics.routes.map((route) => (
+            <div key={`${route.gatewayKind}:${route.modelId}`}>
+              <div className="flex justify-between gap-3 text-sm">
+                <span>{route.gatewayKind} · {route.modelId}</span>
+                <span>{route.attempts}</span>
+              </div>
+              <div className="mt-1 h-2 overflow-hidden rounded bg-surface-hover">
+                <div className="h-full rounded bg-accent" style={{ width: `${(route.attempts / maxRoute) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+          {analytics.routeGroupsTruncated && (
+            <p className="text-xs text-foreground-muted">{t.groupsTruncated}</p>
+          )}
+        </div>
+      </section>
+      <section className="overflow-x-auto rounded-lg border border-border bg-surface p-4">
+        <h2 className="font-semibold">{t.costMetrics}</h2>
+        <table className="mt-3 w-full text-left text-sm">
+          <thead className="text-xs text-foreground-muted"><tr><th className="py-2">{t.currency}</th><th>{t.total}</th><th>{t.estimated}</th><th>{t.providerReported}</th><th>{t.matched}</th><th>{t.mismatch}</th><th>{t.incomplete}</th></tr></thead>
+          <tbody>{analytics.costsByCurrency.map((cost) => <tr key={cost.currency} className="border-t border-border"><td className="py-2">{cost.currency}</td><td>{cost.requestRows}</td><td>{formatNanos(cost.estimatedNanos, cost.currency)}</td><td>{formatNanos(cost.providerReportedNanos, cost.currency)}</td><td>{cost.matchedRows}</td><td>{cost.mismatchRows}</td><td>{cost.incompleteRows}</td></tr>)}</tbody>
+        </table>
+        {analytics.costGroupsTruncated && (
+          <p className="mt-2 text-xs text-foreground-muted">{t.groupsTruncated}</p>
+        )}
+      </section>
+    </div>
+  );
+}
+function MetricSection({
+  title,
+  values,
+}: {
+  title: string;
+  values: Array<Array<string | number>>;
+}) {
+  return (
+    <section>
+      <h2 className="mb-3 font-semibold">{title}</h2>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        {values.map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-border bg-surface p-4">
+            <p className="text-xs text-foreground-muted">{label}</p>
+            <p className="mt-2 text-lg font-semibold">{value}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Page({
   page,
   recordId,
   locale,
   query,
+  accessToken,
+  writesEnabled,
+  onRefresh,
   onQuery,
   t,
 }: {
@@ -634,6 +916,9 @@ function Page({
   recordId?: string;
   locale: string;
   query: Query;
+  accessToken: string;
+  writesEnabled: boolean;
+  onRefresh: () => void;
   onQuery: (query: Query) => void;
   t: AdminMessages;
 }) {
@@ -641,7 +926,15 @@ function Page({
   const rows = page.items as Array<Record<string, unknown>>;
   if (recordId && rows[0])
     return (
-      <Detail section={page.section} row={rows[0]} locale={locale} t={t} />
+      <Detail
+        section={page.section}
+        row={rows[0]}
+        locale={locale}
+        accessToken={accessToken}
+        writesEnabled={writesEnabled}
+        onRefresh={onRefresh}
+        t={t}
+      />
     );
   const fields = columns(page.section, t);
   return (
@@ -724,11 +1017,17 @@ function Detail({
   section,
   row,
   locale,
+  accessToken,
+  writesEnabled,
+  onRefresh,
   t,
 }: {
   section: AdminRecordSection;
   row: Record<string, unknown>;
   locale: string;
+  accessToken: string;
+  writesEnabled: boolean;
+  onRefresh: () => void;
   t: AdminMessages;
 }) {
   return (
@@ -741,12 +1040,20 @@ function Detail({
             className="rounded-lg border border-border bg-surface p-4"
           >
             <dt className="text-xs text-foreground-muted">{label}</dt>
-            <dd className="mt-1 break-words text-sm">
+            <dd className="mt-1 whitespace-pre-wrap break-words text-sm">
               {localizedAdminValue(row[key], locale, t)}
             </dd>
           </div>
         ))}
       </dl>
+      <AdminRecordActions
+        section={section}
+        row={row}
+        accessToken={accessToken}
+        writesEnabled={writesEnabled}
+        onRefresh={onRefresh}
+        t={t}
+      />
     </div>
   );
 }
@@ -760,6 +1067,14 @@ function columns(
       ["isAdmin", t.admin],
       ["banned", t.banned],
       ["createdAt", t.createdAt],
+    ];
+  if (section === "providers")
+    return [
+      ["displayName", t.providers],
+      ["providerKey", t.providerKey],
+      ["gatewayKind", t.gateway],
+      ["defaultModelId", t.defaultModel],
+      ["archived", t.archived],
     ];
   if (section === "profiles")
     return [
@@ -805,17 +1120,36 @@ function detailLabels(
       ["revision", t.configRevision],
       ["banned", t.banned],
     ];
+  if (section === "providers")
+    return [
+      ["id", t.id],
+      ["providerKey", t.providerKey],
+      ["displayName", t.displayName],
+      ["recipientKey", t.recipient],
+      ["gatewayKind", t.gateway],
+      ["defaultAdapterId", t.defaultAdapter],
+      ["defaultEndpointUrl", t.defaultEndpoint],
+      ["defaultCredentialEnvName", t.defaultCredentialEnv],
+      ["defaultModelId", t.defaultModel],
+      ["revision", t.configRevision],
+      ["archived", t.archived],
+      ["createdAt", t.createdAt],
+    ];
   if (section === "profiles")
     return [
       ["id", t.id],
       ["profileId", t.profileId],
       ["profileKey", t.profileKey],
       ["version", t.version],
+      ["latestVersion", t.configRevision],
       ["status", t.status],
+      ["executionSchemaVersion", t.executionSchema],
       ["gatewayKind", t.gateway],
       ["adapterKind", t.adapter],
       ["wireApiKind", t.wireApi],
       ["modelId", t.model],
+      ["capabilityContractId", t.capabilityContract],
+      ["cachePolicyId", t.cachePolicy],
       ["legalManifestId", t.legalManifest],
       ["displayDisclosureKey", t.displayDisclosure],
       ["endpointAlias", t.endpointAlias],
@@ -823,16 +1157,27 @@ function detailLabels(
       ["endpointUrl", t.endpoint],
       ["credentialEnvName", t.credentialEnv],
       ["configSha256", t.configHash],
+      ["config", t.adapterConfig],
       ["createdAt", t.createdAt],
     ];
   if (section === "prices")
     return [
       ["id", t.id],
       ["profileVersionId", t.profileVersion],
+      ["pricingLane", t.pricingLane],
+      ["version", t.version],
+      ["latestVersion", t.configRevision],
       ["currency", t.currency],
       ["calculatorKind", t.calculator],
       ["validFrom", t.validFrom],
       ["validTo", t.validTo],
+      ["providerEffectiveFrom", t.providerEffectiveFrom],
+      ["providerEffectiveTo", t.providerEffectiveTo],
+      ["sourceUrl", t.sourceUrl],
+      ["sourceCheckedAt", t.sourceChecked],
+      ["sourceSnapshotSha256", t.sourceSnapshotHash],
+      ["parameters", t.parameters],
+      ["components", t.components],
       ["sealedAt", t.sealedAt],
       ["createdAt", t.createdAt],
     ];
@@ -841,8 +1186,10 @@ function detailLabels(
       ["id", t.id],
       ["policyKey", t.policyKey],
       ["version", t.version],
+      ["latestVersion", t.configRevision],
       ["status", t.status],
       ["timezone", t.timezone],
+      ["rules", t.rules],
       ["defaultProfileVersionId", t.defaultProfile],
       ["legalBundleVersion", t.legalBundle],
       ["runtimeContractId", t.runtimeContract],
@@ -852,7 +1199,11 @@ function detailLabels(
   return [
     ["id", t.id],
     ["occurredAt", t.occurredAt],
+    ["eventSchemaVersion", t.eventSchema],
+    ["eventType", t.eventType],
     ["source", t.source],
+    ["sourceId", t.sourceId],
+    ["operationId", t.operationId],
     ["operation", t.operation],
     ["actor", t.actor],
     ["targetId", t.targetId],
