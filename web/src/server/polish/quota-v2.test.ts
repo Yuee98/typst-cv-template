@@ -100,12 +100,40 @@ const RUNTIME_EVIDENCE_V2 = Object.freeze({
   displayDisclosureKey: ROUTE_V2.displayDisclosureKey,
   externalEvidenceIds: ["evidence.deepseek-v2.test"],
 });
+const validationCheckedAt = new Date();
+const RUNTIME_DEPLOYMENT_VALIDATION_V1 = Object.freeze({
+  schemaVersion: "runtime_deployment_validation_v1",
+  reportId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+  reviewedDeploymentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
+  environment: "local",
+  projectRef: "local",
+  runtimeBuildId: "local-test-build",
+  bindingManifestRevision: "local-test-manifest",
+  bindingManifestSha256: "4".repeat(64),
+  runtimeContractId: RUNTIME_EVIDENCE_V2.runtimeContractId,
+  runtimeTargetId: RUNTIME_EVIDENCE_V2.runtimeTargetId,
+  runtimeTargetSha256: RUNTIME_EVIDENCE_V2.runtimeTargetSha256,
+  profileVersionId: RUNTIME_EVIDENCE_V2.profileVersionId,
+  priceVersionId: RUNTIME_EVIDENCE_V2.priceVersionId,
+  providerId: RUNTIME_EVIDENCE_V2.providerId,
+  codeCapabilityId: RUNTIME_EVIDENCE_V2.codeCapabilityId,
+  codeCapabilitySha256: RUNTIME_EVIDENCE_V2.codeCapabilitySha256,
+  legalBundleVersion: RUNTIME_EVIDENCE_V2.legalBundleVersion,
+  legalManifestId: RUNTIME_EVIDENCE_V2.legalManifestId,
+  displayDisclosureKey: RUNTIME_EVIDENCE_V2.displayDisclosureKey,
+  checkedAt: validationCheckedAt.toISOString(),
+  expiresAt: new Date(
+    validationCheckedAt.getTime() + 10 * 60_000,
+  ).toISOString(),
+  reportSha256: "5".repeat(64),
+});
 const executionSuccessV2 = Object.freeze({
   ...executionSuccess,
   schemaVersion: "ai_polish_execution_snapshot_v2",
   routeSnapshot: ROUTE_V2,
   profileExecutionConfig: PROFILE_V2,
   runtimeEvidence: RUNTIME_EVIDENCE_V2,
+  deploymentValidation: RUNTIME_DEPLOYMENT_VALIDATION_V1,
 });
 const MIMO_PROFILE = resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1");
 const DEEPSEEK_ENDPOINT = resolveEndpoint(PROFILE.endpointAlias).url;
@@ -385,7 +413,7 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
           target.profile.endpointUrl === PROFILE_V2.endpointUrl,
       }),
     ).resolves.toEqual(executionSuccessV2);
-    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v2", {
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v3", {
       p_reservation_id: RESERVATION_ID,
       p_user_id: USER_ID,
     });

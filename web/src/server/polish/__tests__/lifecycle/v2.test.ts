@@ -108,6 +108,35 @@ const EXECUTION_V2 = Object.freeze({
     displayDisclosureKey: PROFILE_V2.displayDisclosureKey,
     externalEvidenceIds: Object.freeze(["evidence.synthetic-lifecycle"]),
   }),
+  deploymentValidation: (() => {
+    const checkedAt = new Date();
+    return Object.freeze({
+      schemaVersion: "runtime_deployment_validation_v1" as const,
+      reportId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+      reviewedDeploymentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
+      environment: "local" as const,
+      projectRef: "local",
+      runtimeBuildId: "local-test-build",
+      bindingManifestRevision: "local-test-manifest",
+      bindingManifestSha256: "4".repeat(64),
+      runtimeContractId: ROUTE_V2.runtimeContractId,
+      runtimeTargetId: "runtime-target.synthetic.deepseek.v2",
+      runtimeTargetSha256: "1".repeat(64),
+      profileVersionId: ROUTE_V2.profileVersionId,
+      priceVersionId: ROUTE_V2.priceVersionId,
+      providerId: PROFILE_V2.providerId,
+      codeCapabilityId:
+        "runtime-capability.deepseek-chat-v1.2026-09-04",
+      codeCapabilitySha256:
+        "4e5a92750f77f148e6422dcf05b03d99333b357879dba5fdb7248d16dd08bdf2",
+      legalBundleVersion: ROUTE_V2.legalBundleVersion,
+      legalManifestId: PROFILE_V2.legalManifestId,
+      displayDisclosureKey: PROFILE_V2.displayDisclosureKey,
+      checkedAt: checkedAt.toISOString(),
+      expiresAt: new Date(checkedAt.getTime() + 10 * 60_000).toISOString(),
+      reportSha256: "5".repeat(64),
+    });
+  })(),
 });
 const REQUEST: PolishRequest = {
   clientRequestId: CLIENT_REQUEST_ID,

@@ -15,6 +15,10 @@ import {
 } from "./profile-execution-v2";
 import { resolveRuntimeCodeCapabilityV2 } from "./runtime-code-capability-v2";
 import type { FrozenPriceSnapshotV1 } from "./pricing";
+import {
+  runtimeDeploymentValidationSchema,
+  type RuntimeDeploymentValidationV1,
+} from "./runtime-deployment-v1";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
@@ -26,6 +30,7 @@ const SUCCESS_KEYS = [
   "profileExecutionConfig",
   "priceSnapshot",
   "runtimeEvidence",
+  "deploymentValidation",
 ] as const;
 const CODE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,199}$/u;
 const LOWER_HEX_64_PATTERN = /^[0-9a-f]{64}$/u;
@@ -94,6 +99,7 @@ export interface RuntimeExecutionTargetV2 {
   readonly profileVersionId: string;
   readonly profile: Readonly<ProfileExecutionConfigV2>;
   readonly evidence: Readonly<RuntimeExecutionEvidenceV2>;
+  readonly deploymentValidation: Readonly<RuntimeDeploymentValidationV1>;
 }
 
 export type RuntimeTargetResolverV2 = (
@@ -113,6 +119,7 @@ export type ExecutionSnapshotResultV2 =
       profileExecutionConfig: Readonly<ProfileExecutionConfigV2>;
       priceSnapshot: Readonly<FrozenPriceSnapshotV1>;
       runtimeEvidence: Readonly<RuntimeExecutionEvidenceV2>;
+      deploymentValidation: Readonly<RuntimeDeploymentValidationV1>;
     }>;
 
 export type VersionedProfileExecutionConfig =
@@ -243,6 +250,9 @@ export function parseVersionedExecutionSnapshot(
   const profile = validateProfileExecutionConfigV2(input.profileExecutionConfig);
   const price = parsePriceSnapshotV1(input.priceSnapshot);
   const evidence = parseRuntimeExecutionEvidenceV2(input.runtimeEvidence);
+  const deploymentValidation = runtimeDeploymentValidationSchema.parse(
+    input.deploymentValidation,
+  );
   const compiledCapability = (() => {
     try {
       return resolveRuntimeCodeCapabilityV2(evidence.codeCapabilityId);
@@ -282,7 +292,20 @@ export function parseVersionedExecutionSnapshot(
     compiledCapability.wireApiKind !== evidence.wireApiKind ||
     compiledCapability.capabilityContractId !== evidence.capabilityContractId ||
     compiledCapability.cachePolicyId !== evidence.cachePolicyId ||
-    compiledCapability.calculatorKind !== evidence.calculatorKind
+    compiledCapability.calculatorKind !== evidence.calculatorKind ||
+    deploymentValidation.runtimeContractId !== evidence.runtimeContractId ||
+    deploymentValidation.runtimeTargetId !== evidence.runtimeTargetId ||
+    deploymentValidation.runtimeTargetSha256 !== evidence.runtimeTargetSha256 ||
+    deploymentValidation.profileVersionId !== evidence.profileVersionId ||
+    deploymentValidation.priceVersionId !== evidence.priceVersionId ||
+    deploymentValidation.providerId !== evidence.providerId ||
+    deploymentValidation.codeCapabilityId !== evidence.codeCapabilityId ||
+    deploymentValidation.codeCapabilitySha256 !== evidence.codeCapabilitySha256 ||
+    deploymentValidation.legalBundleVersion !== evidence.legalBundleVersion ||
+    deploymentValidation.legalManifestId !== evidence.legalManifestId ||
+    deploymentValidation.displayDisclosureKey !== evidence.displayDisclosureKey ||
+    Date.parse(deploymentValidation.checkedAt) > Date.now() + 30_000 ||
+    Date.parse(deploymentValidation.expiresAt) <= Date.now()
   ) {
     fail("frozen authority mismatch", "EXECUTION_AUTHORITY_MISMATCH");
   }
@@ -294,6 +317,7 @@ export function parseVersionedExecutionSnapshot(
     profileVersionId: route.profileVersionId,
     profile,
     evidence,
+    deploymentValidation,
   });
   let accepted = false;
   try {
@@ -311,5 +335,6 @@ export function parseVersionedExecutionSnapshot(
     profileExecutionConfig: profile,
     priceSnapshot: price,
     runtimeEvidence: evidence,
+    deploymentValidation,
   });
 }

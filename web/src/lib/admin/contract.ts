@@ -56,6 +56,94 @@ export const adminContextSchema = z.strictObject({
 });
 export type AdminContext = z.infer<typeof adminContextSchema>;
 
+export const adminWriteAuthoritySchema = z.strictObject({
+  schemaVersion: z.literal("admin_write_authority_v1"),
+  actorUserId: uuid,
+  writesEnabled: z.boolean(),
+  recentTotp: z.boolean(),
+});
+export type AdminWriteAuthority = z.infer<typeof adminWriteAuthoritySchema>;
+
+export const adminCommittedOperationSchema = z.strictObject({
+  schemaVersion: z.literal("admin_committed_operation_v1"),
+  operationId: uuid,
+  operationKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+  idempotencyKey: uuid,
+  result: z.record(z.string(), z.unknown()),
+  auditId: uuid,
+  committedAt: timestamp,
+});
+export type AdminCommittedOperation = z.infer<
+  typeof adminCommittedOperationSchema
+>;
+
+export const adminValidationRequestSchema = z.strictObject({
+  operation: z.literal("validate_runtime_target"),
+  reviewedDeploymentId: uuid,
+  runtimeContractId: codeId,
+  runtimeTargetId: codeId,
+});
+export type AdminValidationRequest = z.infer<
+  typeof adminValidationRequestSchema
+>;
+
+export const adminValidationReportSchema = z.strictObject({
+  schemaVersion: z.literal("admin_validation_report_v1"),
+  reportId: uuid,
+  reviewedDeploymentId: uuid,
+  environment: adminEnvironmentSchema,
+  projectRef: z.string().min(1).max(100),
+  runtimeBuildId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,199}$/),
+  bindingManifestRevision: codeId,
+  bindingManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  runtimeContractId: codeId,
+  runtimeTargetId: codeId,
+  runtimeTargetSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  profileVersionId: uuid,
+  priceVersionId: uuid,
+  providerId: uuid,
+  codeCapabilityId: codeId,
+  codeCapabilitySha256: z.string().regex(/^[0-9a-f]{64}$/),
+  legalBundleVersion: codeId,
+  legalManifestId: codeId,
+  displayDisclosureKey: codeId,
+  checks: z.strictObject({
+    endpointPolicy: z.boolean(),
+    manifestBinding: z.boolean(),
+    credentialConfigured: z.boolean(),
+    compiledCapability: z.boolean(),
+    databaseBinding: z.boolean(),
+  }),
+  passed: z.boolean(),
+  evidenceIds: z.array(codeId).min(1).max(96).refine(
+    (values) => new Set(values).size === values.length,
+    "evidence IDs must be unique",
+  ),
+  checkedAt: timestamp,
+  expiresAt: timestamp,
+  reportSha256: z.string().regex(/^[0-9a-f]{64}$/),
+}).superRefine((value, context) => {
+  if (value.passed !== Object.values(value.checks).every(Boolean)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["passed"],
+      message: "passed does not match checks",
+    });
+  }
+  const checkedAt = Date.parse(value.checkedAt);
+  const expiresAt = Date.parse(value.expiresAt);
+  if (expiresAt <= checkedAt || expiresAt - checkedAt > 10 * 60_000) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expiresAt"],
+      message: "invalid report validity window",
+    });
+  }
+});
+export type AdminValidationReport = z.infer<
+  typeof adminValidationReportSchema
+>;
+
 export const adminUserSchema = z.strictObject({
   id: uuid,
   email: z.string().nullable(),

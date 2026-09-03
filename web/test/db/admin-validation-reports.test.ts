@@ -1,0 +1,388 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  createAnonClient,
+  createServiceClient,
+  createTestUser,
+  deleteTestUser,
+  RUN_DB_TESTS,
+  signInAsUser,
+  type TestUser,
+} from "./helpers";
+import {
+  authorSyntheticRuntimeContract,
+  INITIAL_LEGAL_BUNDLE_VERSION,
+  runOwnerSql,
+} from "./runtime-contract-fixtures";
+
+const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
+const profileVersionId = crypto.randomUUID();
+const priceVersionId = crypto.randomUUID();
+const reviewedDeploymentId = crypto.randomUUID();
+const modelId = "synthetic-admin-validation-model";
+const displayKey = `test-display.${profileVersionId.replaceAll("-", "")}`;
+const runtimeBuildId = `local-build:${reviewedDeploymentId}`;
+const bindingRevision = `local-binding.${reviewedDeploymentId}`;
+const bindingManifestSha256 = "1".repeat(64);
+const capabilityId =
+  "runtime-capability.deepseek-chat-v1.2026-09-04";
+const mimoCapabilityId =
+  "runtime-capability.mimo-responses-v1.2026-09-04";
+const capabilitySha256 =
+  "4e5a92750f77f148e6422dcf05b03d99333b357879dba5fdb7248d16dd08bdf2";
+
+describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
+  let service: SupabaseClient;
+  let admin: SupabaseClient;
+  let ordinary: SupabaseClient;
+  let adminUser: TestUser;
+  let ordinaryUser: TestUser;
+  let ownsEnvironment = false;
+  let runtime: ReturnType<typeof authorSyntheticRuntimeContract>;
+
+  beforeAll(async () => {
+    service = createServiceClient();
+    runtime = authorSyntheticRuntimeContract({
+      profileKey: "deepseek.official.deepseek-v4-flash.chat.v1",
+    });
+    adminUser = await createTestUser(service, "admin-report");
+    ordinaryUser = await createTestUser(service, "admin-report-ordinary");
+    admin = await signInAsUser(adminUser);
+    ordinary = await signInAsUser(ordinaryUser);
+    const token = (await admin.auth.getSession()).data.session!.access_token;
+    const claims = JSON.parse(
+      Buffer.from(token.split(".")[1], "base64url").toString(),
+    ) as { iss: string };
+    const exists = runOwnerSql(
+      "select count(*) from public.admin_environment;",
+    ).stdout.match(/\n\s*(\d+)\s*\n/)?.[1];
+    if (exists !== "0") {
+      throw new Error(
+        "Admin tests require an uninitialized local Admin environment; never overwrite operator state",
+      );
+    }
+    runOwnerSql(
+      `select public.admin_bootstrap_v1(${literal(adminUser.id)},'local','local',${literal(claims.iss)},'local report test bootstrap');`,
+    );
+    ownsEnvironment = true;
+
+    const fixtureVersion =
+      1_000_000 +
+      (Number.parseInt(profileVersionId.slice(0, 8), 16) % 1_000_000_000);
+    runOwnerSql(String.raw`
+      begin;
+      set local session_replication_role = replica;
+      insert into public.ai_provider_profile_versions
+      select (jsonb_populate_record(
+        null::public.ai_provider_profile_versions,
+        to_jsonb(source_version) || jsonb_build_object(
+          'id', '${profileVersionId}', 'version', ${fixtureVersion},
+          'status', 'validated',
+          'execution_schema_version', 'profile_execution_config_v2',
+          'credential_alias', null, 'endpoint_alias', null,
+          'endpoint_url', 'https://api.deepseek.com/chat/completions',
+          'credential_env_name', 'AI_PROVIDER_KEY_DEEPSEEK_PRIMARY',
+          'model_id', '${modelId}',
+          'display_disclosure_key', '${displayKey}',
+          'validated_at', clock_timestamp(), 'activated_at', null,
+          'retired_at', null
+        )
+      )).*
+      from public.ai_provider_profile_versions as source_version
+      join public.ai_provider_profiles as profile
+        on profile.id = source_version.profile_id
+      where profile.profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+      order by source_version.version limit 1;
+
+      insert into public.ai_price_versions
+      select (jsonb_populate_record(
+        null::public.ai_price_versions,
+        to_jsonb(price) || jsonb_build_object(
+          'id', '${priceVersionId}', 'profile_version_id', '${profileVersionId}',
+          'version', ${fixtureVersion},
+          'components_sealed_at', clock_timestamp()
+        )
+      )).*
+      from public.ai_price_versions as price
+      join public.ai_provider_profile_versions as version
+        on version.id = price.profile_version_id
+      join public.ai_provider_profiles as profile on profile.id = version.profile_id
+      where profile.profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+      order by price.version limit 1;
+      insert into public.ai_price_components(price_version_id,component,nanos_per_million)
+      select '${priceVersionId}', component, nanos_per_million
+      from public.ai_price_components
+      where price_version_id = (
+        select price.id from public.ai_price_versions as price
+        join public.ai_provider_profile_versions as version
+          on version.id = price.profile_version_id
+        join public.ai_provider_profiles as profile on profile.id = version.profile_id
+        where profile.profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
+          and price.id <> '${priceVersionId}' order by price.version limit 1
+      );
+
+      with content(value) as (values (jsonb_build_object(
+        'schemaVersion','legal_display_content_v2',
+        'en',jsonb_build_object('providerLabel','Synthetic DeepSeek',
+          'modelLabel','${modelId}','blocks',jsonb_build_array(
+            jsonb_build_object('kind','paragraph','text','Local validation fixture.'))),
+        'zh',jsonb_build_object('providerLabel','DeepSeek 本地测试',
+          'modelLabel','${modelId}','blocks',jsonb_build_array(
+            jsonb_build_object('kind','paragraph','text','本地验证测试。')))
+      )))
+      insert into public.ai_legal_display_versions_v2(
+        display_disclosure_key,legal_bundle_version,legal_manifest_id,
+        provider_id,recipient_key,model_id,content,content_sha256,
+        fact_ids,evidence_ids,created_at,sealed_at
+      )
+      select '${displayKey}','${INITIAL_LEGAL_BUNDLE_VERSION}',
+        'deepseek-official-2026-08-23-v1',profile.provider_id,
+        provider.recipient_key,'${modelId}',content.value,
+        encode(extensions.digest(convert_to(content.value::text,'UTF8'),'sha256'),'hex'),
+        array['fact.admin-validation'],array['evidence.admin-validation'],
+        statement_timestamp(),statement_timestamp()
+      from public.ai_provider_profiles as profile
+      join public.ai_providers as provider on provider.id=profile.provider_id
+      cross join content
+      where profile.profile_key='deepseek.official.deepseek-v4-flash.chat.v1';
+
+      insert into public.ai_runtime_target_bindings_v2(
+        runtime_contract_id,runtime_target_id,runtime_target_sha256,
+        route_descriptor_id,route_descriptor_sha256,profile_version_id,
+        price_version_id,provider_id,recipient_key,code_capability_id,
+        code_capability_sha256,gateway_kind,adapter_kind,wire_api_kind,
+        endpoint_url,credential_env_name,model_id,capability_contract_id,
+        cache_policy_id,calculator_kind,legal_bundle_version,legal_manifest_id,
+        legal_manifest_sha256,display_disclosure_key,external_evidence_ids
+      )
+      select membership.runtime_contract_id,membership.runtime_target_id,
+        membership.runtime_target_sha256,membership.route_descriptor_id,
+        membership.route_descriptor_sha256,version.id,price.id,provider.id,
+        provider.recipient_key,capability.code_capability_id,
+        capability.descriptor_sha256,profile.gateway_kind,version.adapter_kind,
+        version.wire_api_kind,version.endpoint_url,version.credential_env_name,
+        version.model_id,version.capability_contract_id,version.cache_policy_id,
+        price.calculator_kind,'${INITIAL_LEGAL_BUNDLE_VERSION}',
+        membership.legal_manifest_id,membership.manifest_sha256,
+        version.display_disclosure_key,array['evidence.synthetic-local-db']
+      from public.ai_service_runtime_contract_targets as membership
+      join public.ai_provider_profiles as profile
+        on profile.profile_key=membership.profile_key
+      join public.ai_provider_profile_versions as version
+        on version.profile_id=profile.id and version.id='${profileVersionId}'
+      join public.ai_providers as provider on provider.id=profile.provider_id
+      join public.ai_price_versions as price on price.id='${priceVersionId}'
+      join public.ai_runtime_code_capabilities_v2 as capability
+        on capability.code_capability_id='${capabilityId}'
+      where membership.runtime_contract_id='${runtime.runtimeContractId}';
+      commit;
+    `);
+
+    runOwnerSql(String.raw`
+      select public.admin_import_reviewed_deployment_v1(
+        '${reviewedDeploymentId}','local','local','${runtimeBuildId}',
+        '${bindingRevision}','${bindingManifestSha256}',
+        array['${mimoCapabilityId}','${capabilityId}'],
+        array['evidence.reviewed-z','evidence.reviewed-a'],
+        'sha1:0123456789abcdef0123456789abcdef01234567','${"2".repeat(64)}',
+        clock_timestamp()+interval '1 day'
+      );
+    `);
+  });
+
+  afterAll(async () => {
+    if (ownsEnvironment) {
+      runOwnerSql(`delete from public.admin_principals where user_id=${literal(adminUser.id)};
+        delete from public.admin_environment where environment='local';`);
+    }
+    if (adminUser) await deleteTestUser(service, adminUser.id);
+    if (ordinaryUser) await deleteTestUser(service, ordinaryUser.id);
+  });
+
+  it("allows only the service producer to load a registered candidate", async () => {
+    const canonicalSets = runOwnerSql(String.raw`
+      select array_to_string(deployment.reviewed_evidence_ids, '|') || ';' || (
+        select string_agg(capability.code_capability_id, '|' order by capability.code_capability_id)
+        from public.admin_reviewed_deployment_capabilities_v1 as capability
+        where capability.reviewed_deployment_id = deployment.id
+      )
+      from public.admin_reviewed_deployments_v1 as deployment
+      where deployment.id = '${reviewedDeploymentId}';
+    `).stdout;
+    expect(canonicalSets).toContain(
+      `evidence.reviewed-a|evidence.reviewed-z;${capabilityId}|${mimoCapabilityId}`,
+    );
+    const args = {
+      p_reviewed_deployment_id: reviewedDeploymentId,
+      p_runtime_contract_id: runtime.runtimeContractId,
+      p_runtime_target_id: runtime.runtimeTargetId,
+    };
+    for (const client of [createAnonClient(), ordinary, admin]) {
+      expect(
+        (await client.rpc("get_admin_validation_candidate_v1", args)).error
+          ?.code,
+      ).toBe("42501");
+    }
+    const candidate = await service.rpc(
+      "get_admin_validation_candidate_v1",
+      args,
+    );
+    expect(candidate.error).toBeNull();
+    expect(candidate.data).toMatchObject({
+      schemaVersion: "admin_validation_candidate_v1",
+      deployment: {
+        id: reviewedDeploymentId,
+        runtimeBuildId,
+        bindingManifestRevision: bindingRevision,
+      },
+      profileExecutionConfig: {
+        schemaVersion: "profile_execution_config_v2",
+        modelId,
+      },
+      runtimeTarget: {
+        runtimeContractId: runtime.runtimeContractId,
+        runtimeTargetId: runtime.runtimeTargetId,
+        profileVersionId,
+        priceVersionId,
+      },
+    });
+  });
+
+  it("records strict pass/fail reports without granting reviewed authority", async () => {
+    const baseArgs = {
+      p_reviewed_deployment_id: reviewedDeploymentId,
+      p_runtime_contract_id: runtime.runtimeContractId,
+      p_runtime_target_id: runtime.runtimeTargetId,
+      p_observed_runtime_build_id: runtimeBuildId,
+      p_observed_binding_manifest_revision: bindingRevision,
+      p_observed_binding_manifest_sha256: bindingManifestSha256,
+      p_observed_code_capability_sha256: capabilitySha256,
+      p_endpoint_policy_valid: true,
+      p_manifest_binding_valid: true,
+      p_credential_configured: true,
+      p_compiled_capability_valid: true,
+    };
+    for (const client of [ordinary, admin]) {
+      expect(
+        (await client.rpc("record_admin_validation_report_v1", baseArgs))
+          .error?.code,
+      ).toBe("42501");
+    }
+    const passed = await service.rpc(
+      "record_admin_validation_report_v1",
+      baseArgs,
+    );
+    expect(passed.error).toBeNull();
+    expect(passed.data).toMatchObject({
+      schemaVersion: "admin_validation_report_v1",
+      reviewedDeploymentId,
+      runtimeTargetId: runtime.runtimeTargetId,
+      passed: true,
+      checks: {
+        endpointPolicy: true,
+        manifestBinding: true,
+        credentialConfigured: true,
+        compiledCapability: true,
+        databaseBinding: true,
+      },
+    });
+    const failed = await service.rpc("record_admin_validation_report_v1", {
+      ...baseArgs,
+      p_credential_configured: false,
+    });
+    expect(failed.error).toBeNull();
+    expect(failed.data.passed).toBe(false);
+    const selected = await service.rpc("get_admin_runtime_validation_v1", {
+      p_runtime_contract_id: runtime.runtimeContractId,
+      p_runtime_target_id: runtime.runtimeTargetId,
+    });
+    expect(selected.error).toBeNull();
+    expect(selected.data).toMatchObject({
+      schemaVersion: "runtime_deployment_validation_v1",
+      reportId: passed.data.reportId,
+      runtimeBuildId,
+    });
+
+    const boundedDeploymentId = crypto.randomUUID();
+    const boundedBuildId = `local-build:${boundedDeploymentId}`;
+    runOwnerSql(String.raw`
+      select public.admin_import_reviewed_deployment_v1(
+        '${boundedDeploymentId}','local','local','${boundedBuildId}',
+        '${bindingRevision}','${bindingManifestSha256}',array['${capabilityId}'],
+        array['evidence.reviewed-short-lived-build'],
+        'sha1:0123456789abcdef0123456789abcdef01234567','${"3".repeat(64)}',
+        clock_timestamp()+interval '2 minutes'
+      );
+    `);
+    const bounded = await service.rpc("record_admin_validation_report_v1", {
+      ...baseArgs,
+      p_reviewed_deployment_id: boundedDeploymentId,
+      p_observed_runtime_build_id: boundedBuildId,
+    });
+    expect(bounded.error).toBeNull();
+    expect(Date.parse(bounded.data.expiresAt)).toBeLessThanOrEqual(
+      Date.now() + 2 * 60_000,
+    );
+  });
+
+  it("rejects unknown observed build, manifest, capability and candidate", async () => {
+    const baseArgs = {
+      p_reviewed_deployment_id: reviewedDeploymentId,
+      p_runtime_contract_id: runtime.runtimeContractId,
+      p_runtime_target_id: runtime.runtimeTargetId,
+      p_observed_runtime_build_id: runtimeBuildId,
+      p_observed_binding_manifest_revision: bindingRevision,
+      p_observed_binding_manifest_sha256: bindingManifestSha256,
+      p_observed_code_capability_sha256: capabilitySha256,
+      p_endpoint_policy_valid: true,
+      p_manifest_binding_valid: true,
+      p_credential_configured: true,
+      p_compiled_capability_valid: true,
+    };
+    for (const changed of [
+      { p_observed_runtime_build_id: "unknown-build" },
+      { p_observed_binding_manifest_revision: "wrong-revision" },
+      { p_observed_binding_manifest_sha256: "0".repeat(64) },
+      { p_observed_code_capability_sha256: "0".repeat(64) },
+      { p_runtime_target_id: `unknown-target.${crypto.randomUUID()}` },
+    ]) {
+      const result = await service.rpc("record_admin_validation_report_v1", {
+        ...baseArgs,
+        ...changed,
+      });
+      expect(result.error).not.toBeNull();
+    }
+  });
+
+  it("keeps importer and all report tables outside application DML", async () => {
+    for (const client of [createAnonClient(), ordinary, admin, service]) {
+      expect(
+        (
+          await client.rpc("admin_import_reviewed_deployment_v1", {
+            p_id: crypto.randomUUID(),
+            p_environment: "local",
+            p_project_ref: "local",
+            p_runtime_build_id: runtimeBuildId,
+            p_binding_manifest_revision: bindingRevision,
+            p_binding_manifest_sha256: bindingManifestSha256,
+            p_code_capability_ids: [capabilityId],
+            p_reviewed_evidence_ids: ["evidence.forged"],
+            p_reviewed_source_commit_oid:
+              "sha1:0123456789abcdef0123456789abcdef01234567",
+            p_reviewed_source_sha256: "2".repeat(64),
+            p_valid_until: new Date(Date.now() + 60_000).toISOString(),
+          })
+        ).error?.code,
+      ).toBe("42501");
+      for (const table of [
+        "admin_reviewed_deployments_v1",
+        "admin_reviewed_deployment_capabilities_v1",
+        "admin_validation_reports_v1",
+      ]) {
+        expect((await client.from(table).select("*")).error?.code).toBe(
+          "42501",
+        );
+      }
+    }
+  });
+});

@@ -37,6 +37,10 @@ describe("CFG-001 successor-compatible membership source", () => {
       "20260903000000_admin_read_foundation.sql",
       "20260904000000_ai_provider_binding_v2_expand.sql",
       "20260904001000_provider_execution_v2_lifecycle.sql",
+      "20260904002000_runtime_legal_evidence_v2.sql",
+      "20260904003000_ai_legal_acceptance_v2.sql",
+      "20260904004000_admin_write_kernel.sql",
+      "20260904005000_admin_validation_reports.sql",
     ].map((name) => readFileSync(new URL(`../../../supabase/migrations/${name}`, import.meta.url), "utf8"));
     const declared = sources.flatMap((source) => [...source.matchAll(/create function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
     const manifest = new Set<string>(NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1.map(([name]) => name));
@@ -546,6 +550,20 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["get_ai_legal_display_v2", "p_legal_bundle_version text, p_display_disclosure_key text", "f", true, "a2eba11b407d7f33042e5bf3018dec4eb74396e9aba1bbffdc5b0e96e6165109"],
   ["get_ai_polish_availability_v2", "p_user_id uuid", "f", true, "65764e7c65797c3796d9cb8470e2f00dcefa300285b943016ea8b0d9491bcd2a"],
   ["guard_ai_request_legal_acceptance_v2", "", "f", true, "b557efe180f29392a48c25ae3494d47c2a28f530242ea676b8ebc06dea508396"],
+  ["admin_guard_committed_operation_v1", "", "f", false, "0fee26e267566d4ec90ff3429811dfe48eeaecb8f67ecc877be4ba888498115c"],
+  ["admin_canonical_operation_payload_sha256_v1", "p_operation_kind text, p_payload jsonb", "f", false, "09a2e7cb5965ddcf849c1beffa034b10bad6c0406bdc5e649027d9e7118aebd2"],
+  ["admin_has_recent_totp_v1", "p_actor uuid", "f", true, "c2065c979fa0e20efea4b7a46f142550337b68f6f0655774491a8672ac30408a"],
+  ["admin_assert_write_actor_v1", "p_environment text, p_project_ref text, p_require_recent_totp boolean", "f", true, "dc89261db47d8b942c51d6961d7ec4432450140bfb8cb56c5a8c2d9dcb7cd98a"],
+  ["admin_lock_committed_operation_v1", "p_actor uuid, p_operation_kind text, p_idempotency_key uuid, p_typed_payload jsonb", "f", true, "0254dd150cf83d28396f4400bb90b89ccb616cecdcbf8872188c83416ddcb8aa"],
+  ["admin_commit_operation_v1", "p_actor uuid, p_operation_kind text, p_idempotency_key uuid, p_typed_payload jsonb, p_committed_result jsonb, p_domain_audit_id uuid", "f", true, "446d2aa50b5f6430a7d069c7477a52b689cb4dafd026207dc7b15c88cfd1838a"],
+  ["admin_get_committed_operation_v1", "p_environment text, p_project_ref text, p_operation_kind text, p_idempotency_key uuid", "f", true, "d6f05e1e2fb10f7e9d1b7f54b4bccff34dfd0f2edd6c891a60a66baa9038c0fe"],
+  ["admin_get_write_authority_v1", "p_environment text, p_project_ref text", "f", true, "bc7c586897201daf4a6640710eedbf90cce49b0f602e0f1a075e9d8af838314b"],
+  ["admin_guard_validation_evidence_v1", "", "f", false, "af4a0cf10d265a892bdbc85cd24cbfae572110f5757884a3ef320199ca1962fa"],
+  ["admin_import_reviewed_deployment_v1", "p_id uuid, p_environment text, p_project_ref text, p_runtime_build_id text, p_binding_manifest_revision text, p_binding_manifest_sha256 text, p_code_capability_ids text[], p_reviewed_evidence_ids text[], p_reviewed_source_commit_oid text, p_reviewed_source_sha256 text, p_valid_until timestamp with time zone", "f", true, "2444dd13a8988a23da6350f9c7379873fade9fd9790e823f7598195032d7b0fd"],
+  ["get_admin_validation_candidate_v1", "p_reviewed_deployment_id uuid, p_runtime_contract_id text, p_runtime_target_id text", "f", true, "f28950ac8a97ab47a947a9c8fb2302ba2d7d0176f4d91ac3615221fd9dd9c615"],
+  ["record_admin_validation_report_v1", "p_reviewed_deployment_id uuid, p_runtime_contract_id text, p_runtime_target_id text, p_observed_runtime_build_id text, p_observed_binding_manifest_revision text, p_observed_binding_manifest_sha256 text, p_observed_code_capability_sha256 text, p_endpoint_policy_valid boolean, p_manifest_binding_valid boolean, p_credential_configured boolean, p_compiled_capability_valid boolean", "f", true, "176ae0b3234b8401ceecaa819b36b53147c833edf17fd70904dbea0e5cb19ecb"],
+  ["get_admin_runtime_validation_v1", "p_runtime_contract_id text, p_runtime_target_id text", "f", true, "9cb4c545c19f2cbae0b6c61f95ef1f055d7588a9608161cc21e61d810e61e20a"],
+  ["get_ai_polish_execution_snapshot_v3", "p_reservation_id uuid, p_user_id uuid", "f", true, "4f9cd90873cd3037c97e7b5f3efaffb5021233b804c8478e9f4272c46b1cae5a"],
 ] as const;
 const SUCCESSOR_ROUTINE_VALUES_SQL = NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1
   .map(([name, identityArguments, prokind]) => `('${name}'::text, '${identityArguments}'::text, '${prokind}'::text)`)
@@ -1413,6 +1431,8 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             "admin_get_context_v1",
             "admin_list_records_v1",
             "admin_get_record_v1",
+            "admin_get_committed_operation_v1",
+            "admin_get_write_authority_v1",
             "accept_ai_legal_disclosure_v2",
           ].includes(name),
           serviceRoleExecute: [
@@ -1420,6 +1440,10 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             "get_ai_legal_display_v2",
             "get_ai_polish_availability_v2",
             "get_ai_polish_execution_snapshot_v2",
+            "get_ai_polish_execution_snapshot_v3",
+            "get_admin_validation_candidate_v1",
+            "record_admin_validation_report_v1",
+            "get_admin_runtime_validation_v1",
             "start_ai_polish_provider_attempt_v2",
           ].includes(name),
         }),
