@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { getSiteMetadata } from "@/i18n/site-metadata";
@@ -20,7 +18,6 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = getSiteMetadata("en");
 
-const enableVercelInsights = process.env.VERCEL === "1";
 
 /**
  * Root layout shared by every route.
@@ -51,12 +48,6 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           {children}
         </ThemeProvider>
-        {enableVercelInsights ? (
-          <>
-            <Analytics />
-            <SpeedInsights />
-          </>
-        ) : null}
       </body>
     </html>
   );
