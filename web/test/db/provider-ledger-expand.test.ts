@@ -67,7 +67,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider request-ledger expand (real DB)", () =>
         endpoint_alias, model_id, upstream_route, capability_contract_id,
         cache_policy_id, legal_manifest_id, display_disclosure_key, config, config_sha256
       ) values (
-        '${profileVersionId}', '${profileId}', 1, 'fixture_adapter_v1', 'responses_v1',
+        '${profileVersionId}', '${profileId}', 1, 'mimo_responses_v1', 'responses_v1',
         'fixture_credential_v1', 'fixture_endpoint_v1', 'fixture-model', '{}'::jsonb,
         'fixture_capability_v1', 'fixture_cache_v1', '${MIMO_LEGAL_MANIFEST_ID}',
         'mimo.official', '{}'::jsonb, '${"f".repeat(64)}'

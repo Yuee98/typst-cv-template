@@ -22,7 +22,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider native-currency pricing (real DB)", () 
       insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor)
         values ('${profileId}'::uuid,'test.pricing.${label}.${suffix}','Pricing ${label}','direct_deepseek','fixture');
       insert into public.ai_provider_profile_versions(id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,endpoint_alias,model_id,upstream_route,capability_contract_id,cache_policy_id,legal_manifest_id,config,config_sha256)
-        values ('${versionId}'::uuid,'${profileId}'::uuid,1,'fixture_adapter_v1','chat_completions_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','{}'::jsonb,'fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','{}'::jsonb,'${"b".repeat(64)}');
+        values ('${versionId}'::uuid,'${profileId}'::uuid,1,'deepseek_chat_v1','chat_completions_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','{}'::jsonb,'fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','{}'::jsonb,'${"b".repeat(64)}');
       commit;`);
     return versionId;
   }
