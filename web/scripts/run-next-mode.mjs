@@ -30,7 +30,7 @@ export const GENERATED_ROUTES = [
   },
   {
     file: "src/app/api/admin/route.ts",
-    source: 'export const runtime = "nodejs";\nexport const dynamic = "force-dynamic";\nexport { GET } from "@/server/admin/handler";',
+    source: 'export const runtime = "nodejs";\nexport const dynamic = "force-dynamic";\nexport { GET, POST } from "@/server/admin/handler";',
   },
   {
     file: "src/app/[locale]/admin/layout.tsx",

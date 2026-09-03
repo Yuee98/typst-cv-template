@@ -4,10 +4,13 @@ import {
   adminContextSchema,
   adminPageSchema,
   adminRecordSectionSchema,
+  adminValidationReportSchema,
+  adminValidationRequestSchema,
   type AdminErrorCode,
 } from "@/lib/admin/contract";
 import { resolveAdminEnvironment, type AdminEnvironment } from "./environment";
 import { createAdminRequestClient } from "./request-client";
+import { produceAdminValidationReport } from "./validation-service";
 
 type Client = ReturnType<typeof createAdminRequestClient>;
 interface Dependencies {
@@ -16,10 +19,12 @@ interface Dependencies {
     environment: AdminEnvironment,
     token: string,
   ): Pick<Client, "auth" | "rpc">;
+  produceValidation?: typeof produceAdminValidationReport;
 }
 const defaults: Dependencies = {
   environment: () => resolveAdminEnvironment(process.env),
   client: createAdminRequestClient,
+  produceValidation: produceAdminValidationReport,
 };
 const headers = { "Cache-Control": "private, no-store", Vary: "Authorization" };
 function fail(code: AdminErrorCode) {
@@ -113,3 +118,63 @@ export async function handleAdminGet(
 }
 
 export const GET = (request: Request) => handleAdminGet(request);
+
+export async function handleAdminPost(
+  request: Request,
+  deps: Dependencies = defaults,
+): Promise<Response> {
+  const bearer = /^Bearer ([^\s]+)$/i.exec(
+    request.headers.get("authorization") ?? "",
+  );
+  if (!bearer || bearer[1].length > 16_384) return fail("UNAUTHORIZED");
+  if (new URL(request.url).search !== "") return fail("INVALID_REQUEST");
+  const contentLength = request.headers.get("content-length");
+  if (
+    request.headers.get("content-type")?.split(";", 1)[0].trim() !==
+      "application/json" ||
+    (contentLength !== null &&
+      (!/^[0-9]{1,7}$/.test(contentLength) || Number(contentLength) > 4_096))
+  ) {
+    return fail("INVALID_REQUEST");
+  }
+  try {
+    const body = await request.text();
+    if (Buffer.byteLength(body, "utf8") > 4_096)
+      return fail("INVALID_REQUEST");
+    const parsed = adminValidationRequestSchema.safeParse(JSON.parse(body));
+    if (!parsed.success) return fail("INVALID_REQUEST");
+    const env = deps.environment();
+    const client = deps.client(env, bearer[1]);
+    const { data: auth, error: authError } = await client.auth.getUser(
+      bearer[1],
+    );
+    if (authError || !auth.user) return fail("UNAUTHORIZED");
+    const { data: context, error: contextError } = await client.rpc(
+      "admin_get_context_v1",
+      { p_environment: env.name, p_project_ref: env.projectRef },
+    );
+    if (contextError) return fail(rpcError(contextError));
+    adminContextSchema.parse(context);
+    const {
+      reviewedDeploymentId,
+      runtimeContractId,
+      runtimeTargetId,
+    } = parsed.data;
+    const validationInput = {
+      reviewedDeploymentId,
+      runtimeContractId,
+      runtimeTargetId,
+    };
+    const report = await (deps.produceValidation ?? defaults.produceValidation!)(
+      validationInput,
+    );
+    return Response.json(adminValidationReportSchema.parse(report), {
+      headers,
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError) return fail("INVALID_REQUEST");
+    return fail("UNAVAILABLE");
+  }
+}
+
+export const POST = (request: Request) => handleAdminPost(request);
