@@ -11,6 +11,20 @@ const nextConfig: NextConfig = {
   // must stay off in server mode — otherwise every POST /api/polish is met
   // with a 308 redirect to the trailing-slash URL.
   ...(isStaticExport ? { output: "export" as const, trailingSlash: true as const } : {}),
+  ...(!isStaticExport
+    ? {
+        async headers() {
+          return [
+            {
+              source: "/:locale/admin/:path*",
+              headers: [
+                { key: "Referrer-Policy", value: "no-referrer" },
+              ],
+            },
+          ];
+        },
+      }
+    : {}),
 };
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");

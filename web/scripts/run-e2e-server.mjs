@@ -16,6 +16,9 @@ const env = {
   ...process.env,
   CI: "true",
   NEXT_TELEMETRY_DISABLED: "1",
+  // Mount the production public telemetry components so the browser test can
+  // inspect their queued pageview payload after leaving an Admin URL.
+  VERCEL: "1",
   POLISH_FAKE_LLM: "true",
   POLISH_FAKE_BACKEND: "true",
   AI_POLISH_ENABLED: "true",

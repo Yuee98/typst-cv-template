@@ -34,7 +34,7 @@ export const GENERATED_ROUTES = [
   },
   {
     file: "src/app/[locale]/admin/layout.tsx",
-    source: 'export const metadata = { title: "Admin", robots: { index: false, follow: false } };\nexport default function Layout({ children }: { children: React.ReactNode }) { return children; }',
+    source: 'export const metadata = { title: "Admin", robots: { index: false, follow: false }, referrer: "no-referrer" };\nexport default function Layout({ children }: { children: React.ReactNode }) { return children; }',
   },
   {
     file: "src/app/[locale]/admin/[[...segments]]/page.tsx",

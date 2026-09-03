@@ -32,6 +32,8 @@ on:
       - "web/vitest.config.mts"
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
+      - "web/src/lib/admin/**"
+      - "web/src/server/admin/**"
       - "web/src/server/polish/auth.ts"
       - "web/src/server/polish/deepseek-v2-seed-v1.ts"
       - "web/src/server/polish/deepseek-v2-seed-v1.test.ts"
@@ -41,6 +43,7 @@ on:
       - "web/test/fixtures/routing-rules-v1.json"
       - "web/src/server/polish/lifecycle*.ts"
       - "web/src/server/polish/quota.ts"
+      - "web/test/fixtures/admin-contract-v1.json"
       - "web/test/db/**"
       - "web/vitest.db.config.mts"
   workflow_dispatch:

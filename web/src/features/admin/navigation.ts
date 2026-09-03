@@ -22,3 +22,10 @@ export function adminNavigationPath(
       return null;
   }
 }
+
+// OAuth returns to a stable Admin entry point. Filters, cursors and fragments
+// are transient UI state and must never be copied into the provider callback.
+export function adminOAuthRedirectUrl(origin: string, locale: string): string {
+  const path = locale === "zh" ? "/zh/admin" : "/en/admin";
+  return new URL(path, origin).toString();
+}

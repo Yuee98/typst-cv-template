@@ -18,7 +18,7 @@ import {
   type AdminSection,
 } from "@/lib/admin/contract";
 import { adminMessages, type AdminMessages } from "./messages";
-import { adminNavigationPath } from "./navigation";
+import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
 
 type Props = { locale: "zh" | "en"; section?: AdminSection; recordId?: string };
 type Query = { search: string; after: string; limit: number };
@@ -98,12 +98,38 @@ export default function AdminApp({
     if (!client) return;
     let alive = true;
     let authEventObserved = false;
-    void client.auth.getSession().then(({ data }) => {
-      if (alive && !authEventObserved) {
-        setState({ context: null, page: null, error: null, loading: Boolean(data.session) });
+    void client.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (!alive || authEventObserved) return;
+        if (error) {
+          setState({
+            context: null,
+            page: null,
+            error: t.unavailable,
+            loading: false,
+          });
+          setSession(null);
+          return;
+        }
+        setState({
+          context: null,
+          page: null,
+          error: null,
+          loading: Boolean(data.session),
+        });
         setSession(data.session);
-      }
-    });
+      })
+      .catch(() => {
+        if (!alive || authEventObserved) return;
+        setState({
+          context: null,
+          page: null,
+          error: t.unavailable,
+          loading: false,
+        });
+        setSession(null);
+      });
     const { data: listener } = client.auth.onAuthStateChange((_event, next) => {
       if (!alive) return;
       authEventObserved = true;
@@ -117,7 +143,7 @@ export default function AdminApp({
       requestGeneration.current += 1;
       listener.subscription.unsubscribe();
     };
-  }, [client]);
+  }, [client, t.unavailable]);
   const load = useCallback(async () => {
     if (!session?.access_token) return null;
     try {
@@ -206,7 +232,8 @@ export default function AdminApp({
     setBusy(true);
     try {
       const { error } = await client.auth.signInWithOAuth({
-        provider: "github", options: { redirectTo: window.location.href },
+        provider: "github",
+        options: { redirectTo: adminOAuthRedirectUrl(window.location.origin, locale) },
       });
       if (error) setState(current => ({ ...current, error: t.signInFailed }));
     } catch {
@@ -388,6 +415,7 @@ function UtilityBar({
     <div className="flex items-center justify-between">
       <a
         href={`/${locale}/`}
+        rel="noreferrer"
         className="text-sm text-foreground-muted hover:text-foreground"
       >
         ← {t.backToEditor}
@@ -461,6 +489,7 @@ function Shell({
         <aside className="hidden w-56 shrink-0 border-r border-border p-4 md:block">
           <a
             href={`/${locale}/`}
+            rel="noreferrer"
             className="mb-5 block text-sm text-foreground-muted hover:text-foreground"
           >
             ← {t.backToEditor}
