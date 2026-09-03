@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { PolishRequest } from "@/lib/polish/contract";
 import executionFixture from "../../../../../test/fixtures/ai-runtime-execution-contract-v1.json";
+import profileV2Fixtures from "../../../../../test/fixtures/profile-execution-v2.json";
 import {
   createCodeOwnedPolishAdapterResolverV2,
   executePolishLifecycleV2,
@@ -13,12 +14,19 @@ import {
 import { createFakePolishV2RouteDeps } from "../../backend-fake";
 import {
   parseExecutionSnapshotV1,
+  parsePriceSnapshotV1,
   parseRouteSnapshotV1,
   type ExpectedRouteV1,
 } from "../../lifecycle-v2-contract";
 import { DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1 } from "../../service-runtime-contract-v1";
 import type { PolishInferenceRequestV2, PolishInferenceResultV2 } from "../../inference-v2";
 import type { PolishInferenceProviderV2 } from "../../orchestrator";
+import {
+  createPreparedProviderExecutionV2,
+  type PreparedProviderExecutionV2,
+} from "../../prepared-provider-execution-v2";
+import { prepareProviderTransportV2 } from "../../provider-binding-v2";
+import { validateProfileExecutionConfigV2 } from "../../profile-execution-v2";
 import {
   resolveProfile,
   type ProfileExecutionConfigV1,
@@ -54,6 +62,52 @@ const EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
   profileVersionId: ROUTE.profileVersionId,
   legalBundleVersion: ROUTE.legalBundleVersion,
   runtimeContractId: ROUTE.runtimeContractId,
+});
+const PROFILE_V2 = validateProfileExecutionConfigV2(
+  profileV2Fixtures.deepseek,
+);
+const PRICE_V1 = parsePriceSnapshotV1(deepseekExecution.priceSnapshot);
+const ROUTE_V2 = Object.freeze({
+  ...ROUTE,
+  modelId: PROFILE_V2.modelId,
+  displayDisclosureKey: PROFILE_V2.displayDisclosureKey,
+});
+const EXECUTION_V2 = Object.freeze({
+  schemaVersion: "ai_polish_execution_snapshot_v2" as const,
+  ok: true as const,
+  reservationId: RESERVATION_ID,
+  routeSnapshot: ROUTE_V2,
+  profileExecutionConfig: PROFILE_V2,
+  priceSnapshot: PRICE_V1,
+  runtimeEvidence: Object.freeze({
+    schemaVersion: "runtime_execution_evidence_v2" as const,
+    runtimeContractId: ROUTE_V2.runtimeContractId,
+    runtimeTargetId: "runtime-target.synthetic.deepseek.v2",
+    runtimeTargetSha256: "1".repeat(64),
+    routeDescriptorId: "route-descriptor.synthetic.deepseek.v2",
+    routeDescriptorSha256: "2".repeat(64),
+    profileVersionId: ROUTE_V2.profileVersionId,
+    priceVersionId: ROUTE_V2.priceVersionId,
+    providerId: PROFILE_V2.providerId,
+    recipientKey: "deepseek",
+    codeCapabilityId: "runtime-capability.deepseek-chat-v1.2026-09-04",
+    codeCapabilitySha256:
+      "4e5a92750f77f148e6422dcf05b03d99333b357879dba5fdb7248d16dd08bdf2",
+    gatewayKind: PROFILE_V2.gatewayKind,
+    adapterKind: PROFILE_V2.adapterKind,
+    wireApiKind: PROFILE_V2.wireApiKind,
+    endpointUrl: PROFILE_V2.endpointUrl,
+    credentialEnvName: PROFILE_V2.credentialEnvName,
+    modelId: PROFILE_V2.modelId,
+    capabilityContractId: PROFILE_V2.capabilityContractId,
+    cachePolicyId: PROFILE_V2.cachePolicyId,
+    calculatorKind: PROFILE_V2.calculatorKind,
+    legalBundleVersion: ROUTE_V2.legalBundleVersion,
+    legalManifestId: PROFILE_V2.legalManifestId,
+    legalManifestSha256: "3".repeat(64),
+    displayDisclosureKey: PROFILE_V2.displayDisclosureKey,
+    externalEvidenceIds: Object.freeze(["evidence.synthetic-lifecycle"]),
+  }),
 });
 const REQUEST: PolishRequest = {
   clientRequestId: CLIENT_REQUEST_ID,
@@ -188,6 +242,36 @@ function input(controller = new AbortController()): PolishLifecycleV2Input {
     expectedRoute: EXPECTED_ROUTE,
     signal: controller.signal,
   };
+}
+
+function preparedExecution(
+  fetchImpl: typeof fetch,
+  runtimeBuildId = "preview-build:lifecycle-v2",
+  bindingManifestRevision = "binding-lifecycle-v2",
+): PreparedProviderExecutionV2 {
+  const prepared = prepareProviderTransportV2({
+    profile: PROFILE_V2,
+    recipient: {
+      providerId: PROFILE_V2.providerId,
+      recipientKey: "deepseek",
+    },
+    manifest: {
+      schemaVersion: "ai_provider_bindings_v1",
+      revision: bindingManifestRevision,
+      bindings: [
+        {
+          credentialEnvName: PROFILE_V2.credentialEnvName,
+          providerId: PROFILE_V2.providerId,
+          recipientKey: "deepseek",
+          origin: "https://api.deepseek.com",
+        },
+      ],
+    },
+    expectedManifestRevision: bindingManifestRevision,
+    runtimeBuildId,
+    resolveSecret: () => "fake-provider-key",
+  });
+  return createPreparedProviderExecutionV2(prepared, fetchImpl);
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -433,6 +517,111 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
       PolishAdapterUnavailableV2Error,
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("persists provenance from the exact prepared transport used to send", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        id: "chat-prepared-lifecycle",
+        model: PROFILE_V2.modelId,
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                items: [
+                  {
+                    id: "i0",
+                    polished: "负责后端服务开发，将 P99 延迟降低 40%。",
+                  },
+                ],
+              }),
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: {
+          prompt_tokens: 15,
+          completion_tokens: 4,
+          prompt_cache_hit_tokens: 5,
+          prompt_cache_miss_tokens: 10,
+        },
+      }),
+    );
+    const resolution = preparedExecution(fetchMock);
+    const startAttempt = vi.fn<PolishRouteDepsV2["startAttempt"]>(
+      async (params) => ({
+        ...attemptReceipt(params.attemptNo),
+        routeSnapshot: ROUTE_V2,
+      }),
+    );
+    const { deps, controller } = createHarness({
+      reserve: async () => ({
+        allowed: true,
+        reservationId: RESERVATION_ID,
+        limit: 20,
+        remaining: 19,
+        resetAt: "2026-08-25T16:00:00.000Z",
+        routeSnapshot: ROUTE_V2,
+      }),
+      getExecutionSnapshot: async () => EXECUTION_V2,
+      resolveProvider: () => resolution,
+      startAttempt,
+    });
+
+    const result = await executePolishLifecycleV2(input(controller), deps);
+
+    expect(result).toMatchObject({ ok: true, attemptCount: 1 });
+    expect(startAttempt).toHaveBeenCalledTimes(1);
+    expect(startAttempt.mock.calls[0][0].runtimeProvenance).toEqual({
+      runtimeBuildId: "preview-build:lifecycle-v2",
+      bindingManifestRevision: "binding-lifecycle-v2",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects crossed prepared provider objects before DB start or fetch", async () => {
+    const fetchA = vi.fn<typeof fetch>();
+    const fetchB = vi.fn<typeof fetch>();
+    const executionA = preparedExecution(
+      fetchA,
+      "preview-build:a",
+      "binding-a",
+    );
+    const executionB = preparedExecution(
+      fetchB,
+      "preview-build:b",
+      "binding-b",
+    );
+    const crossed = Object.freeze({
+      ...executionA,
+      provider: executionB.provider,
+    }) as PreparedProviderExecutionV2;
+    const startAttempt = vi.fn<PolishRouteDepsV2["startAttempt"]>();
+    const { deps, controller } = createHarness({
+      reserve: async () => ({
+        allowed: true,
+        reservationId: RESERVATION_ID,
+        limit: 20,
+        remaining: 19,
+        resetAt: "2026-08-25T16:00:00.000Z",
+        routeSnapshot: ROUTE_V2,
+      }),
+      getExecutionSnapshot: async () => EXECUTION_V2,
+      resolveProvider: () => crossed,
+      startAttempt,
+    });
+
+    const result = await executePolishLifecycleV2(input(controller), deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "PROFILE_UNAVAILABLE",
+      stage: "profile_resolution",
+      attemptCount: 0,
+    });
+    expect(startAttempt).not.toHaveBeenCalled();
+    expect(fetchA).not.toHaveBeenCalled();
+    expect(fetchB).not.toHaveBeenCalled();
   });
 
   it("runs reserve → strict snapshot → profile → start → transmit → complete → finalize", async () => {
