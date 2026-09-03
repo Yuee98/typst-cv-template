@@ -779,7 +779,9 @@ it("pins Supabase SQL to LF and canonicalizes every routine authority digest", a
   expect(normalizedAuthorityTest).toContain(
     "pg_catalog.chr(13),\n    pg_catalog.chr(10)",
   );
-  expect(normalizedAuthorityTest.match(/\$\{CANONICAL_ROUTINE_DEFINITION_SQL\}/g)).toHaveLength(4);
+  // Four frozen-v1 inventories plus the explicit successor inventory must all
+  // hash pg_get_functiondef through the same CRLF-to-LF canonicalizer.
+  expect(normalizedAuthorityTest.match(/\$\{CANONICAL_ROUTINE_DEFINITION_SQL\}/g)).toHaveLength(5);
   expect(normalizedAuthorityTest).not.toMatch(
     /extensions\.digest\(\s*pg_catalog\.pg_get_functiondef\(procedure\.oid\)/,
   );
