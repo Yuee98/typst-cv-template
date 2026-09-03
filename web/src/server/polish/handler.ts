@@ -91,6 +91,8 @@ import {
   startPolishProviderAttemptV2,
 } from "./quota";
 import { createServerAdminClient } from "@/server/supabase/admin-client";
+import { parseRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
+import { resolveAdminEnvironment } from "../admin/environment";
 
 const env = process.env;
 
@@ -195,7 +197,16 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
   // All provider subjects/route tags are server-keyed so raw identity or
   // correlation values cannot cross boundaries.
   const hmacSecret = requireServerEnv("AI_USER_ID_HMAC_SECRET");
+  const deploymentIdentity = parseRuntimeDeploymentIdentityV1(env);
+  const adminEnvironment = resolveAdminEnvironment(env);
   const routesV2: PolishRouteDepsV2 = {
+    runtimeDeploymentIdentity: {
+      environment: adminEnvironment.name,
+      projectRef: adminEnvironment.projectRef,
+      runtimeBuildId: deploymentIdentity.buildId,
+      bindingManifestRevision: deploymentIdentity.manifest.revision,
+      bindingManifestSha256: deploymentIdentity.manifestSha256,
+    },
     reserve: (params) => reservePolishRequestV2(adminClient, params),
     getExecutionSnapshot: (params) => getPolishExecutionSnapshotV2(adminClient, params),
     startAttempt: (params) => startPolishProviderAttemptV2(adminClient, params),

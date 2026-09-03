@@ -65,11 +65,15 @@ export function createReportedRuntimeTargetResolverV2(
         report.runtimeTargetId === target.evidence.runtimeTargetId &&
         report.runtimeTargetSha256 === target.evidence.runtimeTargetSha256 &&
         report.profileVersionId === target.profileVersionId &&
+        report.priceVersionId === target.evidence.priceVersionId &&
         report.providerId === target.profile.providerId &&
         report.codeCapabilityId === target.evidence.codeCapabilityId &&
         report.codeCapabilitySha256 === target.evidence.codeCapabilitySha256 &&
         report.legalBundleVersion === target.legalBundleVersion &&
-        Date.parse(report.expiresAt) > Date.now() &&
+        report.legalManifestId === target.evidence.legalManifestId &&
+        report.displayDisclosureKey === target.evidence.displayDisclosureKey &&
+        (report.schemaVersion === "runtime_deployment_admission_v1" ||
+          Date.parse(report.expiresAt) > Date.now()) &&
         binding?.providerId === target.profile.providerId &&
         binding.recipientKey === target.evidence.recipientKey &&
         binding.origin === new URL(endpoint).origin

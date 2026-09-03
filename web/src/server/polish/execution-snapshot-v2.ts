@@ -17,7 +17,9 @@ import { resolveRuntimeCodeCapabilityV2 } from "./runtime-code-capability-v2";
 import type { FrozenPriceSnapshotV1 } from "./pricing";
 import {
   runtimeDeploymentValidationSchema,
+  runtimeDeploymentAdmissionSchema,
   type RuntimeDeploymentValidationV1,
+  type RuntimeDeploymentAdmissionV1,
 } from "./runtime-deployment-v1";
 
 const UUID_PATTERN =
@@ -99,7 +101,7 @@ export interface RuntimeExecutionTargetV2 {
   readonly profileVersionId: string;
   readonly profile: Readonly<ProfileExecutionConfigV2>;
   readonly evidence: Readonly<RuntimeExecutionEvidenceV2>;
-  readonly deploymentValidation: Readonly<RuntimeDeploymentValidationV1>;
+  readonly deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV1>;
 }
 
 export type RuntimeTargetResolverV2 = (
@@ -119,7 +121,7 @@ export type ExecutionSnapshotResultV2 =
       profileExecutionConfig: Readonly<ProfileExecutionConfigV2>;
       priceSnapshot: Readonly<FrozenPriceSnapshotV1>;
       runtimeEvidence: Readonly<RuntimeExecutionEvidenceV2>;
-      deploymentValidation: Readonly<RuntimeDeploymentValidationV1>;
+      deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV1>;
     }>;
 
 export type VersionedProfileExecutionConfig =
@@ -250,9 +252,13 @@ export function parseVersionedExecutionSnapshot(
   const profile = validateProfileExecutionConfigV2(input.profileExecutionConfig);
   const price = parsePriceSnapshotV1(input.priceSnapshot);
   const evidence = parseRuntimeExecutionEvidenceV2(input.runtimeEvidence);
-  const deploymentValidation = runtimeDeploymentValidationSchema.parse(
-    input.deploymentValidation,
-  );
+  const deploymentValidation =
+    input.deploymentValidation &&
+    typeof input.deploymentValidation === "object" &&
+    (input.deploymentValidation as Record<string, unknown>).schemaVersion ===
+      "runtime_deployment_admission_v1"
+      ? runtimeDeploymentAdmissionSchema.parse(input.deploymentValidation)
+      : runtimeDeploymentValidationSchema.parse(input.deploymentValidation);
   const compiledCapability = (() => {
     try {
       return resolveRuntimeCodeCapabilityV2(evidence.codeCapabilityId);
@@ -304,8 +310,9 @@ export function parseVersionedExecutionSnapshot(
     deploymentValidation.legalBundleVersion !== evidence.legalBundleVersion ||
     deploymentValidation.legalManifestId !== evidence.legalManifestId ||
     deploymentValidation.displayDisclosureKey !== evidence.displayDisclosureKey ||
-    Date.parse(deploymentValidation.checkedAt) > Date.now() + 30_000 ||
-    Date.parse(deploymentValidation.expiresAt) <= Date.now()
+    (deploymentValidation.schemaVersion === "runtime_deployment_validation_v1" &&
+      (Date.parse(deploymentValidation.checkedAt) > Date.now() + 30_000 ||
+        Date.parse(deploymentValidation.expiresAt) <= Date.now()))
   ) {
     fail("frozen authority mismatch", "EXECUTION_AUTHORITY_MISMATCH");
   }

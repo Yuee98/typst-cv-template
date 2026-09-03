@@ -50,6 +50,28 @@ export type RuntimeDeploymentValidationV1 = z.infer<
   typeof runtimeDeploymentValidationSchema
 >;
 
+export const runtimeDeploymentAdmissionSchema = z.strictObject({
+  schemaVersion: z.literal("runtime_deployment_admission_v1"),
+  environment: z.enum(["local", "preview", "production"]),
+  projectRef: z.string().min(1).max(100),
+  runtimeBuildId: buildId,
+  bindingManifestRevision: codeId,
+  bindingManifestSha256: sha256,
+  admissionRevision: z.string().regex(/^[1-9][0-9]{0,18}$/u),
+  runtimeContractId: codeId,
+  runtimeTargetId: codeId,
+  runtimeTargetSha256: sha256,
+  profileVersionId: uuid,
+  priceVersionId: uuid,
+  providerId: uuid,
+  codeCapabilityId: codeId,
+  codeCapabilitySha256: sha256,
+  legalBundleVersion: codeId,
+  legalManifestId: codeId,
+  displayDisclosureKey: codeId,
+});
+export type RuntimeDeploymentAdmissionV1 = z.infer<typeof runtimeDeploymentAdmissionSchema>;
+
 export interface RuntimeDeploymentEnvironment {
   readonly AI_RUNTIME_BUILD_ID?: string;
   readonly AI_PROVIDER_BINDING_MANIFEST?: string;
@@ -60,6 +82,46 @@ export interface RuntimeDeploymentIdentityV1 {
   readonly buildId: string;
   readonly manifest: ProviderBindingManifest;
   readonly manifestSha256: string;
+}
+
+export const admittedRuntimeDeploymentSchema = z.strictObject({
+  schemaVersion: z.literal("admin_admitted_runtime_deployment_v1"),
+  reviewedDeploymentId: uuid,
+  environment: z.enum(["local", "preview", "production"]),
+  projectRef: z.string().min(1).max(100),
+  runtimeBuildId: buildId,
+  bindingManifestRevision: codeId,
+  bindingManifestSha256: sha256,
+  admissionRevision: z.string().regex(/^[1-9][0-9]{0,18}$/u),
+  admittedAt: z.string().datetime({ offset: true }),
+  targets: z.array(z.strictObject({
+    runtimeContractId: codeId,
+    runtimeTargetId: codeId,
+    runtimeTargetSha256: sha256,
+    profileVersionId: uuid,
+    priceVersionId: uuid,
+    providerId: uuid,
+    legalBundleVersion: codeId,
+    legalManifestId: codeId,
+    displayDisclosureKey: codeId,
+    codeCapabilityId: codeId,
+    codeCapabilitySha256: sha256,
+  })).min(1).max(64),
+});
+export type AdmittedRuntimeDeploymentV1 = z.infer<typeof admittedRuntimeDeploymentSchema>;
+
+export function isRuntimeDeploymentAdmittedV1(
+  identity: RuntimeDeploymentIdentityV1,
+  admitted: unknown,
+  expected: { environment: string; projectRef: string },
+): boolean {
+  const parsed = runtimeDeploymentAdmissionSchema.safeParse(admitted);
+  if (!parsed.success) return false;
+  return parsed.data.environment === expected.environment &&
+    parsed.data.projectRef === expected.projectRef &&
+    parsed.data.runtimeBuildId === identity.buildId &&
+    parsed.data.bindingManifestRevision === identity.manifest.revision &&
+    parsed.data.bindingManifestSha256 === identity.manifestSha256;
 }
 
 export function canonicalProviderBindingManifest(
