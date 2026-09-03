@@ -130,8 +130,8 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
-      - name: Build (server)
-        run: pnpm build:server
+      - name: Build boundary (server → static → server)
+        run: pnpm --filter web test:admin-build-modes
 
       - name: Smoke — 401 without token + fake-backend full chain
         run: |

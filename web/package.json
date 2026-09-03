@@ -8,6 +8,7 @@
     "build:server": "pnpm sync:typst-assets && node scripts/run-next-mode.mjs build server",
     "build:static": "pnpm sync:typst-assets && node scripts/run-next-mode.mjs build static",
     "assert:static-no-ai": "node scripts/assert-static-no-ai.mjs",
+    "test:admin-build-modes": "node scripts/test-admin-build-modes.mjs",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
