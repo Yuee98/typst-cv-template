@@ -531,8 +531,14 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["guard_ai_provider_directory_v2", "", "f", false, "0edf9a2b51b9ecb7ddf77cb65a9598d9363e151095b0e915df8010555294c963"],
   ["guard_ai_profile_provider_v2", "", "f", false, "f4f4c5c4619d78aa1b835b111e85efb38e95753811141f045b3f557e88843dfa"],
   ["guard_ai_profile_binding_v2", "", "f", false, "9ea4480c057aab2e7e1281f7a31b469c2efe4a65c22e2e4933d641f230754e19"],
-  ["guard_ai_attempt_binding_v2", "", "f", false, "970e2f61a63627b4a443f3930d10c2a47c106f7a13f3950ce7b2c2822dd4517a"],
-  ["get_ai_polish_execution_snapshot_v2", "p_reservation_id uuid, p_user_id uuid", "f", true, "9a7c2c6d48238c0de187cba4347941dfaa18761a68d1cf3c2c5f4e0a129a170d"],
+  ["guard_ai_attempt_binding_v2", "", "f", false, "c108c352ecf7d56f2aa3f202b9702df94d6e3ca2159806d03192eaffcff0dfee"],
+  ["guard_ai_runtime_code_capability_v2", "", "f", false, "c5c468ce0ff7cea295de87f096f1ccadab75313bdb9076fdc57e53822971b263"],
+  ["ai_legal_display_content_shape_v2", "p_content jsonb", "f", false, "00fb99b69a84233b27ea2401ef6fb5f9ac931ed7992d6f147a7a101baab42496"],
+  ["guard_ai_legal_display_version_v2", "", "f", false, "171aafc2e254045026a53da612b10b13c8a3f6a47c714b72651533123fd155c4"],
+  ["guard_ai_current_legal_bundle_v2", "", "f", false, "1b8823594a80f7b71184e1e98b515c1818056cbc795b9a1165498ed853cad444"],
+  ["get_ai_current_legal_bundle_v2", "", "f", true, "443163e8aa131fe1dbbf989f3d35053ac8d8c7ecdcd95ea21aa9517fcdee397e"],
+  ["guard_ai_runtime_target_binding_v2", "", "f", false, "f8f6df398c6b7c13ab8b0178d076c06014bbaecbd14b5cc67e72723178346dee"],
+  ["get_ai_polish_execution_snapshot_v2", "p_reservation_id uuid, p_user_id uuid", "f", true, "db45668b5b53040335b8e68e2d70047ccfcf2e595b6797f83ffd69f441c6bcc6"],
   ["start_ai_polish_provider_attempt_v2", "p_reservation_id uuid, p_attempt_no integer, p_runtime_build_id text, p_binding_manifest_revision text", "f", true, "a1b9421dc07731be7fc60555490f512530c2037ad0633b6371276a0095c873bd"],
 ] as const;
 const SUCCESSOR_ROUTINE_VALUES_SQL = NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1
@@ -1399,6 +1405,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           anonExecute: false,
           authenticatedExecute: ["admin_get_context_v1", "admin_list_records_v1", "admin_get_record_v1"].includes(name),
           serviceRoleExecute: [
+            "get_ai_current_legal_bundle_v2",
             "get_ai_polish_execution_snapshot_v2",
             "start_ai_polish_provider_attempt_v2",
           ].includes(name),

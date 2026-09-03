@@ -68,11 +68,44 @@ const ROUTE_V2 = parseRouteSnapshotV1({
   ...ROUTE,
   modelId: PROFILE_V2.modelId,
 });
+const RUNTIME_EVIDENCE_V2 = Object.freeze({
+  schemaVersion: "runtime_execution_evidence_v2",
+  runtimeContractId: ROUTE_V2.runtimeContractId,
+  runtimeTargetId: "runtime-target.deepseek-v2.test",
+  runtimeTargetSha256:
+    "1000000000000000000000000000000000000000000000000000000000000000",
+  routeDescriptorId: "route-descriptor.deepseek-v2.test",
+  routeDescriptorSha256:
+    "2000000000000000000000000000000000000000000000000000000000000000",
+  profileVersionId: ROUTE_V2.profileVersionId,
+  priceVersionId: ROUTE_V2.priceVersionId,
+  providerId: PROFILE_V2.providerId,
+  recipientKey: "deepseek",
+  codeCapabilityId: "runtime-capability.deepseek-chat-v1.2026-09-04",
+  codeCapabilitySha256:
+    "4e5a92750f77f148e6422dcf05b03d99333b357879dba5fdb7248d16dd08bdf2",
+  gatewayKind: PROFILE_V2.gatewayKind,
+  adapterKind: PROFILE_V2.adapterKind,
+  wireApiKind: PROFILE_V2.wireApiKind,
+  endpointUrl: PROFILE_V2.endpointUrl,
+  credentialEnvName: PROFILE_V2.credentialEnvName,
+  modelId: PROFILE_V2.modelId,
+  capabilityContractId: PROFILE_V2.capabilityContractId,
+  cachePolicyId: PROFILE_V2.cachePolicyId,
+  calculatorKind: PROFILE_V2.calculatorKind,
+  legalBundleVersion: ROUTE_V2.legalBundleVersion,
+  legalManifestId: PROFILE_V2.legalManifestId,
+  legalManifestSha256:
+    "3000000000000000000000000000000000000000000000000000000000000000",
+  displayDisclosureKey: ROUTE_V2.displayDisclosureKey,
+  externalEvidenceIds: ["evidence.deepseek-v2.test"],
+});
 const executionSuccessV2 = Object.freeze({
   ...executionSuccess,
   schemaVersion: "ai_polish_execution_snapshot_v2",
   routeSnapshot: ROUTE_V2,
   profileExecutionConfig: PROFILE_V2,
+  runtimeEvidence: RUNTIME_EVIDENCE_V2,
 });
 const MIMO_PROFILE = resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1");
 const DEEPSEEK_ENDPOINT = resolveEndpoint(PROFILE.endpointAlias).url;

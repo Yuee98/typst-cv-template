@@ -48,8 +48,9 @@ export function createRealPolishRuntimeAuthorityV2(
     // Preserve the legacy DeepSeek target for in-flight/rollback execution
     // while admitting only the exact current combined-v2 target pair.
     runtimeTargetResolver: REAL_POLISH_RUNTIME_TARGET_RESOLVER_V2,
-    // V2 profile rows remain dark until I05 binds exact build, legal and
-    // deployment-manifest evidence. Parsing support does not authorize sends.
+    // V2 profile rows remain dark until I06 binds the running build and
+    // deployment-manifest report to the I05 target evidence. Parsing and DB
+    // evidence alone do not authorize sends.
     runtimeTargetResolverV2: EMPTY_RUNTIME_TARGET_RESOLVER_V2,
     resolveProvider: createCodeOwnedPolishAdapterResolverV2({ env }),
   });
