@@ -385,4 +385,73 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
       }
     }
   });
+
+  it("keeps authority cutover explicit and produces readback from the exact routed report set", async () => {
+    const report = await service.rpc("record_admin_validation_report_v1", {
+      p_reviewed_deployment_id: reviewedDeploymentId,
+      p_runtime_contract_id: runtime.runtimeContractId,
+      p_runtime_target_id: runtime.runtimeTargetId,
+      p_observed_runtime_build_id: runtimeBuildId,
+      p_observed_binding_manifest_revision: bindingRevision,
+      p_observed_binding_manifest_sha256: bindingManifestSha256,
+      p_observed_code_capability_sha256: capabilitySha256,
+      p_endpoint_policy_valid: true,
+      p_manifest_binding_valid: true,
+      p_credential_configured: true,
+      p_compiled_capability_valid: true,
+    });
+    expect(report.error).toBeNull();
+    const reportId = (report.data as { reportId: string }).reportId;
+    const policyId = crypto.randomUUID();
+    const policyKey = `admin.cutover.${policyId}`;
+    const output = runOwnerSql(String.raw`
+      begin;
+      set local session_replication_role=replica;
+      insert into public.ai_routing_policy_versions(
+        id,policy_key,version,status,timezone,rules,default_profile_version_id,
+        legal_bundle_version,config_sha256,runtime_contract_id,
+        validated_at,created_at
+      ) values (
+        '${policyId}', '${policyKey}', 1, 'canary', 'Asia/Shanghai',
+        '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"${profileVersionId}","priceVersionId":"${priceVersionId}"},"windows":[]}'::jsonb,
+        '${profileVersionId}', '${INITIAL_LEGAL_BUNDLE_VERSION}', '${"8".repeat(64)}',
+        '${runtime.runtimeContractId}', clock_timestamp(), clock_timestamp()
+      );
+      update public.ai_feature_config set ai_polish_enabled=false,
+        active_routing_policy_version_id='${policyId}' where id=true;
+      set local session_replication_role=origin;
+
+      select public.admin_cutover_authority_v1(
+        '${reviewedDeploymentId}', array['${reportId}'::uuid], 0, 0,
+        'local transactional authority cutover test'
+      );
+      select jsonb_build_object(
+        'mode',(select control_plane_mode from public.admin_environment where id=true),
+        'cycle',(select closing_cycle_id is not null from public.admin_ai_control_state_v1 where id=true),
+        'oldPointerRpc',has_function_privilege('service_role',
+          'public.set_ai_routing_policy_pointer_v1(uuid,text,text,text,text,text,timestamptz,text)','EXECUTE'),
+        'directGate',has_column_privilege('service_role','public.ai_feature_config','ai_polish_enabled','UPDATE'),
+        'dataPlaneProfileLock',has_column_privilege('service_role','public.ai_provider_profile_versions','display_disclosure_key','UPDATE'),
+        'dataPlanePriceLock',has_column_privilege('service_role','public.ai_price_versions','components_sealed_at','UPDATE')
+      );
+      set local role service_role;
+      set local request.jwt.claims='{"role":"service_role"}';
+      select public.record_admin_runtime_readback_v1(
+        '${reviewedDeploymentId}','${policyId}',array['${reportId}'::uuid],
+        '${runtimeBuildId}','${bindingRevision}','${bindingManifestSha256}'
+      );
+      reset role;
+      rollback;
+    `).stdout;
+    expect(output).toContain('"schemaVersion": "admin_authority_cutover_v1"');
+    expect(output).toContain('"mode": "jwt_v1"');
+    expect(output).toContain('"cycle": true');
+    expect(output).toContain('"oldPointerRpc": false');
+    expect(output).toContain('"directGate": false');
+    expect(output).toContain('"dataPlaneProfileLock": true');
+    expect(output).toContain('"dataPlanePriceLock": true');
+    expect(output).toContain('"schemaVersion": "admin_runtime_readback_v1"');
+    expect(output).toContain(`"policyVersionId": "${policyId}"`);
+    expect(output).toContain(`"validationReportIds": ["${reportId}"]`);
+  });
 });
