@@ -31,6 +31,11 @@ import {
 } from "./profile-execution-v2";
 import { deriveProviderSubjectIdV2 } from "./provider-subject-v2";
 import {
+  isPreparedProviderExecutionV2,
+  readPreparedProviderExecutionV2,
+  type PreparedProviderExecutionV2,
+} from "./prepared-provider-execution-v2";
+import {
   getPolishExecutionSnapshotV2,
   PolishLifecycleV2RpcError,
   reservePolishRequestV2,
@@ -163,7 +168,7 @@ export interface PolishLifecycleV2Input {
 
 export type PolishAdapterResolverV2 = (
   profile: Readonly<ProfileExecutionConfig>,
-) => PolishInferenceProviderV2;
+) => PolishInferenceProviderV2 | PreparedProviderExecutionV2;
 
 export interface PolishRouteDepsV2 {
   readonly reserve: (
@@ -187,10 +192,6 @@ export interface PolishRouteDepsV2 {
   ) => Promise<PolishFinalizeResultV2>;
   readonly runtimeTargetResolver: RuntimeTargetResolverV1;
   readonly runtimeTargetResolverV2?: RuntimeTargetResolverV2;
-  readonly runtimeProvenance?: Readonly<{
-    runtimeBuildId: string;
-    bindingManifestRevision: string;
-  }>;
   readonly resolveProvider: PolishAdapterResolverV2;
   readonly providerSubjectSecret: string;
   readonly routeObservationSecret: string;
@@ -760,9 +761,31 @@ export async function executePolishLifecycleV2(
   }
 
   let provider: PolishInferenceProviderV2;
+  let runtimeProvenance:
+    | Readonly<{
+        runtimeBuildId: string;
+        bindingManifestRevision: string;
+      }>
+    | undefined;
   let providerSubjectId: string;
   try {
-    provider = deps.resolveProvider(execution.profileExecutionConfig);
+    const resolution = deps.resolveProvider(execution.profileExecutionConfig);
+    if (
+      execution.profileExecutionConfig.schemaVersion ===
+      "profile_execution_config_v2"
+    ) {
+      const prepared = readPreparedProviderExecutionV2(
+        resolution,
+        execution.profileExecutionConfig,
+      );
+      provider = prepared.provider;
+      runtimeProvenance = prepared.runtimeProvenance;
+    } else {
+      if (isPreparedProviderExecutionV2(resolution)) {
+        throw new PolishAdapterUnavailableV2Error();
+      }
+      provider = resolution;
+    }
     providerSubjectId = deriveProviderSubjectIdV2({
       profileVersionId: execution.routeSnapshot.profileVersionId,
       authenticatedUserId: input.authenticatedUserId,
@@ -786,11 +809,6 @@ export async function executePolishLifecycleV2(
       now: deps.now,
       sleep: deps.sleep,
       onAttemptStarted: async (started): Promise<ProviderAttemptStartV2> => {
-        const runtimeProvenance =
-          execution.profileExecutionConfig.schemaVersion ===
-          "profile_execution_config_v2"
-            ? deps.runtimeProvenance
-            : undefined;
         if (
           execution.profileExecutionConfig.schemaVersion ===
             "profile_execution_config_v2" &&
