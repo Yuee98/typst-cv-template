@@ -21,6 +21,7 @@ import {
 } from "./adapter-registry";
 import { MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
 import { resolveProfile } from "./profile-registry";
+import { assertPreparedProviderTransportV2, type PreparedProviderTransportV2 } from "./provider-binding-v2";
 import {
   POLISH_STABLE_PROMPT_BLOCK_ID,
   POLISH_VARIABLE_PROMPT_BLOCK_ID,
@@ -415,6 +416,25 @@ export function createMimoResponsesV1Adapter(
   }
   const endpoint = resolveEndpoint(profile.endpointAlias).url;
   const apiKey = resolveCredentialSecret(profile.credentialAlias, env);
+  return createMimoResponsesTransport({ endpoint, apiKey, modelId: profile.modelId, fetch: options.fetch });
+}
+
+export function createPreparedMimoResponsesAdapter(
+  prepared: PreparedProviderTransportV2, fetchImpl?: typeof fetch,
+): MimoResponsesV1Adapter {
+  assertPreparedProviderTransportV2(prepared);
+  if (prepared.profile.adapterKind !== MIMO_RESPONSES_V1_ADAPTER_KIND) throw new Error("Unsupported prepared adapter");
+  return createMimoResponsesTransport({
+    endpoint: prepared.endpoint, apiKey: prepared.apiKey, modelId: prepared.profile.modelId,
+    fetch: fetchImpl, exactModelObservation: true, beforeSend: () => assertPreparedProviderTransportV2(prepared),
+  });
+}
+
+function createMimoResponsesTransport(options: {
+  endpoint: string; apiKey: string; modelId: string; fetch?: typeof fetch;
+  exactModelObservation?: boolean; beforeSend?: () => void;
+}): MimoResponsesV1Adapter {
+  const { endpoint, apiKey, modelId } = options;
   const fetchImpl = options.fetch ?? fetch;
 
   return {
@@ -424,7 +444,8 @@ export function createMimoResponsesV1Adapter(
       { signal, timeoutMs }: { signal: AbortSignal; timeoutMs: number },
     ): Promise<PolishInferenceResultV2> {
       signal.throwIfAborted();
-      const body = assertRequestAndBuildBody(request, profile.modelId);
+      options.beforeSend?.();
+      const body = assertRequestAndBuildBody(request, modelId);
       const timeoutSignal = AbortSignal.timeout(timeoutMs);
       const combinedSignal = AbortSignal.any([signal, timeoutSignal]);
 
@@ -477,8 +498,10 @@ export function createMimoResponsesV1Adapter(
       const payloadRecord = isRecord(payload) ? payload : undefined;
       const providerRequestId = safeRouteToken(payloadRecord?.id);
       const usage = normalizeUsage(payloadRecord?.usage, providerRequestId);
-      const observedModelId = safeRouteToken(payloadRecord?.model, 128);
-      const actualModelId = observedModelId === profile.modelId ? observedModelId : undefined;
+      const observedModelId = options.exactModelObservation
+        ? (payloadRecord?.model === modelId ? modelId : undefined)
+        : safeRouteToken(payloadRecord?.model, 128);
+      const actualModelId = observedModelId === modelId ? observedModelId : undefined;
       const bodyHasError = payloadRecord?.error !== undefined && payloadRecord.error !== null;
       const extracted = payloadRecord
         ? extractOutputText(payloadRecord)

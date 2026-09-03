@@ -53,6 +53,7 @@ import {
   resolveEndpoint,
 } from "./adapter-registry";
 import { resolveProfile } from "./profile-registry";
+import { assertPreparedProviderTransportV2, type PreparedProviderTransportV2 } from "./provider-binding-v2";
 
 /** Model selected by roadmap「模型与配额」. */
 export const DEEPSEEK_POLISH_MODEL = "deepseek-v4-flash";
@@ -149,9 +150,9 @@ function toNonNegativeInt(value: unknown): number {
     : 0;
 }
 
-function buildDeepSeekChatBody(request: PolishProviderRequest): Record<string, unknown> {
+function buildDeepSeekChatBody(request: PolishProviderRequest, modelId = DEEPSEEK_POLISH_MODEL): Record<string, unknown> {
   return {
-    model: DEEPSEEK_POLISH_MODEL,
+    model: modelId,
     messages: request.messages,
     thinking: { type: "disabled" },
     response_format: { type: "json_object" },
@@ -500,6 +501,25 @@ export function createDeepSeekChatV1Adapter(
   const profile = resolveProfile(DEEPSEEK_CHAT_V1_PROFILE_KEY);
   const endpoint = resolveEndpoint(profile.endpointAlias).url;
   const apiKey = resolveCredentialSecret(profile.credentialAlias, env);
+  return createDeepSeekChatTransport({ endpoint, apiKey, modelId: profile.modelId, fetch: options.fetch });
+}
+
+export function createPreparedDeepSeekChatAdapter(
+  prepared: PreparedProviderTransportV2, fetchImpl?: typeof fetch,
+): DeepSeekChatV1Adapter {
+  assertPreparedProviderTransportV2(prepared);
+  if (prepared.profile.adapterKind !== DEEPSEEK_CHAT_V1_ADAPTER_KIND) throw new Error("Unsupported prepared adapter");
+  return createDeepSeekChatTransport({
+    endpoint: prepared.endpoint, apiKey: prepared.apiKey, modelId: prepared.profile.modelId,
+    fetch: fetchImpl, exactModelObservation: true, beforeSend: () => assertPreparedProviderTransportV2(prepared),
+  });
+}
+
+function createDeepSeekChatTransport(options: {
+  endpoint: string; apiKey: string; modelId: string; fetch?: typeof fetch;
+  exactModelObservation?: boolean; beforeSend?: () => void;
+}): DeepSeekChatV1Adapter {
+  const { endpoint, apiKey, modelId } = options;
   const fetchImpl = options.fetch ?? fetch;
 
   return {
@@ -509,6 +529,7 @@ export function createDeepSeekChatV1Adapter(
       { signal, timeoutMs }: { signal: AbortSignal; timeoutMs: number },
     ): Promise<PolishInferenceResultV2> {
       signal.throwIfAborted();
+      options.beforeSend?.();
       const legacyRequest = toLegacyProviderRequest(request);
       const timeoutSignal = AbortSignal.timeout(timeoutMs);
       const combinedSignal = AbortSignal.any([signal, timeoutSignal]);
@@ -525,7 +546,7 @@ export function createDeepSeekChatV1Adapter(
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify(buildDeepSeekChatBody(legacyRequest)),
+          body: JSON.stringify(buildDeepSeekChatBody(legacyRequest, modelId)),
           signal: combinedSignal,
         });
       } catch {
@@ -572,11 +593,13 @@ export function createDeepSeekChatV1Adapter(
       const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : undefined;
       const content = message?.content;
       const contentIsString = typeof content === "string";
-      const observedModelId = safeRouteToken(payloadRecord?.model, 128);
-      // `profile.modelId` is the expected frozen model, not evidence of what
+      const observedModelId = options.exactModelObservation
+        ? (payloadRecord?.model === modelId ? modelId : undefined)
+        : safeRouteToken(payloadRecord?.model, 128);
+      // `modelId` is the expected frozen model, not evidence of what
       // served this response. Record an actual-model observation only when
       // the upstream explicitly reports the same safe identifier.
-      const actualModelId = observedModelId === profile.modelId ? observedModelId : undefined;
+      const actualModelId = observedModelId === modelId ? observedModelId : undefined;
 
       return {
         schemaVersion: "polish_inference_result_v2",
