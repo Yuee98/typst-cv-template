@@ -32,6 +32,16 @@ const DISABLED_AVAILABILITY = {
 } as const;
 
 describe("CFG-001 successor-compatible membership source", () => {
+  it("keeps every additive I02/I03 routine in the explicit successor manifest", () => {
+    const sources = [
+      "20260903000000_admin_read_foundation.sql",
+      "20260904000000_ai_provider_binding_v2_expand.sql",
+    ].map((name) => readFileSync(new URL(`../../../supabase/migrations/${name}`, import.meta.url), "utf8"));
+    const declared = sources.flatMap((source) => [...source.matchAll(/create function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
+    const manifest = new Set<string>(NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1.map(([name]) => name));
+    expect(declared.filter((name) => !name.startsWith("pg_")).filter((name) => !manifest.has(name))).toEqual([]);
+  });
+
   it("scopes membership cardinality to the legacy root while retaining exact tuple checks", () => {
     const source = readFileSync(
       new URL("../../../supabase/migrations/20260824002000_seed_deepseek_v2_draft.sql", import.meta.url),
@@ -504,6 +514,33 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
   authorityRootSha256:
     "1397d6ed8535ff83975a9f0e947bd896961619169e617179b83fb5cb1507887e",
 } as const;
+
+// Post-CFG001 routines are an explicit additive successor surface. The v1
+// root below deliberately excludes exactly these identities, so any new
+// routine omitted from this manifest still changes the frozen v1 count/hash.
+const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
+  ["admin_guard_audit_v1", "", "f", false, "c54e2ae27031c4bcec613fd604405625319e6e29cc25b0a0f575a80d64a880ed"],
+  ["admin_bootstrap_v1", "p_user_id uuid, p_environment text, p_project_ref text, p_auth_issuer text, p_reason text", "f", true, "c2c2d3d9630b06c73dc9443f33dd48ffdaa3edc8126f7a5701b55eda9079abc0"],
+  ["admin_assert_actor_v1", "p_environment text, p_project_ref text", "f", true, "0c579b0557284f56986eecefe4a94279aa4adf4c10c084bff7cc38e6cee67e1f"],
+  ["admin_get_context_v1", "p_environment text, p_project_ref text", "f", true, "935dbdb63c3f1fcc7c6ed798fe1c331778b74c7206c59623ecddbd3e85e25058"],
+  ["admin_records_query_v1", "p_section text", "f", false, "1b33284407f35435722d45a714e395deb1773f8ac2e632cd86e50aa819cc7b6f"],
+  ["admin_list_records_v1", "p_environment text, p_project_ref text, p_section text, p_limit integer, p_after text, p_search text", "f", true, "5f1a87edaa14aa78f8e116766cbd111e4bb2f459349e4a80938655dcac232c3d"],
+  ["admin_get_record_v1", "p_environment text, p_project_ref text, p_section text, p_id uuid", "f", true, "1dc5bbbf6881e29f0b5208fbbef67e4a5398b829a014aa664ec8ee7b16cae36a"],
+  ["ai_endpoint_shape_v2", "p_url text", "f", false, "368d5a62f9b0ca4951e7305b68195c16814b1c9e71972a655f3e01ac1239b5f5"],
+  ["guard_ai_provider_directory_v2", "", "f", false, "0edf9a2b51b9ecb7ddf77cb65a9598d9363e151095b0e915df8010555294c963"],
+  ["guard_ai_profile_provider_v2", "", "f", false, "f4f4c5c4619d78aa1b835b111e85efb38e95753811141f045b3f557e88843dfa"],
+  ["guard_ai_profile_binding_v2", "", "f", false, "9ea4480c057aab2e7e1281f7a31b469c2efe4a65c22e2e4933d641f230754e19"],
+  ["guard_ai_attempt_binding_v2", "", "f", false, "970e2f61a63627b4a443f3930d10c2a47c106f7a13f3950ce7b2c2822dd4517a"],
+] as const;
+const SUCCESSOR_ROUTINE_VALUES_SQL = NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1
+  .map(([name, identityArguments, prokind]) => `('${name}'::text, '${identityArguments}'::text, '${prokind}'::text)`)
+  .join(",");
+const IS_SUCCESSOR_ROUTINE_SQL = `exists (
+  select 1 from (values ${SUCCESSOR_ROUTINE_VALUES_SQL}) as successor(name, identity_arguments, prokind)
+  where namespace.nspname='public' and successor.name=procedure.proname
+    and successor.identity_arguments=pg_catalog.pg_get_function_identity_arguments(procedure.oid)
+    and successor.prokind=procedure.prokind::text
+)`;
 
 function parseOwnerJson(sql: string): unknown {
   const result = runOwnerSql(String.raw`
@@ -1199,6 +1236,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           where namespace.nspname = 'public'
             and procedure.prokind in ('f', 'p')
             and procedure.prosecdef
+            and not (${IS_SUCCESSOR_ROUTINE_SQL})
         ), '[]'::jsonb),
         'publicExecuteRoutines', coalesce((
           select pg_catalog.jsonb_agg(
@@ -1227,6 +1265,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           where namespace.nspname = 'public'
             and procedure.prokind in ('f', 'p')
             and pg_catalog.pg_get_functiondef(procedure.oid) ~* '\mexecute\M'
+            and not (${IS_SUCCESSOR_ROUTINE_SQL})
         ), '[]'::jsonb),
         'runtimeRoutines', coalesce((
           select pg_catalog.jsonb_agg(
@@ -1258,6 +1297,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
               pg_catalog.lower(pg_catalog.pg_get_functiondef(procedure.oid)),
               'ai_service_runtime_'
             ) > 0
+            and not (${IS_SUCCESSOR_ROUTINE_SQL})
         ), '[]'::jsonb),
         'nonSystemRoutineAuthority', (
           with routines as (
@@ -1281,6 +1321,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             where namespace.nspname not in ('pg_catalog', 'information_schema')
               and namespace.nspname !~ '^pg_'
               and procedure.prokind in ('f', 'p')
+              and not (${IS_SUCCESSOR_ROUTINE_SQL})
           ),
           canonical as (
             select
@@ -1310,13 +1351,51 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
               pg_catalog.encode(extensions.digest(payload, 'sha256'), 'hex')
           )
           from canonical
-        )
+        ),
+        'successorRoutineAuthority', coalesce((
+          select pg_catalog.jsonb_agg(
+            pg_catalog.jsonb_build_object(
+              'schema', namespace.nspname,
+              'name', procedure.proname,
+              'identityArguments', pg_catalog.pg_get_function_identity_arguments(procedure.oid),
+              'prokind', procedure.prokind,
+              'prosecdef', procedure.prosecdef,
+              'definitionSha256', pg_catalog.encode(extensions.digest(${CANONICAL_ROUTINE_DEFINITION_SQL}, 'sha256'), 'hex'),
+              'publicExecute', exists (select 1 from aclexplode(coalesce(procedure.proacl, acldefault('f', procedure.proowner))) as acl where acl.grantee = 0 and acl.privilege_type = 'EXECUTE'),
+              'anonExecute', pg_catalog.has_function_privilege('anon', procedure.oid, 'EXECUTE'),
+              'authenticatedExecute', pg_catalog.has_function_privilege('authenticated', procedure.oid, 'EXECUTE'),
+              'serviceRoleExecute', pg_catalog.has_function_privilege('service_role', procedure.oid, 'EXECUTE')
+            ) order by procedure.proname
+          )
+          from pg_catalog.pg_proc as procedure
+          join pg_catalog.pg_namespace as namespace on namespace.oid = procedure.pronamespace
+          join (values ${SUCCESSOR_ROUTINE_VALUES_SQL}) as expected(name, identity_arguments, prokind)
+            on expected.name = procedure.proname
+            and expected.identity_arguments = pg_catalog.pg_get_function_identity_arguments(procedure.oid)
+            and expected.prokind = procedure.prokind::text
+          where namespace.nspname = 'public'
+            and procedure.prokind in ('f', 'p')
+        ), '[]'::jsonb)
       )::text;
     `);
 
     expect(security).toEqual({
       privilegeCount: 0,
       nonSystemRoutineAuthority: NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1,
+      successorRoutineAuthority: [...NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1].sort((a,b) => a[0].localeCompare(b[0])).map(
+        ([name, identityArguments, prokind, prosecdef, definitionSha256]) => ({
+          schema: "public",
+          name,
+          identityArguments,
+          prokind,
+          prosecdef,
+          definitionSha256,
+          publicExecute: false,
+          anonExecute: false,
+          authenticatedExecute: ["admin_get_context_v1", "admin_list_records_v1", "admin_get_record_v1"].includes(name),
+          serviceRoleExecute: false,
+        }),
+      ),
       publicExecuteRoutines: [],
       publicSecurityDefiners: PUBLIC_SECURITY_DEFINER_AUTHORITY_V1,
       runtimeRoutines: RUNTIME_ROUTINE_AUTHORITY_V1,
