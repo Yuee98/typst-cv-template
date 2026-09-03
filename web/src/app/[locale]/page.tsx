@@ -2,6 +2,7 @@ import { setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { CvBuilder } from "@/components/cv-builder/cv-builder";
+import { PublicInsights } from "@/components/telemetry/public-insights";
 import { isLocale } from "@/i18n/routing";
 
 type PageProps = {
@@ -17,5 +18,5 @@ export default async function Home({ params }: PageProps) {
 
   setRequestLocale(locale);
 
-  return <CvBuilder />;
+  return <><CvBuilder />{process.env.VERCEL === "1" && <PublicInsights />}</>;
 }

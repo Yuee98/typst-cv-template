@@ -24,6 +24,9 @@
 /src/app/api/polish/route.ts
 /src/app/api/polish/quota/route.ts
 /src/app/api/polish/availability/route.ts
+/src/app/api/admin/route.ts
+/src/app/\[locale\]/admin/layout.tsx
+/src/app/\[locale\]/admin/\[\[...segments\]\]/page.tsx
 
 # production
 /build

@@ -19,6 +19,7 @@ if ([isCfg001FreshReset, isCfg002FreshReset, isCfg003FreshReset].filter(Boolean)
 export default defineConfig({
   resolve: {
     alias: {
+      "server-only": fileURLToPath(new URL("./test/server-only-stub.ts", import.meta.url)),
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
