@@ -39,6 +39,8 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
   let ordinaryUser: TestUser;
   let ownsEnvironment = false;
   let runtime: ReturnType<typeof authorSyntheticRuntimeContract>;
+  let adminSessionId: string;
+  let adminIssuer: string;
 
   beforeAll(async () => {
     service = createServiceClient();
@@ -52,7 +54,9 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
     const token = (await admin.auth.getSession()).data.session!.access_token;
     const claims = JSON.parse(
       Buffer.from(token.split(".")[1], "base64url").toString(),
-    ) as { iss: string };
+    ) as { iss: string; session_id: string };
+    adminSessionId = claims.session_id;
+    adminIssuer = claims.iss;
     const exists = runOwnerSql(
       "select count(*) from public.admin_environment;",
     ).stdout.match(/\n\s*(\d+)\s*\n/)?.[1];
@@ -402,6 +406,37 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
     });
     expect(report.error).toBeNull();
     const reportId = (report.data as { reportId: string }).reportId;
+    const claims = JSON.stringify({
+      sub: adminUser.id,
+      role: "authenticated",
+      session_id: adminSessionId,
+      iss: adminIssuer,
+      is_anonymous: false,
+    });
+    const authoredPolicyKey = `admin.authored.${crypto.randomUUID()}`;
+    const authored = runOwnerSql(String.raw`
+      begin;
+      update public.admin_environment set control_plane_mode='jwt_v1' where id=true;
+      set local role authenticated;
+      set local request.jwt.claims=${literal(claims)};
+      select public.admin_create_routing_policy_v1(
+        'local','local',${literal(authoredPolicyKey)},0,
+        '{"schemaVersion":"routing_rules_v1","defaultRoute":{"profileVersionId":"${profileVersionId}","priceVersionId":"${priceVersionId}"},"windows":[]}'::jsonb,
+        '${profileVersionId}','${INITIAL_LEGAL_BUNDLE_VERSION}',
+        '${runtime.runtimeContractId}',array['${reportId}'::uuid],
+        'local authored policy test','${crypto.randomUUID()}'
+      );
+      reset role;
+      rollback;
+    `).stdout;
+    expect(authored).toContain(
+      '"schemaVersion": "admin_committed_operation_v1"',
+    );
+    expect(authored).toContain(
+      '"schemaVersion": "admin_routing_policy_result_v1"',
+    );
+    expect(authored).toContain(`"policyKey": "${authoredPolicyKey}"`);
+    expect(authored).toContain(`"validationReportIds": ["${reportId}"]`);
     const policyId = crypto.randomUUID();
     const policyKey = `admin.cutover.${policyId}`;
     const output = runOwnerSql(String.raw`
