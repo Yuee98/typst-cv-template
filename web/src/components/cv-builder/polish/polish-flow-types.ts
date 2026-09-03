@@ -1,4 +1,8 @@
-import type { PolishLanguage } from "@/lib/polish/contract";
+import type {
+  PolishAvailability,
+  PolishExpectedRoute,
+  PolishLanguage,
+} from "@/lib/polish/contract";
 
 import type { SnapshotPathValues } from "./stale-guard";
 
@@ -14,6 +18,10 @@ export interface ActivePolishOperation {
   documentId: string;
   /** Immutable owner: the request language at confirm time. */
   language: PolishLanguage;
+  /** Enabled availability publication reviewed for this exact attempt. */
+  availabilityGeneration: number;
+  /** Compare-only route assertion frozen before any acceptance await. */
+  expectedRoute: PolishExpectedRoute;
   /** Dedup key minted at CONFIRM time; null during terms acceptance. */
   clientRequestId: string | null;
   /** In-flight request controller; null until the request fires. */
@@ -23,6 +31,26 @@ export interface ActivePolishOperation {
    * re-reads quota — the server may still be settling the canceled request.
    */
   refreshQuotaOnSettle: boolean;
+}
+
+/** One authenticated availability read and its exact async owner. */
+export interface ActiveAvailabilityRead {
+  /** Ordinary dialog read or the confirm-owned post-acceptance authority proof. */
+  kind: "ordinary" | "post_acceptance";
+  /** Immutable account key captured before the request starts. */
+  userId: string;
+  /** Monotonic read generation; older same-account reads cannot publish. */
+  generation: number;
+  /** Closing, switching identity or refreshing aborts this exact read. */
+  controller: AbortController;
+}
+
+export type PolishAvailabilityCandidate = Extract<PolishAvailability, { enabled: true }>;
+export type PolishAvailabilityStatus = "idle" | "loading" | "ready" | "disabled" | "error";
+
+export interface PublishedAvailabilityCandidate {
+  generation: number;
+  candidate: PolishAvailabilityCandidate;
 }
 
 /**

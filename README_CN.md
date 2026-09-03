@@ -135,10 +135,16 @@ AI 润色已经覆盖受支持的自由文本字段，并通过三层相互独�
 | 开关 | 生效范围 | 用途 |
 |---|---|---|
 | `NEXT_PUBLIC_AI_POLISH_ENABLED` | 浏览器构建期 | 显示或移除 AI 入口，不是安全开关。`build:static` 会拒绝值为 `true` 的构建，因此 Pages 产物不可能包含 AI 入口。 |
-| `AI_POLISH_ENABLED` | Vercel deployment | 在鉴权、数据库访问和 provider 调用之前禁用两个 AI API 路由。值不是精确的 `true` 时返回 `503 AI_DISABLED`；修改 Vercel env 后需要重新部署。 |
+| `AI_POLISH_ENABLED` | Vercel deployment | 在鉴权、数据库访问和 provider 调用之前禁用全部三个 AI API 路由。值不是精确的 `true` 时返回 `503 AI_DISABLED`；修改 Vercel env 后需要重新部署。 |
 | `public.ai_feature_config.ai_polish_enabled` | Supabase 运行时 | 即时生效的运维 kill switch。reserve 和 provider-start RPC 还会在无需重新部署的情况下执行非空 canary allowlist 与全局日限。 |
 
-API 路由（`/api/polish`、`/api/polish/quota`）只存在于 **server 构建**；静态 Pages 导出既不含路由，也不会获得任何 server-only secret。完整环境变量契约见 `web/.env.example`。
+AI API 路由（`POST /api/polish`、`GET /api/polish/quota`、`GET /api/polish/availability`）只存在于 **server 构建**；静态 Pages 导出不暴露其中任何路由，也不会获得任何 server-only secret。完整环境变量契约见 `web/.env.example`。
+
+#### 多 Provider 运行时权威与凭据
+
+provider/profile version、精确的 price version、routing policy、legal bundle 和不可重新解释的带版本 runtime contract ID 都是 **DB 权威快照**。服务端在传输前冻结该精确 route；经审核的代码 registry 会约束 adapter、endpoint、credential alias、cache policy 和 legal manifest 引用。环境变量只为这些 alias 提供凭据，不是 provider 或 model 选择器。不得把 `AI_PROVIDER`、`AI_MODEL` 或 `AI_BASE_URL` 加为应用路由变量：这会绕过 DB 验证、审计、canary 和 legal gate。
+
+`DEEPSEEK_API_KEY` 与 `MIMO_API_KEY` 是当前官方 gateway 的 server-only credential alias。存在 key 不会启用初版 route；仍须有已批准且 active 的 DB profile 与 policy。`OPENROUTER_API_KEY` 仅是后续可选 alias，不属于初版 route；必须另行完成精确 upstream、profile、披露和 activation 审核。任何 provider key 都不得进入浏览器 bundle、数据库、应用日志、ledger 或 error payload。
 
 ### 部署拓扑
 
@@ -164,12 +170,13 @@ Vercel 项目设置为 **Root Directory** `web`、**Framework Preset** `Next.js`
 |---|---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 测试项目 | 生产项目 | 可公开的项目连接信息 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 测试项目 | 生产项目 | Sensitive；仅服务端 |
-| `DEEPSEEK_API_KEY` | 非生产 key，可与本地共用 | 最好使用独立生产 key | Sensitive；仅服务端 |
+| `DEEPSEEK_API_KEY` / `MIMO_API_KEY` | 仅为已批准的 Preview profile 配置非生产 key；否则留空 | 已批准的 Production profile 应使用独立生产 key | Sensitive server-only credential alias；key 本身不启用路由 |
+| `OPENROUTER_API_KEY` | 初版 route 留空 | 初版 route 留空 | 后续可选 alias，不表示初版启用 |
 | `AI_USER_ID_HMAC_SECRET` | 独立随机 secret | 独立随机 secret | Sensitive；绝不使用 `NEXT_PUBLIC_` 前缀 |
 | `AI_POLISH_ENABLED` | 首次关闭态部署为 `false` | 第一次生产 promotion 前为 `false` | 部署级 API 总闸 |
 | `NEXT_PUBLIC_AI_POLISH_ENABLED` | 首次关闭态部署为 `false` | 第一次生产 promotion 前为 `false` | 构建期 UI 开关 |
 
-托管环境不要设置 `POLISH_FAKE_LLM`、`POLISH_FAKE_BACKEND` 或 `NEXT_PUBLIC_AI_POLISH_MOCK`。`AI_POLISH_MODEL` 与 `AI_POLISH_GLOBAL_DAILY_LIMIT` 不是应用环境变量：模型固定在代码中，全局日限位于 `public.ai_feature_config`。
+托管环境不要设置 `POLISH_FAKE_LLM`、`POLISH_FAKE_BACKEND` 或 `NEXT_PUBLIC_AI_POLISH_MOCK`。`AI_PROVIDER`、`AI_MODEL`、`AI_BASE_URL` 与 `AI_POLISH_GLOBAL_DAILY_LIMIT` 都不是应用路由变量：DB 选择经审核的 profile/price/policy/legal/runtime 快照，全局日限位于 `public.ai_feature_config`。
 
 无法使用数据库 branching 时采用两个独立 Supabase 项目：测试项目 watch `main`，生产项目 watch `release`。应用 migrations 前，先在 `pg_catalog` schema 启用 `pg_cron`；migration 会创建 `ai-polish-retention-cleanup` 和 `ai-polish-stale-reconciliation`。每个项目的 GitHub Integration 中，“production branch”只表示部署到该项目的 Git 分支，并不意味着测试项目是面向用户的生产数据库。
 

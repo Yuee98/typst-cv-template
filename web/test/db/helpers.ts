@@ -102,6 +102,28 @@ export async function deleteTestUser(
   }
 }
 
+/** Records the exact AI legal bundle accepted by an AI-path DB fixture. */
+export async function acceptAiLegalBundle(
+  service: SupabaseClient,
+  userId: string,
+  legalBundleVersion: string,
+): Promise<void> {
+  const { error } = await service.from("user_terms_acceptances").upsert(
+    {
+      user_id: userId,
+      document_key: "ai_terms",
+      version: legalBundleVersion,
+    },
+    {
+      onConflict: "user_id,document_key,version",
+      ignoreDuplicates: true,
+    },
+  );
+  if (error) {
+    throw new Error(`acceptAiLegalBundle failed: ${error.message}`);
+  }
+}
+
 /** Returns a client whose PostgREST/RPC calls run as this user (authenticated role). */
 export async function signInAsUser(user: TestUser): Promise<SupabaseClient> {
   const client = createAnonClient();

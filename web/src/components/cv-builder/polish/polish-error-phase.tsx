@@ -12,6 +12,7 @@ const MESSAGE_KIND: Record<PolishErrorKind, string> = {
   quota_exhausted: "quota_exhausted",
   rate_limited: "rate_limited",
   duplicate: "duplicate",
+  route_changed: "route_changed",
   too_large: "too_large",
   timeout: "timeout",
   invalid_output: "invalid_output",

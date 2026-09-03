@@ -1,0 +1,57 @@
+/**
+ * Parse a smoke response without hiding cancellation. Provider/API error
+ * bodies may legitimately be non-JSON, but a caller/deadline abort must keep
+ * rejecting so the cancellation proof cannot turn into a normal null body.
+ */
+export async function readJsonOrNull(response, signal) {
+  try {
+    return await response.json();
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return null;
+  }
+}
+
+/**
+ * Observe a request without erasing why it settled.  In particular, a network
+ * rejection that happens before (or merely near) a caller abort must never be
+ * relabelled as cancellation just because the caller inspects it later.
+ */
+export function observeAbortableRequest(request, signal) {
+  let settled = false;
+  const outcome = Promise.resolve(request).then(
+    (value) => {
+      settled = true;
+      return { kind: "response", value };
+    },
+    (error) => {
+      settled = true;
+      return {
+        kind: signal.aborted && error === signal.reason ? "aborted" : "rejected",
+        error,
+      };
+    },
+  );
+
+  return Object.freeze({
+    outcome,
+    isSettled: () => settled,
+  });
+}
+
+/**
+ * A valid multi-item workload for observing the provider_started window of a
+ * fast official model. Keep this fixture pure so its request-contract and
+ * output-budget bounds can be tested without a credential or network call.
+ */
+export const CANCELLATION_ITEM_COUNT = 25;
+const CANCELLATION_ITEM_TEXT =
+  "主导微服务架构改造，负责核心链路性能优化与稳定性建设，推进可观测性、容量治理、故障演练和跨团队交付，将延迟、错误率和恢复时间持续降低。";
+
+export function buildCancellationProbeItems() {
+  return Array.from({ length: CANCELLATION_ITEM_COUNT }, (_, index) => ({
+    id: `c${index}`,
+    kind: "experience_bullet",
+    text: `第${index + 1}项：${CANCELLATION_ITEM_TEXT.repeat(2)}`,
+  }));
+}

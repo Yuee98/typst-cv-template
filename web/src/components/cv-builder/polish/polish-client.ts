@@ -12,27 +12,46 @@ import {
 import {
   createMockPolishClient,
   MOCK_CLIENT_CODEWORDS,
+  MOCK_POLISH_AVAILABILITY_RESPONSE,
   mockPolishText,
 } from "./polish-mock-client";
 import { PolishApiError } from "./polish-api-error";
 import type {
+  PolishAvailabilityResponse,
+  PolishPostRequest,
   PolishQuotaResponse,
-  PolishRequest,
   PolishSuccessResponse,
 } from "@/lib/polish/contract";
 
 export interface PolishApiClient {
   polish(
-    request: PolishRequest,
-    options?: { signal?: AbortSignal },
+    request: PolishPostRequest,
+    options: PolishAuthenticatedRequestOptions,
   ): Promise<PolishSuccessResponse>;
-  getQuota(options?: { signal?: AbortSignal }): Promise<PolishQuotaResponse>;
+  getAvailability(
+    options: PolishAuthenticatedRequestOptions,
+  ): Promise<PolishAvailabilityResponse>;
+  getQuota(options: PolishAuthenticatedRequestOptions): Promise<PolishQuotaResponse>;
+}
+
+/** Every authenticated request is bound to the operation's committed owner. */
+export interface PolishAuthenticatedRequestOptions {
+  expectedUserId: string;
+  signal?: AbortSignal;
 }
 export { PolishApiError };
 
 export { createPolishHttpClient, DEFAULT_POLISH_CLIENT_TIMEOUT_MS };
-export type { CreatePolishHttpClientOptions } from "./polish-http-client";
-export { createMockPolishClient, MOCK_CLIENT_CODEWORDS, mockPolishText };
+export type {
+  CreatePolishHttpClientOptions,
+  PolishAuthSnapshot,
+} from "./polish-http-client";
+export {
+  createMockPolishClient,
+  MOCK_CLIENT_CODEWORDS,
+  MOCK_POLISH_AVAILABILITY_RESPONSE,
+  mockPolishText,
+};
 export type { CreateMockPolishClientOptions } from "./polish-mock-client";
 
 export function createPolishClientFromEnv(

@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { AI_TERMS_VERSION, TERMS_VERSION } from "@/content/legal";
 import {
   claimPendingTermsAcceptance,
   clearPendingTermsAcceptance,
@@ -25,7 +26,7 @@ describe("pending terms acceptance", () => {
     expect(JSON.parse(passwordMarker ?? "{}")).toEqual({
       kind: "password",
       userIdHash: expect.stringMatching(/^[0-9a-f]{64}$/),
-      version: expect.any(String),
+      version: TERMS_VERSION,
     });
 
     await markPendingTermsAcceptance({ oauthFlowId: "oauth-flow-a" });
@@ -35,8 +36,9 @@ describe("pending terms acceptance", () => {
     expect(JSON.parse(oauthMarker ?? "{}")).toEqual({
       kind: "oauth",
       oauthFlowHash: expect.stringMatching(/^[0-9a-f]{64}$/),
-      version: expect.any(String),
+      version: TERMS_VERSION,
     });
+    expect(TERMS_VERSION).not.toBe(AI_TERMS_VERSION);
   });
 
   it("lets only the matching password account consume the marker", async () => {

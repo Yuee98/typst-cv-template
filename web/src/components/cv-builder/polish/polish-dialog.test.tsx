@@ -14,7 +14,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import messages from "../../../../messages/en.json";
 
+import { ENABLED_AVAILABILITY_BODY } from "./__tests__/client/fixtures";
 import { PolishDialog } from "./polish-dialog";
+import { resolvePolishProviderAnnexHref } from "./polish-provider-annex";
 import { createInitialState } from "./polish-reducer";
 import type { PolishFlow } from "./use-polish-flow";
 
@@ -45,6 +47,8 @@ function makeStubFlow(overrides?: Partial<PolishFlow>): PolishFlow {
     getValue: () => undefined,
     quota: { limit: 20, remaining: 5, resetAt: "2026-08-04T00:00:00Z" },
     quotaStatus: "ready",
+    availabilityCandidate: ENABLED_AVAILABILITY_BODY.availability,
+    availabilityStatus: "ready",
     terms: {
       status: "accepting",
       serverRejected: false,
@@ -52,6 +56,7 @@ function makeStubFlow(overrides?: Partial<PolishFlow>): PolishFlow {
       setChecked: vi.fn(),
     },
     configChangedHint: false,
+    routeChangedHint: false,
     staleItemIds: new Set(),
     referencesStale: false,
     canConfirm: false,
@@ -72,6 +77,7 @@ function makeStubFlow(overrides?: Partial<PolishFlow>): PolishFlow {
     rejectAll: vi.fn(),
     refreshTerms: vi.fn(),
     quotaRetry: vi.fn(),
+    availabilityRetry: vi.fn(),
     ...overrides,
   } as PolishFlow;
 }
@@ -136,6 +142,45 @@ describe("PolishDialog terms-acceptance lock", () => {
     });
     expect(flow.close).toHaveBeenCalledTimes(1);
   });
+
+  it("checking: normal UI reconfiguration routes through the safe hook setters", () => {
+    const setLevel = vi.fn();
+    const setStylePreset = vi.fn();
+    const setStyleInstruction = vi.fn();
+    const flow = makeStubFlow({
+      availabilityCandidate: null,
+      availabilityStatus: "loading",
+      terms: {
+        status: "checking",
+        serverRejected: false,
+        checked: false,
+        setChecked: vi.fn(),
+      },
+      setLevel,
+      setStylePreset,
+      setStyleInstruction,
+    });
+    renderDialog(flow);
+
+    const radios = screen.getAllByRole("radio");
+    expect((radios[2] as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(radios[2]);
+    expect(setLevel).toHaveBeenCalledWith(2);
+
+    const concise = screen.getByRole("button", {
+      name: messages.PolishDialog.style.presets.concise,
+    });
+    expect((concise as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(concise);
+    expect(setStylePreset).toHaveBeenCalledWith("concise");
+
+    const instruction = screen.getByLabelText(
+      messages.PolishDialog.style.heading,
+    );
+    expect((instruction as HTMLTextAreaElement).disabled).toBe(false);
+    fireEvent.change(instruction, { target: { value: "Direct and specific" } });
+    expect(setStyleInstruction).toHaveBeenCalledWith("Direct and specific");
+  });
 });
 
 describe("PolishDialog E2EE plaintext warning", () => {
@@ -154,6 +199,135 @@ describe("PolishDialog E2EE plaintext warning", () => {
     renderDialog(makeStubFlow({ encrypted: false }));
 
     expect(screen.queryByText(messages.PolishDialog.e2eeWarning)).toBeNull();
+  });
+});
+
+describe("PolishDialog provider disclosure", () => {
+  it("uses one polite loading region and one non-nested assertive error alert", () => {
+    const loading = renderDialog(
+      makeStubFlow({ state: { ...createInitialState(), phase: "loading" } }),
+    );
+    const loadingRegion = screen.getByRole("status");
+    expect(loadingRegion.getAttribute("aria-live")).toBe("polite");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+    loading.unmount();
+
+    renderDialog(
+      makeStubFlow({
+        state: {
+          ...createInitialState(),
+          phase: "error",
+          error: { code: "UPSTREAM_ERROR" },
+        },
+      }),
+    );
+    const alert = screen.getByRole("alert");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(alert.closest("[aria-live]")).toBeNull();
+    expect(document.activeElement).not.toBe(alert);
+  });
+
+  it("keeps the refreshed recipient and content visible under the route-changed hint", () => {
+    renderDialog(makeStubFlow({ routeChangedHint: true }));
+
+    expect(screen.getByText(messages.PolishDialog.routeChanged)).toBeTruthy();
+    expect(screen.getByText(/DeepSeek · DeepSeek V4 Flash/)).toBeTruthy();
+    expect(screen.getByText(messages.PolishDialog.privacyReminder)).toBeTruthy();
+  });
+
+  it("renders the exact DeepSeek recipient, model and code-owned annex without a selector", () => {
+    renderDialog(makeStubFlow());
+
+    expect(
+      screen.getByText(
+        messages.PolishDialog.availability.selected
+          .replace("{provider}", "DeepSeek")
+          .replace("{model}", "DeepSeek V4 Flash"),
+      ),
+    ).toBeTruthy();
+    const annex = screen.getByRole("link", { name: messages.PolishDialog.availability.annex });
+    expect(annex.getAttribute("href")).toBe("/ai-terms#provider-annex-deepseek-official-v1");
+    expect(annex.tabIndex).toBe(0);
+    annex.focus();
+    expect(document.activeElement).toBe(annex);
+    expect(annex.className).toContain("focus-visible:ring-2");
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("maps the MiMo display key to its exact annex", () => {
+    renderDialog(
+      makeStubFlow({
+        availabilityCandidate: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          displayDisclosure: {
+            key: "mimo-cn-v1",
+            providerName: "MiMo",
+            modelName: "MiMo V2.5 Pro",
+          },
+        },
+      }),
+    );
+
+    expect(screen.getByText(/MiMo · MiMo V2.5 Pro/)).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: messages.PolishDialog.availability.annex })
+        .getAttribute("href"),
+    ).toBe("/ai-terms#provider-annex-mimo-cn-v1");
+  });
+
+  it("renders loading, disabled and error states without hiding plaintext disclosure", () => {
+    const loading = renderDialog(
+      makeStubFlow({ availabilityCandidate: null, availabilityStatus: "loading" }),
+    );
+    expect(screen.getByText(messages.PolishDialog.availability.loading)).toBeTruthy();
+    expect(screen.getByText(messages.PolishDialog.privacyReminder)).toBeTruthy();
+    loading.unmount();
+
+    const disabled = renderDialog(
+      makeStubFlow({ availabilityCandidate: null, availabilityStatus: "disabled" }),
+    );
+    expect(screen.getByText(messages.PolishDialog.availability.disabled)).toBeTruthy();
+    expect(screen.queryByText(/DeepSeek/)).toBeNull();
+    disabled.unmount();
+
+    const availabilityRetry = vi.fn();
+    renderDialog(
+      makeStubFlow({
+        availabilityCandidate: null,
+        availabilityStatus: "error",
+        availabilityRetry,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: messages.PolishDialog.availability.retry }),
+    );
+    expect(availabilityRetry).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/DeepSeek/)).toBeNull();
+  });
+
+  it("fails closed for an unknown display key instead of interpolating an annex URL", () => {
+    const unknownKey = "future-provider-v1";
+    expect(resolvePolishProviderAnnexHref(unknownKey)).toBeNull();
+    renderDialog(
+      makeStubFlow({
+        availabilityCandidate: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          displayDisclosure: {
+            key: unknownKey,
+            providerName: "Future Provider",
+            modelName: "Future Model",
+          },
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(messages.PolishDialog.availability.unsupportedDisclosure),
+    ).toBeTruthy();
+    expect(screen.queryByText("Future Provider")).toBeNull();
+    expect(screen.queryByRole("link", { name: messages.PolishDialog.availability.annex })).toBeNull();
   });
 });
 

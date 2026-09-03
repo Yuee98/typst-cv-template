@@ -24,10 +24,18 @@ import {
   POLISH_REFERENCE_ROLES,
   POLISH_RESPONSE_ENVELOPE_CHARS,
   POLISHABLE_FIELD_KINDS,
+  polishAvailabilityResponseSchema,
+  polishConfigGenerationSchema,
+  polishExpectedRouteFromAvailability,
+  polishExpectedRouteSchema,
   polishErrorResponseSchema,
+  polishPostRequestSchema,
   polishQuotaResponseSchema,
   polishRequestSchema,
   polishSuccessResponseSchema,
+  type PolishAvailabilityResponse,
+  type PolishExpectedRoute,
+  type PolishPostRequest,
   type PolishRequest,
 } from "./contract";
 
@@ -497,6 +505,7 @@ describe("capability matrix & constants", () => {
     expect(POLISH_ERROR_HTTP_STATUS.AI_TERMS_REQUIRED).toBe(403);
     expect(POLISH_ERROR_HTTP_STATUS.REQUEST_IN_PROGRESS).toBe(409);
     expect(POLISH_ERROR_HTTP_STATUS.DUPLICATE_REQUEST).toBe(409);
+    expect(POLISH_ERROR_HTTP_STATUS.AI_ROUTE_CHANGED).toBe(409);
     expect(POLISH_ERROR_HTTP_STATUS.PAYLOAD_TOO_LARGE).toBe(413);
     expect(POLISH_ERROR_HTTP_STATUS.QUOTA_EXCEEDED).toBe(429);
     expect(POLISH_ERROR_HTTP_STATUS.RATE_LIMITED).toBe(429);
@@ -555,6 +564,227 @@ describe("dynamic output budget helpers", () => {
     expect(computePolishMaxOutputTokens(items)).toBe(
       MAX_TOTAL_POLISHED_CHARS + POLISH_RESPONSE_ENVELOPE_CHARS,
     );
+  });
+});
+
+describe("GET /api/polish/availability response schema", () => {
+  const ENABLED = {
+    requestId: "req-availability-1",
+    availability: {
+      enabled: true,
+      configGeneration: "7",
+      routingPolicyVersionId: VALID_UUID,
+      profileVersionId: "223e4567-e89b-42d3-a456-426614174000",
+      legalBundleVersion: "2026-08-23-multi-provider-v1",
+      runtimeContractId: "deepseek-g2-runtime-v1",
+      displayDisclosure: {
+        key: "deepseek-official-v1",
+        providerName: "DeepSeek",
+        modelName: "DeepSeek V4 Flash",
+      },
+      termsAccepted: true,
+    },
+  } as const;
+
+  const DISABLED = {
+    requestId: "req-availability-2",
+    availability: {
+      enabled: false,
+      configGeneration: null,
+      routingPolicyVersionId: null,
+      profileVersionId: null,
+      legalBundleVersion: null,
+      runtimeContractId: null,
+      displayDisclosure: null,
+      termsAccepted: false,
+    },
+  } as const;
+
+  it("accepts the exact enabled and disabled goldens", () => {
+    expect(polishAvailabilityResponseSchema.safeParse(ENABLED).success).toBe(true);
+    expect(polishAvailabilityResponseSchema.safeParse(DISABLED).success).toBe(true);
+    expect(
+      polishAvailabilityResponseSchema.safeParse({
+        ...ENABLED,
+        availability: { ...ENABLED.availability, termsAccepted: false },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects every missing enabled field and unknown fields at each level", () => {
+    for (const key of Object.keys(ENABLED.availability)) {
+      const availability = { ...ENABLED.availability } as Record<string, unknown>;
+      delete availability[key];
+      expect(
+        polishAvailabilityResponseSchema.safeParse({
+          requestId: ENABLED.requestId,
+          availability,
+        }).success,
+        key,
+      ).toBe(false);
+    }
+
+    expect(
+      polishAvailabilityResponseSchema.safeParse({ ...ENABLED, internalRoute: "secret" })
+        .success,
+    ).toBe(false);
+    expect(
+      polishAvailabilityResponseSchema.safeParse({
+        ...ENABLED,
+        availability: { ...ENABLED.availability, endpointAlias: "deepseek_official" },
+      }).success,
+    ).toBe(false);
+    expect(
+      polishAvailabilityResponseSchema.safeParse({
+        ...ENABLED,
+        availability: {
+          ...ENABLED.availability,
+          displayDisclosure: { ...ENABLED.availability.displayDisclosure, extra: true },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts only canonical non-negative PostgreSQL bigint generation text", () => {
+    expect(polishConfigGenerationSchema.safeParse("0").success).toBe(true);
+    expect(polishConfigGenerationSchema.safeParse("9223372036854775807").success).toBe(true);
+    for (const invalid of [
+      0,
+      "",
+      "00",
+      "01",
+      "+1",
+      "-1",
+      " 1",
+      "1 ",
+      "9223372036854775808",
+      "10000000000000000000",
+    ]) {
+      expect(polishConfigGenerationSchema.safeParse(invalid).success, String(invalid)).toBe(false);
+    }
+  });
+
+  it("rejects malformed route identity and disclosure values", () => {
+    const variants = [
+      { routingPolicyVersionId: "not-a-uuid" },
+      { routingPolicyVersionId: VALID_UUID.toUpperCase() },
+      { profileVersionId: "not-a-uuid" },
+      { profileVersionId: "223E4567-E89B-42D3-A456-426614174000" },
+      { legalBundleVersion: "Uppercase" },
+      { runtimeContractId: " contains-space" },
+      { displayDisclosure: { ...ENABLED.availability.displayDisclosure, key: "unknown key" } },
+      { displayDisclosure: { ...ENABLED.availability.displayDisclosure, providerName: "   " } },
+      { displayDisclosure: { ...ENABLED.availability.displayDisclosure, modelName: "" } },
+    ];
+
+    for (const variant of variants) {
+      expect(
+        polishAvailabilityResponseSchema.safeParse({
+          ...ENABLED,
+          availability: { ...ENABLED.availability, ...variant },
+        }).success,
+        JSON.stringify(variant),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects every partial or non-null disabled route state", () => {
+    for (const [key, value] of [
+      ["configGeneration", "0"],
+      ["routingPolicyVersionId", VALID_UUID],
+      ["profileVersionId", VALID_UUID],
+      ["legalBundleVersion", "bundle-v1"],
+      ["runtimeContractId", "runtime-v1"],
+      ["displayDisclosure", ENABLED.availability.displayDisclosure],
+      ["termsAccepted", true],
+    ] as const) {
+      expect(
+        polishAvailabilityResponseSchema.safeParse({
+          ...DISABLED,
+          availability: { ...DISABLED.availability, [key]: value },
+        }).success,
+        key,
+      ).toBe(false);
+    }
+  });
+
+  it("preserves discriminated-union type narrowing", () => {
+    const response = polishAvailabilityResponseSchema.parse(
+      ENABLED,
+    ) satisfies PolishAvailabilityResponse;
+    if (!response.availability.enabled) throw new Error("enabled fixture decoded as disabled");
+    expect(response.availability.displayDisclosure.providerName).toBe("DeepSeek");
+  });
+
+  it("projects only assertion fields from an enabled candidate", () => {
+    const expected = polishExpectedRouteFromAvailability(
+      ENABLED.availability,
+    ) satisfies PolishExpectedRoute | null;
+    expect(expected).toEqual({
+      schemaVersion: "expected_route_v1",
+      configGeneration: "7",
+      profileVersionId: "223e4567-e89b-42d3-a456-426614174000",
+      legalBundleVersion: "2026-08-23-multi-provider-v1",
+      runtimeContractId: "deepseek-g2-runtime-v1",
+    });
+    expect(expected).not.toHaveProperty("routingPolicyVersionId");
+    expect(expected).not.toHaveProperty("displayDisclosure");
+    expect(polishExpectedRouteFromAvailability(DISABLED.availability)).toBeNull();
+  });
+
+  it("requires the exact five-field expected route on the V2 POST body", () => {
+    const expectedRoute = polishExpectedRouteFromAvailability(ENABLED.availability);
+    if (expectedRoute === null) throw new Error("enabled fixture did not project a route");
+    const post = polishPostRequestSchema.parse({
+      ...makeRequest(),
+      expectedRoute,
+    }) satisfies PolishPostRequest;
+    expect(post.expectedRoute).toEqual(expectedRoute);
+    expect(polishPostRequestSchema.safeParse(makeRequest()).success).toBe(false);
+    expect(polishRequestSchema.safeParse(post).success).toBe(false);
+
+    for (const key of Object.keys(expectedRoute)) {
+      const missing = { ...expectedRoute } as Record<string, unknown>;
+      delete missing[key];
+      expect(
+        polishPostRequestSchema.safeParse({ ...makeRequest(), expectedRoute: missing }).success,
+        key,
+      ).toBe(false);
+    }
+    for (const forbidden of [
+      { provider: "deepseek" },
+      { model: "deepseek-v4-flash" },
+      { endpointAlias: "deepseek_official" },
+      { routingPolicyVersionId: VALID_UUID },
+      { profileVersionId: expectedRoute.profileVersionId.toUpperCase() },
+      { runtimeContractId: null },
+    ]) {
+      expect(
+        polishExpectedRouteSchema.safeParse({ ...expectedRoute, ...forbidden }).success,
+        JSON.stringify(forbidden),
+      ).toBe(false);
+    }
+  });
+
+  it("preserves all content cross-field refinements on the extended POST schema", () => {
+    const expectedRoute = polishExpectedRouteFromAvailability(ENABLED.availability);
+    expect(
+      polishPostRequestSchema.safeParse({
+        ...makeRequest(),
+        items: [
+          { id: "i0", kind: "experience_bullet", text: "第一项" },
+          { id: "i1", kind: "experience_bullet", text: "第二项" },
+        ],
+        expectedRoute,
+      }).success,
+    ).toBe(false);
+    expect(
+      polishPostRequestSchema.safeParse({
+        ...makeRequest(),
+        clientRequestId: VALID_UUID.toUpperCase(),
+        expectedRoute,
+      }).success,
+    ).toBe(false);
   });
 });
 

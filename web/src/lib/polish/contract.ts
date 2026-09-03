@@ -1,5 +1,5 @@
 /**
- * Shared API contract for POST /api/polish.
+ * Shared API contract for the /api/polish route family.
  *
  * Source of truth: tmp/ai-polish-roadmap.md —「架构决策：API 契约」and
  * 「架构决策：润色粒度与能力矩阵」. Imported by BOTH the client (scope
@@ -311,6 +311,101 @@ export const polishRequestSchema = z
 // Response schemas
 // ---------------------------------------------------------------------------
 
+/** Canonical non-negative PostgreSQL bigint text used by route generations. */
+export const polishConfigGenerationSchema = z
+  .string()
+  .regex(/^(0|[1-9][0-9]{0,18})$/)
+  .refine((value) => value.length < 19 || value <= "9223372036854775807", {
+    message: "config generation exceeds PostgreSQL bigint",
+  });
+
+/** Bounded ASCII identifier shared by legal/runtime/disclosure registries. */
+export const polishRouteIdentifierSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
+
+/** Canonical lowercase UUID text used by every V2 route identity. */
+export const polishCanonicalUuidSchema = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+/**
+ * Client assertion copied from one enabled availability snapshot. Selection
+ * remains server-owned: price, policy, provider, model and endpoint are
+ * deliberately absent and unknown keys are rejected.
+ */
+export const polishExpectedRouteSchema = z.strictObject({
+  schemaVersion: z.literal("expected_route_v1"),
+  configGeneration: polishConfigGenerationSchema,
+  profileVersionId: polishCanonicalUuidSchema,
+  legalBundleVersion: polishRouteIdentifierSchema,
+  runtimeContractId: polishRouteIdentifierSchema,
+});
+
+/** Exact POST /api/polish wire body for the DB-authoritative V2 lifecycle. */
+export const polishPostRequestSchema = polishRequestSchema.safeExtend({
+  clientRequestId: polishCanonicalUuidSchema,
+  expectedRoute: polishExpectedRouteSchema,
+});
+
+const polishAvailabilityDisplayDisclosureSchema = z.strictObject({
+  key: polishRouteIdentifierSchema,
+  providerName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
+  modelName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
+});
+
+const polishAvailabilityEnabledSchema = z.strictObject({
+  enabled: z.literal(true),
+  configGeneration: polishConfigGenerationSchema,
+  routingPolicyVersionId: polishCanonicalUuidSchema,
+  profileVersionId: polishCanonicalUuidSchema,
+  legalBundleVersion: polishRouteIdentifierSchema,
+  runtimeContractId: polishRouteIdentifierSchema,
+  displayDisclosure: polishAvailabilityDisplayDisclosureSchema,
+  termsAccepted: z.boolean(),
+});
+
+const polishAvailabilityDisabledSchema = z.strictObject({
+  enabled: z.literal(false),
+  configGeneration: z.null(),
+  routingPolicyVersionId: z.null(),
+  profileVersionId: z.null(),
+  legalBundleVersion: z.null(),
+  runtimeContractId: z.null(),
+  displayDisclosure: z.null(),
+  termsAccepted: z.literal(false),
+});
+
+/** Frozen public candidate snapshot returned by GET /api/polish/availability. */
+export const polishAvailabilitySchema = z.discriminatedUnion("enabled", [
+  polishAvailabilityEnabledSchema,
+  polishAvailabilityDisabledSchema,
+]);
+
+/**
+ * Convert an enabled candidate into its assertion-only POST shape. Disclosure
+ * and routing-policy identity remain display/diagnostic facts, never client
+ * selectors. Disabled candidates cannot produce a route assertion.
+ */
+export function polishExpectedRouteFromAvailability(
+  availability: z.infer<typeof polishAvailabilitySchema>,
+): z.infer<typeof polishExpectedRouteSchema> | null {
+  if (!availability.enabled) return null;
+  return polishExpectedRouteSchema.parse({
+    schemaVersion: "expected_route_v1",
+    configGeneration: availability.configGeneration,
+    profileVersionId: availability.profileVersionId,
+    legalBundleVersion: availability.legalBundleVersion,
+    runtimeContractId: availability.runtimeContractId,
+  });
+}
+
+export const polishAvailabilityResponseSchema = z.strictObject({
+  /** Server-generated; also echoed in the X-Request-Id header. */
+  requestId: z.string().min(1),
+  availability: polishAvailabilitySchema,
+});
+
 export const polishQuotaSchema = z
   .strictObject({
     limit: z.number().int().nonnegative(),
@@ -394,6 +489,7 @@ export const POLISH_ERROR_CODES = [
   "AI_TERMS_REQUIRED",
   "REQUEST_IN_PROGRESS",
   "DUPLICATE_REQUEST",
+  "AI_ROUTE_CHANGED",
   "PAYLOAD_TOO_LARGE",
   "QUOTA_EXCEEDED",
   "RATE_LIMITED",
@@ -413,6 +509,7 @@ export const POLISH_ERROR_HTTP_STATUS = {
   AI_TERMS_REQUIRED: 403,
   REQUEST_IN_PROGRESS: 409,
   DUPLICATE_REQUEST: 409,
+  AI_ROUTE_CHANGED: 409,
   PAYLOAD_TOO_LARGE: 413,
   QUOTA_EXCEEDED: 429,
   RATE_LIMITED: 429,
@@ -443,6 +540,10 @@ export type PolishReference = z.infer<typeof polishReferenceSchema>;
 export type PolishContextLevel = z.infer<typeof polishContextSchema>["level"];
 export type PolishLanguage = z.infer<typeof polishRequestSchema>["language"];
 export type PolishRequest = z.infer<typeof polishRequestSchema>;
+export type PolishExpectedRoute = z.infer<typeof polishExpectedRouteSchema>;
+export type PolishPostRequest = z.infer<typeof polishPostRequestSchema>;
+export type PolishAvailability = z.infer<typeof polishAvailabilitySchema>;
+export type PolishAvailabilityResponse = z.infer<typeof polishAvailabilityResponseSchema>;
 export type PolishQuota = z.infer<typeof polishQuotaSchema>;
 export type PolishSuccessResponse = z.infer<typeof polishSuccessResponseSchema>;
 export type PolishQuotaResponse = z.infer<typeof polishQuotaResponseSchema>;

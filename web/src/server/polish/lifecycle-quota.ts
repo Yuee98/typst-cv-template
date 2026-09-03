@@ -2,13 +2,16 @@ import { randomUUID } from "node:crypto";
 import { type PolishErrorCode, type PolishQuota, type PolishQuotaResponse } from "@/lib/polish/contract";
 import { verifyBearerUser } from "./auth";
 import { baseHeaders, errorResponse, POLISH_UNAVAILABLE_RETRY_AFTER_SECONDS, toIsoUtc } from "./lifecycle-http";
-import type { PolishRouteDeps } from "./lifecycle-types";
+import type { PolishQuotaRouteDeps } from "./lifecycle-types";
 
 // ---------------------------------------------------------------------------
 // GET /api/polish/quota — login only, never the ai_terms gate
 // ---------------------------------------------------------------------------
 
-export async function handleQuotaGet(request: Request, deps: PolishRouteDeps): Promise<Response> {
+export async function handleQuotaGet(
+  request: Request,
+  deps: PolishQuotaRouteDeps,
+): Promise<Response> {
   const now = deps.now ?? Date.now;
   const log = deps.logger ?? (() => undefined);
   const requestId = deps.createRequestId?.() ?? randomUUID();

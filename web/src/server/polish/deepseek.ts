@@ -40,6 +40,19 @@ import {
   type PolishProviderResult,
   type PolishProviderUsage,
 } from "./provider";
+import {
+  assertNormalizedUsageV2,
+  toLegacyProviderRequest,
+  type NormalizedUsageV2,
+  type PolishInferenceRequestV2,
+  type PolishInferenceResultV2,
+} from "./inference-v2";
+import { MAX_PROVIDER_RETRY_AFTER_MS } from "./provider-error";
+import {
+  resolveCredentialSecret,
+  resolveEndpoint,
+} from "./adapter-registry";
+import { resolveProfile } from "./profile-registry";
 
 /** Model selected by roadmap「模型与配额」. */
 export const DEEPSEEK_POLISH_MODEL = "deepseek-v4-flash";
@@ -53,6 +66,58 @@ export const DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 export interface DeepSeekPolishProviderOptions {
   /** Injectable for tests; production callers use the default process.env. */
   env?: Record<string, string | undefined>;
+  /** Injectable transport for unit tests; production callers use global fetch. */
+  fetch?: typeof fetch;
+}
+
+export const DEEPSEEK_CHAT_V1_ADAPTER_KIND = "deepseek_chat_v1" as const;
+export const DEEPSEEK_CHAT_V1_PROFILE_KEY =
+  "deepseek.official.deepseek-v4-flash.chat.v1" as const;
+
+export interface DeepSeekChatV1AdapterOptions {
+  /** Secrets are resolved through the code-owned credential alias. */
+  env?: Readonly<Record<string, string | undefined>>;
+  /** Injectable transport for unit tests; never retries internally. */
+  fetch?: typeof fetch;
+}
+
+export interface DeepSeekChatV1Adapter {
+  readonly kind: typeof DEEPSEEK_CHAT_V1_ADAPTER_KIND;
+  complete(
+    request: PolishInferenceRequestV2,
+    options: { signal: AbortSignal; timeoutMs: number },
+  ): Promise<PolishInferenceResultV2>;
+}
+
+/**
+ * Safe structured error emitted only by the V2 adapter. Raw response bodies,
+ * transport messages and causes are deliberately absent.
+ */
+export class DeepSeekChatV1AdapterError extends Error {
+  readonly code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT";
+  readonly providerRequestId?: string;
+  readonly upstreamStatus?: number;
+  readonly retryAfterMs?: number;
+  readonly retryable?: boolean;
+
+  constructor(
+    code: "UPSTREAM_ERROR" | "UPSTREAM_TIMEOUT",
+    message: string,
+    options: {
+      providerRequestId?: string;
+      upstreamStatus?: number;
+      retryAfterMs?: number;
+      retryable?: boolean;
+    } = {},
+  ) {
+    super(message);
+    this.name = "DeepSeekChatV1AdapterError";
+    this.code = code;
+    this.providerRequestId = options.providerRequestId;
+    this.upstreamStatus = options.upstreamStatus;
+    this.retryAfterMs = options.retryAfterMs;
+    this.retryable = options.retryable;
+  }
 }
 
 interface DeepSeekProviderConfig {
@@ -82,6 +147,139 @@ function toNonNegativeInt(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : 0;
+}
+
+function buildDeepSeekChatBody(request: PolishProviderRequest): Record<string, unknown> {
+  return {
+    model: DEEPSEEK_POLISH_MODEL,
+    messages: request.messages,
+    thinking: { type: "disabled" },
+    response_format: { type: "json_object" },
+    max_tokens: request.maxOutputTokens,
+    user_id: request.providerUserId,
+  };
+}
+
+function readRequiredTokenCount(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new DeepSeekChatV1AdapterError(
+      "UPSTREAM_ERROR",
+      `DeepSeek response contains invalid ${field}`,
+    );
+  }
+  return value as number;
+}
+
+function readOptionalTokenCount(value: unknown, field: string): number {
+  return value === undefined ? 0 : readRequiredTokenCount(value, field);
+}
+
+function normalizeUsageV2(raw: unknown, providerRequestId?: string): NormalizedUsageV2 {
+  if (!isRecord(raw)) {
+    throw new DeepSeekChatV1AdapterError(
+      "UPSTREAM_ERROR",
+      "DeepSeek response usage is unavailable",
+      { providerRequestId },
+    );
+  }
+
+  let inputTotalTokens: number;
+  let outputTokens: number;
+  let inputCacheReadTokens: number;
+  let reportedStandardTokens: number;
+  let reasoningTokens: number | null = null;
+  try {
+    inputTotalTokens = readRequiredTokenCount(raw.prompt_tokens, "prompt_tokens");
+    outputTokens = readRequiredTokenCount(raw.completion_tokens, "completion_tokens");
+    inputCacheReadTokens = readOptionalTokenCount(
+      raw.prompt_cache_hit_tokens,
+      "prompt_cache_hit_tokens",
+    );
+    reportedStandardTokens = readOptionalTokenCount(
+      raw.prompt_cache_miss_tokens,
+      "prompt_cache_miss_tokens",
+    );
+    if (isRecord(raw.completion_tokens_details)) {
+      const rawReasoning = raw.completion_tokens_details.reasoning_tokens;
+      if (rawReasoning !== undefined) {
+        reasoningTokens = readRequiredTokenCount(rawReasoning, "reasoning_tokens");
+      }
+    }
+  } catch (error) {
+    if (error instanceof DeepSeekChatV1AdapterError && providerRequestId !== undefined) {
+      throw new DeepSeekChatV1AdapterError(error.code, error.message, {
+        providerRequestId,
+      });
+    }
+    throw error;
+  }
+
+  const explainedInput = inputCacheReadTokens + reportedStandardTokens;
+  if (!Number.isSafeInteger(explainedInput) || explainedInput > inputTotalTokens) {
+    throw new DeepSeekChatV1AdapterError(
+      "UPSTREAM_ERROR",
+      "DeepSeek response cache usage violates input conservation",
+      { providerRequestId },
+    );
+  }
+
+  try {
+    return assertNormalizedUsageV2({
+      schemaVersion: "normalized_usage_v2",
+      inputTotalTokens,
+      inputCacheReadTokens,
+      inputCacheWriteTokens: null,
+      inputStandardTokens: reportedStandardTokens + (inputTotalTokens - explainedInput),
+      outputTokens,
+      reasoningTokens,
+      cacheUsageReporting: "unavailable",
+      usageComplete: true,
+    });
+  } catch {
+    throw new DeepSeekChatV1AdapterError(
+      "UPSTREAM_ERROR",
+      "DeepSeek response usage violates the normalized usage contract",
+      { providerRequestId },
+    );
+  }
+}
+
+function safeRouteToken(value: unknown, maxLength = 256): string | undefined {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
+    ? value
+    : undefined;
+}
+
+function readRetryAfterMs(response: Response): number | undefined {
+  if (response.status !== 429) return undefined;
+  const raw = response.headers.get("retry-after");
+  if (raw === null || !/^\d+(?:\.\d+)?$/u.test(raw.trim())) return undefined;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.min(Math.floor(seconds * 1000), MAX_PROVIDER_RETRY_AFTER_MS);
+}
+
+function normalizeV2TransportFailure(
+  callerSignal: AbortSignal,
+  timeoutSignal: AbortSignal,
+  timeoutMs: number,
+  providerRequestId?: string,
+): never {
+  if (callerSignal.aborted) throw callerSignal.reason;
+  if (timeoutSignal.aborted) {
+    throw new DeepSeekChatV1AdapterError(
+      "UPSTREAM_TIMEOUT",
+      `DeepSeek chat completions exceeded the ${timeoutMs}ms hard timeout`,
+    );
+  }
+  throw new DeepSeekChatV1AdapterError(
+    "UPSTREAM_ERROR",
+    "DeepSeek chat completions transport failed",
+    { providerRequestId },
+  );
 }
 
 /**
@@ -194,6 +392,7 @@ export function createDeepSeekPolishProvider(
   options: DeepSeekPolishProviderOptions = {},
 ): PolishProvider {
   const config = resolveConfig(options.env ?? process.env);
+  const injectedFetch = options.fetch;
 
   return {
     async complete(
@@ -210,7 +409,7 @@ export function createDeepSeekPolishProvider(
 
       let response: Response;
       try {
-        response = await fetch(`${config.baseUrl}/chat/completions`, {
+        response = await (injectedFetch ?? fetch)(`${config.baseUrl}/chat/completions`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${config.apiKey}`,
@@ -220,17 +419,7 @@ export function createDeepSeekPolishProvider(
           // Field-by-field: `targets` metadata is deliberately NOT forwarded —
           // the target texts already appear inside `messages`, and the pinned
           // interface restricts `targets` to validation/fake echo use.
-          body: JSON.stringify({
-            model: DEEPSEEK_POLISH_MODEL,
-            messages: request.messages,
-            thinking: { type: "disabled" },
-            response_format: { type: "json_object" },
-            max_tokens: request.maxOutputTokens,
-            // Pseudonymous id computed by the caller (handler); forwarded
-            // unchanged under the documented `user_id` field, never a raw
-            // supabase user id.
-            user_id: request.providerUserId,
-          }),
+          body: JSON.stringify(buildDeepSeekChatBody(request)),
           signal: combinedSignal,
         });
       } catch (error) {
@@ -293,6 +482,115 @@ export function createDeepSeekPolishProvider(
         finishReason: normalizeFinishReason(firstChoice?.finish_reason),
         usage,
         providerRequestId,
+      };
+    },
+  };
+}
+
+/**
+ * Code-owned `deepseek_chat_v1` V2 adapter. It preserves the legacy Chat wire
+ * bytes as the rollback path while exposing normalized V2 usage and route
+ * observations. One call means exactly one transmission; retry/fallback stay
+ * outside this module.
+ */
+export function createDeepSeekChatV1Adapter(
+  options: DeepSeekChatV1AdapterOptions = {},
+): DeepSeekChatV1Adapter {
+  const env = options.env ?? process.env;
+  const profile = resolveProfile(DEEPSEEK_CHAT_V1_PROFILE_KEY);
+  const endpoint = resolveEndpoint(profile.endpointAlias).url;
+  const apiKey = resolveCredentialSecret(profile.credentialAlias, env);
+  const fetchImpl = options.fetch ?? fetch;
+
+  return {
+    kind: DEEPSEEK_CHAT_V1_ADAPTER_KIND,
+    async complete(
+      request: PolishInferenceRequestV2,
+      { signal, timeoutMs }: { signal: AbortSignal; timeoutMs: number },
+    ): Promise<PolishInferenceResultV2> {
+      signal.throwIfAborted();
+      const legacyRequest = toLegacyProviderRequest(request);
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
+      const combinedSignal = AbortSignal.any([signal, timeoutSignal]);
+
+      let response: Response;
+      try {
+        response = await fetchImpl(endpoint, {
+          method: "POST",
+          // Never forward the bearer token or request body to a redirect
+          // target. The observed route remains the exact code-owned endpoint.
+          redirect: "error",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(buildDeepSeekChatBody(legacyRequest)),
+          signal: combinedSignal,
+        });
+      } catch {
+        normalizeV2TransportFailure(signal, timeoutSignal, timeoutMs);
+      }
+
+      if (
+        response.redirected ||
+        (response.url.length > 0 && response.url !== endpoint)
+      ) {
+        throw new DeepSeekChatV1AdapterError(
+          "UPSTREAM_ERROR",
+          "DeepSeek chat completions returned an unexpected redirect",
+          { retryable: false },
+        );
+      }
+
+      const headerRequestId = safeRouteToken(response.headers.get("x-request-id"));
+      if (!response.ok) {
+        throw new DeepSeekChatV1AdapterError(
+          "UPSTREAM_ERROR",
+          `DeepSeek chat completions failed with HTTP ${response.status} (body omitted)`,
+          {
+            providerRequestId: headerRequestId,
+            upstreamStatus: response.status,
+            retryAfterMs: readRetryAfterMs(response),
+          },
+        );
+      }
+
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        normalizeV2TransportFailure(signal, timeoutSignal, timeoutMs, headerRequestId);
+      }
+
+      const payloadRecord = isRecord(payload) ? payload : undefined;
+      const bodyRequestId = safeRouteToken(payloadRecord?.id);
+      const providerRequestId = bodyRequestId ?? headerRequestId;
+      const usage = normalizeUsageV2(payloadRecord?.usage, providerRequestId);
+      const choices = Array.isArray(payloadRecord?.choices) ? payloadRecord.choices : [];
+      const firstChoice = isRecord(choices[0]) ? choices[0] : undefined;
+      const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : undefined;
+      const content = message?.content;
+      const contentIsString = typeof content === "string";
+      const observedModelId = safeRouteToken(payloadRecord?.model, 128);
+      // `profile.modelId` is the expected frozen model, not evidence of what
+      // served this response. Record an actual-model observation only when
+      // the upstream explicitly reports the same safe identifier.
+      const actualModelId = observedModelId === profile.modelId ? observedModelId : undefined;
+
+      return {
+        schemaVersion: "polish_inference_result_v2",
+        text: contentIsString ? content : "",
+        finishReason: contentIsString
+          ? normalizeFinishReason(firstChoice?.finish_reason)
+          : "unknown",
+        usage,
+        route: {
+          ...(headerRequestId ? { gatewayRequestId: headerRequestId } : {}),
+          ...(providerRequestId ? { providerRequestId } : {}),
+          actualUpstreamEndpoint: endpoint,
+          ...(actualModelId ? { actualModelId } : {}),
+        },
       };
     },
   };

@@ -1,4 +1,5 @@
 import {
+  polishAvailabilityResponseSchema,
   polishErrorResponseSchema,
   polishQuotaResponseSchema,
   polishSuccessResponseSchema,
@@ -6,14 +7,23 @@ import {
 } from "@/lib/polish/contract";
 import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
 import { PolishApiError } from "./polish-api-error";
-import type { PolishApiClient } from "./polish-client";
+import type {
+  PolishApiClient,
+  PolishAuthenticatedRequestOptions,
+} from "./polish-client";
 
 /** Roadmap: server deadline is 45s; the client adds transport slack. */
 export const DEFAULT_POLISH_CLIENT_TIMEOUT_MS = 50_000;
 
+/** One atomic authentication observation used for exactly one HTTP request. */
+export interface PolishAuthSnapshot {
+  userId: string;
+  accessToken: string;
+}
+
 export interface CreatePolishHttpClientOptions {
-  /** Resolves the current Supabase access token (null when signed out). */
-  getAccessToken: () => Promise<string | null>;
+  /** Captures the current Supabase principal and token in one observation. */
+  getAuthSnapshot: () => Promise<PolishAuthSnapshot | null>;
   fetchImpl?: typeof fetch;
   /** Prefix for the API paths (defaults to same-origin ""). */
   baseUrl?: string;
@@ -61,6 +71,32 @@ interface WiredSignal {
   isTimedOut: () => boolean;
 }
 
+function unauthorizedError(): PolishApiError {
+  return new PolishApiError({ code: "UNAUTHORIZED", status: 401 });
+}
+
+function waitForAuthSnapshot(
+  getAuthSnapshot: () => Promise<PolishAuthSnapshot | null>,
+  signal: AbortSignal,
+): Promise<PolishAuthSnapshot | null> {
+  if (signal.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void getAuthSnapshot().then(
+      (snapshot) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(snapshot);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 /** Combine the caller's signal with the client-side hard timeout. */
 function wireSignal(callerSignal: AbortSignal | undefined, timeoutMs: number): WiredSignal {
   const controller = new AbortController();
@@ -92,14 +128,40 @@ export function createPolishHttpClient(options: CreatePolishHttpClientOptions): 
 
   async function request<T>(
     path: string,
-    init: { method: "GET" | "POST"; body?: unknown; signal?: AbortSignal },
+    init: {
+      method: "GET" | "POST";
+      body?: unknown;
+      auth: PolishAuthenticatedRequestOptions;
+    },
     parse: (body: unknown, status: number) => T,
   ): Promise<T> {
-    const wired = wireSignal(init.signal, timeoutMs);
+    const wired = wireSignal(init.auth.signal, timeoutMs);
     try {
-      const token = await options.getAccessToken();
+      let authSnapshot: PolishAuthSnapshot | null;
+      try {
+        authSnapshot = await waitForAuthSnapshot(options.getAuthSnapshot, wired.signal);
+      } catch (authError) {
+        if (authError instanceof PolishApiError) throw authError;
+        if (wired.isCallerAborted()) {
+          throw new PolishApiError({ code: POLISH_TRANSPORT_ERROR_CODES.requestAborted });
+        }
+        if (wired.isTimedOut()) {
+          throw new PolishApiError({ code: POLISH_TRANSPORT_ERROR_CODES.clientTimeout });
+        }
+        throw unauthorizedError();
+      }
+      if (
+        !authSnapshot ||
+        authSnapshot.userId.length === 0 ||
+        authSnapshot.accessToken.length === 0 ||
+        init.auth.expectedUserId.length === 0 ||
+        authSnapshot.userId !== init.auth.expectedUserId
+      ) {
+        throw unauthorizedError();
+      }
+
       const headers: Record<string, string> = { Accept: "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
+      headers.Authorization = `Bearer ${authSnapshot.accessToken}`;
       if (init.body !== undefined) headers["Content-Type"] = "application/json";
 
       let response: Response;
@@ -160,7 +222,7 @@ export function createPolishHttpClient(options: CreatePolishHttpClientOptions): 
     polish: (polishRequest, polishOptions) =>
       request(
         "/api/polish",
-        { method: "POST", body: polishRequest, signal: polishOptions?.signal },
+        { method: "POST", body: polishRequest, auth: polishOptions },
         (body, status) => {
           const parsed = polishSuccessResponseSchema.safeParse(body);
           if (!parsed.success) {
@@ -169,8 +231,20 @@ export function createPolishHttpClient(options: CreatePolishHttpClientOptions): 
           return parsed.data;
         },
       ),
+    getAvailability: (availabilityOptions) =>
+      request(
+        "/api/polish/availability",
+        { method: "GET", auth: availabilityOptions },
+        (body, status) => {
+          const parsed = polishAvailabilityResponseSchema.safeParse(body);
+          if (!parsed.success) {
+            throw invalidBodyError(parsed.error.issues[0]?.path.join(".") ?? "body", status);
+          }
+          return parsed.data;
+        },
+      ),
     getQuota: (quotaOptions) =>
-      request("/api/polish/quota", { method: "GET", signal: quotaOptions?.signal }, (body, status) => {
+      request("/api/polish/quota", { method: "GET", auth: quotaOptions }, (body, status) => {
         const parsed = polishQuotaResponseSchema.safeParse(body);
         if (!parsed.success) {
           throw invalidBodyError(parsed.error.issues[0]?.path.join(".") ?? "body", status);

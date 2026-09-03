@@ -1,0 +1,35 @@
+{
+  "id": "resp_mimo_incomplete_001",
+  "object": "response",
+  "created_at": 1787659201,
+  "status": "incomplete",
+  "error": null,
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "model": "mimo-v2.5-pro",
+  "output": [
+    {
+      "id": "message_incomplete_001",
+      "type": "message",
+      "status": "in_progress",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"items\":[",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 12,
+    "input_tokens_details": {},
+    "output_tokens": 4,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 16
+  }
+}

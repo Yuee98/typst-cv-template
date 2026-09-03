@@ -71,7 +71,7 @@ describe("round 2: effect-tiered write-back barriers", () => {
     expect(h.flow().staleItemIds.has(item.id)).toBe(false);
   });
 
-  it("language drift does not block rejecting a pending item", async () => {
+  it("language drift dismisses the stale preview before item transitions", async () => {
     const h = renderHarness();
     await openAndReachPreview(h);
     const item = h.flow().state.items[0];
@@ -81,7 +81,8 @@ describe("round 2: effect-tiered write-back barriers", () => {
     act(() => {
       h.flow().rejectItem(item.id);
     });
-    expect(h.flow().state.items[0].state).toBe("rejected");
+    expect(h.flow().isOpen).toBe(false);
+    expect(h.flow().state.items).toHaveLength(0);
   });
 
   it("reference drift does not block undoing a rejection", async () => {

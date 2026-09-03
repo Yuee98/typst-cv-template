@@ -1,0 +1,566 @@
+{
+  "schemaVersion": "ai_runtime_execution_contract_vectors_v1",
+  "routeObservation": {
+    "fieldKinds": [
+      "gateway_request_id",
+      "provider_request_id"
+    ],
+    "rawIdPattern": "^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$",
+    "sensitivePrefixes": [
+      "access-token",
+      "access_token",
+      "api-key",
+      "api_key",
+      "apikey",
+      "authorization",
+      "basic",
+      "bearer",
+      "cookie",
+      "eyj",
+      "ghp_",
+      "github_pat_",
+      "passwd",
+      "password",
+      "refresh-token",
+      "refresh_token",
+      "secret",
+      "set-cookie",
+      "sk-",
+      "sk_",
+      "token",
+      "x-api-key",
+      "x-auth-token"
+    ],
+    "derivationVectors": [
+      {
+        "name": "gateway-ascii",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "  route-secret  ",
+        "trimmedSecretUtf8Hex": "726f7574652d736563726574",
+        "rawId": "req_ABC12345",
+        "rawIdUtf8Length": 12,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31320a7261775f69643a7265715f4142433132333435",
+        "expectedTag": "hmac-sha256:57affe2f016deb43b71a8d95eee3c9b5ae5cb701e8d42fbac164bf555c0b9ff1"
+      },
+      {
+        "name": "provider-ascii",
+        "fieldKind": "provider_request_id",
+        "secretInput": "  route-secret  ",
+        "trimmedSecretUtf8Hex": "726f7574652d736563726574",
+        "rawId": "req_ABC12345",
+        "rawIdUtf8Length": 12,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a70726f76696465725f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31320a7261775f69643a7265715f4142433132333435",
+        "expectedTag": "hmac-sha256:a411263c88ad4bc01c994f28ebf448039b8ac5480bf7e2329de39719cf1004fe"
+      },
+      {
+        "name": "provider-unicode-secret",
+        "fieldKind": "provider_request_id",
+        "secretInput": "\u3000密钥🔐\u00a0",
+        "trimmedSecretUtf8Hex": "e5af86e992a5f09f9490",
+        "rawId": "mimoResp_12345678",
+        "rawIdUtf8Length": 17,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a70726f76696465725f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31370a7261775f69643a6d696d6f526573705f3132333435363738",
+        "expectedTag": "hmac-sha256:7b562dbc41ba2735ce560fc560620b445ad04d188434988d027e395f8ba13ff3"
+      },
+      {
+        "name": "gateway-nfc-secret",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "\u00a0é\u3000",
+        "trimmedSecretUtf8Hex": "c3a9",
+        "rawId": "gateway_87654321",
+        "rawIdUtf8Length": 16,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31360a7261775f69643a676174657761795f3837363534333231",
+        "expectedTag": "hmac-sha256:05e9661e6b04a0c6b967fd6f0dc56266af8beb9391e268c6aa2db8e364d3d89e"
+      },
+      {
+        "name": "gateway-nfd-secret",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "e\u0301",
+        "trimmedSecretUtf8Hex": "65cc81",
+        "rawId": "gateway_87654321",
+        "rawIdUtf8Length": 16,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31360a7261775f69643a676174657761795f3837363534333231",
+        "expectedTag": "hmac-sha256:0a36e0e766b2ca7c29999c32060aaec1b5c09afad1e311d5f4a108f462aab4e2"
+      },
+      {
+        "name": "gateway-mongolian-vowel-separator-is-not-trimmed",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "\u180e",
+        "trimmedSecretUtf8Hex": "e1a08e",
+        "rawId": "gateway_180E0001",
+        "rawIdUtf8Length": 16,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31360a7261775f69643a676174657761795f3138304530303031",
+        "expectedTag": "hmac-sha256:0793ce8c3ce17bf8c12e08ad638d9c1808420688d16b36abce87542fad542931"
+      },
+      {
+        "name": "gateway-interior-contract-whitespace-is-preserved",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "A\u2001B",
+        "trimmedSecretUtf8Hex": "41e2808142",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:a7e0636c15aa83d64473f6bf6e17c6749072772ade68a5058904e71c483509b0"
+      },
+      {
+        "name": "gateway-u180e-at-both-edges-is-preserved",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "\u180eedge-secret\u180e",
+        "trimmedSecretUtf8Hex": "e1a08e656467652d736563726574e1a08e",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:fcd504dbcfb6cc05bac0a8207a630cef2929b232a64ec7612f3acc4b6f66d151"
+      },
+      {
+        "name": "gateway-u180e-in-interior-is-preserved",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "edge\u180esecret",
+        "trimmedSecretUtf8Hex": "65646765e1a08e736563726574",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:ca777f8884e0a0990a40b2defe315dc9bfd8b2001e790c56652ba1a11a7713f1"
+      },
+      {
+        "name": "gateway-valid-supplementary-plane-secret",
+        "fieldKind": "gateway_request_id",
+        "secretInput": "\ud83d\udd10edge-secret\ud83d\udd10",
+        "trimmedSecretUtf8Hex": "f09f9490656467652d736563726574f09f9490",
+        "rawId": "trim_ABC12345",
+        "rawIdUtf8Length": 13,
+        "messageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+        "expectedTag": "hmac-sha256:2121dceb45560f9f3f9caccb04b6c4c611a314cd09c1fc373d7c17ff091b0971"
+      }
+    ],
+    "edgeTrimVectors": {
+      "fieldKind": "gateway_request_id",
+      "rawId": "trim_ABC12345",
+      "secretCore": "edge-secret",
+      "expectedTrimmedSecretUtf8Hex": "656467652d736563726574",
+      "expectedMessageUtf8Hex": "726f7574652d6f62736572766174696f6e2d76310a6669656c645f6b696e643a676174657761795f726571756573745f69640a7261775f69645f757466385f6c656e6774683a31330a7261775f69643a7472696d5f4142433132333435",
+      "expectedTag": "hmac-sha256:63baa58c381931b4d5a6659eaa611688cdeef87454cd639f9274cd2a5d1ef872",
+      "cases": [
+        { "name": "u0009", "scalarCodePointHex": "0009" },
+        { "name": "u000a", "scalarCodePointHex": "000a" },
+        { "name": "u000b", "scalarCodePointHex": "000b" },
+        { "name": "u000c", "scalarCodePointHex": "000c" },
+        { "name": "u000d", "scalarCodePointHex": "000d" },
+        { "name": "u0020", "scalarCodePointHex": "0020" },
+        { "name": "u00a0", "scalarCodePointHex": "00a0" },
+        { "name": "u1680", "scalarCodePointHex": "1680" },
+        { "name": "u2000", "scalarCodePointHex": "2000" },
+        { "name": "u2001", "scalarCodePointHex": "2001" },
+        { "name": "u2002", "scalarCodePointHex": "2002" },
+        { "name": "u2003", "scalarCodePointHex": "2003" },
+        { "name": "u2004", "scalarCodePointHex": "2004" },
+        { "name": "u2005", "scalarCodePointHex": "2005" },
+        { "name": "u2006", "scalarCodePointHex": "2006" },
+        { "name": "u2007", "scalarCodePointHex": "2007" },
+        { "name": "u2008", "scalarCodePointHex": "2008" },
+        { "name": "u2009", "scalarCodePointHex": "2009" },
+        { "name": "u200a", "scalarCodePointHex": "200a" },
+        { "name": "u2028", "scalarCodePointHex": "2028" },
+        { "name": "u2029", "scalarCodePointHex": "2029" },
+        { "name": "u202f", "scalarCodePointHex": "202f" },
+        { "name": "u205f", "scalarCodePointHex": "205f" },
+        { "name": "u3000", "scalarCodePointHex": "3000" },
+        { "name": "ufeff", "scalarCodePointHex": "feff" }
+      ]
+    },
+    "dropVectors": [
+      {
+        "name": "absent-null",
+        "input": null,
+        "expectedKind": "absent"
+      },
+      {
+        "name": "non-string-number",
+        "input": 42,
+        "expectedKind": "dropped",
+        "expectedReason": "not_string"
+      },
+      {
+        "name": "empty",
+        "input": "",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "too-short",
+        "input": "abc1234",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "leading-underscore",
+        "input": "_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "dot",
+        "input": "req.ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "path",
+        "input": "/v1/responses/abc12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "url",
+        "input": "https://provider.example/request/abc",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "backslash-path",
+        "input": "path\\secret12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "whitespace",
+        "input": "req ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "leading-ascii-space-is-not-trimmed",
+        "input": " req_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "trailing-ascii-space-is-not-trimmed",
+        "input": "req_ABC12345 ",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "leading-tab-is-not-trimmed",
+        "input": "\treq_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "trailing-tab-is-not-trimmed",
+        "input": "req_ABC12345\t",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "leading-nbsp-is-not-trimmed",
+        "input": "\u00a0req_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "trailing-nbsp-is-not-trimmed",
+        "input": "req_ABC12345\u00a0",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "nfkc-compatible-fullwidth-id-is-not-normalized",
+        "input": "\uff52\uff45\uff51\uff3f\uff21\uff22\uff23\uff11\uff12\uff13\uff14\uff15",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "equals",
+        "input": "req=ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "unicode",
+        "input": "请求_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "invalid_ascii_grammar"
+      },
+      {
+        "name": "openai-style-secret",
+        "input": "SK-ABCDEF12",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "jwt-fragment",
+        "input": "eYJabcdef12",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "authorization-header",
+        "input": "Authorization_ABC123",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "bearer-header",
+        "input": "Bearer_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "api-key-header",
+        "input": "x-api-key_ABC123",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "generic-token",
+        "input": "token_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "github-token",
+        "input": "github_pat_ABC123",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "cookie-header",
+        "input": "Cookie_ABC12345",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      },
+      {
+        "name": "password",
+        "input": "password_ABC123",
+        "expectedKind": "dropped",
+        "expectedReason": "sensitive_prefix"
+      }
+    ],
+    "secretErrorVectors": [
+      {
+        "name": "null",
+        "inputEncoding": "json_value",
+        "input": null,
+        "expectedCode": "secret_not_string"
+      },
+      {
+        "name": "number",
+        "inputEncoding": "json_value",
+        "input": 42,
+        "expectedCode": "secret_not_string"
+      },
+      {
+        "name": "empty",
+        "inputEncoding": "json_value",
+        "input": "",
+        "expectedCode": "secret_empty_after_trim"
+      },
+      {
+        "name": "unicode-whitespace-only",
+        "inputEncoding": "json_value",
+        "input": "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
+        "expectedCode": "secret_empty_after_trim"
+      },
+      {
+        "name": "lone-high-surrogate",
+        "inputEncoding": "utf16_code_units_hex",
+        "input": ["d800"],
+        "expectedCode": "secret_invalid_unicode"
+      },
+      {
+        "name": "lone-low-surrogate",
+        "inputEncoding": "utf16_code_units_hex",
+        "input": ["0076", "0061", "006c", "0069", "0064", "dc00", "0074", "0065", "0078", "0074"],
+        "expectedCode": "secret_invalid_unicode"
+      }
+    ]
+  },
+  "priceSnapshotValidation": {
+    "successes": [
+      {
+        "name": "linear-postgres-bigint-maximum",
+        "value": {
+          "schemaVersion": "price_snapshot_v1",
+          "priceVersionId": "33333333-3333-4333-8333-333333333333",
+          "currency": "USD",
+          "calculatorKind": "linear_token_v1",
+          "components": {
+            "input_standard": "9223372036854775807",
+            "input_cache_read": "0",
+            "output": "1"
+          },
+          "parameters": {}
+        }
+      },
+      {
+        "name": "openai-gpt56-long-context",
+        "value": {
+          "schemaVersion": "price_snapshot_v1",
+          "priceVersionId": "44444444-4444-4444-8444-444444444441",
+          "currency": "USD",
+          "calculatorKind": "openai_gpt56_v1",
+          "components": {
+            "input_standard": "2500000000",
+            "input_cache_read": "250000000",
+            "input_cache_write": "3125000000",
+            "output": "15000000000"
+          },
+          "parameters": {
+            "longContext": {
+              "thresholdInputTokens": 272000,
+              "inputMultiplierBps": 20000,
+              "outputMultiplierBps": 15000
+            }
+          }
+        }
+      },
+      {
+        "name": "openai-gpt56-null-long-context",
+        "value": {
+          "schemaVersion": "price_snapshot_v1",
+          "priceVersionId": "44444444-4444-4444-8444-444444444442",
+          "currency": "USD",
+          "calculatorKind": "openai_gpt56_v1",
+          "components": {
+            "input_standard": "2500000000",
+            "input_cache_read": "250000000",
+            "input_cache_write": "3125000000",
+            "output": "15000000000"
+          },
+          "parameters": {
+            "longContext": null
+          }
+        }
+      }
+    ]
+  },
+  "executionSnapshot": {
+    "successes": [
+      {
+        "name": "deepseek-offpeak",
+        "value": {
+          "schemaVersion": "ai_polish_execution_snapshot_v1",
+          "ok": true,
+          "reservationId": "33333333-3333-4333-8333-333333333331",
+          "routeSnapshot": {
+            "schemaVersion": "route_snapshot_v1",
+            "configGeneration": "9223372036854775807",
+            "routingPolicyVersionId": "33333333-3333-4333-8333-333333333332",
+            "profileVersionId": "11111111-1111-4111-8111-111111111111",
+            "priceVersionId": "11111111-1111-4111-8111-111111111112",
+            "legalBundleVersion": "2026-08-23-multi-provider-v1",
+            "runtimeContractId": "runtime.deepseek-v2.v1",
+            "gatewayKind": "direct_deepseek",
+            "modelId": "deepseek-v4-flash",
+            "wireApiKind": "chat_completions_v1",
+            "displayDisclosureKey": "deepseek-official-v1"
+          },
+          "profileExecutionConfig": {
+            "schemaVersion": "profile_execution_config_v1",
+            "profileKey": "deepseek.official.deepseek-v4-flash.chat.v1",
+            "gatewayKind": "direct_deepseek",
+            "adapterKind": "deepseek_chat_v1",
+            "wireApiKind": "chat_completions_v1",
+            "credentialAlias": "deepseek_api_key",
+            "endpointAlias": "deepseek_official",
+            "modelId": "deepseek-v4-flash",
+            "capabilityContractId": "deepseek_chat_json_object_v1",
+            "cachePolicyId": "deepseek_automatic_context_cache_v1",
+            "legalManifestId": "deepseek-official-2026-08-23-v1",
+            "calculatorKind": "linear_token_v1",
+            "displayDisclosureKey": "deepseek-official-v1",
+            "config": {
+              "thinking": "disabled",
+              "structuredOutput": "json_object",
+              "providerSubjectField": "user_id"
+            }
+          },
+          "priceSnapshot": {
+            "schemaVersion": "price_snapshot_v1",
+            "priceVersionId": "11111111-1111-4111-8111-111111111112",
+            "currency": "CNY",
+            "calculatorKind": "linear_token_v1",
+            "components": {
+              "input_standard": "1500000000",
+              "input_cache_read": "50000000",
+              "output": "4500000000"
+            },
+            "parameters": {}
+          }
+        }
+      },
+      {
+        "name": "mimo-peak-with-free-cache-write",
+        "value": {
+          "schemaVersion": "ai_polish_execution_snapshot_v1",
+          "ok": true,
+          "reservationId": "33333333-3333-4333-8333-333333333341",
+          "routeSnapshot": {
+            "schemaVersion": "route_snapshot_v1",
+            "configGeneration": "43",
+            "routingPolicyVersionId": "33333333-3333-4333-8333-333333333342",
+            "profileVersionId": "22222222-2222-4222-8222-222222222221",
+            "priceVersionId": "22222222-2222-4222-8222-222222222222",
+            "legalBundleVersion": "2026-08-23-multi-provider-v1",
+            "runtimeContractId": "runtime.deepseek-mimo-v2.v1",
+            "gatewayKind": "direct_mimo",
+            "modelId": "mimo-v2.5-pro",
+            "wireApiKind": "responses_v1",
+            "displayDisclosureKey": "mimo-cn-v1"
+          },
+          "profileExecutionConfig": {
+            "schemaVersion": "profile_execution_config_v1",
+            "profileKey": "mimo.cn.mimo-v2.5-pro.responses.v1",
+            "gatewayKind": "direct_mimo",
+            "adapterKind": "mimo_responses_v1",
+            "wireApiKind": "responses_v1",
+            "credentialAlias": "mimo_api_key",
+            "endpointAlias": "mimo_cn_official",
+            "modelId": "mimo-v2.5-pro",
+            "capabilityContractId": "mimo_responses_output_text_v1",
+            "cachePolicyId": "mimo_automatic_prompt_cache_v1",
+            "legalManifestId": "mimo-cn-2026-08-23-v1",
+            "calculatorKind": "linear_token_v1",
+            "displayDisclosureKey": "mimo-cn-v1",
+            "config": {
+              "reasoningEffort": "none",
+              "structuredOutput": "prompt_only",
+              "sendProviderSubjectId": false
+            }
+          },
+          "priceSnapshot": {
+            "schemaVersion": "price_snapshot_v1",
+            "priceVersionId": "22222222-2222-4222-8222-222222222222",
+            "currency": "CNY",
+            "calculatorKind": "linear_token_v1",
+            "components": {
+              "input_standard": "3000000000",
+              "input_cache_read": "25000000",
+              "input_cache_write": "0",
+              "output": "6000000000"
+            },
+            "parameters": {}
+          }
+        }
+      }
+    ],
+    "errors": [
+      {
+        "schemaVersion": "ai_polish_execution_snapshot_v1",
+        "ok": false,
+        "reason": "NOT_FOUND"
+      },
+      {
+        "schemaVersion": "ai_polish_execution_snapshot_v1",
+        "ok": false,
+        "reason": "ALREADY_FINALIZED"
+      },
+      {
+        "schemaVersion": "ai_polish_execution_snapshot_v1",
+        "ok": false,
+        "reason": "SERVICE_UNAVAILABLE"
+      }
+    ]
+  }
+}

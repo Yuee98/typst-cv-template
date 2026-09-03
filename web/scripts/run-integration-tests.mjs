@@ -6,7 +6,7 @@
  * Unlike test:db (which skips when no local Supabase is found) this script is
  * a HARD-FAIL preflight: it exists to prove the real chain works, so a missing
  * prerequisite is an error, never a silent skip. It runs the full production
- * wiring — real DeepSeek provider + real local Supabase backend — with NO
+ * wiring — a selected real official provider + real local Supabase backend — with NO
  * POLISH_FAKE_LLM / POLISH_FAKE_BACKEND flags, and is therefore LOCAL-ONLY:
  * it is not part of CI (real API calls cost money) and refuses to run when
  * CI=true.
@@ -19,31 +19,32 @@
  *
  * Cost discipline: the run makes 2 USER-VISIBLE polish requests (one success,
  * one canceled); each may use up to 2 internal provider attempts, so the
- * budget is ≤4 provider transmissions (typical: 2). Token usage and a rough
- * cost estimate (pinned price snapshot) are printed at the end.
+ * budget is ≤4 provider transmissions (typical: 2). The run validates the
+ * DB-frozen usage/cost aggregates without printing token or cost values.
  *
  * Release-gate integrity (CP4 round-1):
  *   - NEXT_PUBLIC_SUPABASE_URL must be loopback http, AND must match the
- *     URL/keys reported by `supabase status` — the script creates users and
- *     flips runtime config with the service key, so it must never touch a
- *     hosted project.
+ *     URL/keys reported by `supabase status` — the script creates smoke users
+ *     and terms acceptances with the service key, but never flips runtime
+ *     configuration, so it must never touch a hosted project.
  *   - the server build is REBUILT by default every run (testing the current
  *     head); --reuse-build is an explicit iteration-only opt-in.
  *   - build and start both get explicit POLISH_FAKE_LLM=false /
  *     POLISH_FAKE_BACKEND=false / CI=false (process.env beats .env.local).
- *   - a non-official DEEPSEEK_BASE_URL is rejected; --allow-custom-upstream
- *     permits it with a loud "NOT proof of direct official DeepSeek
- *     integration" disclaimer.
+ *   - fake, custom, proxy, and cross-profile upstream configuration is
+ *     rejected. The V2 adapter resolves its endpoint from the code-owned
+ *     route authority, so this harness must not imply proxy coverage.
  *
  * Red lines (roadmap 禁存清单): this script never prints request/response
  * bodies, polished text, access tokens, or any key. Only statuses, error
  * codes, request ids and usage/latency NUMBERS appear in its output.
  *
  * Prerequisites (web/.env.local, never committed):
- *   DEEPSEEK_API_KEY, SUPABASE_SERVICE_ROLE_KEY (from `supabase status`),
+ *   DEEPSEEK_API_KEY or MIMO_API_KEY (selected by --profile),
+ *   SUPABASE_SERVICE_ROLE_KEY (from `supabase status`),
  *   AI_USER_ID_HMAC_SECRET (`openssl rand -hex 32`), AI_POLISH_ENABLED=true,
  *   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
- * plus a running local Supabase (`pnpm supabase:start` at the repo root).
+ * plus a running local Supabase (the workspace Supabase CLI at the repo root).
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -53,36 +54,61 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { createClient } from "@supabase/supabase-js";
+import {
+  buildExpectedRouteV1,
+  evaluateRunLedgerEvidence,
+  resolveIntegrationProfile,
+  sameExpectedRouteV1,
+} from "./lib/integration-ledger-evidence.mjs";
+import {
+  buildCancellationProbeItems,
+  observeAbortableRequest,
+  readJsonOrNull,
+} from "./lib/integration-http.mjs";
 import { checkLocalSupabaseUrl, isOfficialDeepSeekBaseUrl } from "./lib/local-safety.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
-
-// DeepSeek V4 Flash list-price snapshot (USD per 1M tokens), pinned from the
-// official pricing page on 2026-08-04. Rough estimate only — token counts are
-// the authoritative numbers.
-const PRICE_SNAPSHOT_DATE = "2026-08-04";
-const PRICE_PER_MTOK_USD = { inputCached: 0.0028, inputUncached: 0.14, output: 0.28 };
+const supabaseCli = path.join(repoRoot, "node_modules", "supabase", "dist", "supabase.js");
+const syncTypstAssetsScript = path.join(scriptsDir, "sync-typst-assets.mjs");
+const runNextModeScript = path.join(scriptsDir, "run-next-mode.mjs");
 
 const PORT = Number(process.env.INTEGRATION_SMOKE_PORT ?? 3123);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const AVAILABILITY_TIMEOUT_MS = 10_000;
+const POLISH_REQUEST_TIMEOUT_MS = 75_000;
+const CANCELLATION_ABORT_DELAY_MS = 750;
+const CANCELLATION_SETTLEMENT_TIMEOUT_MS = 60_000;
+// The cancellation probe deliberately uses a valid multi-item section
+// request. It gives the bounded abort timer a wide in-flight provider window;
+// the terminal ledger, not timing alone, remains the transmission proof. The
+// pure fixture is contract- and output-budget-tested, and the same <=4
+// transmission budget still applies.
+const UPSTREAM_URL_ENV_NAMES = Object.freeze([
+  "DEEPSEEK_BASE_URL", "MIMO_BASE_URL", "AI_BASE_URL", "OPENROUTER_BASE_URL",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
+  "GLOBAL_AGENT_HTTP_PROXY", "GLOBAL_AGENT_HTTPS_PROXY",
+]);
 
-// Explicit opt-ins (both off by default — the defaults are release-gate safe).
+// Explicit opt-in (off by default — the default is release-gate safe).
 //   --reuse-build            skip build:server and reuse the existing .next
-//   --allow-custom-upstream  permit a non-official DEEPSEEK_BASE_URL (the run
-//                            is then NOT proof of official DeepSeek access)
 let reuseBuild = false;
-let allowCustomUpstream = false;
-for (const arg of process.argv.slice(2)) {
+let profileName = "deepseek";
+const args = process.argv.slice(2);
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
   if (arg === "--reuse-build") {
     reuseBuild = true;
-  } else if (arg === "--allow-custom-upstream") {
-    allowCustomUpstream = true;
+  } else if (arg === "--profile") {
+    profileName = args[index + 1] ?? "";
+    index += 1;
+  } else if (arg.startsWith("--profile=")) {
+    profileName = arg.slice("--profile=".length);
   } else {
     console.error(`[test:integration] unknown argument: ${arg}`);
     console.error(
-      "usage: node scripts/run-integration-tests.mjs [--reuse-build] [--allow-custom-upstream]",
+      "usage: node scripts/run-integration-tests.mjs [--profile deepseek|mimo] [--reuse-build]",
     );
     process.exit(1);
   }
@@ -109,6 +135,14 @@ class FatalSmokeError extends Error {}
 function fatal(message, detail) {
   console.error(`[test:integration] FATAL: ${message}${detail ? `\n${detail}` : ""}`);
   throw new FatalSmokeError(message);
+}
+
+function preflightProfile() {
+  try {
+    return resolveIntegrationProfile(profileName);
+  } catch (error) {
+    fatal(error instanceof Error ? error.message : "invalid integration profile");
+  }
 }
 
 function sleep(ms) {
@@ -148,7 +182,7 @@ function preflightEnv() {
     );
   }
   const required = [
-    "DEEPSEEK_API_KEY",
+    integrationProfile.credentialEnv,
     "SUPABASE_SERVICE_ROLE_KEY",
     "AI_USER_ID_HMAC_SECRET",
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -164,11 +198,16 @@ function preflightEnv() {
   if (getEnv("AI_POLISH_ENABLED") !== "true") {
     fatal('AI_POLISH_ENABLED must be "true" in web/.env.local for the real smoke.');
   }
+  for (const name of ["POLISH_FAKE_LLM", "POLISH_FAKE_BACKEND"]) {
+    if (getEnv(name) === "true") {
+      fatal(`${name}=true is incompatible with a real-provider integration proof.`);
+    }
+  }
 }
 
 /**
  * P0-1: the configured Supabase URL must be loopback http BEFORE any client
- * is constructed — the smoke creates users and flips runtime config with the
+ * is constructed — the smoke creates users and accepts terms with the
  * service-role key, so a hosted/staging URL here is a destructive-safety bug.
  */
 function preflightLocalSupabaseUrl(supabaseUrl) {
@@ -176,31 +215,36 @@ function preflightLocalSupabaseUrl(supabaseUrl) {
   if (!result.ok) {
     fatal(
       `refusing non-local Supabase URL (${result.reason}).`,
-      "The real-key integration smoke creates users and changes AI runtime configuration; " +
+      "The real-key integration smoke creates users and accepts AI terms; " +
         "NEXT_PUBLIC_SUPABASE_URL must be http://127.0.0.1 / localhost / [::1].",
     );
   }
 }
 
 /**
- * P0-2.3: a custom DEEPSEEK_BASE_URL can swap the upstream for a proxy/mock
- * while the run still reports "real DeepSeek". The release gate forces the
- * official origin; --allow-custom-upstream opts out WITH a loud disclaimer.
+ * Reject custom, proxy, and unused provider upstream overrides before any
+ * mutation. The V2 adapter resolves exact endpoints from route authority;
+ * accepting a custom variable would falsely imply proxy coverage.
  */
 function preflightUpstream() {
-  const baseUrl = getEnv("DEEPSEEK_BASE_URL");
-  if (!baseUrl || isOfficialDeepSeekBaseUrl(baseUrl)) {
-    return false; // official origin (default or explicit) — full proof
-  }
-  if (!allowCustomUpstream) {
+  const deepseekBaseUrl = getEnv("DEEPSEEK_BASE_URL");
+  if (integrationProfile.name !== "deepseek" && deepseekBaseUrl) {
     fatal(
-      "DEEPSEEK_BASE_URL is set to a non-official origin — the release smoke must " +
-        "prove the DIRECT official DeepSeek integration.",
-      "Unset it for the release run, or pass --allow-custom-upstream (that run is " +
-        "explicitly NOT proof of official DeepSeek access).",
+      "DEEPSEEK_BASE_URL is forbidden for the MiMo smoke, including the official origin.",
+      "The selected route must be code/DB-owned without an ambient cross-profile override.",
     );
   }
-  return true;
+  if (deepseekBaseUrl && !isOfficialDeepSeekBaseUrl(deepseekBaseUrl)) {
+    fatal(
+      "DEEPSEEK_BASE_URL is set to a non-official origin — this smoke proves only exact official provider routes.",
+      "Unset custom/proxy upstream variables before running.",
+    );
+  }
+  for (const name of UPSTREAM_URL_ENV_NAMES.filter((name) => name !== "DEEPSEEK_BASE_URL")) {
+    if (getEnv(name)) {
+      fatal(`${name} is unsupported by the exact-route integration smoke.`, "Unset custom upstream variables before running.");
+    }
+  }
 }
 
 /**
@@ -209,16 +253,18 @@ function preflightUpstream() {
  * project than the verified-local one. Never prints key material, only names.
  */
 function preflightSupabaseCliMatch() {
-  const status = spawnSync("pnpm exec supabase status -o env", {
+  if (!existsSync(supabaseCli)) {
+    fatal("the workspace Supabase CLI is not installed.");
+  }
+  const status = spawnSync(process.execPath, [supabaseCli, "status", "-o", "env"], {
     cwd: repoRoot,
-    shell: true,
     encoding: "utf8",
     timeout: 120_000,
   });
   if (status.error || status.status !== 0) {
     fatal(
       "local Supabase is not running (`supabase status` failed).",
-      "Start it with `pnpm supabase:start` at the repo root, then re-run.",
+      "Start the verified local Supabase project, then re-run.",
     );
   }
   const reported = {};
@@ -280,9 +326,16 @@ function realModeEnv() {
 
 /** The server config shared by build and start, from .env.local/process.env. */
 function forwardedServerEnv() {
-  const env = {};
+  // Explicit empty values win over .env.local loading in child Next processes.
+  // A selected smoke profile must never gain a second credential or fallback.
+  const env = {
+    DEEPSEEK_API_KEY: "",
+    MIMO_API_KEY: "",
+    OPENROUTER_API_KEY: "",
+  };
+  for (const name of UPSTREAM_URL_ENV_NAMES) env[name] = "";
   for (const name of [
-    "DEEPSEEK_API_KEY",
+    integrationProfile.credentialEnv,
     "SUPABASE_SERVICE_ROLE_KEY",
     "AI_USER_ID_HMAC_SECRET",
     "AI_POLISH_ENABLED",
@@ -291,11 +344,6 @@ function forwardedServerEnv() {
   ]) {
     const value = getEnv(name);
     if (value) env[name] = value;
-  }
-  // Only forwarded when --allow-custom-upstream explicitly permits a
-  // non-official origin; an official one is the provider default anyway.
-  if (allowCustomUpstream && getEnv("DEEPSEEK_BASE_URL")) {
-    env.DEEPSEEK_BASE_URL = getEnv("DEEPSEEK_BASE_URL");
   }
   return env;
 }
@@ -312,21 +360,30 @@ function ensureServerBuild() {
   }
   log(
     reuseBuild
-      ? "--reuse-build requested but no server build found — running `pnpm build:server`…"
+      ? "--reuse-build requested but no server build found — rebuilding the server directly…"
       : "building the current head (default; may take minutes — --reuse-build opts out for iteration)…",
   );
-  const build = spawnSync("pnpm build:server", {
+  const childEnv = { ...process.env, ...realModeEnv(), ...forwardedServerEnv() };
+  const syncAssets = spawnSync(process.execPath, [syncTypstAssetsScript], {
     cwd: webRoot,
-    shell: true,
     stdio: "inherit",
     timeout: 900_000,
-    env: { ...process.env, ...realModeEnv(), ...forwardedServerEnv() },
+    env: childEnv,
+  });
+  if (syncAssets.error || syncAssets.status !== 0) {
+    fatal("direct Typst asset sync failed; see the build output above.");
+  }
+  const build = spawnSync(process.execPath, [runNextModeScript, "build", "server"], {
+    cwd: webRoot,
+    stdio: "inherit",
+    timeout: 900_000,
+    env: childEnv,
   });
   if (build.error || build.status !== 0) {
-    fatal("`pnpm build:server` failed; see the build output above.");
+    fatal("direct server build failed; see the build output above.");
   }
   if (!existsSync(buildId) || !existsSync(polishRoute)) {
-    fatal("`pnpm build:server` finished but .next still has no server API build.");
+    fatal("direct server build finished but .next still has no server API build.");
   }
 }
 
@@ -349,8 +406,8 @@ function startServer() {
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  // Server logs are metadata-only by construction (PolishLogEvent has no
-  // content fields); buffer them and dump only when the run fails.
+  // Drain child output so it cannot block, but never print it: an upstream or
+  // framework error must not turn a smoke failure into provider-content logs.
   const capture = (chunk) => {
     serverOutput.push(chunk.toString());
     if (serverOutput.length > 200) serverOutput.shift();
@@ -361,19 +418,25 @@ function startServer() {
     child,
     dumpOutput() {
       if (serverOutput.length > 0) {
-        console.error("--- server output (tail) ---");
-        console.error(serverOutput.join(""));
-        console.error("--- end server output ---");
+        console.error("--- server output redacted to preserve no-content logging ---");
       }
     },
     async stop() {
       if (child.exitCode !== null || child.signalCode !== null) return;
+      const exitedAfterTerm = new Promise((resolve) => child.once("exit", () => resolve(true)));
       child.kill("SIGTERM");
       const exited = await Promise.race([
-        new Promise((resolve) => child.once("exit", () => resolve(true))),
+        exitedAfterTerm,
         sleep(5_000).then(() => false),
       ]);
-      if (!exited) child.kill("SIGKILL");
+      if (exited) return;
+      const exitedAfterKill = new Promise((resolve) => child.once("exit", () => resolve(true)));
+      child.kill("SIGKILL");
+      const killed = await Promise.race([
+        exitedAfterKill,
+        sleep(5_000).then(() => false),
+      ]);
+      if (!killed) throw new Error("integration server did not exit after forced termination");
     },
   };
 }
@@ -419,17 +482,22 @@ async function waitForServer(server) {
 async function postPolish(body, { token, signal } = {}) {
   const headers = { "content-type": "application/json" };
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
+  const deadline = AbortSignal.timeout(POLISH_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const response = await fetch(`${BASE_URL}/api/polish`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal,
+    signal: requestSignal,
   });
-  const json = await response.json().catch(() => null);
+  const json = await readJsonOrNull(response, requestSignal);
   return { status: response.status, headers: response.headers, body: json };
 }
 
-function makePolishBody(clientRequestId, text) {
+function makePolishBody(clientRequestId, text, expectedRoute) {
+  if (expectedRoute?.schemaVersion !== "expected_route_v1") {
+    throw new Error("refusing to build a polish request without a strict expected route");
+  }
   return {
     clientRequestId,
     granularity: "item",
@@ -437,12 +505,66 @@ function makePolishBody(clientRequestId, text) {
     language: "zh",
     items: [{ id: "i0", kind: "experience_bullet", text }],
     context: { level: 0, references: [] },
+    expectedRoute,
   };
+}
+
+function makeCancellationPolishBody(clientRequestId, expectedRoute) {
+  const body = makePolishBody(clientRequestId, "cancellation probe", expectedRoute);
+  return {
+    ...body,
+    granularity: "section",
+    items: buildCancellationProbeItems(),
+  };
+}
+
+async function getAuthenticatedAvailability(accessToken, expectedRoute = null) {
+  const availabilitySignal = AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS);
+  const response = await fetch(`${BASE_URL}/api/polish/availability`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+    signal: availabilitySignal,
+  });
+  const body = await readJsonOrNull(response, availabilitySignal);
+  if (response.status !== 200 || body?.availability?.enabled !== true) {
+    fatal("selected integration profile is not authenticated-and-available on the prepared local route.");
+  }
+  let route;
+  try {
+    route = buildExpectedRouteV1(body.availability, integrationProfile);
+  } catch (error) {
+    fatal(error instanceof Error ? error.message : "availability route validation failed");
+  }
+  if (expectedRoute !== null && !sameExpectedRouteV1(expectedRoute, route)) {
+    fatal("availability route changed during the smoke; refusing another provider transmission.");
+  }
+  return Object.freeze({ route, termsAccepted: body.availability.termsAccepted === true });
 }
 
 function utcToday() {
   return new Date().toISOString().slice(0, 10);
 }
+
+const REQUEST_LEDGER_SELECT = [
+  "reservation_id", "request_id", "state", "status", "quota_charged", "provider_billable",
+  "usage_complete", "attempt_count", "provider_started_at", "latency_ms", "failure_stage",
+  "input_cached_tokens", "input_uncached_tokens", "output_tokens", "incomplete_fields",
+  "route_schema_version", "config_generation", "routing_policy_version_id", "profile_version_id",
+  "price_version_id", "legal_bundle_version", "runtime_contract_id",
+  "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key", "billing_currency",
+  "cost_basis", "known_estimated_cost_nanos", "estimated_cost_nanos", "provider_reported_currency",
+  "provider_reported_cost_nanos", "cost_reconciliation_status",
+].join(",");
+
+const ATTEMPT_LEDGER_SELECT = [
+  "attempt_no", "status", "failure_stage", "transmitted", "provider_billable", "usage_observation_kind",
+  "usage_complete", "input_cache_read_tokens", "input_cache_write_tokens", "input_standard_tokens",
+  "output_tokens", "reasoning_tokens", "route_schema_version", "config_generation", "routing_policy_version_id",
+  "profile_version_id", "price_version_id", "legal_bundle_version", "runtime_contract_id",
+  "gateway_kind", "model_id", "wire_api_kind", "display_disclosure_key",
+  "endpoint_alias", "actual_upstream_endpoint", "actual_model_id", "billing_currency",
+  "estimated_currency", "estimated_cost_nanos", "provider_reported_currency",
+  "provider_reported_cost_nanos",
+].join(",");
 
 async function getDailyRequestCount(service, userId) {
   const { data, error } = await service
@@ -458,7 +580,7 @@ async function getDailyRequestCount(service, userId) {
 async function getLedgerRowByRequestId(service, requestId) {
   const { data, error } = await service
     .from("ai_request_ledger")
-    .select("*")
+    .select(REQUEST_LEDGER_SELECT)
     .eq("request_id", requestId)
     .maybeSingle();
   if (error) throw new Error(`ai_request_ledger read failed: ${error.message}`);
@@ -468,7 +590,7 @@ async function getLedgerRowByRequestId(service, requestId) {
 async function getLedgerRowByClientRequestId(service, userId, clientRequestId) {
   const { data, error } = await service
     .from("ai_request_ledger")
-    .select("*")
+    .select(REQUEST_LEDGER_SELECT)
     .eq("user_id", userId)
     .eq("client_request_id", clientRequestId)
     .maybeSingle();
@@ -476,15 +598,25 @@ async function getLedgerRowByClientRequestId(service, userId, clientRequestId) {
   return data;
 }
 
-async function waitFinalized(fetchRow, label) {
+async function getAttemptRowsByReservationId(service, reservationId) {
+  const { data, error } = await service
+    .from("ai_provider_attempt_ledger")
+    .select(ATTEMPT_LEDGER_SELECT)
+    .eq("reservation_id", reservationId)
+    .order("attempt_no", { ascending: true });
+  if (error) throw new Error(`ai_provider_attempt_ledger read failed: ${error.message}`);
+  return data ?? [];
+}
+
+async function waitFinalized(fetchRow, label, { timeoutMs = 20_000 } = {}) {
   const row = await pollUntil(
     async () => {
       const current = await fetchRow();
       return current && current.state === "finalized" ? current : false;
     },
-    { timeoutMs: 20_000, intervalMs: 100 },
+    { timeoutMs, intervalMs: 100 },
   );
-  check(`${label}: ledger row reaches state=finalized`, row !== null, "timed out after 20s");
+  check(`${label}: ledger row reaches state=finalized`, row !== null, `timed out after ${timeoutMs}ms`);
   return row;
 }
 
@@ -495,22 +627,22 @@ async function waitFinalized(fetchRow, label) {
 let service = null;
 let server = null;
 let userId = null;
-let featureConfigRestore = null;
-let customUpstream = false;
 let fatalError = null;
+let integrationProfile = null;
+let cancellationController = null;
+let cancellationProbe = null;
+let stopServerBeforeUserCleanup = false;
 
 try {
+  integrationProfile = preflightProfile();
+  log(`profile: ${integrationProfile.name} (${integrationProfile.profileKey})`);
   preflightEnv();
   const SUPABASE_URL = getEnv("NEXT_PUBLIC_SUPABASE_URL");
   const SERVICE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   const PUBLISHABLE_KEY = getEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
 
   preflightLocalSupabaseUrl(SUPABASE_URL);
-  customUpstream = preflightUpstream();
-  if (customUpstream) {
-    log("⚠ --allow-custom-upstream: DEEPSEEK_BASE_URL points at a CUSTOM upstream —");
-    log("  此运行不构成对官方 DeepSeek 直连的证明 (NOT proof of official DeepSeek integration).");
-  }
+  preflightUpstream();
   preflightSupabaseCliMatch();
   await preflightReachable(SUPABASE_URL);
   ensureServerBuild();
@@ -524,37 +656,10 @@ try {
   server = startServer();
   try {
     await waitForServer(server);
-  log(
-    customUpstream
-      ? `server ready on ${BASE_URL} (CUSTOM upstream — NOT official DeepSeek proof — + real local Supabase)`
-      : `server ready on ${BASE_URL} (real official DeepSeek provider + real local Supabase)`,
-  );
-
-  // DB-side runtime switch (distinct from the AI_POLISH_ENABLED env): the
-  // reserve RPC denies with 503 AI_DISABLED while it is off, and test:db
-  // restores the post-migration default (false) after every run — so the
-  // smoke enables it via the service role when needed and restores the
-  // original value during cleanup.
-  const { data: featureConfig, error: featureError } = await service
-    .from("ai_feature_config")
-    .select("ai_polish_enabled")
-    .eq("id", true)
-    .single();
-  if (featureError) fatal(`ai_feature_config read failed: ${featureError.message}`);
-  if (featureConfig.ai_polish_enabled !== true) {
-    const { error: enableError } = await service
-      .from("ai_feature_config")
-      .update({ ai_polish_enabled: true })
-      .eq("id", true);
-    if (enableError) {
-      fatal(`failed to enable the DB runtime switch: ${enableError.message}`);
-    }
-    featureConfigRestore = featureConfig.ai_polish_enabled;
-    log(
-      "DB runtime switch ai_feature_config.ai_polish_enabled was off — " +
-        "enabled via service role (restored on cleanup)",
-    );
-  }
+  log(`server ready on ${BASE_URL} (real official ${integrationProfile.displayDisclosure.providerName} provider + real local Supabase)`);
+  // This harness never activates a route or flips the DB feature switch. A
+  // separate local driver must prepare the exact selected route; authenticated
+  // availability below is the fail-closed proof before any request is sent.
 
   // --- Real auth chain: admin-created one-off user + gotrue password grant.
   const email = `smoke-${crypto.randomUUID()}@example.com`;
@@ -579,6 +684,13 @@ try {
   const accessToken = session.session.access_token;
   log("smoke user created and signed in via the real password grant");
 
+  const availabilityBeforeTerms = await getAuthenticatedAvailability(accessToken);
+  check(
+    "authenticated availability: terms are not yet accepted",
+    availabilityBeforeTerms.termsAccepted === false,
+  );
+  const expectedRoute = availabilityBeforeTerms.route;
+
   // --- 1. Auth denials.
   const noToken = await postPolish({});
   check(
@@ -595,7 +707,7 @@ try {
   );
 
   // --- 2. Terms gate, then acceptance via service role.
-  const beforeTerms = await postPolish(makePolishBody(crypto.randomUUID(), "负责后端服务开发。"), {
+  const beforeTerms = await postPolish(makePolishBody(crypto.randomUUID(), "负责后端服务开发。", expectedRoute), {
     token: accessToken,
   });
   check(
@@ -618,9 +730,12 @@ try {
   if (acceptError) fatal(`terms acceptance insert failed: ${acceptError.message}`);
   log(`AI terms accepted via service role (version ${termsVersion})`);
 
+  const availabilityAfterTerms = await getAuthenticatedAvailability(accessToken, expectedRoute);
+  check("authenticated availability: terms accepted without route drift", availabilityAfterTerms.termsAccepted === true);
+
   // --- 3. Real polish 200 (provider transmission #1).
   const baselineCount = await getDailyRequestCount(service, userId);
-  const successBody = makePolishBody(crypto.randomUUID(), "负责后端服务开发，优化接口性能。");
+  const successBody = makePolishBody(crypto.randomUUID(), "负责后端服务开发，优化接口性能。", expectedRoute);
   const success = await postPolish(successBody, { token: accessToken });
   check("POST /api/polish (real chain) → 200", success.status === 200, `got ${success.status}`);
 
@@ -678,12 +793,6 @@ try {
       `got ${successRow.latency_ms}`,
     );
     check("success ledger: usage_complete=true", successRow.usage_complete === true);
-    // Cache diagnosis only (never asserted): DeepSeek context-cache split.
-    log(
-      `cache diagnosis (success): input_cached_tokens=${successRow.input_cached_tokens} ` +
-        `input_uncached_tokens=${successRow.input_uncached_tokens} ` +
-        `output_tokens=${successRow.output_tokens}`,
-    );
   }
 
   const afterSuccessCount = await getDailyRequestCount(service, userId);
@@ -704,95 +813,117 @@ try {
   );
 
   // --- 6. Cancel while the provider call is in flight (transmission #2).
+  await getAuthenticatedAvailability(accessToken, expectedRoute);
   const cancelClientRequestId = crypto.randomUUID();
-  const controller = new AbortController();
-  const cancelFetch = postPolish(
-    makePolishBody(
-      cancelClientRequestId,
-      "主导微服务架构改造，负责核心链路性能优化与稳定性建设，推动接口延迟持续下降。",
+  cancellationController = new AbortController();
+  const cancellationReason = new DOMException("integration cancellation probe", "AbortError");
+  cancellationProbe = observeAbortableRequest(
+    postPolish(
+      makeCancellationPolishBody(cancelClientRequestId, expectedRoute),
+      { token: accessToken, signal: cancellationController.signal },
     ),
-    { token: accessToken, signal: controller.signal },
-  ).catch((error) => ({ aborted: true, error }));
-
-  const startedRow = await pollUntil(
-    async () => {
-      const row = await getLedgerRowByClientRequestId(service, userId, cancelClientRequestId);
-      return row && (row.state === "provider_started" || row.state === "finalized") ? row : false;
-    },
-    { timeoutMs: 20_000, intervalMs: 25 },
+    cancellationController.signal,
   );
+  // From request launch until a terminal ledger row is observed, teardown must
+  // stop the server before deleting the user whose cascades carry the proof.
+  stopServerBeforeUserCleanup = true;
+
+  // A live provider_started row can be shorter-lived than a PostgREST poll.
+  // Time the client disconnect from request launch, then let the immutable
+  // terminal parent/attempt ledger prove whether a real transmission was in
+  // flight. Too-early (released) and too-late (succeeded) aborts both fail.
+  await sleep(CANCELLATION_ABORT_DELAY_MS);
   check(
-    "cancel setup: reservation reaches provider_started",
-    startedRow !== null && startedRow.state === "provider_started",
-    startedRow === null
-      ? "reservation never appeared"
-      : `state was already ${startedRow.state} (provider call finished before the abort window)`,
+    "cancel: client request remains pending before abort",
+    !cancellationProbe.isSettled(),
+    "the request settled before the bounded abort point",
   );
-
-  if (startedRow && startedRow.state === "provider_started") {
-    // Let the upstream transmission get genuinely underway, then hang up.
-    await sleep(250);
-    controller.abort();
-    const cancelOutcome = await cancelFetch;
+  cancellationController.abort(cancellationReason);
+  const cancelOutcome = await cancellationProbe.outcome;
+  check(
+    "cancel: client fetch rejected from the requested abort",
+    cancelOutcome.kind === "aborted" && cancelOutcome.error === cancellationReason,
+    "the request did not reject from this controller's abort reason",
+  );
+  const cancelRow = await waitFinalized(
+    () => getLedgerRowByClientRequestId(service, userId, cancelClientRequestId),
+    "cancel settlement",
+    { timeoutMs: CANCELLATION_SETTLEMENT_TIMEOUT_MS },
+  );
+  if (cancelRow !== null) stopServerBeforeUserCleanup = false;
+  if (cancelRow) {
+    // Designed settlement (roadmap settlement table): a user cancel after
+    // the provider call was entered is CHARGED, settled as canceled. The
+    // mid-flight abort means no usage came back, so billability is UNKNOWN
+    // (null — CP2 round3 honest accounting), never provably free (false).
+    // The parent preserves the last immutable attempt's adapter stage rather
+    // than replacing that fact with the request-level canceled status.
+    check("cancel ledger: status=canceled", cancelRow.status === "canceled", `got ${cancelRow.status}`);
+    check("cancel ledger: quota_charged=true", cancelRow.quota_charged === true);
     check(
-      "cancel: client fetch aborted",
-      cancelOutcome.aborted === true,
-      "the fetch completed before the abort landed",
+      "cancel ledger: failure_stage=transport",
+      cancelRow.failure_stage === "transport",
+      `got ${cancelRow.failure_stage}`,
     );
-    const cancelRow = await waitFinalized(
-      () => getLedgerRowByRequestId(service, startedRow.request_id),
-      "cancel settlement",
+    check(
+      "cancel ledger: attempt_count is within the two-attempt provider budget",
+      Number.isInteger(cancelRow.attempt_count) && cancelRow.attempt_count >= 1 && cancelRow.attempt_count <= 2,
+      `got ${cancelRow.attempt_count}`,
     );
-    if (cancelRow) {
-      // Designed settlement (roadmap settlement table): a user cancel after
-      // the provider call was entered is CHARGED, settled as canceled. The
-      // mid-flight abort means no usage came back, so billability is UNKNOWN
-      // (null — CP2 round3 honest accounting), never provably free (false).
-      check("cancel ledger: status=canceled", cancelRow.status === "canceled", `got ${cancelRow.status}`);
-      check("cancel ledger: quota_charged=true", cancelRow.quota_charged === true);
+    check(
+      "cancel ledger: provider_billable=null (billability unknown mid-flight)",
+      cancelRow.provider_billable === null,
+      `got ${cancelRow.provider_billable}`,
+    );
+  }
+
+  // --- 7. Evidence readback: exactly this run's two request ids and their
+  // immutable attempt children. No user-wide scan can accidentally include a
+  // prior run in the transmission budget or cost aggregation.
+  check(
+    "ledger evidence: both run request ids finalized",
+    successRow !== null && cancelRow !== null,
+    "expected the succeeded and canceled request ledgers",
+  );
+  if (successRow && cancelRow) {
+    const records = await Promise.all(
+      [successRow, cancelRow].map(async (parent) => ({
+        parent,
+        attempts: await getAttemptRowsByReservationId(service, parent.reservation_id),
+      })),
+    );
+    const evidence = evaluateRunLedgerEvidence(records, { profile: integrationProfile });
+    for (const [index, result] of evidence.requestResults.entries()) {
       check(
-        "cancel ledger: failure_stage=canceled",
-        cancelRow.failure_stage === "canceled",
-        `got ${cancelRow.failure_stage}`,
-      );
-      check(
-        "cancel ledger: attempt_count=1 (provider was entered once)",
-        cancelRow.attempt_count === 1,
-        `got ${cancelRow.attempt_count}`,
-      );
-      check(
-        "cancel ledger: provider_billable=null (billability unknown mid-flight)",
-        cancelRow.provider_billable === null,
-        `got ${cancelRow.provider_billable}`,
+        `ledger evidence: request ${index + 1} parent/child route, terminal, transmission, usage, and cost facts agree`,
+        result.ok,
+        result.ok ? undefined : result.issues.join(","),
       );
     }
-  } else {
-    controller.abort();
-    await cancelFetch.catch(() => undefined);
-  }
-
-  // --- 7. Cost report (metadata only, straight from this user's ledger rows).
-  const { data: allRows, error: rowsError } = await service
-    .from("ai_request_ledger")
-    .select("status,attempt_count,input_cached_tokens,input_uncached_tokens,output_tokens")
-    .eq("user_id", userId);
-  if (!rowsError && allRows) {
-    const providerCalls = allRows.reduce((sum, row) => sum + (row.attempt_count ?? 0), 0);
-    const cached = allRows.reduce((sum, row) => sum + (row.input_cached_tokens ?? 0), 0);
-    const uncached = allRows.reduce((sum, row) => sum + (row.input_uncached_tokens ?? 0), 0);
-    const output = allRows.reduce((sum, row) => sum + (row.output_tokens ?? 0), 0);
-    const usd =
-      (cached / 1e6) * PRICE_PER_MTOK_USD.inputCached +
-      (uncached / 1e6) * PRICE_PER_MTOK_USD.inputUncached +
-      (output / 1e6) * PRICE_PER_MTOK_USD.output;
-    log(
-      `provider transmissions: ${providerCalls} (2 user requests × ≤2 attempts; budget ≤4) | ` +
-        `tokens — cached in: ${cached}, uncached in: ${uncached}, out: ${output} | ` +
-        `rough cost ≈ $${usd.toFixed(6)} (price snapshot ${PRICE_SNAPSHOT_DATE})`,
+    check(
+      "ledger evidence: transmitted attempt budget respected (≤4)",
+      evidence.transmissions <= 4,
+      `got ${evidence.transmissions}`,
     );
-    check("provider transmission budget respected (≤4)", providerCalls <= 4, `got ${providerCalls}`);
+    check(`ledger evidence: official ${integrationProfile.displayDisclosure.providerName} proof verdict`, evidence.ok);
   }
   } finally {
+    // Drain the client promise on every exceptional path. If terminal DB proof
+    // is still absent, terminate the Next process before the smoke-user cascade
+    // can erase an in-flight request's lifecycle rows.
+    if (cancellationProbe !== null) {
+      if (!cancellationProbe.isSettled() && !cancellationController.signal.aborted) {
+        cancellationController.abort(
+          new DOMException("integration cleanup cancellation", "AbortError"),
+        );
+      }
+      await cancellationProbe.outcome;
+    }
+    if (stopServerBeforeUserCleanup && server !== null) {
+      log("stopping the server before cleanup because cancellation settlement is unproven");
+      await server.stop();
+      server = null;
+    }
     // --- Cleanup: user deletion cascades ledger/usage/terms rows.
     if (userId !== null) {
       const { error } = await service.auth.admin.deleteUser(userId);
@@ -823,26 +954,12 @@ try {
         }
       }
     }
-    if (featureConfigRestore !== null) {
-      const { error } = await service
-        .from("ai_feature_config")
-        .update({ ai_polish_enabled: featureConfigRestore })
-        .eq("id", true);
-      if (error) {
-        failures += 1;
-        console.error(`FAIL cleanup: restore ai_feature_config — ${error.message}`);
-      } else {
-        log(`DB runtime switch restored to ai_polish_enabled=${featureConfigRestore}`);
-      }
-    }
   }
 } catch (error) {
   if (error instanceof FatalSmokeError) {
     fatalError = error;
   } else {
-    console.error(
-      `[test:integration] UNEXPECTED: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
-    );
+    console.error("[test:integration] UNEXPECTED: details redacted to preserve no-content logging.");
     failures += 1;
   }
 } finally {
@@ -859,13 +976,8 @@ if (fatalError !== null || failures > 0) {
       : `\n${failures} integration assertion(s) failed`,
   );
   process.exitCode = 1;
-} else if (customUpstream) {
-  console.log(
-    "\nAll integration smoke assertions passed — ⚠ CUSTOM upstream: " +
-      "此运行不构成对官方 DeepSeek 直连的证明 (real local Supabase only).",
-  );
 } else {
   console.log(
-    "\nAll integration smoke assertions passed (real official DeepSeek + real local Supabase)",
+    `\nAll integration smoke assertions passed (real official ${integrationProfile.displayDisclosure.providerName} + real local Supabase)`,
   );
 }

@@ -35,6 +35,12 @@ export interface PolishRouteDeps {
   logger?: (event: PolishLogEvent) => void;
 }
 
+/** Narrow dependency surface used by the login-only quota route. */
+export type PolishQuotaRouteDeps = Pick<
+  PolishRouteDeps,
+  "verifyAccessToken" | "getQuota" | "aiPolishEnabled" | "now" | "createRequestId" | "logger"
+>;
+
 export interface PolishLogEvent {
   event:
     | "polish.request.completed"

@@ -341,6 +341,7 @@
     },
     "signInRequired": "Sign in to use AI polish.",
     "configChanged": "The form content changed; the disclosure was rebuilt. Please review and confirm again.",
+    "routeChanged": "The AI service route changed. Review the recipient and content again; nothing is submitted until you confirm.",
     "disclosure": {
       "heading": "Content sent to the AI service",
       "summary": "{targetCount} text(s) ({targetChars} chars) · {referenceCount} context item(s) ({referenceChars} chars)",
@@ -359,6 +360,16 @@
     },
     "privacyReminder": "Your name, email and phone from the resume header are never sent. If the selected text or context itself contains personal information, it will still be sent to the AI service for processing.",
     "e2eeWarning": "Polished text leaves your device in plaintext and is forwarded by our server to a third-party AI service. End-to-end encryption only protects cloud storage.",
+    "availability": {
+      "heading": "Candidate AI service recipient",
+      "selected": "{provider} · {model}. This candidate is determined by server routing; it is not a user choice.",
+      "annex": "View this provider annex",
+      "loading": "Confirming the processing service…",
+      "disabled": "AI polish is not available; no recipient is selected.",
+      "error": "Could not confirm the processing service.",
+      "unsupportedDisclosure": "This service has no reviewed provider annex, so submission is blocked.",
+      "retry": "Check again"
+    },
     "quota": {
       "remaining": "{remaining}/{limit} requests left today",
       "loading": "Checking usage…",
@@ -430,6 +441,7 @@
       "quota_exhausted": "Today's quota is exhausted.",
       "rate_limited": "Too many requests. Please try again later.",
       "duplicate": "An identical request is already being processed. Please wait.",
+      "route_changed": "The AI service route changed. Go back, review it, and confirm again.",
       "too_large": "The content exceeds the size limit; narrow the scope and try again.",
       "timeout": "The AI service timed out. Please try again.",
       "invalid_output": "The AI returned an invalid result. You can try again.",

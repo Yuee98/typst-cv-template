@@ -33,7 +33,11 @@ export function LegalDocumentPage({ document }: { document: LegalDocument }) {
 
         <div className="space-y-8 pt-8">
           {document.sections.map((section, index) => (
-            <section key={section.heading} className="space-y-3">
+            <section
+              key={section.id ?? section.heading}
+              className="scroll-mt-6 space-y-3"
+              id={section.id}
+            >
               <h2 className="text-lg font-semibold text-foreground">
                 {index + 1}. {section.heading}
               </h2>
@@ -45,6 +49,32 @@ export function LegalDocumentPage({ document }: { document: LegalDocument }) {
                   <ul className="list-disc space-y-2 pl-6">
                     {section.bullets.map((item) => (
                       <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                )}
+                {section.links && (
+                  <ul className="list-disc space-y-2 pl-6">
+                    {section.links.map((link) => (
+                      <li key={`${link.kind}:${link.href}:${link.label}`}>
+                        {link.kind === "external" ? (
+                          <a
+                            className="break-all font-medium text-accent-soft-foreground underline underline-offset-2 hover:text-accent"
+                            href={link.href}
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            {link.label}
+                          </a>
+                        ) : (
+                          <Link
+                            className="font-medium text-accent-soft-foreground underline underline-offset-2 hover:text-accent"
+                            href={link.href}
+                            locale={link.locale}
+                          >
+                            {link.label}
+                          </Link>
+                        )}
+                      </li>
                     ))}
                   </ul>
                 )}

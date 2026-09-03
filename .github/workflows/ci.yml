@@ -45,6 +45,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Runtime contract preflight
+        run: pnpm --filter web exec vitest run src/server/polish/service-runtime-contract-v1.test.ts
+
       - name: Lint
         run: pnpm lint
 
@@ -56,6 +59,9 @@ jobs:
 
       - name: Build (static export)
         run: pnpm build:static
+
+      - name: Assert no AI client in static export
+        run: pnpm --filter web assert:static-no-ai
 
       - name: Assert static export artifact
         run: |
@@ -112,6 +118,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Runtime contract preflight
+        run: pnpm --filter web exec vitest run src/server/polish/service-runtime-contract-v1.test.ts
+
       - name: Lint
         run: pnpm lint
 
@@ -157,6 +166,47 @@ jobs:
           # a Bearer token drives the full chain to a 200 success shape
           # (scripts/smoke-polish-api.mjs).
           node scripts/smoke-polish-api.mjs http://localhost:3100
+
+      - name: Build and smoke — real-backend deployment gate disabled
+        env:
+          POLISH_FAKE_LLM: ""
+          POLISH_FAKE_BACKEND: ""
+          AI_POLISH_ENABLED: "false"
+          NEXT_PUBLIC_AI_POLISH_ENABLED: "false"
+          NEXT_PUBLIC_SUPABASE_URL: ""
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+          AI_USER_ID_HMAC_SECRET: ""
+          DEEPSEEK_API_KEY: ""
+          MIMO_API_KEY: ""
+        run: |
+          set -euo pipefail
+
+          # Rebuild with fake flags and all live-backend credentials absent.
+          # The disabled deployment composition must not construct or access
+          # authentication, Supabase, or provider dependencies.
+          pnpm build:server
+          cd web
+
+          node_modules/.bin/next start -p 3101 > "${RUNNER_TEMP}/next-start-disabled.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
+
+          status="000"
+          for _ in $(seq 1 60); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3101/ || true)"
+            if [ "${status}" != "000" ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "${status}" = "000" ]; then
+            echo "::error::disabled real-composition server did not become ready within 60s. Log follows."
+            cat "${RUNNER_TEMP}/next-start-disabled.log"
+            exit 1
+          fi
+
+          node scripts/smoke-polish-disabled.mjs http://localhost:3101
 
   web-e2e:
     name: Web E2E (server/Chromium)

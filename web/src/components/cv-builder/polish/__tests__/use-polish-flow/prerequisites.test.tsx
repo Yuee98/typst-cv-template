@@ -31,14 +31,29 @@ describe("terms-acceptance window", () => {
     await act(async () => {
       h.acceptCalls[0].resolve();
     });
+    expect(h.polishCalls).toHaveLength(0);
+    expect(h.hasAcceptedCalls).toHaveLength(2);
+    await act(async () => {
+      h.hasAcceptedCalls[1].resolve(true);
+    });
     expect(h.polishCalls).toHaveLength(1);
     const sent = h.polishCalls[0].request;
-    // Only the single-use clientRequestId differs from the reviewed snapshot.
+    // Content is frozen; only the id changes and the reviewed route assertion
+    // is added outside the form-derived snapshot.
     expect(sent.clientRequestId).not.toBe(disclosed!.apiRequest.clientRequestId);
-    expect({ ...sent, clientRequestId: "fixed" }).toEqual({
+    const { expectedRoute, ...sentContent } = sent;
+    expect({ ...sentContent, clientRequestId: "fixed" }).toEqual({
       ...disclosed!.apiRequest,
       clientRequestId: "fixed",
     });
+    expect(expectedRoute).toEqual({
+      schemaVersion: "expected_route_v1",
+      configGeneration: "42",
+      profileVersionId: "11111111-1111-4111-8111-111111111111",
+      legalBundleVersion: "2026-08-23-multi-provider-v1",
+      runtimeContractId: "runtime.deepseek-v2.v1",
+    });
+    expect(h.acceptCalls[0].legalBundleVersion).toBe(expectedRoute.legalBundleVersion);
     expect(h.flow().state.phase).toBe("loading");
   });
 
@@ -144,6 +159,8 @@ describe("account keying", () => {
     expect(h.hasAcceptedCalls).toHaveLength(2);
     expect(h.flow().terms.status).toBe("checking");
     expect(h.flow().canConfirm).toBe(false);
+    expect(h.availabilityCalls[1].expectedUserId).toBe("user-b");
+    expect(h.quotaOwners).toEqual(["user-a", "user-b"]);
     await act(async () => {
       h.quotaCalls[1].resolve({ requestId: "q-2", quota: makeQuota(7) });
       h.hasAcceptedCalls[1].resolve(false);
