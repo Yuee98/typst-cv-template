@@ -4,6 +4,7 @@ import runtimeFixture from "../../../test/fixtures/ai-runtime-execution-contract
 import profileFixture from "../../../test/fixtures/profile-execution-v2.json";
 import {
   EMPTY_RUNTIME_TARGET_RESOLVER_V2,
+  parseRuntimeExecutionEvidenceV2,
   parseVersionedExecutionSnapshot,
 } from "./execution-snapshot-v2";
 import { parseRouteSnapshotV1 } from "./lifecycle-v2-contract";
@@ -87,6 +88,88 @@ describe("versioned execution snapshot", () => {
         codeCapabilityId: "runtime-capability.deepseek-chat-v1.2026-09-04",
       },
     });
+  });
+
+  it("accepts a coherent successor legal bundle outside the frozen v1 catalog", () => {
+    const successorBundle = "legal-bundle.successor-v2";
+    const successorManifest = "provider-manifest.successor-v2";
+    const successorRoute = { ...route, legalBundleVersion: successorBundle };
+    const successorProfile = {
+      ...v2Profile,
+      legalManifestId: successorManifest,
+    };
+    const successorEvidence = {
+      ...runtimeEvidence,
+      legalBundleVersion: successorBundle,
+      legalManifestId: successorManifest,
+    };
+    const resolver = (target: {
+      legalBundleVersion: string;
+      evidence: { legalManifestId: string };
+    }) =>
+      target.legalBundleVersion === successorBundle &&
+      target.evidence.legalManifestId === successorManifest;
+
+    expect(
+      parseVersionedExecutionSnapshot(
+        {
+          ...v2,
+          routeSnapshot: successorRoute,
+          profileExecutionConfig: successorProfile,
+          runtimeEvidence: successorEvidence,
+        },
+        {
+          ...expected,
+          reserveRoute: successorRoute,
+          runtimeTargetResolverV2: resolver,
+        },
+      ),
+    ).toMatchObject({
+      routeSnapshot: { legalBundleVersion: successorBundle },
+      profileExecutionConfig: { legalManifestId: successorManifest },
+    });
+
+    expect(() =>
+      parseVersionedExecutionSnapshot(
+        {
+          ...v2,
+          routeSnapshot: successorRoute,
+          profileExecutionConfig: successorProfile,
+          runtimeEvidence: {
+            ...successorEvidence,
+            legalManifestId: "provider-manifest.crossed-v2",
+          },
+        },
+        {
+          ...expected,
+          reserveRoute: successorRoute,
+          runtimeTargetResolverV2: () => true,
+        },
+      ),
+    ).toThrow(/authority mismatch/u);
+  });
+
+  it("uses the same 64-item external evidence bound as the database", () => {
+    for (const count of [32, 33, 64]) {
+      expect(() =>
+        parseRuntimeExecutionEvidenceV2({
+          ...runtimeEvidence,
+          externalEvidenceIds: Array.from(
+            { length: count },
+            (_, index) => `evidence.boundary-${index}`,
+          ),
+        }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      parseRuntimeExecutionEvidenceV2({
+        ...runtimeEvidence,
+        externalEvidenceIds: Array.from(
+          { length: 65 },
+          (_, index) => `evidence.boundary-${index}`,
+        ),
+      }),
+    ).toThrow(/externalEvidenceIds/u);
   });
 
   it("rejects unknown versions, crossed bindings and an unavailable runtime", () => {

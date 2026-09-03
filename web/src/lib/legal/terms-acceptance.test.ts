@@ -6,6 +6,7 @@ import {
   AI_TERMS_VERSION,
 } from "@/content/legal";
 import {
+  acceptAiLegalDisclosureV2,
   acceptAiLegalBundle,
   acceptCurrentAiTerms,
   AI_LEGAL_BUNDLE_TERMS_VERSION_MAP,
@@ -24,6 +25,7 @@ function createTermsClient(options: {
   readonly upsertError?: unknown;
   readonly sessionUserId?: string | null;
   readonly sessionError?: unknown;
+  readonly rpcResult?: QueryResult;
 } = {}) {
   const maybeSingle = vi.fn(async () =>
     options.queryResult ?? { data: null, error: null },
@@ -49,16 +51,43 @@ function createTermsClient(options: {
     },
     error: options.sessionError ?? null,
   }));
+  const rpc = vi.fn(async () =>
+    options.rpcResult ?? { data: null, error: null },
+  );
 
   return {
-    client: { auth: { getSession }, from } as unknown as SupabaseClient,
+    client: { auth: { getSession }, from, rpc } as unknown as SupabaseClient,
     from,
     table,
     selectChain,
     upsert,
     getSession,
+    rpc,
   };
 }
+
+const V2_DISPLAY = {
+  schemaVersion: "legal_display_v2" as const,
+  displayDisclosureKey: "provider-v2",
+  legalBundleVersion: "bundle-v2",
+  legalManifestId: "manifest-v2",
+  providerId: "00000000-0000-4000-8000-000000000001",
+  recipientKey: "provider-recipient",
+  modelId: "model-v2",
+  contentSha256: "a".repeat(64),
+  factIds: ["fact.provider.v2"],
+  evidenceIds: ["evidence.provider.v2"],
+  zh: {
+    providerLabel: "提供方",
+    modelLabel: "模型",
+    blocks: [{ kind: "paragraph" as const, text: "中文说明。" }],
+  },
+  en: {
+    providerLabel: "Provider",
+    modelLabel: "Model",
+    blocks: [{ kind: "paragraph" as const, text: "English disclosure." }],
+  },
+};
 
 describe("AI legal bundle acceptance", () => {
   it("maps only the exact current bundle to the exact AI terms version", () => {
@@ -191,5 +220,76 @@ describe("AI legal bundle acceptance", () => {
       acceptAiLegalBundle(drifted.client, AI_LEGAL_BUNDLE_VERSION, "user-a"),
     ).rejects.toThrow("Authenticated user changed");
     expect(drifted.from).not.toHaveBeenCalled();
+  });
+
+  it("accepts the exact V2 display through the authenticated successor RPC", async () => {
+    const harness = createTermsClient({
+      rpcResult: {
+        data: {
+          schemaVersion: "ai_legal_acceptance_v2",
+          legalBundleVersion: V2_DISPLAY.legalBundleVersion,
+          displayDisclosureKey: V2_DISPLAY.displayDisclosureKey,
+          contentSha256: V2_DISPLAY.contentSha256,
+          accepted: true,
+        },
+        error: null,
+      },
+    });
+
+    await expect(
+      acceptAiLegalDisclosureV2(harness.client, {
+        expectedUserId: "user-a",
+        legalDisplay: V2_DISPLAY,
+      }),
+    ).resolves.toBeUndefined();
+    expect(harness.rpc).toHaveBeenCalledWith(
+      "accept_ai_legal_disclosure_v2",
+      {
+        p_expected_user_id: "user-a",
+        p_legal_bundle_version: "bundle-v2",
+        p_display_disclosure_key: "provider-v2",
+        p_content_sha256: "a".repeat(64),
+      },
+    );
+    expect(harness.from).not.toHaveBeenCalled();
+  });
+
+  it("rejects V2 account drift, forged displays and crossed receipts", async () => {
+    const drifted = createTermsClient({ sessionUserId: "user-b" });
+    await expect(
+      acceptAiLegalDisclosureV2(drifted.client, {
+        expectedUserId: "user-a",
+        legalDisplay: V2_DISPLAY,
+      }),
+    ).rejects.toThrow("Authenticated user changed");
+    expect(drifted.rpc).not.toHaveBeenCalled();
+
+    const forged = createTermsClient();
+    await expect(
+      acceptAiLegalDisclosureV2(forged.client, {
+        expectedUserId: "user-a",
+        legalDisplay: { ...V2_DISPLAY, contentSha256: "unsafe" },
+      }),
+    ).rejects.toThrow();
+    expect(forged.getSession).not.toHaveBeenCalled();
+
+    const crossed = createTermsClient({
+      rpcResult: {
+        data: {
+          schemaVersion: "ai_legal_acceptance_v2",
+          legalBundleVersion: "crossed-bundle",
+          displayDisclosureKey: V2_DISPLAY.displayDisclosureKey,
+          contentSha256: V2_DISPLAY.contentSha256,
+          accepted: true,
+        },
+        error: null,
+      },
+    });
+    await expect(
+      acceptAiLegalDisclosureV2(crossed.client, {
+        expectedUserId: "user-a",
+        legalDisplay: V2_DISPLAY,
+      }),
+    ).rejects.toThrow("Invalid AI legal acceptance receipt");
   });
 });

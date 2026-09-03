@@ -249,6 +249,128 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     `);
   });
 
+  it("discovers, accepts and reserves a configurable v2 target without code labels", () => {
+    const cycle = runOwnerSql(String.raw`
+      begin;
+      set local session_replication_role = replica;
+      update public.ai_routing_policy_versions
+      set default_profile_version_id = '${profileVersionId}',
+          rules = jsonb_set(
+            jsonb_set(
+              rules,
+              '{defaultRoute,profileVersionId}',
+              to_jsonb('${profileVersionId}'::text)
+            ),
+            '{defaultRoute,priceVersionId}',
+            to_jsonb('${priceVersionId}'::text)
+          )
+      where id = '${harness.fixture.policyVersionId}';
+      set local session_replication_role = origin;
+
+      do $cycle$
+      declare
+        v_availability jsonb;
+        v_reservation jsonb;
+      begin
+        v_availability := public.get_ai_polish_availability_v2('${userId}');
+        if v_availability ->> 'enabled' is distinct from 'true'
+           or v_availability ->> 'profileVersionId' is distinct from '${profileVersionId}'
+           or v_availability ->> 'displayDisclosureKey' is distinct from '${displayDisclosureKey}'
+           or v_availability -> 'legalDisplay' ->> 'schemaVersion'
+             is distinct from 'legal_display_v2'
+           or v_availability -> 'legalDisplay' ->> 'modelId'
+             is distinct from '${modelId}'
+           or v_availability ->> 'termsAccepted' is distinct from 'false' then
+          raise exception 'v2 availability did not expose the exact sealed display';
+        end if;
+
+        insert into public.user_ai_legal_acceptances_v2(
+          user_id, legal_bundle_version, display_disclosure_key, content_sha256
+        )
+        select '${userId}', display.legal_bundle_version,
+          display.display_disclosure_key, display.content_sha256
+        from public.ai_legal_display_versions_v2 as display
+        where display.display_disclosure_key = '${displayDisclosureKey}';
+
+        v_availability := public.get_ai_polish_availability_v2('${userId}');
+        if v_availability ->> 'termsAccepted' is distinct from 'true' then
+          raise exception 'v2 availability did not observe exact consent';
+        end if;
+
+        v_reservation := public.reserve_ai_polish_request_v2(
+          '${userId}',
+          extensions.gen_random_uuid(),
+          extensions.gen_random_uuid(),
+          jsonb_build_object(
+            'schema_version', 'expected_route_v1',
+            'config_generation', v_availability ->> 'configGeneration',
+            'profile_version_id', v_availability ->> 'profileVersionId',
+            'legal_bundle_version', v_availability ->> 'legalBundleVersion',
+            'runtime_contract_id', v_availability ->> 'runtimeContractId'
+          )
+        );
+        if v_reservation ->> 'allowed' is distinct from 'true'
+           or v_reservation -> 'routeSnapshot' ->> 'profileVersionId'
+             is distinct from '${profileVersionId}'
+           or v_reservation -> 'routeSnapshot' ->> 'displayDisclosureKey'
+             is distinct from '${displayDisclosureKey}' then
+          raise exception 'exactly accepted v2 target was not reservable';
+        end if;
+      end
+      $cycle$;
+      rollback;
+    `);
+    expect(cycle.status, cycle.stderr).toBe(0);
+  });
+
+  it("requires the exact sealed disclosure on every v2 request insert", () => {
+    const withoutExactConsent = runOwnerSql(String.raw`
+      insert into public.ai_request_ledger
+      select (jsonb_populate_record(
+        null::public.ai_request_ledger,
+        to_jsonb(source_request) || jsonb_build_object(
+          'reservation_id', extensions.gen_random_uuid(),
+          'request_id', extensions.gen_random_uuid(),
+          'client_request_id', extensions.gen_random_uuid(),
+          'reserved_at', clock_timestamp()
+        )
+      )).*
+      from public.ai_request_ledger as source_request
+      where source_request.reservation_id = '${reservation.reservationId}';
+    `, { expectFailure: true });
+    expect(withoutExactConsent.stderr).toContain(
+      "exact v2 legal disclosure acceptance is required",
+    );
+
+    const withExactConsent = runOwnerSql(String.raw`
+      begin;
+      insert into public.user_ai_legal_acceptances_v2(
+        user_id, legal_bundle_version, display_disclosure_key, content_sha256
+      )
+      select
+        '${userId}', display.legal_bundle_version,
+        display.display_disclosure_key, display.content_sha256
+      from public.ai_legal_display_versions_v2 as display
+      where display.legal_bundle_version = '${reservation.routeSnapshot.legalBundleVersion}'
+        and display.display_disclosure_key = '${displayDisclosureKey}';
+
+      insert into public.ai_request_ledger
+      select (jsonb_populate_record(
+        null::public.ai_request_ledger,
+        to_jsonb(source_request) || jsonb_build_object(
+          'reservation_id', extensions.gen_random_uuid(),
+          'request_id', extensions.gen_random_uuid(),
+          'client_request_id', extensions.gen_random_uuid(),
+          'reserved_at', clock_timestamp()
+        )
+      )).*
+      from public.ai_request_ledger as source_request
+      where source_request.reservation_id = '${reservation.reservationId}';
+      rollback;
+    `);
+    expect(withExactConsent.status, withExactConsent.stderr).toBe(0);
+  });
+
   it("reads, admits, completes and settles one frozen v2 execution", async () => {
     const snapshot = await service.rpc("get_ai_polish_execution_snapshot_v2", {
       p_reservation_id: reservation.reservationId,

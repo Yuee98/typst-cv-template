@@ -13,6 +13,7 @@ import {
   type PolishAvailabilityResponse,
   type PolishErrorCode,
 } from "@/lib/polish/contract";
+import { legalDisplayV2Schema } from "@/lib/legal/legal-display-v2";
 import { verifyBearerUser } from "./auth";
 import { resolveDisplayDisclosure } from "./adapter-registry";
 import { baseHeaders, errorResponse } from "./lifecycle-http";
@@ -44,7 +45,25 @@ const dbAvailabilitySchema = z.discriminatedUnion("enabled", [
   dbAvailabilityDisabledSchema,
 ]);
 
-export type PolishAvailabilityDbResult = z.infer<typeof dbAvailabilitySchema>;
+const dbAvailabilityV2EnabledSchema = dbAvailabilityEnabledSchema.extend({
+  schemaVersion: z.literal("ai_polish_availability_v2"),
+  legalDisplay: legalDisplayV2Schema.nullable(),
+});
+
+const dbAvailabilityV2DisabledSchema = dbAvailabilityDisabledSchema.extend({
+  schemaVersion: z.literal("ai_polish_availability_v2"),
+  legalDisplay: z.null(),
+});
+
+const dbAvailabilityAnyVersionSchema = z.union([
+  dbAvailabilitySchema,
+  dbAvailabilityV2EnabledSchema,
+  dbAvailabilityV2DisabledSchema,
+]);
+
+export type PolishAvailabilityDbResult = z.infer<
+  typeof dbAvailabilityAnyVersionSchema
+>;
 
 interface DisplayDisclosureProjection {
   readonly key: string;
@@ -90,8 +109,20 @@ export async function readPolishAvailabilityV1(
   return data;
 }
 
+/** Successor reader; its DB result still projects legacy v1 profiles safely. */
+export async function readPolishAvailabilityV2(
+  client: Pick<SupabaseClient, "rpc">,
+  userId: string,
+): Promise<unknown> {
+  const { data, error } = await client.rpc("get_ai_polish_availability_v2", {
+    p_user_id: userId,
+  });
+  if (error) throw new PolishAvailabilityReadError(error);
+  return data;
+}
+
 export function decodePolishAvailabilityDbResult(raw: unknown): PolishAvailabilityDbResult {
-  return dbAvailabilitySchema.parse(raw);
+  return dbAvailabilityAnyVersionSchema.parse(raw);
 }
 
 /**
@@ -113,6 +144,31 @@ export function projectPolishAvailability(
       runtimeContractId: null,
       displayDisclosure: null,
       termsAccepted: false,
+    });
+  }
+
+  if ("schemaVersion" in availability && availability.legalDisplay !== null) {
+    const display = availability.legalDisplay;
+    if (
+      display.legalBundleVersion !== availability.legalBundleVersion ||
+      display.displayDisclosureKey !== availability.displayDisclosureKey
+    ) {
+      throw new Error("legal display identity does not match availability");
+    }
+    return polishAvailabilitySchema.parse({
+      enabled: true,
+      configGeneration: availability.configGeneration,
+      routingPolicyVersionId: availability.routingPolicyVersionId,
+      profileVersionId: availability.profileVersionId,
+      legalBundleVersion: availability.legalBundleVersion,
+      runtimeContractId: availability.runtimeContractId,
+      displayDisclosure: {
+        key: display.displayDisclosureKey,
+        providerName: display.en.providerLabel,
+        modelName: display.en.modelLabel,
+        legalDisplay: display,
+      },
+      termsAccepted: availability.termsAccepted,
     });
   }
 

@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 import { ORDERED_SECTION_IDS, type CvSectionId } from "@/lib/cv/schema";
+import { legalDisplayV2Schema } from "@/lib/legal/legal-display-v2";
 
 // ---------------------------------------------------------------------------
 // Polishable sections, field kinds, and the capability matrix
@@ -348,11 +349,22 @@ export const polishPostRequestSchema = polishRequestSchema.safeExtend({
   expectedRoute: polishExpectedRouteSchema,
 });
 
-const polishAvailabilityDisplayDisclosureSchema = z.strictObject({
+export const polishAvailabilityLegacyDisplayDisclosureSchema = z.strictObject({
   key: polishRouteIdentifierSchema,
   providerName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
   modelName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
 });
+
+/**
+ * V1 candidates retain their code-owned label projection. V2 candidates
+ * carry the exact sealed, text-only DB disclosure that the user can accept.
+ */
+export const polishAvailabilityDisplayDisclosureSchema = z.union([
+  polishAvailabilityLegacyDisplayDisclosureSchema,
+  polishAvailabilityLegacyDisplayDisclosureSchema.extend({
+    legalDisplay: legalDisplayV2Schema,
+  }),
+]);
 
 const polishAvailabilityEnabledSchema = z.strictObject({
   enabled: z.literal(true),
@@ -544,6 +556,9 @@ export type PolishExpectedRoute = z.infer<typeof polishExpectedRouteSchema>;
 export type PolishPostRequest = z.infer<typeof polishPostRequestSchema>;
 export type PolishAvailability = z.infer<typeof polishAvailabilitySchema>;
 export type PolishAvailabilityResponse = z.infer<typeof polishAvailabilityResponseSchema>;
+export type PolishAvailabilityDisplayDisclosure = z.infer<
+  typeof polishAvailabilityDisplayDisclosureSchema
+>;
 export type PolishQuota = z.infer<typeof polishQuotaSchema>;
 export type PolishSuccessResponse = z.infer<typeof polishSuccessResponseSchema>;
 export type PolishQuotaResponse = z.infer<typeof polishQuotaResponseSchema>;

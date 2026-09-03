@@ -11,7 +11,10 @@ const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
-const DB_CHILD_TIMEOUT_MS = 600_000;
+// The strictly serial real-DB suite includes lock/concurrency scenarios and
+// now spans more than ten minutes on Windows. Keep this below the 20-minute
+// CI job bound while allowing the test process to report its own failures.
+const DB_CHILD_TIMEOUT_MS = 900_000;
 
 function isRequired(env) {
   return env.DB_TESTS_REQUIRED === "1" || env.DB_TESTS_REQUIRED === "true";

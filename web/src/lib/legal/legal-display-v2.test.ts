@@ -27,6 +27,35 @@ describe("legal display v2 descriptor", () => {
     expect(Object.isFrozen(result.zh.blocks[0])).toBe(true);
   });
 
+  it("preserves every reviewed text character while retaining the digest", () => {
+    const spaced = {
+      ...base,
+      en: {
+        providerLabel: "  Provider  ",
+        modelLabel: " Model ",
+        blocks: [{ kind: "paragraph", text: "  Reviewed text.\n" }],
+      },
+    };
+    const result = parseLegalDisplayV2(spaced);
+    expect(result.en).toEqual(spaced.en);
+    expect(result.contentSha256).toBe(base.contentSha256);
+  });
+
+  it("uses database-compatible Unicode character limits", () => {
+    expect(() =>
+      parseLegalDisplayV2({
+        ...base,
+        en: { ...base.en, providerLabel: "😀".repeat(200) },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      parseLegalDisplayV2({
+        ...base,
+        en: { ...base.en, providerLabel: "😀".repeat(201) },
+      }),
+    ).toThrow();
+  });
+
   it.each([
     ["unknown top-level field", { ...base, extra: true }],
     ["unknown block field", { ...base, en: { ...base.en, blocks: [{ kind: "paragraph", text: "x", html: "<p>x</p>" }] } }],
@@ -34,6 +63,22 @@ describe("legal display v2 descriptor", () => {
     ["duplicate evidence ids", { ...base, evidenceIds: ["evidence.provider.v2", "evidence.provider.v2"] }],
     ["invalid provider UUID", { ...base, providerId: "provider-v2" }],
     ["empty bullet list", { ...base, en: { ...base.en, blocks: [{ kind: "bulletList", items: [] }] } }],
+    ["blank label", { ...base, en: { ...base.en, providerLabel: " \t " } }],
+    ["blank paragraph", { ...base, en: { ...base.en, blocks: [{ kind: "paragraph", text: " \n " }] } }],
+    ["oversized bullet", { ...base, en: { ...base.en, blocks: [{ kind: "bulletList", items: ["x".repeat(1_001)] }] } }],
+    [
+      "oversized UTF-8 text aggregate",
+      {
+        ...base,
+        en: {
+          ...base.en,
+          blocks: Array.from(
+            { length: 3 },
+            () => ({ kind: "paragraph", text: "中".repeat(4_000) }),
+          ),
+        },
+      },
+    ],
   ])("rejects %s", (_name, input) => {
     expect(() => parseLegalDisplayV2(input)).toThrow();
   });

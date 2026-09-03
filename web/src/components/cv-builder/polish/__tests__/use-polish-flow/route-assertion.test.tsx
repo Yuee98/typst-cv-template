@@ -8,6 +8,7 @@ import {
   polishPostRequestSchema,
   type PolishAvailabilityResponse,
 } from "@/lib/polish/contract";
+import type { LegalDisplayV2 } from "@/lib/legal/legal-display-v2";
 
 import {
   DISABLED_AVAILABILITY_BODY,
@@ -45,6 +46,48 @@ const UNACCEPTED_DEEPSEEK_BODY: PolishAvailabilityResponse = {
   ...ENABLED_AVAILABILITY_BODY,
   availability: {
     ...ENABLED_AVAILABILITY_BODY.availability,
+    termsAccepted: false,
+  },
+};
+
+const CONFIGURABLE_V2_LEGAL_DISPLAY: LegalDisplayV2 = {
+  schemaVersion: "legal_display_v2",
+  displayDisclosureKey: "configured-provider-v2",
+  legalBundleVersion: "legal-bundle-configurable-v2",
+  legalManifestId: "configured-provider-manifest-v2",
+  providerId: "00000000-0000-4000-8000-000000000045",
+  recipientKey: "configured-provider",
+  modelId: "configurable-model-v2",
+  contentSha256: "b".repeat(64),
+  factIds: ["fact.configurable-provider-v2"],
+  evidenceIds: ["evidence.configurable-provider-v2"],
+  en: {
+    providerLabel: "Configured Provider",
+    modelLabel: "Configurable Model V2",
+    blocks: [{ kind: "paragraph", text: "Reviewed disclosure." }],
+  },
+  zh: {
+    providerLabel: "配置化服务商",
+    modelLabel: "配置化模型 V2",
+    blocks: [{ kind: "paragraph", text: "已审核的服务商披露。" }],
+  },
+};
+
+const CONFIGURABLE_V2_AVAILABILITY_BODY: PolishAvailabilityResponse = {
+  requestId: "srv-availability-configurable-v2",
+  availability: {
+    enabled: true,
+    configGeneration: "44",
+    routingPolicyVersionId: "00000000-0000-4000-8000-000000000044",
+    profileVersionId: "33333333-3333-4333-8333-333333333333",
+    legalBundleVersion: "legal-bundle-configurable-v2",
+    runtimeContractId: "runtime.configurable-v2.v1",
+    displayDisclosure: {
+      key: "configured-provider-v2",
+      providerName: "Configured Provider",
+      modelName: "Configurable Model V2",
+      legalDisplay: CONFIGURABLE_V2_LEGAL_DISPLAY,
+    },
     termsAccepted: false,
   },
 };
@@ -200,6 +243,40 @@ describe("usePolishFlow exact route assertion", () => {
     expect(h.polishCalls).toHaveLength(1);
     expect(h.polishCalls[0].request.expectedRoute.legalBundleVersion).toBe(
       h.acceptCalls[0].legalBundleVersion,
+    );
+  });
+
+  it("accepts a configurable v2 model by the exact displayed identity and digest", async () => {
+    const h = renderHarness(undefined, { deferAvailability: true });
+    act(() => h.flow().open(SCOPE));
+    await act(async () => {
+      h.availabilityCalls[0].deferred.resolve(
+        CONFIGURABLE_V2_AVAILABILITY_BODY,
+      );
+      h.quotaCalls[0].resolve({ requestId: "q-v2", quota: makeQuota(5) });
+    });
+
+    expect(h.flow().availabilityStatus).toBe("ready");
+    expect(h.flow().terms.status).toBe("required");
+    act(() => h.flow().terms.setChecked(true));
+    act(() => h.flow().confirm());
+
+    expect(h.acceptCalls).toHaveLength(1);
+    expect(h.acceptCalls[0]).toMatchObject({
+      userId: "user-a",
+      legalBundleVersion: "legal-bundle-configurable-v2",
+      legalDisplay: CONFIGURABLE_V2_LEGAL_DISPLAY,
+    });
+    await act(async () => h.acceptCalls[0].resolve());
+    expect(h.availabilityCalls).toHaveLength(2);
+    await act(async () => {
+      h.availabilityCalls[1].deferred.resolve(
+        withAcceptedTerms(CONFIGURABLE_V2_AVAILABILITY_BODY),
+      );
+    });
+    expect(h.polishCalls).toHaveLength(1);
+    expect(h.polishCalls[0].request.expectedRoute.legalBundleVersion).toBe(
+      "legal-bundle-configurable-v2",
     );
   });
 

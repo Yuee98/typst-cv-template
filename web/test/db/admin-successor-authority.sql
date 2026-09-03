@@ -34,5 +34,11 @@ where n.nspname = 'public'
     'guard_ai_legal_display_version_v2',
     'guard_ai_current_legal_bundle_v2',
     'get_ai_current_legal_bundle_v2',
-    'guard_ai_runtime_target_binding_v2'
+    'guard_ai_runtime_target_binding_v2',
+    'guard_user_ai_legal_acceptance_v2',
+    'has_accepted_ai_legal_disclosure_v2',
+    'accept_ai_legal_disclosure_v2',
+    'get_ai_legal_display_v2',
+    'get_ai_polish_availability_v2',
+    'guard_ai_request_legal_acceptance_v2'
   );

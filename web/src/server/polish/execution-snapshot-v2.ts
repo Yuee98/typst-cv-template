@@ -1,7 +1,4 @@
-import {
-  legalBundleContainsManifest,
-  type ProfileExecutionConfigV1,
-} from "./profile-registry";
+import type { ProfileExecutionConfigV1 } from "./profile-registry";
 import {
   parseExecutionSnapshotV1,
   parsePriceSnapshotV1,
@@ -175,7 +172,7 @@ export function parseRuntimeExecutionEvidenceV2(
   if (
     !Array.isArray(externalEvidenceIds) ||
     externalEvidenceIds.length === 0 ||
-    externalEvidenceIds.length > 32 ||
+    externalEvidenceIds.length > 64 ||
     externalEvidenceIds.some(
       (id) => typeof id !== "string" || !CODE_ID_PATTERN.test(id),
     ) ||
@@ -263,7 +260,6 @@ export function parseVersionedExecutionSnapshot(
     route.wireApiKind !== profile.wireApiKind ||
     route.displayDisclosureKey !== profile.displayDisclosureKey ||
     price.calculatorKind !== profile.calculatorKind ||
-    !legalBundleContainsManifest(route.legalBundleVersion, profile.legalManifestId) ||
     evidence.runtimeContractId !== route.runtimeContractId ||
     evidence.profileVersionId !== route.profileVersionId ||
     evidence.priceVersionId !== route.priceVersionId ||

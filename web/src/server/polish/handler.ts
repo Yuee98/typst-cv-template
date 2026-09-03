@@ -46,7 +46,7 @@
 import type { PolishLogEvent, PolishQuotaRouteDeps } from "./lifecycle-types";
 import {
   createPolishAvailabilityHandler,
-  readPolishAvailabilityV1,
+  readPolishAvailabilityV2,
   type PolishAvailabilityDbResult,
   type PolishAvailabilityDeps,
   type PolishAvailabilityLogEvent,
@@ -221,7 +221,7 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
     },
     availability: {
       verifyAccessToken: authDeps.verifyAccessToken,
-      readAvailability: (userId) => readPolishAvailabilityV1(adminClient, userId),
+      readAvailability: (userId) => readPolishAvailabilityV2(adminClient, userId),
       logger: logPolishAvailabilityEvent,
     },
     postV2: {

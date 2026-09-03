@@ -19,7 +19,6 @@ import {
 
 export interface PreparedProviderExecutionV2 {
   readonly schemaVersion: "prepared_provider_execution_v2";
-  readonly provider: PolishInferenceProviderV2;
 }
 
 interface PreparedProviderExecutionFactsV2 {
@@ -30,7 +29,15 @@ interface PreparedProviderExecutionFactsV2 {
   }>;
 }
 
-const preparedExecutions = new WeakMap<object, PreparedProviderTransportV2>();
+interface StoredPreparedProviderExecutionV2 {
+  readonly prepared: PreparedProviderTransportV2;
+  readonly provider: PolishInferenceProviderV2;
+}
+
+const preparedExecutions = new WeakMap<
+  object,
+  StoredPreparedProviderExecutionV2
+>();
 
 function sameProfile(
   expected: Readonly<ProfileExecutionConfigV2>,
@@ -57,11 +64,14 @@ export function createPreparedProviderExecutionV2(
         return createPreparedMimoResponsesAdapter(prepared, fetchImpl);
     }
   })();
+  const immutableProvider = Object.freeze(provider);
   const execution = Object.freeze({
     schemaVersion: "prepared_provider_execution_v2" as const,
-    provider,
   });
-  preparedExecutions.set(execution, prepared);
+  preparedExecutions.set(
+    execution,
+    Object.freeze({ prepared, provider: immutableProvider }),
+  );
   return execution;
 }
 
@@ -81,18 +91,18 @@ export function readPreparedProviderExecutionV2(
   expectedProfile: Readonly<ProfileExecutionConfigV2>,
 ): PreparedProviderExecutionFactsV2 {
   if (!isPreparedProviderExecutionV2(value)) throw new ProviderBindingError();
-  const prepared = preparedExecutions.get(value);
-  if (prepared === undefined) throw new ProviderBindingError();
-  assertPreparedProviderTransportV2(prepared);
+  const stored = preparedExecutions.get(value);
+  if (stored === undefined) throw new ProviderBindingError();
+  assertPreparedProviderTransportV2(stored.prepared);
   const profile = validateProfileExecutionConfigV2(expectedProfile);
-  if (!sameProfile(profile, prepared.profile)) {
+  if (!sameProfile(profile, stored.prepared.profile)) {
     throw new ProviderBindingError();
   }
   return Object.freeze({
-    provider: value.provider,
+    provider: stored.provider,
     runtimeProvenance: Object.freeze({
-      runtimeBuildId: prepared.runtimeBuildId,
-      bindingManifestRevision: prepared.bindingManifestRevision,
+      runtimeBuildId: stored.prepared.runtimeBuildId,
+      bindingManifestRevision: stored.prepared.bindingManifestRevision,
     }),
   });
 }
