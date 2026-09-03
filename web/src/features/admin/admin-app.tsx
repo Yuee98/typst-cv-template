@@ -18,6 +18,7 @@ import {
   type AdminSection,
 } from "@/lib/admin/contract";
 import { adminMessages, type AdminMessages } from "./messages";
+import { adminNavigationPath } from "./navigation";
 
 type Props = { locale: "zh" | "en"; section?: AdminSection; recordId?: string };
 type Query = { search: string; after: string; limit: number };
@@ -243,10 +244,10 @@ export default function AdminApp({
       />
     );
 
-  const navigate = (next: AdminSection) =>
-    window.location.assign(
-      next === "overview" ? `/${locale}/admin` : `/${locale}/admin/${next}`,
-    );
+  const navigate = (next: AdminSection) => {
+    const path = adminNavigationPath(locale, next);
+    if (path) window.location.assign(path);
+  };
   const otherLocale = locale === "zh" ? "en" : "zh";
   const translatedRoute = recordId
     ? `/${otherLocale}/admin/${section}/${encodeURIComponent(recordId)}`
