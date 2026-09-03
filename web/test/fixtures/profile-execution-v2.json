@@ -1,0 +1,36 @@
+{
+  "deepseek": {
+    "schemaVersion": "profile_execution_config_v2",
+    "profileKey": "deepseek.official.synthetic-compatible.v2",
+    "providerId": "706513a5-462b-4bba-93b0-53e50661416e",
+    "gatewayKind": "direct_deepseek",
+    "adapterKind": "deepseek_chat_v1",
+    "wireApiKind": "chat_completions_v1",
+    "endpointUrl": "https://api.deepseek.com/chat/completions",
+    "credentialEnvName": "AI_PROVIDER_KEY_DEEPSEEK_PRIMARY",
+    "modelId": "synthetic-compatible-model",
+    "capabilityContractId": "deepseek_chat_json_object_v1",
+    "cachePolicyId": "deepseek_automatic_context_cache_v1",
+    "legalManifestId": "synthetic-deepseek-legal-v2",
+    "calculatorKind": "linear_token_v1",
+    "displayDisclosureKey": "synthetic-deepseek-display-v2",
+    "config": { "thinking": "disabled", "structuredOutput": "json_object", "providerSubjectField": "user_id" }
+  },
+  "mimo": {
+    "schemaVersion": "profile_execution_config_v2",
+    "profileKey": "mimo.cn.synthetic-compatible.v2",
+    "providerId": "d1a481e6-5baf-4b2f-8f2d-da28c2b92ed9",
+    "gatewayKind": "direct_mimo",
+    "adapterKind": "mimo_responses_v1",
+    "wireApiKind": "responses_v1",
+    "endpointUrl": "https://api.xiaomimimo.com/v1/responses",
+    "credentialEnvName": "AI_PROVIDER_KEY_MIMO_PRIMARY",
+    "modelId": "synthetic-responses-model",
+    "capabilityContractId": "mimo_responses_output_text_v1",
+    "cachePolicyId": "mimo_automatic_prompt_cache_v1",
+    "legalManifestId": "synthetic-mimo-legal-v2",
+    "calculatorKind": "linear_token_v1",
+    "displayDisclosureKey": "synthetic-mimo-display-v2",
+    "config": { "reasoningEffort": "none", "structuredOutput": "prompt_only", "sendProviderSubjectId": false }
+  }
+}
