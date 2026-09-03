@@ -19,6 +19,7 @@ import {
 } from "@/lib/admin/contract";
 import { adminMessages, type AdminMessages } from "./messages";
 import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
+import { AdminSecuritySettings } from "./security-settings";
 
 type Props = { locale: "zh" | "en"; section?: AdminSection; recordId?: string };
 type Query = { search: string; after: string; limit: number };
@@ -253,7 +254,7 @@ export default function AdminApp({
       setState(current => ({ ...current, error: t.unavailable }));
     } finally { setBusy(false); }
   }
-  if (!session)
+  if (!session || !client)
     return (
       <LoginForm
         locale={locale}
@@ -300,7 +301,10 @@ export default function AdminApp({
       ) : state.error ? (
         <ErrorPanel text={state.error} />
       ) : section === "overview" && state.context ? (
-        <Overview context={state.context} t={t} />
+        <div className="space-y-6">
+          <Overview context={state.context} t={t} />
+          <AdminSecuritySettings key={session.user.id} client={client} t={t} />
+        </div>
       ) : state.page ? (
         <Page
           page={state.page}
