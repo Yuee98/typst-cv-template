@@ -176,7 +176,11 @@ begin
       is distinct from (old.execution_schema_version,old.endpoint_url,old.credential_env_name,old.runtime_build_id,old.binding_manifest_revision) then
       raise exception 'attempt execution binding and provenance are immutable' using errcode='23514';
     end if;
-  else
+  elsif new.execution_schema_version='profile_execution_config_v2'
+     or new.endpoint_url is not null
+     or new.credential_env_name is not null
+     or new.runtime_build_id is not null
+     or new.binding_manifest_revision is not null then
     select * into v_profile from public.ai_provider_profile_versions where id=new.profile_version_id;
     if not found or (new.execution_schema_version,new.endpoint_url,new.credential_env_name)
       is distinct from (v_profile.execution_schema_version,v_profile.endpoint_url,v_profile.credential_env_name) then

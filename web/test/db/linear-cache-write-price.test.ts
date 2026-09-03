@@ -35,7 +35,7 @@ describe.skipIf(!RUN_DB_TESTS)("optional linear cache-write pricing (real DB)", 
       insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor)
         values ('${profileId}'::uuid,'${profileKey}','Linear cache write ${label}','direct_mimo','fixture');
       insert into public.ai_provider_profile_versions(id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,endpoint_alias,model_id,capability_contract_id,cache_policy_id,legal_manifest_id,display_disclosure_key,config_sha256)
-        values ('${versionId}'::uuid,'${profileId}'::uuid,1,'fixture_adapter_v1','responses_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','fixture-v1','${"a".repeat(64)}');
+        values ('${versionId}'::uuid,'${profileId}'::uuid,1,'mimo_responses_v1','responses_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','fixture-v1','${"a".repeat(64)}');
       insert into public.ai_price_versions(id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,source_url,source_checked_at,source_snapshot_sha256,parameters)
         values ('${priceId}'::uuid,'${versionId}'::uuid,'default',1,'CNY','linear_token_v1','2026-08-25T00:00:00Z','https://example.com/linear-cache-write-fixture','2026-08-25T00:00:00Z','${"b".repeat(64)}','{}'::jsonb);
       insert into public.ai_price_components(price_version_id,component,nanos_per_million) values ${componentSql};
