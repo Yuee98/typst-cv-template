@@ -65,6 +65,7 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   authStateListeners.length = 0;
   authClient.auth.getSession.mockResolvedValue({
     data: { session: session("A") },
@@ -77,6 +78,43 @@ afterEach(() => {
 });
 
 describe("AdminApp identity boundaries", () => {
+  it("surfaces an initial session restoration failure", async () => {
+    authClient.auth.getSession.mockRejectedValueOnce(new Error("storage unavailable"));
+    render(<AdminApp locale="en" />);
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "The admin service is temporarily unavailable. Try again later.",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("starts GitHub OAuth from the clean Admin root", async () => {
+    authClient.auth.getSession.mockResolvedValueOnce({
+      data: { session: null },
+      error: null,
+    });
+    authClient.auth.signInWithOAuth.mockResolvedValueOnce({ error: null });
+    window.history.replaceState(
+      null,
+      "",
+      "/en/admin/users?search=admin%40example.test&after=cursor#private",
+    );
+
+    render(<AdminApp locale="en" section="users" />);
+    await screen.findByText("Administrator sign in");
+    screen.getByRole("button", { name: "Continue with GitHub" }).click();
+
+    await waitFor(() =>
+      expect(authClient.auth.signInWithOAuth).toHaveBeenCalledWith({
+        provider: "github",
+        options: { redirectTo: `${window.location.origin}/en/admin` },
+      }),
+    );
+  });
+
   it("does not paint an overview response after signout", async () => {
     const pending = deferred<Response>();
     vi.mocked(fetch).mockReturnValueOnce(pending.promise);

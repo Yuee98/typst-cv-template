@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { adminNavigationPath } from "./navigation";
+import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
 it("restricts DOM-provided destinations to the implemented local sections", () => {
   expect(adminNavigationPath("zh", "profiles")).toBe("/zh/admin/profiles");
   expect(adminNavigationPath("en", "overview")).toBe("/en/admin");
@@ -12,4 +12,16 @@ it("restricts DOM-provided destinations to the implemented local sections", () =
   ]) {
     expect(adminNavigationPath("zh", value)).toBeNull();
   }
+});
+
+it("uses a fixed OAuth callback without Admin query or fragment state", () => {
+  const current = new URL(
+    "https://preview.example/zh/admin/users?search=admin%40example.test&after=cursor#private",
+  );
+  expect(adminOAuthRedirectUrl(current.origin, "zh")).toBe(
+    "https://preview.example/zh/admin",
+  );
+  expect(adminOAuthRedirectUrl(current.origin, "unsupported")).toBe(
+    "https://preview.example/en/admin",
+  );
 });

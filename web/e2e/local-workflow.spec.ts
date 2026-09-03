@@ -2,6 +2,42 @@ import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
 test.describe("local server-mode CV workflow", () => {
+  test("leaves no Admin referrer or query in a public pageview", async ({ page }) => {
+    const sensitive = "private-admin@example.test";
+    let publicDocumentReferer: string | undefined;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (request.resourceType() === "document" && url.pathname === "/en") {
+        publicDocumentReferer = request.headers().referer ?? "";
+      }
+    });
+
+    const adminResponse = await page.goto(
+      `/en/admin/users?search=${encodeURIComponent(sensitive)}&after=private-cursor#private-fragment`,
+    );
+    expect(adminResponse?.headers()["referrer-policy"]).toBe("no-referrer");
+    await expect(page.locator('meta[name="referrer"]')).toHaveAttribute(
+      "content",
+      "no-referrer",
+    );
+    await page.getByRole("link", { name: "Back to editor" }).click();
+    await expect(page).toHaveURL(/\/en$/);
+    await expect(page.getByRole("heading", { name: "CV Library" })).toBeVisible();
+
+    expect(publicDocumentReferer).toBe("");
+    expect(await page.evaluate(() => document.referrer)).toBe("");
+    const analyticsQueue = await page.evaluate(() =>
+      JSON.stringify(
+        (window as Window & { vaq?: unknown[] }).vaq ?? [],
+        (_key, value) => (typeof value === "function" ? "[function]" : value),
+      ),
+    );
+    expect(analyticsQueue).toContain("pageview");
+    expect(analyticsQueue).not.toContain("/admin");
+    expect(analyticsQueue).not.toContain(sensitive);
+    expect(analyticsQueue).not.toContain("private-cursor");
+  });
+
   test("edits, recovers, reorders, switches locale, and exports without AI calls", async ({ page }) => {
     const polishRequests: string[] = [];
     page.on("request", (request) => {

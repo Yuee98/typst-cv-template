@@ -29,6 +29,8 @@ it("cycles server/static/server with a complete owned manifest", async () => {
   expect(await readFile(join(root, "src/app/api/keep.txt"), "utf8")).toBe("unrelated");
   await syncApiRoutes("server", root);
   expect(await Promise.all(GENERATED_ROUTES.map(({ file }) => readFile(join(root, file), "utf8")))).toEqual(first);
+  const adminLayout = GENERATED_ROUTES.find(({ file }) => file.endsWith("admin/layout.tsx"));
+  expect(adminLayout?.source).toContain('referrer: "no-referrer"');
 });
 
 it.each(["server", "static"])("refuses an unknown file before any %s mutations", async (mode) => {
