@@ -84,7 +84,7 @@ import {
 import {
   completePolishProviderAttemptV2,
   finalizePolishRequestV2,
-  getPolishExecutionSnapshotV1,
+  getPolishExecutionSnapshotV2,
   getPolishQuota,
   recordPolishRequestCancellationV2,
   reservePolishRequestV2,
@@ -197,7 +197,7 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
   const hmacSecret = requireServerEnv("AI_USER_ID_HMAC_SECRET");
   const routesV2: PolishRouteDepsV2 = {
     reserve: (params) => reservePolishRequestV2(adminClient, params),
-    getExecutionSnapshot: (params) => getPolishExecutionSnapshotV1(adminClient, params),
+    getExecutionSnapshot: (params) => getPolishExecutionSnapshotV2(adminClient, params),
     startAttempt: (params) => startPolishProviderAttemptV2(adminClient, params),
     completeAttempt: (params) => completePolishProviderAttemptV2(adminClient, params),
     recordCancellation: (params) =>

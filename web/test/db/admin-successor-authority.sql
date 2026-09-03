@@ -9,6 +9,7 @@ select jsonb_agg(jsonb_build_object(
   'identityArguments', pg_get_function_identity_arguments(p.oid),
   'prokind', p.prokind,
   'prosecdef', p.prosecdef,
+  'owner', pg_get_userbyid(p.proowner),
   'definitionSha256', encode(extensions.digest(replace(replace(pg_get_functiondef(p.oid), chr(13) || chr(10), chr(10)), chr(13), chr(10)), 'sha256'), 'hex'),
   'publicExecute', exists (
     select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) as acl
@@ -26,5 +27,6 @@ where n.nspname = 'public'
     'admin_get_context_v1', 'admin_records_query_v1', 'admin_list_records_v1',
     'admin_get_record_v1', 'ai_endpoint_shape_v2',
     'guard_ai_provider_directory_v2', 'guard_ai_profile_provider_v2',
-    'guard_ai_profile_binding_v2', 'guard_ai_attempt_binding_v2'
+    'guard_ai_profile_binding_v2', 'guard_ai_attempt_binding_v2',
+    'get_ai_polish_execution_snapshot_v2', 'start_ai_polish_provider_attempt_v2'
   );

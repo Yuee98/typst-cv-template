@@ -6,6 +6,10 @@ import {
   type RuntimeTargetResolverV1,
 } from "./lifecycle-v2-contract";
 import {
+  EMPTY_RUNTIME_TARGET_RESOLVER_V2,
+  type RuntimeTargetResolverV2,
+} from "./execution-snapshot-v2";
+import {
   DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1,
   DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
 } from "./service-runtime-contract-v1";
@@ -14,6 +18,7 @@ type ServerEnvironment = Readonly<Record<string, string | undefined>>;
 
 export interface RealPolishRuntimeAuthorityV2 {
   readonly runtimeTargetResolver: RuntimeTargetResolverV1;
+  readonly runtimeTargetResolverV2: RuntimeTargetResolverV2;
   readonly resolveProvider: PolishAdapterResolverV2;
 }
 
@@ -43,6 +48,9 @@ export function createRealPolishRuntimeAuthorityV2(
     // Preserve the legacy DeepSeek target for in-flight/rollback execution
     // while admitting only the exact current combined-v2 target pair.
     runtimeTargetResolver: REAL_POLISH_RUNTIME_TARGET_RESOLVER_V2,
+    // V2 profile rows remain dark until I05 binds exact build, legal and
+    // deployment-manifest evidence. Parsing support does not authorize sends.
+    runtimeTargetResolverV2: EMPTY_RUNTIME_TARGET_RESOLVER_V2,
     resolveProvider: createCodeOwnedPolishAdapterResolverV2({ env }),
   });
 }

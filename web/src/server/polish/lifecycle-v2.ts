@@ -9,6 +9,10 @@ import {
   type ExpectedRouteV1,
   type RuntimeTargetResolverV1,
 } from "./lifecycle-v2-contract";
+import {
+  EMPTY_RUNTIME_TARGET_RESOLVER_V2,
+  type RuntimeTargetResolverV2,
+} from "./execution-snapshot-v2";
 import { isAbortError } from "./lifecycle-settlement";
 import {
   aggregatePolishAttemptFactsV2,
@@ -22,12 +26,12 @@ import {
   type RequestUsageAggregateV2,
 } from "./orchestrator";
 import {
-  validateProfileExecutionConfig,
-  type ProfileExecutionConfigV1,
-} from "./profile-registry";
+  validateVersionedProfileExecutionConfig,
+  type ProfileExecutionConfig,
+} from "./profile-execution-v2";
 import { deriveProviderSubjectIdV2 } from "./provider-subject-v2";
 import {
-  getPolishExecutionSnapshotV1,
+  getPolishExecutionSnapshotV2,
   PolishLifecycleV2RpcError,
   reservePolishRequestV2,
   type PolishFinalizeCallOptionsV2,
@@ -158,7 +162,7 @@ export interface PolishLifecycleV2Input {
 }
 
 export type PolishAdapterResolverV2 = (
-  profile: Readonly<ProfileExecutionConfigV1>,
+  profile: Readonly<ProfileExecutionConfig>,
 ) => PolishInferenceProviderV2;
 
 export interface PolishRouteDepsV2 {
@@ -166,8 +170,8 @@ export interface PolishRouteDepsV2 {
     params: Parameters<typeof reservePolishRequestV2>[1],
   ) => ReturnType<typeof reservePolishRequestV2>;
   readonly getExecutionSnapshot: (
-    params: Parameters<typeof getPolishExecutionSnapshotV1>[1],
-  ) => ReturnType<typeof getPolishExecutionSnapshotV1>;
+    params: Parameters<typeof getPolishExecutionSnapshotV2>[1],
+  ) => ReturnType<typeof getPolishExecutionSnapshotV2>;
   readonly startAttempt: (
     params: Parameters<typeof startPolishProviderAttemptV2>[1],
   ) => ReturnType<typeof startPolishProviderAttemptV2>;
@@ -182,6 +186,11 @@ export interface PolishRouteDepsV2 {
     options?: PolishFinalizeCallOptionsV2,
   ) => Promise<PolishFinalizeResultV2>;
   readonly runtimeTargetResolver: RuntimeTargetResolverV1;
+  readonly runtimeTargetResolverV2?: RuntimeTargetResolverV2;
+  readonly runtimeProvenance?: Readonly<{
+    runtimeBuildId: string;
+    bindingManifestRevision: string;
+  }>;
   readonly resolveProvider: PolishAdapterResolverV2;
   readonly providerSubjectSecret: string;
   readonly routeObservationSecret: string;
@@ -207,16 +216,17 @@ export function createCodeOwnedPolishAdapterResolverV2(
   } = {},
 ): PolishAdapterResolverV2 {
   return (profile) => {
-    let registeredProfile: ProfileExecutionConfigV1;
+    let registeredProfile: ProfileExecutionConfig;
     try {
       // Revalidate at the operational boundary so a crossed profile, adapter,
       // credential, endpoint, or other runtime tuple cannot select a provider.
-      registeredProfile = validateProfileExecutionConfig(profile);
+      registeredProfile = validateVersionedProfileExecutionConfig(profile);
     } catch {
       throw new PolishAdapterUnavailableV2Error();
     }
 
     if (
+      registeredProfile.schemaVersion === "profile_execution_config_v1" &&
       registeredProfile.profileKey ===
         "deepseek.official.deepseek-v4-flash.chat.v1" &&
       registeredProfile.adapterKind === "deepseek_chat_v1"
@@ -227,6 +237,7 @@ export function createCodeOwnedPolishAdapterResolverV2(
       });
     }
     if (
+      registeredProfile.schemaVersion === "profile_execution_config_v1" &&
       registeredProfile.profileKey === "mimo.cn.mimo-v2.5-pro.responses.v1" &&
       registeredProfile.adapterKind === "mimo_responses_v1"
     ) {
@@ -713,13 +724,15 @@ export async function executePolishLifecycleV2(
     return cancelAfterReservation();
   }
 
-  let execution: Awaited<ReturnType<typeof getPolishExecutionSnapshotV1>>;
+  let execution: Awaited<ReturnType<typeof getPolishExecutionSnapshotV2>>;
   try {
     execution = await deps.getExecutionSnapshot({
       reservationId: reservation.reservationId,
       userId: input.authenticatedUserId,
       reserveRoute: reservation.routeSnapshot,
       runtimeTargetResolver: deps.runtimeTargetResolver,
+      runtimeTargetResolverV2:
+        deps.runtimeTargetResolverV2 ?? EMPTY_RUNTIME_TARGET_RESOLVER_V2,
     });
   } catch (error) {
     if (input.signal.aborted) {
@@ -773,10 +786,23 @@ export async function executePolishLifecycleV2(
       now: deps.now,
       sleep: deps.sleep,
       onAttemptStarted: async (started): Promise<ProviderAttemptStartV2> => {
+        const runtimeProvenance =
+          execution.profileExecutionConfig.schemaVersion ===
+          "profile_execution_config_v2"
+            ? deps.runtimeProvenance
+            : undefined;
+        if (
+          execution.profileExecutionConfig.schemaVersion ===
+            "profile_execution_config_v2" &&
+          runtimeProvenance === undefined
+        ) {
+          throw new PolishAdapterUnavailableV2Error();
+        }
         const receipt = await deps.startAttempt({
           reservationId: reservation.reservationId,
           attemptNo: started.attemptNo as 1 | 2,
           expectedRoute: execution.routeSnapshot,
+          runtimeProvenance,
         });
         admittedAttempts += 1;
         return receipt;

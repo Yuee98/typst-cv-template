@@ -32,10 +32,11 @@ const DISABLED_AVAILABILITY = {
 } as const;
 
 describe("CFG-001 successor-compatible membership source", () => {
-  it("keeps every additive I02/I03 routine in the explicit successor manifest", () => {
+  it("keeps every additive Admin/v2 routine in the explicit successor manifest", () => {
     const sources = [
       "20260903000000_admin_read_foundation.sql",
       "20260904000000_ai_provider_binding_v2_expand.sql",
+      "20260904001000_provider_execution_v2_lifecycle.sql",
     ].map((name) => readFileSync(new URL(`../../../supabase/migrations/${name}`, import.meta.url), "utf8"));
     const declared = sources.flatMap((source) => [...source.matchAll(/create function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
     const manifest = new Set<string>(NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1.map(([name]) => name));
@@ -531,6 +532,8 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["guard_ai_profile_provider_v2", "", "f", false, "f4f4c5c4619d78aa1b835b111e85efb38e95753811141f045b3f557e88843dfa"],
   ["guard_ai_profile_binding_v2", "", "f", false, "9ea4480c057aab2e7e1281f7a31b469c2efe4a65c22e2e4933d641f230754e19"],
   ["guard_ai_attempt_binding_v2", "", "f", false, "970e2f61a63627b4a443f3930d10c2a47c106f7a13f3950ce7b2c2822dd4517a"],
+  ["get_ai_polish_execution_snapshot_v2", "p_reservation_id uuid, p_user_id uuid", "f", true, "9a7c2c6d48238c0de187cba4347941dfaa18761a68d1cf3c2c5f4e0a129a170d"],
+  ["start_ai_polish_provider_attempt_v2", "p_reservation_id uuid, p_attempt_no integer, p_runtime_build_id text, p_binding_manifest_revision text", "f", true, "a1b9421dc07731be7fc60555490f512530c2037ad0633b6371276a0095c873bd"],
 ] as const;
 const SUCCESSOR_ROUTINE_VALUES_SQL = NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1
   .map(([name, identityArguments, prokind]) => `('${name}'::text, '${identityArguments}'::text, '${prokind}'::text)`)
@@ -1360,6 +1363,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
               'identityArguments', pg_catalog.pg_get_function_identity_arguments(procedure.oid),
               'prokind', procedure.prokind,
               'prosecdef', procedure.prosecdef,
+              'owner', pg_catalog.pg_get_userbyid(procedure.proowner),
               'definitionSha256', pg_catalog.encode(extensions.digest(${CANONICAL_ROUTINE_DEFINITION_SQL}, 'sha256'), 'hex'),
               'publicExecute', exists (select 1 from aclexplode(coalesce(procedure.proacl, acldefault('f', procedure.proowner))) as acl where acl.grantee = 0 and acl.privilege_type = 'EXECUTE'),
               'anonExecute', pg_catalog.has_function_privilege('anon', procedure.oid, 'EXECUTE'),
@@ -1389,11 +1393,15 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           identityArguments,
           prokind,
           prosecdef,
+          owner: "postgres",
           definitionSha256,
           publicExecute: false,
           anonExecute: false,
           authenticatedExecute: ["admin_get_context_v1", "admin_list_records_v1", "admin_get_record_v1"].includes(name),
-          serviceRoleExecute: false,
+          serviceRoleExecute: [
+            "get_ai_polish_execution_snapshot_v2",
+            "start_ai_polish_provider_attempt_v2",
+          ].includes(name),
         }),
       ),
       publicExecuteRoutines: [],
