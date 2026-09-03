@@ -153,6 +153,8 @@ as $$
          or jsonb_typeof(selected.body -> 'modelLabel') is distinct from 'string'
          or length(selected.body ->> 'providerLabel') not between 1 and 200
          or length(selected.body ->> 'modelLabel') not between 1 and 200
+         or selected.body ->> 'providerLabel' !~ '[^[:space:]]'
+         or selected.body ->> 'modelLabel' !~ '[^[:space:]]'
          or jsonb_typeof(selected.body -> 'blocks') is distinct from 'array'
          or jsonb_array_length(selected.body -> 'blocks') not between 1 and 24
          or exists (
@@ -165,7 +167,9 @@ as $$
                     select array_agg(key order by key)
                     from jsonb_object_keys(block.value) as fields(key)
                   ) is distinct from array['kind', 'text']::text[]
+                  or jsonb_typeof(block.value -> 'text') is distinct from 'string'
                   or length(block.value ->> 'text') not between 1 and 4000
+                  or block.value ->> 'text' !~ '[^[:space:]]'
                 when 'bulletList' then
                   (
                     select array_agg(key order by key)
@@ -178,11 +182,37 @@ as $$
                     from jsonb_array_elements(block.value -> 'items') as item(value)
                     where jsonb_typeof(item.value) is distinct from 'string'
                        or length(item.value #>> '{}') not between 1 and 1000
+                       or item.value #>> '{}' !~ '[^[:space:]]'
                   )
                 else true
               end
          )
-    ),
+    )
+    and (
+      select sum(
+        octet_length(convert_to(selected.body ->> 'providerLabel', 'UTF8'))
+        + octet_length(convert_to(selected.body ->> 'modelLabel', 'UTF8'))
+        + coalesce((
+          select sum(
+            case block.value ->> 'kind'
+              when 'paragraph' then octet_length(
+                convert_to(block.value ->> 'text', 'UTF8')
+              )
+              when 'bulletList' then coalesce((
+                select sum(octet_length(convert_to(item.value #>> '{}', 'UTF8')))
+                from jsonb_array_elements(block.value -> 'items') as item(value)
+              ), 0)
+              else 0
+            end
+          )
+          from jsonb_array_elements(selected.body -> 'blocks') as block(value)
+        ), 0)
+      )
+      from (values ('en'), ('zh')) as languages(code)
+      cross join lateral (
+        select p_content -> languages.code as body
+      ) as selected
+    ) between 1 and 32768,
     false
   );
 $$;
@@ -214,7 +244,6 @@ create table public.ai_legal_display_versions_v2 (
     check (model_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'),
   constraint ai_legal_display_versions_v2_content_check check (
     public.ai_legal_display_content_shape_v2(content)
-    and octet_length(content::text) between 1 and 32768
   ),
   constraint ai_legal_display_versions_v2_hash_check
     check (content_sha256 ~ '^[0-9a-f]{64}$'),

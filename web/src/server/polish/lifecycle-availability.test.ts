@@ -8,6 +8,7 @@ import {
   PolishAvailabilityReadError,
   projectPolishAvailability,
   readPolishAvailabilityV1,
+  readPolishAvailabilityV2,
   type PolishAvailabilityDbResult,
   type PolishAvailabilityDeps,
   type PolishAvailabilityLogEvent,
@@ -36,6 +37,44 @@ const DISABLED = {
   runtimeContractId: null,
   displayDisclosureKey: null,
   termsAccepted: false,
+} as const;
+
+const LEGAL_DISPLAY_V2 = {
+  schemaVersion: "legal_display_v2",
+  displayDisclosureKey: "provider-v2",
+  legalBundleVersion: "legal-bundle-v2",
+  legalManifestId: "provider-manifest-v2",
+  providerId: "00000000-0000-4000-8000-000000000013",
+  recipientKey: "provider-v2",
+  modelId: "configurable-model-v2",
+  contentSha256: "a".repeat(64),
+  factIds: ["fact.provider-v2"],
+  evidenceIds: ["evidence.provider-v2"],
+  en: {
+    providerLabel: "Configured Provider",
+    modelLabel: "Configurable Model V2",
+    blocks: [{ kind: "paragraph", text: "Reviewed English disclosure." }],
+  },
+  zh: {
+    providerLabel: "配置化服务商",
+    modelLabel: "配置化模型 V2",
+    blocks: [{ kind: "bulletList", items: ["已审核的中文披露。"] }],
+  },
+} as const;
+
+const ENABLED_V2 = {
+  ...ENABLED,
+  schemaVersion: "ai_polish_availability_v2",
+  legalBundleVersion: LEGAL_DISPLAY_V2.legalBundleVersion,
+  displayDisclosureKey: LEGAL_DISPLAY_V2.displayDisclosureKey,
+  termsAccepted: false,
+  legalDisplay: LEGAL_DISPLAY_V2,
+} as const;
+
+const DISABLED_V2 = {
+  ...DISABLED,
+  schemaVersion: "ai_polish_availability_v2",
+  legalDisplay: null,
 } as const;
 
 function request(token = "valid-token"): Request {
@@ -85,6 +124,17 @@ describe("availability DB codec", () => {
       decodePolishAvailabilityDbResult({ ...ENABLED, gatewayKind: "direct_deepseek" }),
     ).toThrow();
     expect(() => decodePolishAvailabilityDbResult({ ...DISABLED, reason: "disabled" })).toThrow();
+  });
+
+  it("accepts the exact successor disclosure branches", () => {
+    expect(decodePolishAvailabilityDbResult(ENABLED_V2)).toEqual(ENABLED_V2);
+    expect(decodePolishAvailabilityDbResult(DISABLED_V2)).toEqual(DISABLED_V2);
+    expect(() =>
+      decodePolishAvailabilityDbResult({
+        ...ENABLED_V2,
+        legalDisplay: { ...LEGAL_DISPLAY_V2, endpointUrl: "https://secret.test" },
+      }),
+    ).toThrow();
   });
 
   it("rejects malformed identity, noncanonical bigint and partial runtime states", () => {
@@ -164,6 +214,32 @@ describe("availability disclosure projection", () => {
       })),
     ).toThrow(/mismatched key/);
   });
+
+  it("projects the sealed v2 display without consulting the legacy registry", () => {
+    const resolver = vi.fn();
+    expect(projectPolishAvailability(ENABLED_V2, resolver)).toEqual({
+      enabled: true,
+      configGeneration: ENABLED.configGeneration,
+      routingPolicyVersionId: ENABLED.routingPolicyVersionId,
+      profileVersionId: ENABLED.profileVersionId,
+      legalBundleVersion: LEGAL_DISPLAY_V2.legalBundleVersion,
+      runtimeContractId: ENABLED.runtimeContractId,
+      displayDisclosure: {
+        key: LEGAL_DISPLAY_V2.displayDisclosureKey,
+        providerName: LEGAL_DISPLAY_V2.en.providerLabel,
+        modelName: LEGAL_DISPLAY_V2.en.modelLabel,
+        legalDisplay: LEGAL_DISPLAY_V2,
+      },
+      termsAccepted: false,
+    });
+    expect(resolver).not.toHaveBeenCalled();
+    expect(() =>
+      projectPolishAvailability({
+        ...ENABLED_V2,
+        displayDisclosureKey: "crossed-display-v2",
+      }),
+    ).toThrow(/identity does not match/u);
+  });
 });
 
 describe("availability service-role RPC wrapper", () => {
@@ -173,6 +249,17 @@ describe("availability service-role RPC wrapper", () => {
     await expect(readPolishAvailabilityV1(client, USER_ID)).resolves.toEqual(ENABLED);
     expect(rpc).toHaveBeenCalledOnce();
     expect(rpc).toHaveBeenCalledWith("get_ai_polish_availability_v1", {
+      p_user_id: USER_ID,
+    });
+  });
+
+  it("calls the successor RPC with the same narrow user input", async () => {
+    const rpc = vi.fn(async () => ({ data: ENABLED_V2, error: null }));
+    const client = { rpc } as unknown as Pick<SupabaseClient, "rpc">;
+    await expect(readPolishAvailabilityV2(client, USER_ID)).resolves.toEqual(
+      ENABLED_V2,
+    );
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_availability_v2", {
       p_user_id: USER_ID,
     });
   });
@@ -253,6 +340,16 @@ describe("GET /api/polish/availability", () => {
         latencyMs: 0,
       },
     ]);
+  });
+
+  it("serves a sealed configurable disclosure without a code registry entry", async () => {
+    const mocks = makeDeps(ENABLED_V2);
+    const response = await createPolishAvailabilityHandler(mocks.deps)(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      requestId: REQUEST_ID,
+      availability: projectPolishAvailability(ENABLED_V2),
+    });
   });
 
   it("serves the exact disabled union rather than an AI_DISABLED error", async () => {

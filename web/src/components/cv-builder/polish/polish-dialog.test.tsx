@@ -277,6 +277,53 @@ describe("PolishDialog provider disclosure", () => {
     ).toBe("/ai-terms#provider-annex-mimo-cn-v1");
   });
 
+  it("renders a sealed configurable disclosure inline without a frontend annex switch", () => {
+    renderDialog(
+      makeStubFlow({
+        availabilityCandidate: {
+          ...ENABLED_AVAILABILITY_BODY.availability,
+          legalBundleVersion: "legal-bundle-configurable-v2",
+          displayDisclosure: {
+            key: "configured-provider-v2",
+            providerName: "Configured Provider",
+            modelName: "Configurable Model V2",
+            legalDisplay: {
+              schemaVersion: "legal_display_v2",
+              displayDisclosureKey: "configured-provider-v2",
+              legalBundleVersion: "legal-bundle-configurable-v2",
+              legalManifestId: "configured-provider-manifest-v2",
+              providerId: "00000000-0000-4000-8000-000000000045",
+              recipientKey: "configured-provider",
+              modelId: "configurable-model-v2",
+              contentSha256: "c".repeat(64),
+              factIds: ["fact.configurable-provider-v2"],
+              evidenceIds: ["evidence.configurable-provider-v2"],
+              en: {
+                providerLabel: "Configured Provider",
+                modelLabel: "Configurable Model V2",
+                blocks: [
+                  { kind: "paragraph", text: "Reviewed inline disclosure." },
+                  { kind: "bulletList", items: ["No raw HTML is rendered."] },
+                ],
+              },
+              zh: {
+                providerLabel: "配置化服务商",
+                modelLabel: "配置化模型 V2",
+                blocks: [{ kind: "paragraph", text: "已审核的披露。" }],
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect(screen.getByText(/Configured Provider · Configurable Model V2/u)).toBeTruthy();
+    expect(screen.getByText("Reviewed inline disclosure.")).toBeTruthy();
+    expect(screen.getByText("No raw HTML is rendered.")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: messages.PolishDialog.availability.annex })).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
   it("renders loading, disabled and error states without hiding plaintext disclosure", () => {
     const loading = renderDialog(
       makeStubFlow({ availabilityCandidate: null, availabilityStatus: "loading" }),

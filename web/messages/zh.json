@@ -364,6 +364,7 @@
       "heading": "本次 AI 服务候选接收方",
       "selected": "{provider} · {model}。该候选由服务端路由决定，不是可选项。",
       "annex": "查看该服务商附录",
+      "reviewedDisclosure": "已审核的服务商披露",
       "loading": "正在确认本次处理服务…",
       "disabled": "AI 润色当前未开放，未选择任何接收方。",
       "error": "无法确认本次处理服务。",

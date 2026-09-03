@@ -579,7 +579,7 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects crossed prepared provider objects before DB start or fetch", async () => {
+  it("rejects copied prepared execution objects before DB start or fetch", async () => {
     const fetchA = vi.fn<typeof fetch>();
     const fetchB = vi.fn<typeof fetch>();
     const executionA = preparedExecution(
@@ -587,14 +587,14 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
       "preview-build:a",
       "binding-a",
     );
-    const executionB = preparedExecution(
+    preparedExecution(
       fetchB,
       "preview-build:b",
       "binding-b",
     );
     const crossed = Object.freeze({
       ...executionA,
-      provider: executionB.provider,
+      provider: { complete: vi.fn() },
     }) as PreparedProviderExecutionV2;
     const startAttempt = vi.fn<PolishRouteDepsV2["startAttempt"]>();
     const { deps, controller } = createHarness({

@@ -46,7 +46,9 @@ describe("prepared provider execution v2", () => {
       execution,
       PROFILE,
     );
-    expect(facts.provider).toBe(execution.provider);
+    expect(Object.keys(execution)).toEqual(["schemaVersion"]);
+    expect("provider" in execution).toBe(false);
+    expect(Object.isFrozen(facts.provider)).toBe(true);
     expect(facts.runtimeProvenance).toEqual({
       runtimeBuildId: "test-build:a",
       bindingManifestRevision: "test-binding-a",
@@ -61,13 +63,13 @@ describe("prepared provider execution v2", () => {
       prepare("test-build:a", "test-binding-a"),
       fetchA,
     );
-    const executionB = createPreparedProviderExecutionV2(
+    createPreparedProviderExecutionV2(
       prepare("test-build:b", "test-binding-b"),
       fetchB,
     );
     const crossed = {
       ...executionA,
-      provider: executionB.provider,
+      provider: { complete: vi.fn() },
       runtimeBuildId: "test-build:b",
       bindingManifestRevision: "test-binding-b",
     };
@@ -78,6 +80,21 @@ describe("prepared provider execution v2", () => {
     ).toThrow();
     expect(fetchA).not.toHaveBeenCalled();
     expect(fetchB).not.toHaveBeenCalled();
+  });
+
+  it("does not expose a mutable provider on the branded token", () => {
+    const execution = createPreparedProviderExecutionV2(prepare(), vi.fn());
+    expect(() =>
+      Object.defineProperty(execution, "provider", {
+        value: { complete: vi.fn() },
+      }),
+    ).toThrow();
+    const facts = readPreparedProviderExecutionV2(execution, PROFILE);
+    expect(() =>
+      Object.defineProperty(facts.provider, "complete", {
+        value: vi.fn(),
+      }),
+    ).toThrow();
   });
 
   it("rejects a branded execution when the DB profile differs", () => {

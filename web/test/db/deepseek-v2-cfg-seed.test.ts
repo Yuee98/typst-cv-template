@@ -533,13 +533,19 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["guard_ai_profile_binding_v2", "", "f", false, "9ea4480c057aab2e7e1281f7a31b469c2efe4a65c22e2e4933d641f230754e19"],
   ["guard_ai_attempt_binding_v2", "", "f", false, "c108c352ecf7d56f2aa3f202b9702df94d6e3ca2159806d03192eaffcff0dfee"],
   ["guard_ai_runtime_code_capability_v2", "", "f", false, "c5c468ce0ff7cea295de87f096f1ccadab75313bdb9076fdc57e53822971b263"],
-  ["ai_legal_display_content_shape_v2", "p_content jsonb", "f", false, "00fb99b69a84233b27ea2401ef6fb5f9ac931ed7992d6f147a7a101baab42496"],
+  ["ai_legal_display_content_shape_v2", "p_content jsonb", "f", false, "2c4f1c85c63e24a82a77ee14cb60656b74d80ba0193329801ee1676949255278"],
   ["guard_ai_legal_display_version_v2", "", "f", false, "171aafc2e254045026a53da612b10b13c8a3f6a47c714b72651533123fd155c4"],
   ["guard_ai_current_legal_bundle_v2", "", "f", false, "1b8823594a80f7b71184e1e98b515c1818056cbc795b9a1165498ed853cad444"],
   ["get_ai_current_legal_bundle_v2", "", "f", true, "443163e8aa131fe1dbbf989f3d35053ac8d8c7ecdcd95ea21aa9517fcdee397e"],
   ["guard_ai_runtime_target_binding_v2", "", "f", false, "f8f6df398c6b7c13ab8b0178d076c06014bbaecbd14b5cc67e72723178346dee"],
   ["get_ai_polish_execution_snapshot_v2", "p_reservation_id uuid, p_user_id uuid", "f", true, "db45668b5b53040335b8e68e2d70047ccfcf2e595b6797f83ffd69f441c6bcc6"],
   ["start_ai_polish_provider_attempt_v2", "p_reservation_id uuid, p_attempt_no integer, p_runtime_build_id text, p_binding_manifest_revision text", "f", true, "a1b9421dc07731be7fc60555490f512530c2037ad0633b6371276a0095c873bd"],
+  ["guard_user_ai_legal_acceptance_v2", "", "f", false, "4196ee3f7f9d9dfeb95ad8a3724d9297e00208597898a844c57432cc0080c413"],
+  ["has_accepted_ai_legal_disclosure_v2", "p_user_id uuid, p_legal_bundle_version text, p_display_disclosure_key text", "f", true, "21549d835d5d6165b2da7ba0f1b92cbb879d3305c7affc27723dcc1f878227a7"],
+  ["accept_ai_legal_disclosure_v2", "p_expected_user_id uuid, p_legal_bundle_version text, p_display_disclosure_key text, p_content_sha256 text", "f", true, "c7d7e8ae03ecac2c3a4a266ac35a2d9a7a905442843c082d2a616258aba2a163"],
+  ["get_ai_legal_display_v2", "p_legal_bundle_version text, p_display_disclosure_key text", "f", true, "a2eba11b407d7f33042e5bf3018dec4eb74396e9aba1bbffdc5b0e96e6165109"],
+  ["get_ai_polish_availability_v2", "p_user_id uuid", "f", true, "65764e7c65797c3796d9cb8470e2f00dcefa300285b943016ea8b0d9491bcd2a"],
+  ["guard_ai_request_legal_acceptance_v2", "", "f", true, "b557efe180f29392a48c25ae3494d47c2a28f530242ea676b8ebc06dea508396"],
 ] as const;
 const SUCCESSOR_ROUTINE_VALUES_SQL = NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1
   .map(([name, identityArguments, prokind]) => `('${name}'::text, '${identityArguments}'::text, '${prokind}'::text)`)
@@ -1403,9 +1409,16 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           definitionSha256,
           publicExecute: false,
           anonExecute: false,
-          authenticatedExecute: ["admin_get_context_v1", "admin_list_records_v1", "admin_get_record_v1"].includes(name),
+          authenticatedExecute: [
+            "admin_get_context_v1",
+            "admin_list_records_v1",
+            "admin_get_record_v1",
+            "accept_ai_legal_disclosure_v2",
+          ].includes(name),
           serviceRoleExecute: [
             "get_ai_current_legal_bundle_v2",
+            "get_ai_legal_display_v2",
+            "get_ai_polish_availability_v2",
             "get_ai_polish_execution_snapshot_v2",
             "start_ai_polish_provider_attempt_v2",
           ].includes(name),

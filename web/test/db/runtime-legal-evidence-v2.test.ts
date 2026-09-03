@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { createServiceClient, RUN_DB_TESTS } from "./helpers";
+import {
+  createServiceClient,
+  createTestUser,
+  deleteTestUser,
+  RUN_DB_TESTS,
+  signInAsUser,
+} from "./helpers";
 import {
   INITIAL_LEGAL_BUNDLE_VERSION,
   runOwnerSql,
@@ -107,6 +113,9 @@ describe.skipIf(!RUN_DB_TESTS)("runtime and legal evidence v2", () => {
     for (const content of [
       '{"schemaVersion":"legal_display_content_v2","en":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"html","text":"<p>x</p>"}]},"zh":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"paragraph","text":"z"}]}}',
       '{"schemaVersion":"legal_display_content_v2","en":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"paragraph","text":"z","href":"https://example.com"}]},"zh":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"paragraph","text":"z"}]}}',
+      '{"schemaVersion":"legal_display_content_v2","en":{"providerLabel":" ","modelLabel":"y","blocks":[{"kind":"paragraph","text":"z"}]},"zh":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"paragraph","text":"z"}]}}',
+      '{"schemaVersion":"legal_display_content_v2","en":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"bulletList","items":[" "]}]},"zh":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"paragraph","text":"z"}]}}',
+      `{"schemaVersion":"legal_display_content_v2","en":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"bulletList","items":["${"x".repeat(1_001)}"]}]},"zh":{"providerLabel":"x","modelLabel":"y","blocks":[{"kind":"paragraph","text":"z"}]}}`,
     ]) {
       const failure = runOwnerSql(String.raw`
         begin;
@@ -148,5 +157,189 @@ describe.skipIf(!RUN_DB_TESTS)("runtime and legal evidence v2", () => {
       $$;
     `);
     expect(result.status).toBe(0);
+  });
+
+  it("reads and accepts only the exact current sealed disclosure", async () => {
+    const key = `test-display.${crypto.randomUUID()}`;
+    const content = {
+      schemaVersion: "legal_display_content_v2",
+      en: {
+        providerLabel: "  Synthetic DeepSeek  ",
+        modelLabel: "synthetic-model",
+        blocks: [
+          {
+            kind: "paragraph",
+            text: "  Local database test disclosure. No provider call is made.  ",
+          },
+        ],
+      },
+      zh: {
+        providerLabel: "DeepSeek 本地测试",
+        modelLabel: "synthetic-model",
+        blocks: [
+          {
+            kind: "paragraph",
+            text: "本地数据库测试披露，不会调用 Provider。",
+          },
+        ],
+      },
+    };
+    const encodedContent = JSON.stringify(content).replaceAll("'", "''");
+    const authored = runOwnerSql(String.raw`
+      begin;
+      with content(value) as (values ('${encodedContent}'::jsonb))
+      insert into public.ai_legal_display_versions_v2(
+        display_disclosure_key, legal_bundle_version, legal_manifest_id,
+        provider_id, recipient_key, model_id, content, content_sha256,
+        fact_ids, evidence_ids
+      )
+      select '${key}', '${INITIAL_LEGAL_BUNDLE_VERSION}',
+        'deepseek-official-2026-08-23-v1', '${DEEPSEEK_PROVIDER_ID}',
+        'deepseek', 'synthetic-model', content.value,
+        encode(extensions.digest(convert_to(content.value::text, 'UTF8'), 'sha256'), 'hex'),
+        array['fact.local-exact-consent'], array['evidence.local-exact-consent']
+      from content;
+      update public.ai_legal_display_versions_v2
+      set sealed_at = greatest(clock_timestamp(), created_at)
+      where display_disclosure_key = '${key}';
+      commit;
+    `);
+    expect(authored.status, authored.stderr).toBe(0);
+
+    const display = await service.rpc("get_ai_legal_display_v2", {
+      p_legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+      p_display_disclosure_key: key,
+    });
+    expect(display.error).toBeNull();
+    expect(display.data).toMatchObject({
+      schemaVersion: "legal_display_v2",
+      displayDisclosureKey: key,
+      legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
+      providerId: DEEPSEEK_PROVIDER_ID,
+      recipientKey: "deepseek",
+      modelId: "synthetic-model",
+      en: content.en,
+      zh: content.zh,
+    });
+    const digest = String(display.data.contentSha256);
+
+    const user = await createTestUser(service, "legal-display-v2");
+    const authenticated = await signInAsUser(user);
+    try {
+      const accepted = await authenticated.rpc(
+        "accept_ai_legal_disclosure_v2",
+        {
+          p_expected_user_id: user.id,
+          p_legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+          p_display_disclosure_key: key,
+          p_content_sha256: digest,
+        },
+      );
+      expect(accepted.error).toBeNull();
+      expect(accepted.data).toEqual({
+        schemaVersion: "ai_legal_acceptance_v2",
+        legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
+        displayDisclosureKey: key,
+        contentSha256: digest,
+        accepted: true,
+      });
+
+      const exact = runOwnerSql(String.raw`
+        \pset format unaligned
+        \pset tuples_only on
+        select jsonb_build_object(
+          'exact', (
+            select count(*)
+            from public.user_ai_legal_acceptances_v2
+            where user_id = '${user.id}'
+              and legal_bundle_version = '${INITIAL_LEGAL_BUNDLE_VERSION}'
+              and display_disclosure_key = '${key}'
+              and content_sha256 = '${digest}'
+          ),
+          'compatibility', (
+            select count(*)
+            from public.user_terms_acceptances
+            where user_id = '${user.id}'
+              and document_key = 'ai_terms'
+              and version = '${INITIAL_LEGAL_BUNDLE_VERSION}'
+          )
+        )::text;
+      `);
+      const exactLine = exact.stdout
+        .split(/\r?\n/u)
+        .map((value) => value.trim())
+        .findLast((value) => value.startsWith("{"));
+      expect(JSON.parse(exactLine ?? "null")).toEqual({
+        exact: 1,
+        compatibility: 1,
+      });
+
+      for (const args of [
+        {
+          p_expected_user_id: crypto.randomUUID(),
+          p_legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+          p_display_disclosure_key: key,
+          p_content_sha256: digest,
+        },
+        {
+          p_expected_user_id: user.id,
+          p_legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+          p_display_disclosure_key: key,
+          p_content_sha256: "0".repeat(64),
+        },
+      ]) {
+        const rejected = await authenticated.rpc(
+          "accept_ai_legal_disclosure_v2",
+          args,
+        );
+        expect(rejected.error).not.toBeNull();
+      }
+
+      const serviceCannotAccept = await service.rpc(
+        "accept_ai_legal_disclosure_v2",
+        {
+          p_expected_user_id: user.id,
+          p_legal_bundle_version: INITIAL_LEGAL_BUNDLE_VERSION,
+          p_display_disclosure_key: key,
+          p_content_sha256: digest,
+        },
+      );
+      expect(serviceCannotAccept.error).not.toBeNull();
+
+      const directRead = await authenticated
+        .from("user_ai_legal_acceptances_v2")
+        .select("user_id");
+      expect(directRead.error).not.toBeNull();
+    } finally {
+      await deleteTestUser(service, user.id);
+    }
+
+    const cascaded = runOwnerSql(String.raw`
+      \pset format unaligned
+      \pset tuples_only on
+      select count(*)::text
+      from public.user_ai_legal_acceptances_v2
+      where display_disclosure_key = '${key}';
+    `);
+    expect(cascaded.stdout).toMatch(/\b0\b/u);
+  });
+
+  it("returns a versioned fail-closed availability projection while disabled", async () => {
+    const result = await service.rpc("get_ai_polish_availability_v2", {
+      p_user_id: crypto.randomUUID(),
+    });
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({
+      schemaVersion: "ai_polish_availability_v2",
+      enabled: false,
+      configGeneration: null,
+      routingPolicyVersionId: null,
+      profileVersionId: null,
+      legalBundleVersion: null,
+      runtimeContractId: null,
+      displayDisclosureKey: null,
+      legalDisplay: null,
+      termsAccepted: false,
+    });
   });
 });

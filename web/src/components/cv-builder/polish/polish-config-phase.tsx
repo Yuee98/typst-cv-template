@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
 import { Link } from "@/i18n/navigation";
@@ -11,6 +11,7 @@ import {
   POLISH_STYLE_PRESETS,
   type PolishContextLevel,
 } from "@/lib/polish/contract";
+import { isLegalDisplayV2 } from "@/lib/legal/legal-display-v2";
 import { cn } from "@/lib/utils";
 
 import type { PolishDisclosure } from "./scope-builder";
@@ -86,6 +87,7 @@ export function PolishConfigPhase({ flow }: { flow: PolishFlow }) {
 
 function AvailabilityDisclosure({ flow }: { flow: PolishFlow }) {
   const t = useTranslations("PolishDialog");
+  const locale = useLocale();
   if (!flow.signedIn) return null;
 
   const status = flow.availabilityStatus;
@@ -115,10 +117,16 @@ function AvailabilityDisclosure({ flow }: { flow: PolishFlow }) {
   }
 
   const candidate = flow.availabilityCandidate;
-  const annexHref = candidate
-    ? resolvePolishProviderAnnexHref(candidate.displayDisclosure.key)
+  const display = candidate?.displayDisclosure;
+  const legalDisplay = display && "legalDisplay" in display
+    ? display.legalDisplay
     : null;
-  if (status === "error" || !candidate || !annexHref) {
+  const isV2Display = isLegalDisplayV2(legalDisplay);
+  const annexHref =
+    display && !isV2Display
+      ? resolvePolishProviderAnnexHref(display.key)
+      : null;
+  if (status === "error" || !candidate || !display || (!isV2Display && !annexHref)) {
     return (
       <div
         role="status"
@@ -137,6 +145,14 @@ function AvailabilityDisclosure({ flow }: { flow: PolishFlow }) {
     );
   }
 
+  const localizedDisplay = isV2Display
+    ? legalDisplay[locale.toLowerCase().startsWith("zh") ? "zh" : "en"]
+    : null;
+  const providerName = localizedDisplay?.providerLabel ??
+    display.providerName;
+  const modelName = localizedDisplay?.modelLabel ??
+    display.modelName;
+
   return (
     <div
       role="status"
@@ -146,18 +162,41 @@ function AvailabilityDisclosure({ flow }: { flow: PolishFlow }) {
       <div className="font-medium text-foreground">{t("availability.heading")}</div>
       <p>
         {t("availability.selected", {
-          provider: candidate.displayDisclosure.providerName,
-          model: candidate.displayDisclosure.modelName,
+          provider: providerName,
+          model: modelName,
         })}
       </p>
-      <Link
-        className="rounded-sm font-medium text-accent-soft-foreground hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        href={annexHref}
-        target="_blank"
-        rel="noreferrer"
-      >
-        {t("availability.annex")}
-      </Link>
+      {localizedDisplay ? (
+        <div className="mt-2 space-y-2 rounded-md border border-accent-border bg-surface px-3 py-2 text-foreground-muted">
+          <div className="text-xs font-medium uppercase tracking-wide text-foreground">
+            {t("availability.reviewedDisclosure")}
+          </div>
+          {localizedDisplay.blocks.map((block, index) =>
+            block.kind === "paragraph" ? (
+              <p key={index} className="whitespace-pre-wrap break-words">
+                {block.text}
+              </p>
+            ) : (
+              <ul key={index} className="list-disc space-y-1 pl-5">
+                {block.items.map((item, itemIndex) => (
+                  <li key={itemIndex} className="whitespace-pre-wrap break-words">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            ),
+          )}
+        </div>
+      ) : annexHref ? (
+        <Link
+          className="rounded-sm font-medium text-accent-soft-foreground hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          href={annexHref}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t("availability.annex")}
+        </Link>
+      ) : null}
     </div>
   );
 }

@@ -84,10 +84,14 @@ import type { FieldPath, UseFormReturn } from "react-hook-form";
 
 import type { CvData } from "@/lib/cv/schema";
 import {
+  acceptAiLegalDisclosureV2,
   acceptAiLegalBundle,
   parseKnownAiLegalBundleVersion,
-  type KnownAiLegalBundleVersion,
 } from "@/lib/legal/terms-acceptance";
+import {
+  isLegalDisplayV2,
+  type LegalDisplayV2,
+} from "@/lib/legal/legal-display-v2";
 import {
   polishExpectedRouteFromAvailability,
   polishPostRequestSchema,
@@ -154,7 +158,8 @@ import {
 export interface PolishTermsGateway {
   accept(options: {
     userId: string;
-    legalBundleVersion: KnownAiLegalBundleVersion;
+    legalBundleVersion: string;
+    legalDisplay?: LegalDisplayV2;
   }): Promise<void>;
 }
 
@@ -270,15 +275,54 @@ function sameAvailabilityAuthority(
 ): boolean {
   const leftRoute = polishExpectedRouteFromAvailability(left);
   const rightRoute = polishExpectedRouteFromAvailability(right);
+  const leftDisplay = left.displayDisclosure;
+  const rightDisplay = right.displayDisclosure;
+  const leftLegalDisplay = "legalDisplay" in leftDisplay
+    ? leftDisplay.legalDisplay
+    : null;
+  const rightLegalDisplay = "legalDisplay" in rightDisplay
+    ? rightDisplay.legalDisplay
+    : null;
+  const sameDisplay =
+    leftLegalDisplay && rightLegalDisplay
+      ? JSON.stringify(leftDisplay) === JSON.stringify(rightDisplay)
+      : !leftLegalDisplay &&
+        !rightLegalDisplay &&
+        leftDisplay.key === rightDisplay.key &&
+        leftDisplay.providerName === rightDisplay.providerName &&
+        leftDisplay.modelName === rightDisplay.modelName;
   return (
     leftRoute !== null &&
     rightRoute !== null &&
     sameExpectedRoute(leftRoute, rightRoute) &&
     left.routingPolicyVersionId === right.routingPolicyVersionId &&
-    left.displayDisclosure.key === right.displayDisclosure.key &&
-    left.displayDisclosure.providerName === right.displayDisclosure.providerName &&
-    left.displayDisclosure.modelName === right.displayDisclosure.modelName
+    sameDisplay
   );
+}
+
+function assertSupportedAvailabilityCandidate(
+  candidate: PolishAvailabilityCandidate,
+  requireRenderableDisclosure = true,
+): string | null {
+  const display = candidate.displayDisclosure;
+  const legalDisplay = "legalDisplay" in display ? display.legalDisplay : null;
+  if (legalDisplay && isLegalDisplayV2(legalDisplay)) {
+    if (
+      legalDisplay.legalBundleVersion !== candidate.legalBundleVersion ||
+      legalDisplay.displayDisclosureKey !== display.key
+    ) {
+      throw new Error("availability legal display identity mismatch");
+    }
+    return null;
+  }
+  const version = parseKnownAiLegalBundleVersion(candidate.legalBundleVersion);
+  if (
+    requireRenderableDisclosure &&
+    resolvePolishProviderAnnexHref(display.key) === null
+  ) {
+    throw new Error("enabled availability has an unknown disclosure");
+  }
+  return version;
 }
 
 export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
@@ -376,8 +420,18 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     if (options.termsGateway) return options.termsGateway;
     if (!supabase) return null;
     return {
-      accept: ({ userId, legalBundleVersion }) =>
-        acceptAiLegalBundle(supabase, legalBundleVersion, userId),
+      accept: ({ userId, legalBundleVersion, legalDisplay }) => {
+        if (legalDisplay) {
+          if (legalDisplay.legalBundleVersion !== legalBundleVersion) {
+            throw new Error("AI legal acceptance identity mismatch.");
+          }
+          return acceptAiLegalDisclosureV2(supabase, {
+            expectedUserId: userId,
+            legalDisplay,
+          });
+        }
+        return acceptAiLegalBundle(supabase, legalBundleVersion, userId);
+      },
     };
   }, [options.termsGateway, supabase]);
 
@@ -690,7 +744,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
         if (availabilityGenerationRef.current !== read.generation) return;
 
         if (response.availability.enabled) {
-          parseKnownAiLegalBundleVersion(response.availability.legalBundleVersion);
+          assertSupportedAvailabilityCandidate(response.availability, false);
           const expectedRoute = polishExpectedRouteFromAvailability(response.availability);
           if (!expectedRoute) throw new Error("enabled availability has no expected route");
           setAvailabilityCandidate(response.availability);
@@ -806,21 +860,13 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
           return false;
         }
 
-        parseKnownAiLegalBundleVersion(response.availability.legalBundleVersion);
+        assertSupportedAvailabilityCandidate(response.availability);
         const freshExpectedRoute = polishExpectedRouteFromAvailability(
           response.availability,
         );
         if (!freshExpectedRoute) {
           throw new Error("enabled availability has no expected route");
         }
-        if (
-          resolvePolishProviderAnnexHref(
-            response.availability.displayDisclosure.key,
-          ) === null
-        ) {
-          throw new Error("enabled availability has an unknown disclosure");
-        }
-
         const authorityUnchanged = sameAvailabilityAuthority(
           reviewedCandidate,
           response.availability,
@@ -1012,9 +1058,9 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     if (!scope || !documentId || scopeFailure !== null) return;
     if (!session) return;
     if (availabilityStatus !== "ready" || availabilityCandidate === null) return;
-    if (
-      resolvePolishProviderAnnexHref(availabilityCandidate.displayDisclosure.key) === null
-    ) {
+    try {
+      assertSupportedAvailabilityCandidate(availabilityCandidate);
+    } catch {
       return;
     }
     const publication = availabilityPublicationRef.current;
@@ -1027,9 +1073,20 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     }
     const expectedRoute = polishExpectedRouteFromAvailability(availabilityCandidate);
     if (!expectedRoute) return;
-    let legalBundleVersion: KnownAiLegalBundleVersion;
+    let legalBundleVersion: string;
+    let legalDisplay: LegalDisplayV2 | undefined;
     try {
-      legalBundleVersion = parseKnownAiLegalBundleVersion(expectedRoute.legalBundleVersion);
+      const legacyBundle = assertSupportedAvailabilityCandidate(
+        availabilityCandidate,
+      );
+      if (legacyBundle === null) {
+        const disclosure = availabilityCandidate.displayDisclosure;
+        if (!("legalDisplay" in disclosure)) return;
+        legalDisplay = disclosure.legalDisplay;
+        legalBundleVersion = legalDisplay.legalBundleVersion;
+      } else {
+        legalBundleVersion = legacyBundle;
+      }
     } catch {
       return;
     }
@@ -1086,10 +1143,18 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       const termsGeneration = ++termsGenerationRef.current;
       dispatchTerms({ type: "ACCEPT_START" });
       try {
-        await termsGateway.accept({
-          userId: operation.userId,
-          legalBundleVersion,
-        });
+        await termsGateway.accept(
+          legalDisplay
+            ? {
+                userId: operation.userId,
+                legalBundleVersion,
+                legalDisplay,
+              }
+            : {
+                userId: operation.userId,
+                legalBundleVersion,
+              },
+        );
       } catch {
         // The write failed: report the failure only while this attempt still
         // owns the continuation for the same account — a superseded failure
@@ -1471,7 +1536,14 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     availabilityStatus === "ready" &&
     availabilityCandidate !== null &&
     availabilityPublicationGeneration !== null &&
-    resolvePolishProviderAnnexHref(availabilityCandidate.displayDisclosure.key) !== null &&
+    (() => {
+      try {
+        assertSupportedAvailabilityCandidate(availabilityCandidate);
+        return true;
+      } catch {
+        return false;
+      }
+    })() &&
     // A quota re-read in flight (initial load, or the post-cancel refresh)
     // means the remaining count is unknown/stale: no confirm until it lands.
     quotaStatus !== "loading" &&

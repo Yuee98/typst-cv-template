@@ -364,6 +364,7 @@
       "heading": "Candidate AI service recipient",
       "selected": "{provider} · {model}. This candidate is determined by server routing; it is not a user choice.",
       "annex": "View this provider annex",
+      "reviewedDisclosure": "Reviewed provider disclosure",
       "loading": "Confirming the processing service…",
       "disabled": "AI polish is not available; no recipient is selected.",
       "error": "Could not confirm the processing service.",
