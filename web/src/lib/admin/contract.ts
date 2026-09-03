@@ -64,12 +64,80 @@ export const adminWriteAuthoritySchema = z.strictObject({
 });
 export type AdminWriteAuthority = z.infer<typeof adminWriteAuthoritySchema>;
 
+const safeMutationResultSchema = z.discriminatedUnion("schemaVersion", [
+  z.strictObject({
+    schemaVersion: z.literal("admin_ai_control_result_v1"),
+    aiEnabled: z.boolean(),
+    controlRevision: decimalRevisionSchema,
+    closingCycleId: uuid.nullable(),
+    configGeneration: decimalRevisionSchema,
+    activePolicyVersionId: uuid.nullable(),
+    globalDailyLimit: z.number().int().nonnegative().optional(),
+    lifecycleAuditId: uuid.optional(),
+    validationReportIds: z.array(uuid).min(1).max(32).optional(),
+    readbackReportId: uuid.optional(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal("admin_membership_result_v1"),
+    userId: uuid,
+    enabled: z.boolean(),
+    revision: decimalRevisionSchema,
+  }),
+  z.strictObject({
+    schemaVersion: z.literal("admin_provider_result_v1"),
+    providerId: uuid,
+    revision: decimalRevisionSchema,
+    archived: z.boolean(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal("admin_profile_identity_result_v1"),
+    profileId: uuid,
+    profileKey: codeId,
+    providerId: uuid,
+    retired: z.boolean().optional(),
+    lifecycleAuditId: uuid.optional(),
+    validationReportId: uuid.optional(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal("admin_profile_version_result_v1"),
+    profileVersionId: uuid,
+    profileId: uuid,
+    version: z.number().int().positive(),
+    status: z.enum(["draft", "validated", "canary", "active", "retired"]),
+    configSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    lifecycleAuditId: uuid.optional(),
+    validationReportId: uuid.optional(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal("admin_price_version_result_v1"),
+    priceVersionId: uuid,
+    profileVersionId: uuid,
+    pricingLane: codeId,
+    version: z.number().int().positive(),
+    sealed: z.boolean(),
+    validTo: timestamp.nullable().optional(),
+    lifecycleAuditId: uuid.optional(),
+    validationReportId: uuid.optional(),
+    reviewedDeploymentId: uuid.optional(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal("admin_routing_policy_result_v1"),
+    policyVersionId: uuid,
+    policyKey: codeId,
+    version: z.number().int().positive(),
+    status: z.enum(["draft", "validated", "canary", "active", "retired"]),
+    configSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    lifecycleAuditId: uuid,
+    validationReportIds: z.array(uuid).min(1).max(32),
+  }),
+]);
+
 export const adminCommittedOperationSchema = z.strictObject({
   schemaVersion: z.literal("admin_committed_operation_v1"),
   operationId: uuid,
   operationKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
   idempotencyKey: uuid,
-  result: z.record(z.string(), z.unknown()),
+  result: safeMutationResultSchema,
   auditId: uuid,
   committedAt: timestamp,
 });
@@ -143,6 +211,39 @@ export const adminValidationReportSchema = z.strictObject({
 export type AdminValidationReport = z.infer<
   typeof adminValidationReportSchema
 >;
+
+const mutationReason = z.string().refine((value) => value === value.trim(), "reason must be trimmed").min(1).max(500);
+const idempotencyKey = uuid;
+const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const ids = z.array(uuid).min(1).max(96).refine((values) => new Set(values).size === values.length, "IDs must be unique");
+const policyIds = z.array(uuid).min(1).max(32).refine((values) => new Set(values).size === values.length, "IDs must be unique");
+const codeText = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
+const jsonObject = z.record(z.string(), z.unknown());
+const mutationBase = {
+  reason: mutationReason,
+  idempotencyKey,
+};
+
+export const adminMutationRequestSchema = z.discriminatedUnion("operation", [
+  z.strictObject({ operation: z.literal("disable_ai"), ...mutationBase, expectedControlRevision: revision }),
+  z.strictObject({ operation: z.literal("pointer_set"), ...mutationBase, policyVersionId: uuid, validationReportIds: ids, expectedControlRevision: revision, expectedPolicyVersionId: uuid.nullable(), expectedConfigGeneration: revision }),
+  z.strictObject({ operation: z.literal("pointer_clear"), ...mutationBase, validationReportIds: ids, expectedControlRevision: revision, expectedPolicyVersionId: uuid, expectedConfigGeneration: revision }),
+  z.strictObject({ operation: z.literal("reopen"), ...mutationBase, readbackReportId: uuid, expectedClosingCycleId: uuid, expectedControlRevision: revision, expectedPolicyVersionId: uuid.nullable(), expectedConfigGeneration: revision }),
+  z.strictObject({ operation: z.literal("membership_set"), ...mutationBase, targetUserId: uuid, enabled: z.boolean(), expectedRevision: revision }),
+  z.strictObject({ operation: z.literal("provider_defaults_update"), ...mutationBase, providerId: uuid, displayName: z.string().trim().min(1).max(200), defaultAdapterId: codeText, defaultEndpointUrl: z.string().url().max(512), defaultCredentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), defaultModelId: z.string().min(1).max(200), archived: z.boolean(), expectedRevision: revision }),
+  z.strictObject({ operation: z.literal("provider_profile_create"), ...mutationBase, providerId: uuid, profileKey: codeText, displayName: z.string().trim().min(1).max(200), modelVendor: z.string().trim().min(1).max(200) }),
+  z.strictObject({ operation: z.literal("profile_version_create"), ...mutationBase, profileId: uuid, expectedLatestVersion: revision, adapterId: codeText, wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]), endpointUrl: z.string().url().max(512), credentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), modelId: z.string().min(1).max(200), capabilityContractId: codeText, cachePolicyId: codeText, legalManifestId: codeText, displayDisclosureKey: codeText, config: jsonObject }),
+  z.strictObject({ operation: z.literal("price_version_create"), ...mutationBase, profileVersionId: uuid, pricingLane: codeText, expectedLatestVersion: revision, currency: z.string().regex(/^[A-Z]{3}$/), calculatorKind: z.enum(["linear_token_v1", "openai_gpt56_v1"]), validFrom: timestamp, validTo: timestamp.nullable(), providerEffectiveFrom: timestamp.nullable(), providerEffectiveTo: timestamp.nullable(), sourceUrl: z.string().url().refine((value) => value.startsWith("https://")), sourceCheckedAt: timestamp, sourceSnapshotSha256: z.string().regex(/^[0-9a-f]{64}$/), parameters: jsonObject, components: jsonObject }),
+  z.strictObject({ operation: z.literal("global_daily_limit_set"), ...mutationBase, globalDailyLimit: z.number().int().nonnegative(), expectedGlobalDailyLimit: z.number().int().nonnegative(), expectedControlRevision: revision }),
+  z.strictObject({ operation: z.literal("price_seal"), ...mutationBase, priceVersionId: uuid, runtimeContractId: codeText, reviewedDeploymentId: uuid }),
+  z.strictObject({ operation: z.literal("profile_version_transition"), ...mutationBase, profileVersionId: uuid, toStatus: z.enum(["validated", "canary", "active"]), validationReportId: uuid }),
+  z.strictObject({ operation: z.literal("routing_policy_create"), ...mutationBase, policyKey: codeText, expectedLatestVersion: revision, rules: jsonObject, defaultProfileVersionId: uuid, legalBundleVersion: codeText, runtimeContractId: codeText, validationReportIds: policyIds }),
+  z.strictObject({ operation: z.literal("routing_policy_transition"), ...mutationBase, policyVersionId: uuid, toStatus: z.enum(["validated", "canary", "active", "retired"]), validationReportIds: policyIds }),
+  z.strictObject({ operation: z.literal("price_close"), ...mutationBase, priceVersionId: uuid, validTo: timestamp, successorPriceVersionId: uuid.nullable(), validationReportId: uuid }),
+  z.strictObject({ operation: z.literal("profile_version_retire"), ...mutationBase, profileVersionId: uuid, validationReportId: uuid }),
+  z.strictObject({ operation: z.literal("provider_profile_retire"), ...mutationBase, profileId: uuid, validationReportId: uuid }),
+]);
+export type AdminMutationRequest = z.infer<typeof adminMutationRequestSchema>;
 
 export const adminUserSchema = z.strictObject({
   id: uuid,

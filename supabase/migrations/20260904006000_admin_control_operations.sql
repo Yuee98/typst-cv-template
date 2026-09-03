@@ -876,7 +876,20 @@ begin
      or to_regprocedure('public.admin_set_ai_routing_pointer_v1(text,text,uuid,uuid[],bigint,uuid,bigint,text,uuid)') is null
      or to_regprocedure('public.admin_clear_ai_routing_pointer_v1(text,text,uuid[],bigint,uuid,bigint,text,uuid)') is null
      or to_regprocedure('public.record_admin_runtime_readback_v1(uuid,uuid,uuid[],text,text,text)') is null
-     or to_regprocedure('public.admin_reopen_ai_v1(text,text,uuid,uuid,bigint,uuid,bigint,text,uuid)') is null then
+     or to_regprocedure('public.admin_reopen_ai_v1(text,text,uuid,uuid,bigint,uuid,bigint,text,uuid)') is null
+     or to_regprocedure('public.admin_set_membership_v1(text,text,uuid,boolean,bigint,text,uuid)') is null
+     or to_regprocedure('public.admin_update_provider_defaults_v1(text,text,uuid,text,text,text,text,text,boolean,bigint,text,uuid)') is null
+     or to_regprocedure('public.admin_create_provider_profile_v1(text,text,uuid,text,text,text,text,uuid)') is null
+     or to_regprocedure('public.admin_create_profile_version_v2(text,text,uuid,integer,text,text,text,text,text,text,text,text,text,jsonb,text,uuid)') is null
+     or to_regprocedure('public.admin_create_price_version_v1(text,text,uuid,text,integer,text,text,timestamptz,timestamptz,timestamptz,timestamptz,text,timestamptz,text,jsonb,jsonb,text,uuid)') is null
+     or to_regprocedure('public.admin_set_global_daily_limit_v1(text,text,integer,integer,bigint,text,uuid)') is null
+     or to_regprocedure('public.admin_seal_price_for_activation_v1(text,text,uuid,text,uuid,text,uuid)') is null
+     or to_regprocedure('public.admin_transition_profile_version_v1(text,text,uuid,text,uuid,text,uuid)') is null
+     or to_regprocedure('public.admin_create_routing_policy_v1(text,text,text,integer,jsonb,uuid,text,text,uuid[],text,uuid)') is null
+     or to_regprocedure('public.admin_transition_routing_policy_v1(text,text,uuid,text,uuid[],text,uuid)') is null
+     or to_regprocedure('public.admin_close_price_version_v1(text,text,uuid,timestamptz,uuid,uuid,text,uuid)') is null
+     or to_regprocedure('public.admin_retire_profile_version_v1(text,text,uuid,uuid,text,uuid)') is null
+     or to_regprocedure('public.admin_retire_provider_profile_v1(text,text,uuid,uuid,text,uuid)') is null then
     raise exception 'CUTOVER_SCHEMA_MISMATCH' using errcode = '23514';
   end if;
 
