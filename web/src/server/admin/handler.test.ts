@@ -72,6 +72,76 @@ const committed = {
   auditId: "33333333-3333-4333-8333-333333333333",
   committedAt: "2026-09-04T00:00:00.000Z",
 };
+const analytics = {
+  schemaVersion: "admin_ai_analytics_v1",
+  range: {
+    from: "2026-08-28T00:00:00.000Z",
+    to: "2026-09-04T00:00:00.000Z",
+    timezone: "UTC",
+    retentionDays: 90,
+    retentionBoundary: "2026-06-06T00:00:00.000Z",
+    rangeMayBeTruncated: false,
+    requestTimeField: "reserved_at",
+    attemptTimeField: "started_at",
+  },
+  requests: {
+    total: 3, finalized: 3, succeeded: 2, failedUpstream: 1,
+    invalidOutput: 0, canceled: 0, released: 0, abandoned: 0,
+    retried: 1, latencyP50Ms: 100, latencyP95Ms: 200,
+  },
+  attempts: {
+    total: 4, transmitted: 3, succeeded: 2, failedUpstream: 1,
+    invalidOutput: 0, timedOut: 0, canceled: 0, unknown: 0, unsettled: 1,
+  },
+  usage: {
+    completeRows: 2, incompleteRows: 2, inputCacheReadTokens: "10",
+    inputCacheWriteTokens: "0", inputStandardTokens: "30",
+    outputTokens: "20", reasoningTokens: "0",
+  },
+  costsByCurrency: [],
+  costGroupsTruncated: false,
+  routes: [],
+  routeGroupsTruncated: false,
+};
+const controlState = {
+  schemaVersion: "admin_ai_control_state_v1",
+  aiEnabled: false,
+  globalDailyLimit: 25,
+  activePolicyVersionId: "55555555-5555-4555-8555-555555555555",
+  configGeneration: "8",
+  controlRevision: "12",
+  closingCycleId: "66666666-6666-4666-8666-666666666666",
+  closedAt: "2026-09-04T00:00:00.000Z",
+  reopenedAt: null,
+  writesEnabled: true,
+};
+const runtimeReadbackRequest = {
+  operation: "record_runtime_readback" as const,
+  reviewedDeploymentId: "11111111-1111-4111-8111-111111111111",
+  policyVersionId: "55555555-5555-4555-8555-555555555555",
+  validationReportIds: ["77777777-7777-4777-8777-777777777777"],
+};
+function runtimeReadback() {
+  const checkedAt = new Date(Date.now() - 1_000);
+  return {
+    schemaVersion: "admin_runtime_readback_v1" as const,
+    reportId: "88888888-8888-4888-8888-888888888888",
+    closingCycleId: controlState.closingCycleId,
+    controlRevision: controlState.controlRevision,
+    configGeneration: controlState.configGeneration,
+    policyVersionId: runtimeReadbackRequest.policyVersionId,
+    legalBundleVersion: "legal.bundle.v1",
+    reviewedDeploymentId: runtimeReadbackRequest.reviewedDeploymentId,
+    runtimeBuildId: "build-2026-09-04",
+    bindingManifestRevision: "manifest-2026-09-04",
+    bindingManifestSha256: "a".repeat(64),
+    validationReportIds: runtimeReadbackRequest.validationReportIds,
+    effectiveRoutes: [{ runtimeTargetId: "target.deepseek.v1" }],
+    checkedAt: checkedAt.toISOString(),
+    expiresAt: new Date(checkedAt.getTime() + 9 * 60_000).toISOString(),
+    reportSha256: "b".repeat(64),
+  };
+}
 
 const validationRequest = {
   operation: "validate_runtime_target" as const,
@@ -150,6 +220,10 @@ describe("Admin read HTTP boundary", () => {
     "?section=users&after=bad",
     "?section=users&search=" + "x".repeat(101),
     "?section=overview&limit=1",
+    "?section=analytics&days=0",
+    "?section=analytics&days=32",
+    "?section=analytics&id=11111111-1111-4111-8111-111111111111",
+    "?section=users&days=7",
     "?secret=anything",
   ])("rejects unbounded/unknown query %s", async (query) => {
     const { deps, rpc } = setup();
@@ -169,6 +243,41 @@ describe("Admin read HTTP boundary", () => {
       await (await handleAdminGet(request(), upstream.deps)).json(),
     ).toEqual({ error: { code: "UNAVAILABLE" } });
   });
+  it("returns only the bounded analytics projection", async () => {
+    const setupData = setup(analytics);
+    const response = await handleAdminGet(
+      request("?section=analytics&days=7"),
+      setupData.deps,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(analytics);
+    expect(setupData.rpc).toHaveBeenCalledWith(
+      "admin_get_ai_analytics_v1",
+      expect.objectContaining({
+        p_environment: "local",
+        p_project_ref: "local",
+        p_from: expect.any(String),
+        p_to: expect.any(String),
+      }),
+    );
+  });
+  it("returns the strict runtime control state without list parameters", async () => {
+    const setupData = setup(controlState);
+    const response = await handleAdminGet(
+      request("?section=controls"),
+      setupData.deps,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(controlState);
+    expect(setupData.rpc).toHaveBeenCalledWith(
+      "admin_get_ai_control_state_v1",
+      { p_environment: "local", p_project_ref: "local" },
+    );
+    expect(
+      (await handleAdminGet(request("?section=controls&limit=1"), setupData.deps))
+        .status,
+    ).toBe(400);
+  });
   it("preserves current authorization and environment denials from DB", async () => {
     for (const message of ["FORBIDDEN", "ENVIRONMENT_MISMATCH"]) {
       const { deps } = setup(null, { code: "42501", message });
@@ -186,7 +295,7 @@ describe("Admin mutation HTTP boundary", () => {
       operation: "membership_set",
       targetUserId: "44444444-4444-4444-8444-444444444444",
       enabled: true,
-      expectedRevision: 1,
+      expectedRevision: "1",
       reason: "grant reviewed administrator",
       idempotencyKey: "22222222-2222-4222-8222-222222222222",
     }), setupData.deps);
@@ -195,7 +304,7 @@ describe("Admin mutation HTTP boundary", () => {
     expect(setupData.rpc).toHaveBeenCalledWith("admin_set_membership_v1", expect.objectContaining({
       p_target_user_id: "44444444-4444-4444-8444-444444444444",
       p_enabled: true,
-      p_expected_revision: 1,
+      p_expected_revision: "1",
       p_reason: "grant reviewed administrator",
     }));
   });
@@ -227,7 +336,7 @@ describe("Admin mutation HTTP boundary", () => {
     const response = await handleAdminPost(postRequest({
       operation: "routing_policy_create",
       policyKey: "weekday.v2",
-      expectedLatestVersion: 1,
+      expectedLatestVersion: "1",
       rules,
       defaultProfileVersionId: "88888888-8888-4888-8888-888888888888",
       legalBundleVersion: "2026-09-04.v1",
@@ -241,7 +350,7 @@ describe("Admin mutation HTTP boundary", () => {
       "admin_create_routing_policy_v1",
       expect.objectContaining({
         p_policy_key: "weekday.v2",
-        p_expected_latest_version: 1,
+        p_expected_latest_version: "1",
         p_rules: rules,
         p_validation_report_ids: ["77777777-7777-4777-8777-777777777777"],
       }),
@@ -255,7 +364,7 @@ describe("Admin mutation HTTP boundary", () => {
     });
     const response = await handleAdminPost(postRequest({
       operation: "disable_ai",
-      expectedControlRevision: 0,
+      expectedControlRevision: "0",
       reason: "disable for maintenance",
       idempotencyKey: "22222222-2222-4222-8222-222222222222",
     }), setupData.deps);
@@ -266,8 +375,8 @@ describe("Admin mutation HTTP boundary", () => {
   });
 
   it.each([
-    { operation: "membership_set", targetUserId: "44444444-4444-4444-8444-444444444444", enabled: true, expectedRevision: 1, reason: "x", idempotencyKey: "22222222-2222-4222-8222-222222222222", actor: "forged" },
-    { operation: "global_daily_limit_set", globalDailyLimit: 1, expectedGlobalDailyLimit: 0, expectedControlRevision: 0, reason: "x", idempotencyKey: "bad" },
+    { operation: "membership_set", targetUserId: "44444444-4444-4444-8444-444444444444", enabled: true, expectedRevision: "1", reason: "x", idempotencyKey: "22222222-2222-4222-8222-222222222222", actor: "forged" },
+    { operation: "global_daily_limit_set", globalDailyLimit: 1, expectedGlobalDailyLimit: 0, expectedControlRevision: "0", reason: "x", idempotencyKey: "bad" },
   ])("rejects malformed or extra mutation fields before RPC", async (body) => {
     const setupData = setup(committed);
     const response = await handleAdminPost(postRequest(body), setupData.deps);
@@ -279,7 +388,7 @@ describe("Admin mutation HTTP boundary", () => {
     const setupData = setup({ ...committed, unexpected: true });
     const response = await handleAdminPost(postRequest({
       operation: "disable_ai",
-      expectedControlRevision: 0,
+      expectedControlRevision: "0",
       reason: "disable for maintenance",
       idempotencyKey: "22222222-2222-4222-8222-222222222222",
     }), setupData.deps);
@@ -292,7 +401,7 @@ describe("Admin mutation HTTP boundary", () => {
       operation: "membership_set",
       targetUserId: "44444444-4444-4444-8444-444444444444",
       enabled: true,
-      expectedRevision: 1,
+      expectedRevision: "1",
       reason: "grant reviewed administrator",
       idempotencyKey: "22222222-2222-4222-8222-222222222222",
     }), setupData.deps);
@@ -403,6 +512,49 @@ describe("Admin validation HTTP boundary", () => {
     });
     expect(response.status).toBe(503);
     expect(await response.text()).not.toContain("hidden-value");
+  });
+});
+
+describe("Admin runtime readback HTTP boundary", () => {
+  it("authorizes the Admin before invoking the trusted runtime producer", async () => {
+    const setupData = setup(context);
+    const produceReadback = vi.fn().mockResolvedValue(runtimeReadback());
+    const response = await handleAdminPost(postRequest(runtimeReadbackRequest), {
+      ...setupData.deps,
+      produceReadback,
+    });
+    expect(response.status).toBe(200);
+    expect(setupData.rpc).toHaveBeenCalledWith("admin_get_context_v1", {
+      p_environment: "local",
+      p_project_ref: "local",
+    });
+    expect(produceReadback).toHaveBeenCalledWith({
+      reviewedDeploymentId: runtimeReadbackRequest.reviewedDeploymentId,
+      policyVersionId: runtimeReadbackRequest.policyVersionId,
+      validationReportIds: runtimeReadbackRequest.validationReportIds,
+    });
+    expect(await response.json()).toMatchObject({
+      schemaVersion: "admin_runtime_readback_v1",
+      policyVersionId: runtimeReadbackRequest.policyVersionId,
+    });
+  });
+
+  it("rejects malformed or unsafe readback producer output", async () => {
+    const setupData = setup(context);
+    const invalid = await handleAdminPost(
+      postRequest({ ...runtimeReadbackRequest, validationReportIds: [] }),
+      { ...setupData.deps, produceReadback: vi.fn() },
+    );
+    expect(invalid.status).toBe(400);
+    const unsafe = await handleAdminPost(postRequest(runtimeReadbackRequest), {
+      ...setupData.deps,
+      produceReadback: vi.fn().mockResolvedValue({
+        ...runtimeReadback(),
+        credential: "hidden-value",
+      }),
+    });
+    expect(unsafe.status).toBe(503);
+    expect(await unsafe.text()).not.toContain("hidden-value");
   });
 });
 

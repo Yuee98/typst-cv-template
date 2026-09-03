@@ -2,10 +2,14 @@ import "server-only";
 import {
   ADMIN_ERROR_STATUS,
   adminContextSchema,
+  adminControlStateSchema,
+  adminAnalyticsSchema,
   adminPageSchema,
   adminRecordSectionSchema,
   adminValidationReportSchema,
   adminValidationRequestSchema,
+  adminRuntimeReadbackRequestSchema,
+  adminRuntimeReadbackSchema,
   adminMutationRequestSchema,
   adminCommittedOperationSchema,
   type AdminErrorCode,
@@ -14,6 +18,7 @@ import {
 import { resolveAdminEnvironment, type AdminEnvironment } from "./environment";
 import { createAdminRequestClient } from "./request-client";
 import { produceAdminValidationReport } from "./validation-service";
+import { produceAdminRuntimeReadback } from "./readback-service";
 
 type Client = ReturnType<typeof createAdminRequestClient>;
 interface Dependencies {
@@ -23,11 +28,13 @@ interface Dependencies {
     token: string,
   ): Pick<Client, "auth" | "rpc">;
   produceValidation?: typeof produceAdminValidationReport;
+  produceReadback?: typeof produceAdminRuntimeReadback;
 }
 const defaults: Dependencies = {
   environment: () => resolveAdminEnvironment(process.env),
   client: createAdminRequestClient,
   produceValidation: produceAdminValidationReport,
+  produceReadback: produceAdminRuntimeReadback,
 };
 const headers = { "Cache-Control": "private, no-store", Vary: "Authorization" };
 function fail(code: AdminErrorCode) {
@@ -144,7 +151,7 @@ export async function handleAdminGet(
     );
     if (authError || !auth.user) return fail("UNAUTHORIZED");
     const query = new URL(request.url).searchParams;
-    const allowedKeys = ["section", "limit", "after", "search", "id"];
+    const allowedKeys = ["section", "limit", "after", "search", "id", "days"];
     if (
       [...query.keys()].some(
         (key) => !allowedKeys.includes(key) || query.getAll(key).length !== 1,
@@ -161,6 +168,33 @@ export async function handleAdminGet(
       if (error) return fail(rpcError(error));
       return Response.json(adminContextSchema.parse(data), { headers });
     }
+    if (section === "analytics") {
+      if ([...query.keys()].some((key) => !["section", "days"].includes(key)))
+        return fail("INVALID_REQUEST");
+      const daysText = query.get("days") ?? "7";
+      if (!/^(?:[1-9]|[12][0-9]|3[01])$/.test(daysText))
+        return fail("INVALID_REQUEST");
+      const to = new Date();
+      const from = new Date(to.getTime() - Number(daysText) * 86_400_000);
+      const { data, error } = await client.rpc("admin_get_ai_analytics_v1", {
+        p_environment: env.name,
+        p_project_ref: env.projectRef,
+        p_from: from.toISOString(),
+        p_to: to.toISOString(),
+      });
+      if (error) return fail(rpcError(error));
+      return Response.json(adminAnalyticsSchema.parse(data), { headers });
+    }
+    if (section === "controls") {
+      if ([...query.keys()].some((key) => key !== "section"))
+        return fail("INVALID_REQUEST");
+      const { data, error } = await client.rpc(
+        "admin_get_ai_control_state_v1",
+        base,
+      );
+      if (error) return fail(rpcError(error));
+      return Response.json(adminControlStateSchema.parse(data), { headers });
+    }
     if (!adminRecordSectionSchema.safeParse(section).success)
       return fail("INVALID_REQUEST");
     const id = query.get("id");
@@ -174,6 +208,10 @@ export async function handleAdminGet(
       Number(limitText) > 100 ||
       (after !== null && !uuid.test(after)) ||
       (search !== null && search.length > 100) ||
+      (id === null &&
+        [...query.keys()].some(
+          (key) => !["section", "limit", "after", "search"].includes(key),
+        )) ||
       (id !== null &&
         (!uuid.test(id) ||
           [...query.keys()].some((key) => !["section", "id"].includes(key))))
@@ -234,7 +272,9 @@ export async function handleAdminPost(
     const raw: unknown = JSON.parse(body);
     const mutation = adminMutationRequestSchema.safeParse(raw);
     const validation = adminValidationRequestSchema.safeParse(raw);
-    if (!mutation.success && !validation.success) return fail("INVALID_REQUEST");
+    const readback = adminRuntimeReadbackRequestSchema.safeParse(raw);
+    if (!mutation.success && !validation.success && !readback.success)
+      return fail("INVALID_REQUEST");
     if (mutation.success) {
       const descriptor = mutationRpc[mutation.data.operation];
       const { data, error } = await client.rpc(
@@ -247,13 +287,24 @@ export async function handleAdminPost(
         return fail("UNAVAILABLE");
       return Response.json(result.data, { headers });
     }
-    if (!validation.success) return fail("INVALID_REQUEST");
+    if (!validation.success && !readback.success) return fail("INVALID_REQUEST");
     const { data: context, error: contextError } = await client.rpc(
       "admin_get_context_v1",
       { p_environment: env.name, p_project_ref: env.projectRef },
     );
     if (contextError) return fail(rpcError(contextError));
     adminContextSchema.parse(context);
+    if (readback.success) {
+      const report = await (deps.produceReadback ?? defaults.produceReadback!)({
+        reviewedDeploymentId: readback.data.reviewedDeploymentId,
+        policyVersionId: readback.data.policyVersionId,
+        validationReportIds: readback.data.validationReportIds,
+      });
+      return Response.json(adminRuntimeReadbackSchema.parse(report), {
+        headers,
+      });
+    }
+    if (!validation.success) return fail("INVALID_REQUEST");
     const {
       reviewedDeploymentId,
       runtimeContractId,
