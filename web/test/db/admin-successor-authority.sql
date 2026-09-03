@@ -28,5 +28,11 @@ where n.nspname = 'public'
     'admin_get_record_v1', 'ai_endpoint_shape_v2',
     'guard_ai_provider_directory_v2', 'guard_ai_profile_provider_v2',
     'guard_ai_profile_binding_v2', 'guard_ai_attempt_binding_v2',
-    'get_ai_polish_execution_snapshot_v2', 'start_ai_polish_provider_attempt_v2'
+    'get_ai_polish_execution_snapshot_v2', 'start_ai_polish_provider_attempt_v2',
+    'guard_ai_runtime_code_capability_v2',
+    'ai_legal_display_content_shape_v2',
+    'guard_ai_legal_display_version_v2',
+    'guard_ai_current_legal_bundle_v2',
+    'get_ai_current_legal_bundle_v2',
+    'guard_ai_runtime_target_binding_v2'
   );

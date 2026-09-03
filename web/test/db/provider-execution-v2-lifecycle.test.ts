@@ -18,6 +18,7 @@ const endpoint = "https://api.deepseek.com/chat/completions";
 const credentialEnvName = "AI_PROVIDER_KEY_DEEPSEEK_PRIMARY";
 const runtimeBuildId = "local-test-build";
 const bindingRevision = "local-binding-v1";
+const displayDisclosureKey = `test-display.${profileVersionId.replaceAll("-", "")}`;
 
 describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
   let service: SupabaseClient;
@@ -51,6 +52,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
           'endpoint_url', '${endpoint}',
           'credential_env_name', '${credentialEnvName}',
           'model_id', '${modelId}',
+          'display_disclosure_key', '${displayDisclosureKey}',
           'validated_at', clock_timestamp(),
           'activated_at', clock_timestamp(),
           'retired_at', null
@@ -79,11 +81,118 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
       from public.ai_price_components
       where price_version_id = '${harness.fixture.priceVersionId}';
 
+      update public.ai_service_runtime_target_versions as target
+      set profile_key = profile.profile_key
+      from public.ai_provider_profile_versions as version
+      join public.ai_provider_profiles as profile on profile.id = version.profile_id
+      where version.id = '${profileVersionId}'
+        and target.runtime_target_id in (
+          select membership.runtime_target_id
+          from public.ai_service_runtime_contract_targets as membership
+          where membership.runtime_contract_id = '${reservation.routeSnapshot.runtimeContractId}'
+        );
+
+      update public.ai_service_runtime_contract_targets as membership
+      set profile_key = profile.profile_key
+      from public.ai_provider_profile_versions as version
+      join public.ai_provider_profiles as profile on profile.id = version.profile_id
+      where version.id = '${profileVersionId}'
+        and membership.runtime_contract_id = '${reservation.routeSnapshot.runtimeContractId}';
+
+      with display_content(value) as (
+        values (jsonb_build_object(
+          'schemaVersion', 'legal_display_content_v2',
+          'en', jsonb_build_object(
+            'providerLabel', 'Synthetic DeepSeek test recipient',
+            'modelLabel', '${modelId}',
+            'blocks', jsonb_build_array(jsonb_build_object(
+              'kind', 'paragraph',
+              'text', 'Synthetic local database fixture. No provider request is sent.'
+            ))
+          ),
+          'zh', jsonb_build_object(
+            'providerLabel', 'DeepSeek 本地合成测试接收方',
+            'modelLabel', '${modelId}',
+            'blocks', jsonb_build_array(jsonb_build_object(
+              'kind', 'paragraph',
+              'text', '仅用于本地数据库测试，不会发送 Provider 请求。'
+            ))
+          )
+        ))
+      )
+      insert into public.ai_legal_display_versions_v2(
+        display_disclosure_key, legal_bundle_version, legal_manifest_id,
+        provider_id, recipient_key, model_id, content, content_sha256,
+        fact_ids, evidence_ids, created_at, sealed_at
+      )
+      select
+        '${displayDisclosureKey}', '${reservation.routeSnapshot.legalBundleVersion}',
+        version.legal_manifest_id, profile.provider_id, provider.recipient_key,
+        version.model_id, display_content.value,
+        encode(extensions.digest(convert_to(display_content.value::text, 'UTF8'), 'sha256'), 'hex'),
+        array['fact.synthetic-provider-recipient'],
+        array['evidence.synthetic-local-db'], statement_timestamp(),
+        statement_timestamp()
+      from public.ai_provider_profile_versions as version
+      join public.ai_provider_profiles as profile on profile.id = version.profile_id
+      join public.ai_providers as provider on provider.id = profile.provider_id
+      cross join display_content
+      where version.id = '${profileVersionId}';
+
+      insert into public.ai_runtime_target_bindings_v2(
+        runtime_contract_id, runtime_target_id, runtime_target_sha256,
+        route_descriptor_id, route_descriptor_sha256,
+        profile_version_id, price_version_id, provider_id, recipient_key,
+        code_capability_id, code_capability_sha256,
+        gateway_kind, adapter_kind, wire_api_kind, endpoint_url,
+        credential_env_name, model_id, capability_contract_id,
+        cache_policy_id, calculator_kind, legal_bundle_version,
+        legal_manifest_id, legal_manifest_sha256, display_disclosure_key,
+        external_evidence_ids
+      )
+      select
+        membership.runtime_contract_id, membership.runtime_target_id,
+        membership.runtime_target_sha256, membership.route_descriptor_id,
+        membership.route_descriptor_sha256, version.id, price.id,
+        provider.id, provider.recipient_key, capability.code_capability_id,
+        capability.descriptor_sha256, profile.gateway_kind,
+        version.adapter_kind, version.wire_api_kind, version.endpoint_url,
+        version.credential_env_name, version.model_id,
+        version.capability_contract_id, version.cache_policy_id,
+        price.calculator_kind, '${reservation.routeSnapshot.legalBundleVersion}',
+        membership.legal_manifest_id, membership.manifest_sha256,
+        version.display_disclosure_key,
+        array['evidence.synthetic-local-db']
+      from public.ai_service_runtime_contract_targets as membership
+      join public.ai_provider_profiles as profile
+        on profile.profile_key = membership.profile_key
+      join public.ai_provider_profile_versions as version
+        on version.profile_id = profile.id and version.id = '${profileVersionId}'
+      join public.ai_providers as provider on provider.id = profile.provider_id
+      join public.ai_price_versions as price on price.id = '${priceVersionId}'
+      join public.ai_runtime_code_capabilities_v2 as capability
+        on capability.code_capability_id = 'runtime-capability.deepseek-chat-v1.2026-09-04'
+      where membership.runtime_contract_id = '${reservation.routeSnapshot.runtimeContractId}';
+
+      do $assert_binding$
+      begin
+        if not exists (
+          select 1
+          from public.ai_runtime_target_bindings_v2
+          where runtime_contract_id = '${reservation.routeSnapshot.runtimeContractId}'
+            and profile_version_id = '${profileVersionId}'
+            and price_version_id = '${priceVersionId}'
+        ) then
+          raise exception 'v2 runtime binding fixture was not authored';
+        end if;
+      end
+      $assert_binding$;
+
       update public.ai_request_ledger
       set profile_version_id = '${profileVersionId}',
           price_version_id = '${priceVersionId}',
           model_id = '${modelId}',
-          display_disclosure_key = 'deepseek-official-v1'
+          display_disclosure_key = '${displayDisclosureKey}'
       where reservation_id = '${reservation.reservationId}';
       commit;
     `);
@@ -95,13 +204,49 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
         profileVersionId,
         priceVersionId,
         modelId,
-        displayDisclosureKey: "deepseek-official-v1",
+        displayDisclosureKey,
       },
     };
   });
 
   afterAll(async () => {
+    const restoredRuntimeTarget = runOwnerSql(String.raw`
+      begin;
+      set local session_replication_role = replica;
+      delete from public.ai_runtime_target_bindings_v2
+        where profile_version_id = '${profileVersionId}';
+      update public.ai_service_runtime_target_versions as target
+      set profile_key = profile.profile_key
+      from public.ai_provider_profiles as profile
+      where profile.id = '${harness.fixture.profileId}'
+        and target.runtime_target_id in (
+          select membership.runtime_target_id
+          from public.ai_service_runtime_contract_targets as membership
+          where membership.runtime_contract_id = '${reservation.routeSnapshot.runtimeContractId}'
+        );
+      update public.ai_service_runtime_contract_targets as membership
+      set profile_key = profile.profile_key
+      from public.ai_provider_profiles as profile
+      where profile.id = '${harness.fixture.profileId}'
+        and membership.runtime_contract_id = '${reservation.routeSnapshot.runtimeContractId}';
+      commit;
+    `);
+    expect(
+      restoredRuntimeTarget.status,
+      restoredRuntimeTarget.stderr,
+    ).toBe(0);
     await harness.cleanup();
+    runOwnerSql(String.raw`
+      begin;
+      set local session_replication_role = replica;
+      delete from public.ai_legal_display_versions_v2
+        where display_disclosure_key = '${displayDisclosureKey}';
+      delete from public.ai_price_components
+        where price_version_id = '${priceVersionId}';
+      delete from public.ai_price_versions where id = '${priceVersionId}';
+      delete from public.ai_provider_profile_versions where id = '${profileVersionId}';
+      commit;
+    `);
   });
 
   it("reads, admits, completes and settles one frozen v2 execution", async () => {
@@ -120,6 +265,18 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
         endpointUrl: endpoint,
         credentialEnvName,
         modelId,
+      },
+      runtimeEvidence: {
+        runtimeContractId: reservation.routeSnapshot.runtimeContractId,
+        profileVersionId,
+        priceVersionId,
+        providerId: "706513a5-462b-4bba-93b0-53e50661416e",
+        recipientKey: "deepseek",
+        codeCapabilityId: "runtime-capability.deepseek-chat-v1.2026-09-04",
+        endpointUrl: endpoint,
+        credentialEnvName,
+        modelId,
+        displayDisclosureKey,
       },
     });
 
