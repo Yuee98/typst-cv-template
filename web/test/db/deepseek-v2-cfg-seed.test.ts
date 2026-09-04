@@ -48,10 +48,20 @@ describe("CFG-001 successor-compatible membership source", () => {
       "20260904010000_admin_authoring_reads.sql",
       "20260904011000_admin_ai_analytics.sql",
       "20260904012000_admin_privilege_hardening.sql",
+      "20260904013000_admin_runtime_admission_v2.sql",
+      "20260904014000_admin_runtime_admission_readback_v2.sql",
+      "20260904016000_attempt_admission_receipt_seal.sql",
+      "20260904017000_runtime_authority_receipt_v2.sql",
     ].map((name) => readFileSync(new URL(`../../../supabase/migrations/${name}`, import.meta.url), "utf8"));
     const declared = sources.flatMap((source) => [...source.matchAll(/create function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
     const manifest = new Set<string>(NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1.map(([name]) => name));
-    expect(declared.filter((name) => !name.startsWith("pg_")).filter((name) => !manifest.has(name))).toEqual([]);
+    const retired = new Set(["admin_cutover_authority_v1"]);
+    expect(
+      declared
+        .filter((name) => !name.startsWith("pg_"))
+        .filter((name) => !retired.has(name))
+        .filter((name) => !manifest.has(name)),
+    ).toEqual([]);
   });
 
   it("scopes membership cardinality to the legacy root while retaining exact tuple checks", () => {
@@ -522,9 +532,9 @@ const RUNTIME_ROUTINE_AUTHORITY_V1 = [
 // routines and DB003C migration 20260824005000's authorized replacement of the
 // sole assert_ai_price_structure_v1(uuid) body.
 const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
-  routineCount: 375,
+  routineCount: 374,
   authorityRootSha256:
-    "1397d6ed8535ff83975a9f0e947bd896961619169e617179b83fb5cb1507887e",
+    "d3cdcd8357e159809df663ea47add75d1babb2bb2678bfaf618421add60986bd",
 } as const;
 
 // Post-CFG001 routines are an explicit additive successor surface. The v1
