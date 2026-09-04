@@ -11,7 +11,10 @@ const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptsDir, "..");
 const repoRoot = path.resolve(webRoot, "..");
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
-const DB_CHILD_TIMEOUT_MS = 600_000;
+// The strictly serial real-DB suite includes lock/concurrency scenarios and
+// now spans more than ten minutes on Windows. Keep this below the 35-minute
+// CI job bound while allowing the test process to report its own failures.
+const DB_CHILD_TIMEOUT_MS = 900_000;
 
 function isRequired(env) {
   return env.DB_TESTS_REQUIRED === "1" || env.DB_TESTS_REQUIRED === "true";
@@ -54,8 +57,8 @@ export function validateLocalDatabaseUrl(rawUrl) {
 export function parseSupabaseStatus(stdout) {
   const values = {};
   for (const line of (stdout ?? "").split(/\r?\n/)) {
-    if (line.trim() && !/^[A-Z_]+="[^"]*"$/.test(line.trim())) return null;
-    const match = /^([A-Z_]+)="([^"]*)"$/.exec(line.trim());
+    if (line.trim() && !/^[A-Z][A-Z0-9_]*="[^"]*"$/.test(line.trim())) return null;
+    const match = /^([A-Z][A-Z0-9_]*)="([^"]*)"$/.exec(line.trim());
     if (match) {
       if (match[1] in values) return null;
       values[match[1]] = match[2].trim();

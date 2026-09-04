@@ -46,7 +46,7 @@
 import type { PolishLogEvent, PolishQuotaRouteDeps } from "./lifecycle-types";
 import {
   createPolishAvailabilityHandler,
-  readPolishAvailabilityV1,
+  readPolishAvailabilityV2,
   type PolishAvailabilityDbResult,
   type PolishAvailabilityDeps,
   type PolishAvailabilityLogEvent,
@@ -84,13 +84,15 @@ import {
 import {
   completePolishProviderAttemptV2,
   finalizePolishRequestV2,
-  getPolishExecutionSnapshotV1,
+  getPolishExecutionSnapshotV2,
   getPolishQuota,
   recordPolishRequestCancellationV2,
   reservePolishRequestV2,
   startPolishProviderAttemptV2,
 } from "./quota";
 import { createServerAdminClient } from "@/server/supabase/admin-client";
+import { parseRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
+import { resolveAdminEnvironment } from "../admin/environment";
 
 const env = process.env;
 
@@ -195,9 +197,31 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
   // All provider subjects/route tags are server-keyed so raw identity or
   // correlation values cannot cross boundaries.
   const hmacSecret = requireServerEnv("AI_USER_ID_HMAC_SECRET");
+  // The deployment identity is required only for v2 execution. During the
+  // additive rollout an existing v1 route must keep working before the new
+  // identity variables are configured; v4 returns v1 snapshots before it
+  // consults these nullable fields and fails closed for every v2 snapshot.
+  let runtimeDeploymentIdentity: PolishRouteDepsV2["runtimeDeploymentIdentity"];
+  const hasRuntimeIdentityConfiguration =
+    env.AI_RUNTIME_BUILD_ID !== undefined ||
+    env.AI_PROVIDER_BINDING_MANIFEST !== undefined;
+  if (hasRuntimeIdentityConfiguration) {
+    const deploymentIdentity = parseRuntimeDeploymentIdentityV1(env);
+    const adminEnvironment = resolveAdminEnvironment(env);
+    runtimeDeploymentIdentity = {
+      environment: adminEnvironment.name,
+      projectRef: adminEnvironment.projectRef,
+      runtimeBuildId: deploymentIdentity.buildId,
+      bindingManifestRevision: deploymentIdentity.manifest.revision,
+      bindingManifestSha256: deploymentIdentity.manifestSha256,
+    };
+  } else {
+    runtimeDeploymentIdentity = undefined;
+  }
   const routesV2: PolishRouteDepsV2 = {
+    runtimeDeploymentIdentity,
     reserve: (params) => reservePolishRequestV2(adminClient, params),
-    getExecutionSnapshot: (params) => getPolishExecutionSnapshotV1(adminClient, params),
+    getExecutionSnapshot: (params) => getPolishExecutionSnapshotV2(adminClient, params),
     startAttempt: (params) => startPolishProviderAttemptV2(adminClient, params),
     completeAttempt: (params) => completePolishProviderAttemptV2(adminClient, params),
     recordCancellation: (params) =>
@@ -221,7 +245,7 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
     },
     availability: {
       verifyAccessToken: authDeps.verifyAccessToken,
-      readAvailability: (userId) => readPolishAvailabilityV1(adminClient, userId),
+      readAvailability: (userId) => readPolishAvailabilityV2(adminClient, userId),
       logger: logPolishAvailabilityEvent,
     },
     postV2: {

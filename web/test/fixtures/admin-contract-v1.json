@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "admin_context_v1",
+  "actor": { "userId": "29f045bc-88f1-4d16-a9c7-f105460823c5", "email": "admin@example.test", "revision": "1" },
+  "environment": { "name": "local", "projectRef": "local", "controlPlaneMode": "legacy", "revision": "0" },
+  "features": { "aiEnabled": false, "globalDailyLimit": 50, "allowlistedUsers": 0, "configGeneration": "9007199254740993", "activePolicyVersionId": null, "currentLegalBundle": "2026-08-23-multi-provider-v1" },
+  "capabilities": { "writes": false }
+}

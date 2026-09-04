@@ -29,18 +29,40 @@ on:
       - "web/scripts/run-cfg003-fresh-reset.mjs"
       - "web/scripts/run-db-tests.mjs"
       - "web/scripts/run-db-tests.test.mjs"
+      - "web/scripts/admin-reviewed-deployment-import.mjs"
+      - "web/scripts/admin-reviewed-deployment-import.test.mjs"
+      - "web/scripts/run-admin-e2e-server.mjs"
+      - "web/scripts/run-admin-e2e.mjs"
+      - "web/e2e/**"
+      - "web/playwright.admin.config.ts"
       - "web/vitest.config.mts"
       - "web/src/lib/cv/cloud-storage.ts"
+      - "web/src/lib/legal/legal-display-v2.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
+      - "web/src/lib/admin/**"
+      - "web/src/server/admin/**"
       - "web/src/server/polish/auth.ts"
       - "web/src/server/polish/deepseek-v2-seed-v1.ts"
       - "web/src/server/polish/deepseek-v2-seed-v1.test.ts"
+      - "web/src/server/polish/deepseek.ts"
+      - "web/src/server/polish/mimo.ts"
+      - "web/src/server/polish/execution-snapshot-v2.ts"
+      - "web/src/server/polish/handler-runtime-authority.ts"
+      - "web/src/server/polish/handler.ts"
+      - "web/src/server/polish/legal-display-reader-v2.ts"
+      - "web/src/server/polish/prepared-provider-execution-v2.ts"
+      - "web/src/server/polish/profile-execution-v2.ts"
+      - "web/src/server/polish/provider-binding-v2.ts"
+      - "web/src/server/polish/runtime-code-capability-v2.ts"
+      - "web/src/server/polish/runtime-deployment-v1.ts"
       - "web/src/server/polish/g4-routing-policy-seed-v1.ts"
       - "web/src/server/polish/g4-routing-policy-seed-v1.test.ts"
       - "web/src/server/polish/routing-rules-v1.test.ts"
       - "web/test/fixtures/routing-rules-v1.json"
       - "web/src/server/polish/lifecycle*.ts"
       - "web/src/server/polish/quota.ts"
+      - "web/test/fixtures/admin-contract-v1.json"
+      - "web/test/fixtures/profile-execution-v2.json"
       - "web/test/db/**"
       - "web/vitest.db.config.mts"
   workflow_dispatch:
@@ -52,7 +74,7 @@ jobs:
   db-tests:
     name: Web (real-DB tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     env:
       NEXT_TELEMETRY_DISABLED: "1"
@@ -102,6 +124,12 @@ jobs:
 
       - name: Run CFG-003 fresh-reset gate
         run: node web/scripts/run-cfg003-fresh-reset.mjs
+
+      - name: Install Chromium for Admin Auth E2E
+        run: pnpm --filter web test:e2e:install
+
+      - name: Run local Supabase Admin Auth UI E2E
+        run: pnpm --filter web test:e2e:admin
 
       # Required mode makes status, local-API, and child-process failures hard
       # CI errors. The runner accepts only HTTP loopback endpoints and clears

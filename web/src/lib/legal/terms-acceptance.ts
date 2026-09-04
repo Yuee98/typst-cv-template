@@ -5,6 +5,10 @@ import {
   AI_TERMS_VERSION,
   TERMS_VERSION,
 } from "@/content/legal";
+import {
+  parseLegalDisplayV2,
+  type LegalDisplayV2,
+} from "./legal-display-v2";
 
 export type LegalDocumentKey = "terms" | "ai_terms";
 
@@ -137,4 +141,53 @@ export async function acceptAiLegalBundle(
     );
 
   if (error) throw error;
+}
+
+/**
+ * Successor consent writes the exact sealed disclosure identity through an
+ * authenticated RPC. The DB rechecks the current bundle, user, display key
+ * and content digest and also enforces the same tuple at request insertion.
+ */
+export async function acceptAiLegalDisclosureV2(
+  supabase: SupabaseClient,
+  input: {
+    expectedUserId: string;
+    legalDisplay: LegalDisplayV2;
+  },
+): Promise<void> {
+  if (input.expectedUserId.length === 0) {
+    throw new Error("AI terms acceptance requires an expected user ID.");
+  }
+  const legalDisplay = parseLegalDisplayV2(input.legalDisplay);
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  if (sessionData.session?.user.id !== input.expectedUserId) {
+    throw new Error("Authenticated user changed before AI terms acceptance.");
+  }
+
+  const { data, error } = await supabase.rpc(
+    "accept_ai_legal_disclosure_v2",
+    {
+      p_expected_user_id: input.expectedUserId,
+      p_legal_bundle_version: legalDisplay.legalBundleVersion,
+      p_display_disclosure_key: legalDisplay.displayDisclosureKey,
+      p_content_sha256: legalDisplay.contentSha256,
+    },
+  );
+  if (error) throw error;
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    Array.isArray(data) ||
+    Object.keys(data).sort().join(",") !==
+      "accepted,contentSha256,displayDisclosureKey,legalBundleVersion,schemaVersion" ||
+    data.schemaVersion !== "ai_legal_acceptance_v2" ||
+    data.accepted !== true ||
+    data.legalBundleVersion !== legalDisplay.legalBundleVersion ||
+    data.displayDisclosureKey !== legalDisplay.displayDisclosureKey ||
+    data.contentSha256 !== legalDisplay.contentSha256
+  ) {
+    throw new Error("Invalid AI legal acceptance receipt.");
+  }
 }

@@ -9,6 +9,10 @@ import {
   type ExpectedRouteV1,
   type RuntimeTargetResolverV1,
 } from "./lifecycle-v2-contract";
+import {
+  EMPTY_RUNTIME_TARGET_RESOLVER_V2,
+  type RuntimeTargetResolverV2,
+} from "./execution-snapshot-v2";
 import { isAbortError } from "./lifecycle-settlement";
 import {
   aggregatePolishAttemptFactsV2,
@@ -22,12 +26,19 @@ import {
   type RequestUsageAggregateV2,
 } from "./orchestrator";
 import {
-  validateProfileExecutionConfig,
-  type ProfileExecutionConfigV1,
-} from "./profile-registry";
+  validateVersionedProfileExecutionConfig,
+  type ProfileExecutionConfig,
+} from "./profile-execution-v2";
 import { deriveProviderSubjectIdV2 } from "./provider-subject-v2";
 import {
-  getPolishExecutionSnapshotV1,
+  isPreparedProviderExecutionV2,
+  readPreparedProviderExecutionV2,
+  type PreparedProviderExecutionV2,
+} from "./prepared-provider-execution-v2";
+import type { RuntimeDeploymentAdmissionV2 } from "./runtime-deployment-v1";
+import type { RuntimeExecutionTargetV2 } from "./execution-snapshot-v2";
+import {
+  getPolishExecutionSnapshotV2,
   PolishLifecycleV2RpcError,
   reservePolishRequestV2,
   type PolishFinalizeCallOptionsV2,
@@ -158,16 +169,24 @@ export interface PolishLifecycleV2Input {
 }
 
 export type PolishAdapterResolverV2 = (
-  profile: Readonly<ProfileExecutionConfigV1>,
-) => PolishInferenceProviderV2;
+  profile: Readonly<ProfileExecutionConfig>,
+  target?: Readonly<RuntimeExecutionTargetV2>,
+) => PolishInferenceProviderV2 | PreparedProviderExecutionV2;
 
 export interface PolishRouteDepsV2 {
+  readonly runtimeDeploymentIdentity?: Readonly<{
+    environment: string;
+    projectRef: string;
+    runtimeBuildId: string;
+    bindingManifestRevision: string;
+    bindingManifestSha256: string;
+  }>;
   readonly reserve: (
     params: Parameters<typeof reservePolishRequestV2>[1],
   ) => ReturnType<typeof reservePolishRequestV2>;
   readonly getExecutionSnapshot: (
-    params: Parameters<typeof getPolishExecutionSnapshotV1>[1],
-  ) => ReturnType<typeof getPolishExecutionSnapshotV1>;
+    params: Parameters<typeof getPolishExecutionSnapshotV2>[1],
+  ) => ReturnType<typeof getPolishExecutionSnapshotV2>;
   readonly startAttempt: (
     params: Parameters<typeof startPolishProviderAttemptV2>[1],
   ) => ReturnType<typeof startPolishProviderAttemptV2>;
@@ -182,6 +201,7 @@ export interface PolishRouteDepsV2 {
     options?: PolishFinalizeCallOptionsV2,
   ) => Promise<PolishFinalizeResultV2>;
   readonly runtimeTargetResolver: RuntimeTargetResolverV1;
+  readonly runtimeTargetResolverV2?: RuntimeTargetResolverV2;
   readonly resolveProvider: PolishAdapterResolverV2;
   readonly providerSubjectSecret: string;
   readonly routeObservationSecret: string;
@@ -206,17 +226,22 @@ export function createCodeOwnedPolishAdapterResolverV2(
     fetch?: typeof fetch;
   } = {},
 ): PolishAdapterResolverV2 {
-  return (profile) => {
-    let registeredProfile: ProfileExecutionConfigV1;
+  return (profile, target) => {
+    let registeredProfile: ProfileExecutionConfig;
     try {
       // Revalidate at the operational boundary so a crossed profile, adapter,
       // credential, endpoint, or other runtime tuple cannot select a provider.
-      registeredProfile = validateProfileExecutionConfig(profile);
+      registeredProfile = validateVersionedProfileExecutionConfig(profile);
     } catch {
       throw new PolishAdapterUnavailableV2Error();
     }
 
+    if (registeredProfile.schemaVersion === "profile_execution_config_v2" && target !== undefined) {
+      throw new PolishAdapterUnavailableV2Error();
+    }
+
     if (
+      registeredProfile.schemaVersion === "profile_execution_config_v1" &&
       registeredProfile.profileKey ===
         "deepseek.official.deepseek-v4-flash.chat.v1" &&
       registeredProfile.adapterKind === "deepseek_chat_v1"
@@ -227,6 +252,7 @@ export function createCodeOwnedPolishAdapterResolverV2(
       });
     }
     if (
+      registeredProfile.schemaVersion === "profile_execution_config_v1" &&
       registeredProfile.profileKey === "mimo.cn.mimo-v2.5-pro.responses.v1" &&
       registeredProfile.adapterKind === "mimo_responses_v1"
     ) {
@@ -713,13 +739,18 @@ export async function executePolishLifecycleV2(
     return cancelAfterReservation();
   }
 
-  let execution: Awaited<ReturnType<typeof getPolishExecutionSnapshotV1>>;
+  let execution: Awaited<ReturnType<typeof getPolishExecutionSnapshotV2>>;
   try {
     execution = await deps.getExecutionSnapshot({
       reservationId: reservation.reservationId,
       userId: input.authenticatedUserId,
       reserveRoute: reservation.routeSnapshot,
       runtimeTargetResolver: deps.runtimeTargetResolver,
+      runtimeTargetResolverV2:
+        deps.runtimeTargetResolverV2 ?? EMPTY_RUNTIME_TARGET_RESOLVER_V2,
+      ...(deps.runtimeDeploymentIdentity
+        ? { runtimeIdentity: deps.runtimeDeploymentIdentity }
+        : {}),
     });
   } catch (error) {
     if (input.signal.aborted) {
@@ -747,9 +778,53 @@ export async function executePolishLifecycleV2(
   }
 
   let provider: PolishInferenceProviderV2;
+  let runtimeProvenance:
+    | Readonly<{
+        runtimeBuildId: string;
+        bindingManifestRevision: string;
+      }>
+    | undefined;
+  let runtimeAdmission: Readonly<RuntimeDeploymentAdmissionV2> | undefined;
   let providerSubjectId: string;
   try {
-    provider = deps.resolveProvider(execution.profileExecutionConfig);
+    const resolution = deps.resolveProvider(
+      execution.profileExecutionConfig,
+      execution.schemaVersion === "ai_polish_execution_snapshot_v2"
+        ? {
+            schemaVersion: "runtime_execution_target_v2",
+            runtimeContractId: execution.runtimeEvidence.runtimeContractId,
+            legalBundleVersion: execution.routeSnapshot.legalBundleVersion,
+            profileVersionId: execution.routeSnapshot.profileVersionId,
+            profile: execution.profileExecutionConfig,
+            evidence: execution.runtimeEvidence,
+            deploymentValidation: execution.deploymentValidation,
+          }
+        : undefined,
+    );
+    if (
+      execution.profileExecutionConfig.schemaVersion ===
+      "profile_execution_config_v2"
+    ) {
+      const prepared = readPreparedProviderExecutionV2(
+        resolution,
+        execution.profileExecutionConfig,
+      );
+      provider = prepared.provider;
+      runtimeProvenance = prepared.runtimeProvenance;
+      if (
+        execution.schemaVersion !== "ai_polish_execution_snapshot_v2" ||
+        execution.deploymentValidation.schemaVersion !==
+          "runtime_deployment_admission_v2"
+      ) {
+        throw new PolishAdapterUnavailableV2Error();
+      }
+      runtimeAdmission = execution.deploymentValidation;
+    } else {
+      if (isPreparedProviderExecutionV2(resolution)) {
+        throw new PolishAdapterUnavailableV2Error();
+      }
+      provider = resolution;
+    }
     providerSubjectId = deriveProviderSubjectIdV2({
       profileVersionId: execution.routeSnapshot.profileVersionId,
       authenticatedUserId: input.authenticatedUserId,
@@ -773,10 +848,19 @@ export async function executePolishLifecycleV2(
       now: deps.now,
       sleep: deps.sleep,
       onAttemptStarted: async (started): Promise<ProviderAttemptStartV2> => {
+        if (
+          execution.profileExecutionConfig.schemaVersion ===
+            "profile_execution_config_v2" &&
+          runtimeProvenance === undefined
+        ) {
+          throw new PolishAdapterUnavailableV2Error();
+        }
         const receipt = await deps.startAttempt({
           reservationId: reservation.reservationId,
           attemptNo: started.attemptNo as 1 | 2,
           expectedRoute: execution.routeSnapshot,
+          runtimeProvenance,
+          runtimeAdmission,
         });
         admittedAttempts += 1;
         return receipt;

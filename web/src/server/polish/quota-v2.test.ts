@@ -3,14 +3,17 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import fixture from "../../../test/fixtures/ai-runtime-execution-contract-v1.json";
+import profileV2Fixture from "../../../test/fixtures/profile-execution-v2.json";
 import { resolveEndpoint } from "./adapter-registry";
 import { parseRouteSnapshotV1, type ExpectedRouteV1 } from "./lifecycle-v2-contract";
 import type { PolishAttemptCompletedFactV2 } from "./orchestrator";
 import { resolveProfile } from "./profile-registry";
+import { validateProfileExecutionConfigV2 } from "./profile-execution-v2";
 import {
   completePolishProviderAttemptV2,
   finalizePolishRequestV2,
   getPolishExecutionSnapshotV1,
+  getPolishExecutionSnapshotV2,
   POLISH_ATTEMPT_FAILURE_STAGES_V2,
   PolishLifecycleV2RpcError,
   recordPolishRequestCancellationV2,
@@ -56,6 +59,79 @@ const executionSuccess = structuredClone(fixture.executionSnapshot.successes[0].
 const RESERVATION_ID = executionSuccess.reservationId;
 const ROUTE = parseRouteSnapshotV1(executionSuccess.routeSnapshot);
 const PROFILE = resolveProfile("deepseek.official.deepseek-v4-flash.chat.v1");
+const PROFILE_V2 = validateProfileExecutionConfigV2({
+  ...profileV2Fixture.deepseek,
+  legalManifestId: PROFILE.legalManifestId,
+  displayDisclosureKey: ROUTE.displayDisclosureKey,
+});
+const ROUTE_V2 = parseRouteSnapshotV1({
+  ...ROUTE,
+  modelId: PROFILE_V2.modelId,
+});
+const RUNTIME_EVIDENCE_V2 = Object.freeze({
+  schemaVersion: "runtime_execution_evidence_v2",
+  runtimeContractId: ROUTE_V2.runtimeContractId,
+  runtimeTargetId: "runtime-target.deepseek-v2.test",
+  runtimeTargetSha256:
+    "1000000000000000000000000000000000000000000000000000000000000000",
+  routeDescriptorId: "route-descriptor.deepseek-v2.test",
+  routeDescriptorSha256:
+    "2000000000000000000000000000000000000000000000000000000000000000",
+  profileVersionId: ROUTE_V2.profileVersionId,
+  priceVersionId: ROUTE_V2.priceVersionId,
+  providerId: PROFILE_V2.providerId,
+  recipientKey: "deepseek",
+  codeCapabilityId: "runtime-capability.deepseek-chat-v1.2026-09-04",
+  codeCapabilitySha256:
+    "4e5a92750f77f148e6422dcf05b03d99333b357879dba5fdb7248d16dd08bdf2",
+  gatewayKind: PROFILE_V2.gatewayKind,
+  adapterKind: PROFILE_V2.adapterKind,
+  wireApiKind: PROFILE_V2.wireApiKind,
+  endpointUrl: PROFILE_V2.endpointUrl,
+  credentialEnvName: PROFILE_V2.credentialEnvName,
+  modelId: PROFILE_V2.modelId,
+  capabilityContractId: PROFILE_V2.capabilityContractId,
+  cachePolicyId: PROFILE_V2.cachePolicyId,
+  calculatorKind: PROFILE_V2.calculatorKind,
+  legalBundleVersion: ROUTE_V2.legalBundleVersion,
+  legalManifestId: PROFILE_V2.legalManifestId,
+  legalManifestSha256:
+    "3000000000000000000000000000000000000000000000000000000000000000",
+  displayDisclosureKey: ROUTE_V2.displayDisclosureKey,
+  externalEvidenceIds: ["evidence.deepseek-v2.test"],
+});
+const RUNTIME_DEPLOYMENT_ADMISSION_V2 = Object.freeze({
+  schemaVersion: "runtime_deployment_admission_v2",
+  admissionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee0",
+  reviewedDeploymentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
+  validationReportId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+  environment: "local",
+  projectRef: "local",
+  runtimeBuildId: "local-test-build",
+  bindingManifestRevision: "local-test-manifest",
+  bindingManifestSha256: "4".repeat(64),
+  admissionRevision: "1",
+  targetSetSha256: "6".repeat(64),
+  runtimeContractId: RUNTIME_EVIDENCE_V2.runtimeContractId,
+  runtimeTargetId: RUNTIME_EVIDENCE_V2.runtimeTargetId,
+  runtimeTargetSha256: RUNTIME_EVIDENCE_V2.runtimeTargetSha256,
+  profileVersionId: RUNTIME_EVIDENCE_V2.profileVersionId,
+  priceVersionId: RUNTIME_EVIDENCE_V2.priceVersionId,
+  providerId: RUNTIME_EVIDENCE_V2.providerId,
+  codeCapabilityId: RUNTIME_EVIDENCE_V2.codeCapabilityId,
+  codeCapabilitySha256: RUNTIME_EVIDENCE_V2.codeCapabilitySha256,
+  legalBundleVersion: RUNTIME_EVIDENCE_V2.legalBundleVersion,
+  legalManifestId: RUNTIME_EVIDENCE_V2.legalManifestId,
+  displayDisclosureKey: RUNTIME_EVIDENCE_V2.displayDisclosureKey,
+});
+const executionSuccessV2 = Object.freeze({
+  ...executionSuccess,
+  schemaVersion: "ai_polish_execution_snapshot_v2",
+  routeSnapshot: ROUTE_V2,
+  profileExecutionConfig: PROFILE_V2,
+  runtimeEvidence: RUNTIME_EVIDENCE_V2,
+  deploymentValidation: RUNTIME_DEPLOYMENT_ADMISSION_V2,
+});
 const MIMO_PROFILE = resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1");
 const DEEPSEEK_ENDPOINT = resolveEndpoint(PROFILE.endpointAlias).url;
 const EXPECTED_ROUTE: ExpectedRouteV1 = Object.freeze({
@@ -321,9 +397,145 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
       reason: "RUNTIME_TARGET_UNAVAILABLE",
     });
   });
+
+  it("never falls back to the short-lived v3 RPC when runtime identity is absent", async () => {
+    const unavailable = {
+      schemaVersion: "ai_polish_execution_snapshot_v1",
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
+    };
+    const { client, rpc } = sequenceClient({ data: unavailable });
+    await expect(
+      getPolishExecutionSnapshotV2(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE_V2,
+        runtimeTargetResolver: () => true,
+        runtimeTargetResolverV2: () => true,
+      }),
+    ).rejects.toMatchObject({
+      kind: "SNAPSHOT_UNAVAILABLE",
+      reason: "SERVICE_UNAVAILABLE",
+    });
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v4", {
+      p_reservation_id: RESERVATION_ID,
+      p_user_id: USER_ID,
+      p_environment: null,
+      p_project_ref: null,
+      p_runtime_build_id: null,
+      p_binding_manifest_revision: null,
+      p_binding_manifest_sha256: null,
+    });
+  });
+
+  it("preserves a v1 snapshot through v4 when runtime identity is absent", async () => {
+    const { client, rpc } = sequenceClient({ data: executionSuccess });
+    await expect(
+      getPolishExecutionSnapshotV2(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE,
+        runtimeTargetResolver: () => true,
+        runtimeTargetResolverV2: () => false,
+      }),
+    ).resolves.toEqual(executionSuccess);
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v4", {
+      p_reservation_id: RESERVATION_ID,
+      p_user_id: USER_ID,
+      p_environment: null,
+      p_project_ref: null,
+      p_runtime_build_id: null,
+      p_binding_manifest_revision: null,
+      p_binding_manifest_sha256: null,
+    });
+  });
+
+  it("reports a rejected v2 runtime target as unavailable authority", async () => {
+    const { client } = sequenceClient({ data: executionSuccessV2 });
+    const error = await capturedError(
+      getPolishExecutionSnapshotV2(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE_V2,
+        runtimeTargetResolver: () => true,
+        runtimeTargetResolverV2: () => false,
+      }),
+    );
+    expect(error).toMatchObject({
+      kind: "SNAPSHOT_UNAVAILABLE",
+      reason: "RUNTIME_TARGET_UNAVAILABLE",
+    });
+  });
+
+  it("uses the exact admitted deployment identity for ordinary v2 snapshots", async () => {
+    const { client, rpc } = sequenceClient({ data: executionSuccessV2 });
+    await expect(
+      getPolishExecutionSnapshotV2(client, {
+        reservationId: RESERVATION_ID,
+        userId: USER_ID,
+        reserveRoute: ROUTE_V2,
+        runtimeTargetResolver: () => true,
+        runtimeTargetResolverV2: () => true,
+        runtimeIdentity: {
+          environment: "local",
+          projectRef: "local",
+          runtimeBuildId: "build-a",
+          bindingManifestRevision: "binding-a",
+          bindingManifestSha256: "a".repeat(64),
+        },
+      }),
+    ).resolves.toEqual(executionSuccessV2);
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v4", expect.objectContaining({
+      p_environment: "local",
+      p_project_ref: "local",
+      p_runtime_build_id: "build-a",
+      p_binding_manifest_revision: "binding-a",
+      p_binding_manifest_sha256: "a".repeat(64),
+    }));
+  });
 });
 
 describe("RT-009 V2 attempt admission", () => {
+  it("freezes the durable runtime admission through the successor start RPC", async () => {
+    const { client, rpc } = sequenceClient({ data: attemptStart() });
+    const runtimeAdmission = {
+      ...RUNTIME_DEPLOYMENT_ADMISSION_V2,
+      runtimeBuildId: "preview-build:abc123",
+      bindingManifestRevision: "binding-v1",
+    };
+    await expect(
+      startPolishProviderAttemptV2(client, {
+        reservationId: RESERVATION_ID,
+        attemptNo: 1,
+        expectedRoute: ROUTE,
+        runtimeProvenance: {
+          runtimeBuildId: "preview-build:abc123",
+          bindingManifestRevision: "binding-v1",
+        },
+        runtimeAdmission,
+      }),
+    ).resolves.toEqual(attemptStart());
+    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v4", {
+      p_reservation_id: RESERVATION_ID,
+      p_attempt_no: 1,
+      p_runtime_admission: runtimeAdmission,
+    });
+  });
+
+  it("rejects V2 provenance without the exact durable admission receipt", async () => {
+    const { client, rpc } = sequenceClient({ data: attemptStart() });
+    await expect(startPolishProviderAttemptV2(client, {
+      reservationId: RESERVATION_ID,
+      attemptNo: 1,
+      expectedRoute: ROUTE,
+      runtimeProvenance: {
+        runtimeBuildId: "preview-build:abc123",
+        bindingManifestRevision: "binding-v1",
+      },
+    })).rejects.toMatchObject({ kind: "LOCAL_CONTRACT_REJECTED" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("returns a fresh exact start receipt without replay", async () => {
     const { client, rpc } = sequenceClient({ data: attemptStart() });
     await expect(
@@ -334,6 +546,11 @@ describe("RT-009 V2 attempt admission", () => {
       }),
     ).resolves.toEqual(attemptStart());
     expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v4", {
+      p_reservation_id: RESERVATION_ID,
+      p_attempt_no: 1,
+      p_runtime_admission: null,
+    });
   });
 
   it("rejects a first-observation replay and never retries or authorizes transmission", async () => {
@@ -476,6 +693,24 @@ describe("RT-009 V2 durable cancellation observation", () => {
 });
 
 describe("RT-009 V2 terminal attempt persistence", () => {
+  it("validates the frozen v2 endpoint without duplicating it into legacy observation", () => {
+    const payload = serializePolishAttemptCompletionV2({
+      attempt: attemptStart({ routeSnapshot: ROUTE_V2 }),
+      fact: completedFact({
+        route: {
+          ...completedFact().route,
+          actualUpstreamEndpoint: PROFILE_V2.endpointUrl,
+          actualModelId: PROFILE_V2.modelId,
+        },
+      }),
+      profileExecutionConfig: PROFILE_V2,
+      billingCurrency: "CNY",
+      routeObservationSecret: "route-secret",
+    });
+    expect(payload.p_route.actual_upstream_endpoint).toBeNull();
+    expect(payload.p_route.actual_model_id).toBe(PROFILE_V2.modelId);
+  });
+
   it("serializes exact usage, tagged route, cost reconciliation, and metadata", () => {
     const payload = serializePolishAttemptCompletionV2({
       attempt: attemptStart(),

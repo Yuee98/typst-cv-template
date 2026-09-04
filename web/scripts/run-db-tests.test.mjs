@@ -15,6 +15,7 @@ const GOOD_STATUS = [
   'API_URL="http://127.0.0.1:54321"',
   'PUBLISHABLE_KEY="publishable-test-key"',
   'SECRET_KEY="secret-test-key"',
+  'S3_PROTOCOL_REGION="local"',
 ].join("\n");
 
 const INVALID_SUPABASE_PROJECT_CONFIGS = [
@@ -196,7 +197,7 @@ function freshHarness({
   };
 }
 
-const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-cfg003-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/g4-routing-policy-seed-v1.ts", "web/src/server/polish/g4-routing-policy-seed-v1.test.ts", "web/src/server/polish/routing-rules-v1.test.ts", "web/test/fixtures/routing-rules-v1.json", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/db/**", "web/vitest.db.config.mts"];
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-cfg003-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/scripts/admin-reviewed-deployment-import.mjs", "web/scripts/admin-reviewed-deployment-import.test.mjs", "web/scripts/run-admin-e2e-server.mjs", "web/scripts/run-admin-e2e.mjs", "web/e2e/**", "web/playwright.admin.config.ts", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/legal-display-v2.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/lib/admin/**", "web/src/server/admin/**", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/deepseek.ts", "web/src/server/polish/mimo.ts", "web/src/server/polish/execution-snapshot-v2.ts", "web/src/server/polish/handler-runtime-authority.ts", "web/src/server/polish/handler.ts", "web/src/server/polish/legal-display-reader-v2.ts", "web/src/server/polish/prepared-provider-execution-v2.ts", "web/src/server/polish/profile-execution-v2.ts", "web/src/server/polish/provider-binding-v2.ts", "web/src/server/polish/runtime-code-capability-v2.ts", "web/src/server/polish/runtime-deployment-v1.ts", "web/src/server/polish/g4-routing-policy-seed-v1.ts", "web/src/server/polish/g4-routing-policy-seed-v1.test.ts", "web/src/server/polish/routing-rules-v1.test.ts", "web/test/fixtures/routing-rules-v1.json", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/fixtures/admin-contract-v1.json", "web/test/fixtures/profile-execution-v2.json", "web/test/db/**", "web/vitest.db.config.mts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
@@ -224,7 +225,7 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(jobIds).toEqual(["db-tests"]);
   const directJob = jobLines.filter((line) => /^    [^\s#][^:]*:/.test(line));
   expect(directJob.map((line) => line.trim().split(":")[0])).toEqual(["name", "runs-on", "timeout-minutes", "env", "steps"]);
-  expect(directJob).toEqual(expect.arrayContaining(["    name: Web (real-DB tests)", "    runs-on: ubuntu-latest", "    timeout-minutes: 20"]));
+  expect(directJob).toEqual(expect.arrayContaining(["    name: Web (real-DB tests)", "    runs-on: ubuntu-latest", "    timeout-minutes: 35"]));
   const envDeclarations = jobLines.filter((line) => line === "    env:");
   expect(envDeclarations).toHaveLength(1);
   const envAt = jobLines.indexOf("    env:");
@@ -241,7 +242,8 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(steps.map((step) => step.name)).toEqual([
     "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
     "Install dependencies", "Verify DB test runner contract (credential-free)",
-    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run CFG-003 fresh-reset gate", "Run real-DB suite",
+    "Start local Supabase", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run CFG-003 fresh-reset gate",
+    "Install Chromium for Admin Auth E2E", "Run local Supabase Admin Auth UI E2E", "Run real-DB suite",
   ]);
   const commands = {
     runner: "pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs",
@@ -249,6 +251,8 @@ function assertWorkflowContract(workflow, normalConfig) {
     cfg001Fresh: "pnpm --filter web test:db:cfg001-fresh",
     cfg002Fresh: "node web/scripts/run-cfg002-fresh-reset.mjs",
     cfg003Fresh: "node web/scripts/run-cfg003-fresh-reset.mjs",
+    e2eInstall: "pnpm --filter web test:e2e:install",
+    e2e: "pnpm --filter web test:e2e:admin",
     full: "pnpm --filter web test:db",
   };
   const find = (command) => steps.map((step, index) => ({ step, index })).filter(({ step }) => step.run === command);
@@ -258,6 +262,9 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(indexes.start).toBeLessThan(indexes.cfg001Fresh);
   expect(indexes.cfg001Fresh).toBeLessThan(indexes.cfg002Fresh);
   expect(indexes.cfg002Fresh).toBeLessThan(indexes.cfg003Fresh);
+  expect(indexes.cfg003Fresh).toBeLessThan(indexes.e2eInstall);
+  expect(indexes.e2eInstall).toBeLessThan(indexes.e2e);
+  expect(indexes.e2e).toBeLessThan(indexes.full);
   expect(indexes.cfg003Fresh).toBeLessThan(indexes.full);
   for (const step of steps) expect(step.hasCondition).toBe(false);
   expect(steps[0].hasWith).toBe(false);
@@ -707,7 +714,7 @@ it("Vitest spawn errors, signals, and exit failures always propagate", async () 
   ]) {
     const subject = harness({ results: [{ status: 0, stdout: GOOD_STATUS }, result] });
     expect(await subject.run()).toBe(result.status === 7 ? 7 : 1);
-    expect(subject.calls[1].options.timeout).toBe(600_000);
+    expect(subject.calls[1].options.timeout).toBe(900_000);
   }
 });
 
@@ -779,7 +786,9 @@ it("pins Supabase SQL to LF and canonicalizes every routine authority digest", a
   expect(normalizedAuthorityTest).toContain(
     "pg_catalog.chr(13),\n    pg_catalog.chr(10)",
   );
-  expect(normalizedAuthorityTest.match(/\$\{CANONICAL_ROUTINE_DEFINITION_SQL\}/g)).toHaveLength(4);
+  // Four frozen-v1 inventories plus the explicit successor inventory must all
+  // hash pg_get_functiondef through the same CRLF-to-LF canonicalizer.
+  expect(normalizedAuthorityTest.match(/\$\{CANONICAL_ROUTINE_DEFINITION_SQL\}/g)).toHaveLength(5);
   expect(normalizedAuthorityTest).not.toMatch(
     /extensions\.digest\(\s*pg_catalog\.pg_get_functiondef\(procedure\.oid\)/,
   );

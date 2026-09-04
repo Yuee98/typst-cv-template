@@ -34,7 +34,7 @@ describe.skipIf(!RUN_DB_TESTS)("legacy pricing request discriminator (real DB)",
       insert into public.ai_provider_profiles(id,profile_key,display_name,gateway_kind,model_vendor)
         values ('${profileId}'::uuid,'test.legacy-pricing.${suffix}','Legacy pricing fixture','direct_deepseek','fixture');
       insert into public.ai_provider_profile_versions(id,profile_id,version,adapter_kind,wire_api_kind,credential_alias,endpoint_alias,model_id,capability_contract_id,cache_policy_id,legal_manifest_id,config_sha256)
-        values ('${profileVersionId}'::uuid,'${profileId}'::uuid,1,'fixture_adapter_v1','chat_completions_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','${"c".repeat(64)}');
+        values ('${profileVersionId}'::uuid,'${profileId}'::uuid,1,'deepseek_chat_v1','chat_completions_v1','fixture_credential_v1','fixture_endpoint_v1','fixture-model','fixture_capability_v1','fixture_cache_v1','fixture_legal_v1','${"c".repeat(64)}');
       insert into public.ai_price_versions(id,profile_version_id,pricing_lane,version,currency,calculator_kind,valid_from,valid_to,source_url,source_checked_at,source_snapshot_sha256)
         values ('${priceVersionId}'::uuid,'${profileVersionId}'::uuid,'legacy',1,'CNY','linear_token_v1','2026-01-01T00:00:00Z','2026-08-24T00:00:00Z','https://example.com/legacy-pricing-fixture','2026-08-24T00:00:00Z','${"d".repeat(64)}');
       insert into public.ai_price_components(price_version_id,component,nanos_per_million) values

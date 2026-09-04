@@ -255,9 +255,9 @@ export function makeTermsGateway() {
   type AcceptOptions = Parameters<PolishTermsGateway["accept"]>[0];
   const acceptCalls: Array<Deferred<void> & AcceptOptions> = [];
   const termsGateway: PolishTermsGateway = {
-    accept: vi.fn(({ userId, legalBundleVersion }: AcceptOptions) => {
+    accept: vi.fn((options: AcceptOptions) => {
       const call = deferred<void>();
-      acceptCalls.push({ ...call, userId, legalBundleVersion });
+      acceptCalls.push({ ...call, ...options });
       return call.promise;
     }),
   };

@@ -72,6 +72,7 @@ function ownerInsertAttempt(
     attempt_id: crypto.randomUUID(),
     status: "started",
     started_at: new Date().toISOString(),
+    execution_schema_version: "profile_execution_config_v1",
     ...value,
   };
   return ownerMutationResult(String.raw`
@@ -930,7 +931,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
     const modelProvenance = await createCustomReservation({
       key: "model-provenance",
       gatewayKind: "direct_deepseek",
-      adapterKind: "fixture_chat_v1",
+      adapterKind: "deepseek_chat_v1",
       wireApiKind: "chat_completions_v1",
       endpointAlias: "deepseek_official",
       modelId: "vendor/basic-model@2026",
@@ -1091,7 +1092,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         input: {
           key: "unknown-endpoint",
           gatewayKind: "direct_deepseek" as const,
-          adapterKind: "fixture_chat_v1",
+          adapterKind: "deepseek_chat_v1",
           wireApiKind: "chat_completions_v1" as const,
           endpointAlias: "unregistered_endpoint_v1",
           modelId: "fixture-unknown-endpoint-model",
@@ -1102,7 +1103,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider attempt ledger schema (real DB)", () =>
         input: {
           key: "mismatched-endpoint",
           gatewayKind: "direct_deepseek" as const,
-          adapterKind: "fixture_responses_v1",
+          adapterKind: "mimo_responses_v1",
           wireApiKind: "responses_v1" as const,
           endpointAlias: "deepseek_official",
           modelId: "fixture-mismatched-endpoint-model",

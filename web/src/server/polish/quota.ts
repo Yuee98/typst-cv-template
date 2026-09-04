@@ -25,6 +25,11 @@ import {
 import { resolveEndpoint } from "./adapter-registry";
 import { assertNormalizedUsageV2 } from "./inference-v2";
 import {
+  parseVersionedExecutionSnapshot,
+  type ExecutionSnapshotResultV2,
+  type RuntimeTargetResolverV2,
+} from "./execution-snapshot-v2";
+import {
   PolishLifecycleV2ContractError,
   observeRouteIdentifierV1,
   parseAttemptCompleteRpcResultV2,
@@ -50,9 +55,10 @@ import type {
   PolishAttemptStatusV2,
 } from "./orchestrator";
 import {
-  validateProfileExecutionConfig,
-  type ProfileExecutionConfigV1,
-} from "./profile-registry";
+  validateVersionedProfileExecutionConfig,
+  type ProfileExecutionConfig,
+} from "./profile-execution-v2";
+import type { RuntimeDeploymentAdmissionV2 } from "./runtime-deployment-v1";
 import { POLISH_VALIDATION_FAILURE_STAGES } from "./validate";
 
 // ---------------------------------------------------------------------------
@@ -598,6 +604,7 @@ export class PolishLifecycleV2RpcError extends Error {
 
 type ReserveSuccessV2 = Extract<ReserveRpcResultV2, { allowed: true }>;
 type ExecutionSnapshotSuccessV1 = Extract<ExecutionSnapshotResultV1, { ok: true }>;
+type ExecutionSnapshotSuccessV2 = Extract<ExecutionSnapshotResultV2, { ok: true }>;
 export type ProviderAttemptStartV2 = Extract<AttemptStartRpcResultV2, { ok: true }>;
 export type ProviderAttemptCompleteV2 = Extract<
   AttemptCompleteRpcResultV2,
@@ -785,6 +792,84 @@ export async function getPolishExecutionSnapshotV1(
   return result;
 }
 
+export async function getPolishExecutionSnapshotV2(
+  client: SupabaseClient,
+  params: {
+    reservationId: string;
+    userId: string;
+    reserveRoute: RouteSnapshotV1;
+    runtimeTargetResolver: RuntimeTargetResolverV1;
+    runtimeTargetResolverV2: RuntimeTargetResolverV2;
+    runtimeIdentity?: Readonly<{
+      environment: string;
+      projectRef: string;
+      runtimeBuildId: string;
+      bindingManifestRevision: string;
+      bindingManifestSha256: string;
+    }>;
+  },
+): Promise<ExecutionSnapshotSuccessV2> {
+  const reservationId = requireCanonicalUuidV2(params.reservationId);
+  const userId = requireCanonicalUuidV2(params.userId);
+  const reserveRoute = parseRouteSnapshotInputV2(params.reserveRoute);
+  const observation = await observeRpcV2(
+    client,
+    // Production always uses the durable-admission wrapper. The nullable
+    // identity preserves legacy v1 execution, while v2 fails closed in v4;
+    // absence must never select the short-lived v3 report path.
+    "get_ai_polish_execution_snapshot_v4",
+    freezeRpcValueV2({
+      p_reservation_id: reservationId,
+      p_user_id: userId,
+      p_environment: params.runtimeIdentity?.environment ?? null,
+      p_project_ref: params.runtimeIdentity?.projectRef ?? null,
+      p_runtime_build_id: params.runtimeIdentity?.runtimeBuildId ?? null,
+      p_binding_manifest_revision:
+        params.runtimeIdentity?.bindingManifestRevision ?? null,
+      p_binding_manifest_sha256:
+        params.runtimeIdentity?.bindingManifestSha256 ?? null,
+    }),
+  );
+  if (observation.kind === "ambiguous") {
+    throw new PolishLifecycleV2RpcError("SNAPSHOT_UNAVAILABLE", {
+      reason: "RPC_ERROR",
+      cause: observation.cause,
+    });
+  }
+
+  let result: ExecutionSnapshotResultV2;
+  try {
+    result = parseVersionedExecutionSnapshot(observation.data, {
+      reservationId,
+      reserveRoute,
+      runtimeTargetResolverV1: params.runtimeTargetResolver,
+      runtimeTargetResolverV2: params.runtimeTargetResolverV2,
+    });
+  } catch (cause) {
+    const kind =
+      cause instanceof PolishLifecycleV2ContractError &&
+      cause.code === "RUNTIME_TARGET_UNAVAILABLE"
+        ? "SNAPSHOT_UNAVAILABLE"
+        : "SNAPSHOT_INVALID";
+    throw new PolishLifecycleV2RpcError(kind, {
+      reason:
+        cause instanceof PolishLifecycleV2ContractError
+          ? cause.code
+          : "LOCAL_CONTRACT",
+      cause,
+    });
+  }
+  if (!result.ok) {
+    throw new PolishLifecycleV2RpcError(
+      result.reason === "SERVICE_UNAVAILABLE"
+        ? "SNAPSHOT_UNAVAILABLE"
+        : "SNAPSHOT_DENIED",
+      { reason: result.reason },
+    );
+  }
+  return result;
+}
+
 function startReadbackMatchesV2(
   result: ProviderAttemptStartV2,
   attemptNo: 1 | 2,
@@ -808,6 +893,11 @@ export async function startPolishProviderAttemptV2(
     reservationId: string;
     attemptNo: 1 | 2;
     expectedRoute: RouteSnapshotV1;
+    runtimeProvenance?: Readonly<{
+      runtimeBuildId: string;
+      bindingManifestRevision: string;
+    }>;
+    runtimeAdmission?: Readonly<RuntimeDeploymentAdmissionV2>;
   },
 ): Promise<ProviderAttemptStartV2> {
   const reservationId = requireCanonicalUuidV2(params.reservationId);
@@ -815,12 +905,31 @@ export async function startPolishProviderAttemptV2(
     throw localContractErrorV2();
   }
   const expectedRoute = parseRouteSnapshotInputV2(params.expectedRoute);
-  const args = freezeRpcValueV2({
-    p_reservation_id: reservationId,
-    p_attempt_no: params.attemptNo,
-  });
+  if (
+    (params.runtimeProvenance === undefined) !==
+      (params.runtimeAdmission === undefined) ||
+    (params.runtimeProvenance !== undefined &&
+      params.runtimeAdmission !== undefined &&
+      (params.runtimeProvenance.runtimeBuildId !==
+        params.runtimeAdmission.runtimeBuildId ||
+        params.runtimeProvenance.bindingManifestRevision !==
+          params.runtimeAdmission.bindingManifestRevision))
+  ) {
+    throw localContractErrorV2();
+  }
+  const args = freezeRpcValueV2(
+    {
+      p_reservation_id: reservationId,
+      p_attempt_no: params.attemptNo,
+      p_runtime_admission: params.runtimeAdmission ?? null,
+    },
+  );
 
-  const first = await observeRpcV2(client, "start_ai_polish_provider_attempt", args);
+  const first = await observeRpcV2(
+    client,
+    "start_ai_polish_provider_attempt_v4",
+    args,
+  );
   let firstAmbiguity: unknown;
   if (first.kind === "response") {
     try {
@@ -847,7 +956,11 @@ export async function startPolishProviderAttemptV2(
     firstAmbiguity = first.cause;
   }
 
-  const second = await observeRpcV2(client, "start_ai_polish_provider_attempt", args);
+  const second = await observeRpcV2(
+    client,
+    "start_ai_polish_provider_attempt_v4",
+    args,
+  );
   if (second.kind === "ambiguous") {
     throw new PolishLifecycleV2RpcError("ATTEMPT_START_UNKNOWN", {
       reason: "RPC_ERROR",
@@ -965,14 +1078,16 @@ function taggedRouteIdV2(
 export function serializePolishAttemptCompletionV2(params: {
   attempt: ProviderAttemptStartV2;
   fact: PolishAttemptCompletedFactV2;
-  profileExecutionConfig: ProfileExecutionConfigV1;
+  profileExecutionConfig: ProfileExecutionConfig;
   billingCurrency: string;
   routeObservationSecret: unknown;
 }): PolishAttemptCompletionRpcPayloadV2 {
   try {
     const attempt = parseAttemptStartRpcResultV2(params.attempt);
     if (!attempt.ok || attempt.status !== "started") throw localContractErrorV2();
-    const profile = validateProfileExecutionConfig(params.profileExecutionConfig);
+    const profile = validateVersionedProfileExecutionConfig(
+      params.profileExecutionConfig,
+    );
     if (
       attempt.routeSnapshot.gatewayKind !== profile.gatewayKind ||
       attempt.routeSnapshot.modelId !== profile.modelId ||
@@ -981,7 +1096,10 @@ export function serializePolishAttemptCompletionV2(params: {
     ) {
       throw localContractErrorV2();
     }
-    const expectedUpstreamEndpoint = resolveEndpoint(profile.endpointAlias).url;
+    const expectedUpstreamEndpoint =
+      profile.schemaVersion === "profile_execution_config_v1"
+        ? resolveEndpoint(profile.endpointAlias).url
+        : profile.endpointUrl;
     if (!CURRENCY_V2.test(params.billingCurrency)) throw localContractErrorV2();
 
     const fact = params.fact;
@@ -1119,7 +1237,13 @@ export function serializePolishAttemptCompletionV2(params: {
           "provider_request_id",
           params.routeObservationSecret,
         ),
-        actual_upstream_endpoint: actualUpstreamEndpoint,
+        // The v2 endpoint is already frozen separately on the attempt. The
+        // legacy completion routine treats aliases as its observation policy,
+        // so v2 retains no duplicate endpoint observation during transition.
+        actual_upstream_endpoint:
+          profile.schemaVersion === "profile_execution_config_v1"
+            ? actualUpstreamEndpoint
+            : null,
         actual_model_id: actualModelId,
         router_attempt_count: fact.route.routerAttemptCount,
       },

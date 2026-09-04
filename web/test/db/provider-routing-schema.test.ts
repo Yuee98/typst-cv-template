@@ -104,7 +104,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider routing schema (real DB)", () => {
         '${profileId}'::uuid,
         1,
         'draft',
-        'fixture_adapter_v1',
+        'mimo_responses_v1',
         'responses_v1',
         'fixture_credential_v1',
         'fixture_endpoint_v1',

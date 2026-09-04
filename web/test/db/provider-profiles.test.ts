@@ -29,7 +29,7 @@ function versionFixture(profileId: string, version = 1) {
     profile_id: profileId,
     version,
     status: "draft",
-    adapter_kind: "fixture_adapter_v1",
+    adapter_kind: "deepseek_chat_v1",
     wire_api_kind: "responses_v1",
     credential_alias: "fixture_credential_v1",
     endpoint_alias: "fixture_endpoint_v1",

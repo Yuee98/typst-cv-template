@@ -556,7 +556,7 @@ function parseProfileExecutionConfigV1(
   }
 }
 
-function parsePriceSnapshotV1(
+export function parsePriceSnapshotV1(
   value: unknown,
 ): Readonly<FrozenPriceSnapshotV1> {
   const price = requireRecord(value, "price snapshot");

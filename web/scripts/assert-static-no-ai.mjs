@@ -8,6 +8,12 @@ export const STATIC_AI_DENYLIST = [
   "getAvailability",
   "getQuota",
   "PolishFlowProvider",
+  "/api/admin",
+  "admin_context_v1",
+  "admin_page_v1",
+  "admin_get_context_v1",
+  "Admin Control Plane",
+  "AI_PROVIDER_KEY_",
 ];
 
 const encodedDenylist = STATIC_AI_DENYLIST.map((marker) => ({ marker, bytes: Buffer.from(marker) }));
@@ -73,6 +79,7 @@ export async function assertStaticNoAi(outputDirectory, { fsOps = defaultFsOps }
       const path = join(directory, entry.name);
       const entryStat = await readEntry(path, root, fsOps);
       const displayed = displayPath(root, path);
+      if (/(^|\/)admin(?:[/.]|$)/i.test(displayed)) fail(`Admin route is not allowed: ${displayed}.`);
       if (entryStat.isSymbolicLink()) fail(`symbolic link is not allowed: ${displayed}.`);
       if (entryStat.isDirectory()) {
         await scanDirectory(path);
