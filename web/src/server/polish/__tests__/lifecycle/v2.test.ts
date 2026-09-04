@@ -109,16 +109,18 @@ const EXECUTION_V2 = Object.freeze({
     externalEvidenceIds: Object.freeze(["evidence.synthetic-lifecycle"]),
   }),
   deploymentValidation: (() => {
-    const checkedAt = new Date();
     return Object.freeze({
-      schemaVersion: "runtime_deployment_validation_v1" as const,
-      reportId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+      schemaVersion: "runtime_deployment_admission_v2" as const,
+      admissionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee0",
       reviewedDeploymentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
+      validationReportId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
       environment: "local" as const,
       projectRef: "local",
-      runtimeBuildId: "local-test-build",
-      bindingManifestRevision: "local-test-manifest",
+      runtimeBuildId: "preview-build:lifecycle-v2",
+      bindingManifestRevision: "binding-lifecycle-v2",
       bindingManifestSha256: "4".repeat(64),
+      admissionRevision: "1",
+      targetSetSha256: "6".repeat(64),
       runtimeContractId: ROUTE_V2.runtimeContractId,
       runtimeTargetId: "runtime-target.synthetic.deepseek.v2",
       runtimeTargetSha256: "1".repeat(64),
@@ -132,9 +134,6 @@ const EXECUTION_V2 = Object.freeze({
       legalBundleVersion: ROUTE_V2.legalBundleVersion,
       legalManifestId: PROFILE_V2.legalManifestId,
       displayDisclosureKey: PROFILE_V2.displayDisclosureKey,
-      checkedAt: checkedAt.toISOString(),
-      expiresAt: new Date(checkedAt.getTime() + 10 * 60_000).toISOString(),
-      reportSha256: "5".repeat(64),
     });
   })(),
 });
@@ -605,6 +604,9 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
       runtimeBuildId: "preview-build:lifecycle-v2",
       bindingManifestRevision: "binding-lifecycle-v2",
     });
+    expect(startAttempt.mock.calls[0][0].runtimeAdmission).toEqual(
+      EXECUTION_V2.deploymentValidation,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

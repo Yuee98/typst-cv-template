@@ -58,6 +58,7 @@ import {
   validateVersionedProfileExecutionConfig,
   type ProfileExecutionConfig,
 } from "./profile-execution-v2";
+import type { RuntimeDeploymentAdmissionV2 } from "./runtime-deployment-v1";
 import { POLISH_VALIDATION_FAILURE_STAGES } from "./validate";
 
 // ---------------------------------------------------------------------------
@@ -813,22 +814,20 @@ export async function getPolishExecutionSnapshotV2(
   const reserveRoute = parseRouteSnapshotInputV2(params.reserveRoute);
   const observation = await observeRpcV2(
     client,
-    params.runtimeIdentity
-      ? "get_ai_polish_execution_snapshot_v4"
-      : "get_ai_polish_execution_snapshot_v3",
+    // Production always uses the durable-admission wrapper. The nullable
+    // identity preserves legacy v1 execution, while v2 fails closed in v4;
+    // absence must never select the short-lived v3 report path.
+    "get_ai_polish_execution_snapshot_v4",
     freezeRpcValueV2({
       p_reservation_id: reservationId,
       p_user_id: userId,
-      ...(params.runtimeIdentity
-        ? {
-            p_environment: params.runtimeIdentity.environment,
-            p_project_ref: params.runtimeIdentity.projectRef,
-            p_runtime_build_id: params.runtimeIdentity.runtimeBuildId,
-            p_binding_manifest_revision:
-              params.runtimeIdentity.bindingManifestRevision,
-            p_binding_manifest_sha256: params.runtimeIdentity.bindingManifestSha256,
-          }
-        : {}),
+      p_environment: params.runtimeIdentity?.environment ?? null,
+      p_project_ref: params.runtimeIdentity?.projectRef ?? null,
+      p_runtime_build_id: params.runtimeIdentity?.runtimeBuildId ?? null,
+      p_binding_manifest_revision:
+        params.runtimeIdentity?.bindingManifestRevision ?? null,
+      p_binding_manifest_sha256:
+        params.runtimeIdentity?.bindingManifestSha256 ?? null,
     }),
   );
   if (observation.kind === "ambiguous") {
@@ -898,6 +897,7 @@ export async function startPolishProviderAttemptV2(
       runtimeBuildId: string;
       bindingManifestRevision: string;
     }>;
+    runtimeAdmission?: Readonly<RuntimeDeploymentAdmissionV2>;
   },
 ): Promise<ProviderAttemptStartV2> {
   const reservationId = requireCanonicalUuidV2(params.reservationId);
@@ -905,17 +905,45 @@ export async function startPolishProviderAttemptV2(
     throw localContractErrorV2();
   }
   const expectedRoute = parseRouteSnapshotInputV2(params.expectedRoute);
-  const functionName = params.runtimeProvenance
-    ? "start_ai_polish_provider_attempt_v2"
+  if (
+    (params.runtimeProvenance === undefined) !==
+      (params.runtimeAdmission === undefined) ||
+    (params.runtimeProvenance !== undefined &&
+      params.runtimeAdmission !== undefined &&
+      (params.runtimeProvenance.runtimeBuildId !==
+        params.runtimeAdmission.runtimeBuildId ||
+        params.runtimeProvenance.bindingManifestRevision !==
+          params.runtimeAdmission.bindingManifestRevision))
+  ) {
+    throw localContractErrorV2();
+  }
+  const functionName = params.runtimeAdmission
+    ? "start_ai_polish_provider_attempt_v3"
     : "start_ai_polish_provider_attempt";
   const args = freezeRpcValueV2(
-    params.runtimeProvenance
+    params.runtimeAdmission
       ? {
           p_reservation_id: reservationId,
           p_attempt_no: params.attemptNo,
-          p_runtime_build_id: params.runtimeProvenance.runtimeBuildId,
+          p_admission_id: params.runtimeAdmission.admissionId,
+          p_reviewed_deployment_id:
+            params.runtimeAdmission.reviewedDeploymentId,
+          p_validation_report_id:
+            params.runtimeAdmission.validationReportId,
+          p_environment: params.runtimeAdmission.environment,
+          p_project_ref: params.runtimeAdmission.projectRef,
+          p_runtime_build_id: params.runtimeAdmission.runtimeBuildId,
           p_binding_manifest_revision:
-            params.runtimeProvenance.bindingManifestRevision,
+            params.runtimeAdmission.bindingManifestRevision,
+          p_binding_manifest_sha256:
+            params.runtimeAdmission.bindingManifestSha256,
+          p_admission_revision: params.runtimeAdmission.admissionRevision,
+          p_target_set_sha256: params.runtimeAdmission.targetSetSha256,
+          p_runtime_contract_id:
+            params.runtimeAdmission.runtimeContractId,
+          p_runtime_target_id: params.runtimeAdmission.runtimeTargetId,
+          p_runtime_target_sha256:
+            params.runtimeAdmission.runtimeTargetSha256,
         }
       : {
           p_reservation_id: reservationId,

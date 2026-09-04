@@ -26,6 +26,12 @@ const INPUT_KEYS = [
   "reviewedSourceSha256",
   "validUntil",
 ].sort();
+const ADMISSION_KEYS = [
+  "schemaVersion", "reviewedDeploymentId", "targets", "reason",
+].sort();
+const ADMISSION_TARGET_KEYS = [
+  "runtimeContractId", "runtimeTargetId", "validationReportId",
+].sort();
 
 function strictRecord(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -90,6 +96,51 @@ export function parseReviewedDeploymentImport(value, now = Date.now()) {
   });
 }
 
+export function parseRuntimeAdmissionImport(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(ADMISSION_KEYS) ||
+      value.schemaVersion !== "admin_runtime_admission_import_v2" ||
+      !UUID.test(value.reviewedDeploymentId) || !Array.isArray(value.targets) ||
+      value.targets.length < 1 || value.targets.length > 64 ||
+      typeof value.reason !== "string" || value.reason.trim() !== value.reason ||
+      value.reason.length < 1 || value.reason.length > 500) {
+    throw new Error("runtime admission requires an exact sealed target set");
+  }
+  const targets = value.targets.map((target) => {
+    if (!target || typeof target !== "object" || Array.isArray(target) ||
+        JSON.stringify(Object.keys(target).sort()) !== JSON.stringify(ADMISSION_TARGET_KEYS) ||
+        !CODE_ID.test(target.runtimeContractId) || !CODE_ID.test(target.runtimeTargetId) ||
+        !UUID.test(target.validationReportId)) {
+      throw new Error("runtime admission target is invalid");
+    }
+    return Object.freeze({ ...target });
+  }).sort((left, right) => {
+    const leftKey = `${left.runtimeContractId}\u0000${left.runtimeTargetId}`;
+    const rightKey = `${right.runtimeContractId}\u0000${right.runtimeTargetId}`;
+    return leftKey === rightKey ? 0 : leftKey < rightKey ? -1 : 1;
+  });
+  const targetIds = targets.map((target) =>
+    `${target.runtimeContractId}\u0000${target.runtimeTargetId}`);
+  const reportIds = targets.map((target) => target.validationReportId);
+  if (new Set(targetIds).size !== targets.length ||
+      new Set(reportIds).size !== targets.length) {
+    throw new Error("runtime admission targets and reports must be unique");
+  }
+  return Object.freeze({ ...value, targets: Object.freeze(targets) });
+}
+
+export function runtimeAdmissionImportSql(input) {
+  const value = parseRuntimeAdmissionImport(input);
+  return [
+    "\\set ON_ERROR_STOP on", "begin;",
+    "select public.admin_admit_runtime_deployment_v2(",
+    `  ${literal(value.reviewedDeploymentId)}::uuid,`,
+    `  ${literal(JSON.stringify(value.targets))}::jsonb,`,
+    `  ${literal(value.reason)}`,
+    ");", "commit;", "",
+  ].join("\n");
+}
+
 function literal(value) {
   return `'${value.replaceAll("'", "''")}'`;
 }
@@ -137,15 +188,19 @@ export function runReviewedDeploymentImport(
   if (filtered.length !== 1 || ackIndex >= 0 && !acknowledgement) {
     throw new Error("usage: admin-reviewed-deployment-import [--execute --ack environment/project] input.json");
   }
-  const input = parseReviewedDeploymentImport(
-    JSON.parse(readFile(path.resolve(filtered[0]), "utf8")),
-  );
-  const sql = reviewedDeploymentImportSql(input);
+  const raw = JSON.parse(readFile(path.resolve(filtered[0]), "utf8"));
+  const admission = raw?.schemaVersion === "admin_runtime_admission_import_v2";
+  const input = admission ? null : parseReviewedDeploymentImport(raw);
+  const parsed = admission ? parseRuntimeAdmissionImport(raw) : input;
+  const sql = admission ? runtimeAdmissionImportSql(parsed) : reviewedDeploymentImportSql(input);
   if (!execute) {
     stdout.write(sql);
     return 0;
   }
-  if (acknowledgement !== `${input.environment}/${input.projectRef}`) {
+  const expectedAcknowledgement = admission
+    ? `admission/${parsed.reviewedDeploymentId}`
+    : `${input.environment}/${input.projectRef}`;
+  if (acknowledgement !== expectedAcknowledgement) {
     throw new Error("execution acknowledgement does not match the reviewed environment");
   }
   if (

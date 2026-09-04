@@ -297,6 +297,9 @@ export async function handleAdminPost(
     if (readback.success) {
       const report = await (deps.produceReadback ?? defaults.produceReadback!)({
         reviewedDeploymentId: readback.data.reviewedDeploymentId,
+        admissionId: readback.data.admissionId,
+        admissionRevision: readback.data.admissionRevision,
+        targetSetSha256: readback.data.targetSetSha256,
         policyVersionId: readback.data.policyVersionId,
         validationReportIds: readback.data.validationReportIds,
       });

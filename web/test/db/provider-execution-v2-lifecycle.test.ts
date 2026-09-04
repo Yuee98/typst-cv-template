@@ -27,6 +27,13 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
   let harness: SettlementHarness;
   let reservation: SettlementReservation;
   let userId: string;
+  let runtimeTargetId: string;
+  let validationReportId: string;
+  let admission: {
+    admissionId: string;
+    admissionRevision: string;
+    targetSetSha256: string;
+  };
 
   beforeAll(async () => {
     service = createServiceClient();
@@ -233,17 +240,18 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
         clock_timestamp()+interval '1 day'
       );
     `);
+    runtimeTargetId = (
+      runOwnerSql(String.raw`
+        \pset format unaligned
+        \pset tuples_only on
+        select runtime_target_id from public.ai_runtime_target_bindings_v2
+        where profile_version_id='${profileVersionId}';
+      `).stdout.split(/\r?\n/u).map(value => value.trim()).findLast(Boolean)
+    )!;
     const report = await service.rpc("record_admin_validation_report_v1", {
       p_reviewed_deployment_id: reviewedDeploymentId,
       p_runtime_contract_id: reservation.routeSnapshot.runtimeContractId,
-      p_runtime_target_id: (
-        runOwnerSql(String.raw`
-          \pset format unaligned
-          \pset tuples_only on
-          select runtime_target_id from public.ai_runtime_target_bindings_v2
-          where profile_version_id='${profileVersionId}';
-        `).stdout.split(/\r?\n/u).map(value => value.trim()).findLast(Boolean)
-      ),
+      p_runtime_target_id: runtimeTargetId,
       p_observed_runtime_build_id: runtimeBuildId,
       p_observed_binding_manifest_revision: bindingRevision,
       p_observed_binding_manifest_sha256: bindingManifestSha256,
@@ -256,20 +264,54 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     });
     expect(report.error).toBeNull();
     expect(report.data?.passed).toBe(true);
+    validationReportId = report.data.reportId as string;
+    const duplicateTargets = runOwnerSql(String.raw`
+      select public.admin_admit_runtime_deployment_v2(
+        '${reviewedDeploymentId}',jsonb_build_array(
+          jsonb_build_object(
+            'runtimeContractId','${reservation.routeSnapshot.runtimeContractId}',
+            'runtimeTargetId','${runtimeTargetId}',
+            'validationReportId','${validationReportId}'
+          ),
+          jsonb_build_object(
+            'runtimeContractId','${reservation.routeSnapshot.runtimeContractId}',
+            'runtimeTargetId','${runtimeTargetId}',
+            'validationReportId','${validationReportId}'
+          )
+        ),'duplicate target must fail'
+      );
+    `, { expectFailure: true });
+    expect(duplicateTargets.stderr).toContain("INVALID_REQUEST");
+    const missingReport = runOwnerSql(String.raw`
+      select public.admin_admit_runtime_deployment_v2(
+        '${reviewedDeploymentId}',jsonb_build_array(jsonb_build_object(
+          'runtimeContractId','${reservation.routeSnapshot.runtimeContractId}',
+          'runtimeTargetId','${runtimeTargetId}',
+          'validationReportId','${crypto.randomUUID()}'
+        )),'missing validation report must fail'
+      );
+    `, { expectFailure: true });
+    expect(missingReport.stderr).toContain("EXACT_ADMISSION_EVIDENCE_REQUIRED");
+    const admitted = runOwnerSql(String.raw`
+      \pset format unaligned
+      \pset tuples_only on
+      select public.admin_admit_runtime_deployment_v2(
+        '${reviewedDeploymentId}',jsonb_build_array(jsonb_build_object(
+          'runtimeContractId','${reservation.routeSnapshot.runtimeContractId}',
+          'runtimeTargetId','${runtimeTargetId}',
+          'validationReportId','${validationReportId}'
+        )),'provider execution v2 integration admission'
+      );
+    `).stdout.split(/\r?\n/u).map(value => value.trim())
+      .findLast(value => value.startsWith("{"));
+    if (!admitted) throw new Error("runtime admission receipt was not returned");
+    admission = JSON.parse(admitted) as typeof admission;
   });
 
   afterAll(async () => {
     const restoredRuntimeTarget = runOwnerSql(String.raw`
       begin;
       set local session_replication_role = replica;
-      delete from public.admin_validation_reports_v1
-        where reviewed_deployment_id = '${reviewedDeploymentId}';
-      delete from public.admin_reviewed_deployment_capabilities_v1
-        where reviewed_deployment_id = '${reviewedDeploymentId}';
-      delete from public.admin_reviewed_deployments_v1
-        where id = '${reviewedDeploymentId}';
-      delete from public.ai_runtime_target_bindings_v2
-        where profile_version_id = '${profileVersionId}';
       update public.ai_service_runtime_target_versions as target
       set profile_key = profile.profile_key
       from public.ai_provider_profiles as profile
@@ -296,6 +338,21 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     runOwnerSql(String.raw`
       begin;
       set local session_replication_role = replica;
+      delete from public.admin_admitted_runtime_targets_v2
+        where admission_id in (
+          select admission_id from public.admin_admitted_runtime_deployments_v2
+          where reviewed_deployment_id = '${reviewedDeploymentId}'
+        );
+      delete from public.admin_admitted_runtime_deployments_v2
+        where reviewed_deployment_id = '${reviewedDeploymentId}';
+      delete from public.admin_validation_reports_v1
+        where reviewed_deployment_id = '${reviewedDeploymentId}';
+      delete from public.admin_reviewed_deployment_capabilities_v1
+        where reviewed_deployment_id = '${reviewedDeploymentId}';
+      delete from public.admin_reviewed_deployments_v1
+        where id = '${reviewedDeploymentId}';
+      delete from public.ai_runtime_target_bindings_v2
+        where profile_version_id = '${profileVersionId}';
       delete from public.ai_legal_display_versions_v2
         where display_disclosure_key = '${displayDisclosureKey}';
       delete from public.ai_price_components
@@ -446,9 +503,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
         bindingManifestRevision: bindingRevision,
       },
     });
-    const snapshot = await service.rpc("get_ai_polish_execution_snapshot_v2", {
+    const snapshot = await service.rpc("get_ai_polish_execution_snapshot_v4", {
       p_reservation_id: reservation.reservationId,
       p_user_id: userId,
+      p_environment: "local",
+      p_project_ref: "local",
+      p_runtime_build_id: runtimeBuildId,
+      p_binding_manifest_revision: bindingRevision,
+      p_binding_manifest_sha256: bindingManifestSha256,
     });
     expect(snapshot.error).toBeNull();
     expect(snapshot.data, JSON.stringify(snapshot.data)).toMatchObject({
@@ -474,14 +536,36 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
         modelId,
         displayDisclosureKey,
       },
+      deploymentValidation: {
+        schemaVersion: "runtime_deployment_admission_v2",
+        admissionId: admission.admissionId,
+        reviewedDeploymentId,
+        validationReportId,
+        admissionRevision: admission.admissionRevision,
+        targetSetSha256: admission.targetSetSha256,
+        runtimeTargetId,
+      },
     });
 
-    const start = await service.rpc("start_ai_polish_provider_attempt_v2", {
+    const runtimeAdmission = snapshot.data.deploymentValidation;
+    const startArgs = {
       p_reservation_id: reservation.reservationId,
       p_attempt_no: 1,
+      p_admission_id: runtimeAdmission.admissionId,
+      p_reviewed_deployment_id: runtimeAdmission.reviewedDeploymentId,
+      p_validation_report_id: runtimeAdmission.validationReportId,
+      p_environment: runtimeAdmission.environment,
+      p_project_ref: runtimeAdmission.projectRef,
       p_runtime_build_id: runtimeBuildId,
       p_binding_manifest_revision: bindingRevision,
-    });
+      p_binding_manifest_sha256: runtimeAdmission.bindingManifestSha256,
+      p_admission_revision: runtimeAdmission.admissionRevision,
+      p_target_set_sha256: runtimeAdmission.targetSetSha256,
+      p_runtime_contract_id: runtimeAdmission.runtimeContractId,
+      p_runtime_target_id: runtimeAdmission.runtimeTargetId,
+      p_runtime_target_sha256: runtimeAdmission.runtimeTargetSha256,
+    };
+    const start = await service.rpc("start_ai_polish_provider_attempt_v3", startArgs);
     expect(start.error).toBeNull();
     expect(start.data).toMatchObject({
       ok: true,
@@ -491,13 +575,8 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     });
 
     const replayMismatch = await service.rpc(
-      "start_ai_polish_provider_attempt_v2",
-      {
-        p_reservation_id: reservation.reservationId,
-        p_attempt_no: 1,
-        p_runtime_build_id: "different-build",
-        p_binding_manifest_revision: bindingRevision,
-      },
+      "start_ai_polish_provider_attempt_v3",
+      { ...startArgs, p_runtime_build_id: "different-build" },
     );
     expect(replayMismatch.error).toBeNull();
     expect(replayMismatch.data).toEqual({
@@ -508,7 +587,7 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     const attempt = await service
       .from("ai_provider_attempt_ledger")
       .select(
-        "execution_schema_version,endpoint_url,credential_env_name,runtime_build_id,binding_manifest_revision",
+        "execution_schema_version,endpoint_url,credential_env_name,runtime_build_id,binding_manifest_revision,runtime_admission_id,runtime_admission_revision,runtime_target_set_sha256,admitted_runtime_target_id,runtime_validation_report_id",
       )
       .eq("attempt_id", start.data.attemptId)
       .single();
@@ -519,6 +598,49 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
       credential_env_name: credentialEnvName,
       runtime_build_id: runtimeBuildId,
       binding_manifest_revision: bindingRevision,
+      runtime_admission_id: admission.admissionId,
+      runtime_admission_revision: Number(admission.admissionRevision),
+      runtime_target_set_sha256: admission.targetSetSha256,
+      admitted_runtime_target_id: runtimeTargetId,
+      runtime_validation_report_id: validationReportId,
+    });
+
+    const sealedAppend = runOwnerSql(String.raw`
+      insert into public.admin_admitted_runtime_targets_v2
+      select * from public.admin_admitted_runtime_targets_v2
+      where admission_id='${admission.admissionId}' limit 1;
+    `, { expectFailure: true });
+    expect(sealedAppend.stderr).toMatch(/sealed|duplicate|immutable|Exact passed/i);
+
+    runOwnerSql(String.raw`
+      select public.admin_revoke_runtime_deployment_v2(
+        '${admission.admissionId}',${admission.admissionRevision}::bigint,
+        '${admission.targetSetSha256}','integration revoke before retry'
+      );
+    `);
+    const deniedSecond = await service.rpc(
+      "start_ai_polish_provider_attempt_v3",
+      { ...startArgs, p_attempt_no: 2 },
+    );
+    expect(deniedSecond.error).toBeNull();
+    expect(deniedSecond.data).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
+    const exactReplay = await service.rpc("start_ai_polish_provider_attempt_v3", startArgs);
+    expect(exactReplay.error).toBeNull();
+    expect(exactReplay.data).toMatchObject({ ok: true, alreadyStarted: true });
+    const revokedSnapshot = await service.rpc("get_ai_polish_execution_snapshot_v4", {
+      p_reservation_id: reservation.reservationId,
+      p_user_id: userId,
+      p_environment: "local",
+      p_project_ref: "local",
+      p_runtime_build_id: runtimeBuildId,
+      p_binding_manifest_revision: bindingRevision,
+      p_binding_manifest_sha256: bindingManifestSha256,
+    });
+    expect(revokedSnapshot.error).toBeNull();
+    expect(revokedSnapshot.data).toEqual({
+      schemaVersion: "ai_polish_execution_snapshot_v1",
+      ok: false,
+      reason: "SERVICE_UNAVAILABLE",
     });
 
     const completed = await harness.complete(

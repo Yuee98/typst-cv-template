@@ -79,6 +79,30 @@ const deploymentValidation = {
   expiresAt: new Date(checkedAt.getTime() + 10 * 60_000).toISOString(),
   reportSha256: "5".repeat(64),
 };
+const deploymentAdmission = {
+  schemaVersion: "runtime_deployment_admission_v2",
+  admissionId: "40000000-0000-4000-8000-000000000003",
+  reviewedDeploymentId: deploymentValidation.reviewedDeploymentId,
+  validationReportId: deploymentValidation.reportId,
+  environment: deploymentValidation.environment,
+  projectRef: deploymentValidation.projectRef,
+  runtimeBuildId: deploymentValidation.runtimeBuildId,
+  bindingManifestRevision: deploymentValidation.bindingManifestRevision,
+  bindingManifestSha256: deploymentValidation.bindingManifestSha256,
+  admissionRevision: "1",
+  targetSetSha256: "6".repeat(64),
+  runtimeContractId: runtimeEvidence.runtimeContractId,
+  runtimeTargetId: runtimeEvidence.runtimeTargetId,
+  runtimeTargetSha256: runtimeEvidence.runtimeTargetSha256,
+  profileVersionId: runtimeEvidence.profileVersionId,
+  priceVersionId: runtimeEvidence.priceVersionId,
+  providerId: runtimeEvidence.providerId,
+  codeCapabilityId: runtimeEvidence.codeCapabilityId,
+  codeCapabilitySha256: runtimeEvidence.codeCapabilitySha256,
+  legalBundleVersion: runtimeEvidence.legalBundleVersion,
+  legalManifestId: runtimeEvidence.legalManifestId,
+  displayDisclosureKey: runtimeEvidence.displayDisclosureKey,
+};
 const v2 = {
   ...v1,
   schemaVersion: "ai_polish_execution_snapshot_v2",
@@ -143,7 +167,7 @@ describe("versioned execution snapshot", () => {
     const reported = {
       ...v2,
       deploymentValidation: {
-        ...deploymentValidation,
+        ...deploymentAdmission,
         runtimeBuildId: identity.buildId,
         bindingManifestRevision: identity.manifest.revision,
         bindingManifestSha256: identity.manifestSha256,
@@ -199,24 +223,10 @@ describe("versioned execution snapshot", () => {
     };
     const identity = parseRuntimeDeploymentIdentityV1(environment);
     const admission = {
-      schemaVersion: "runtime_deployment_admission_v1",
-      environment: "local",
-      projectRef: "local",
+      ...deploymentAdmission,
       runtimeBuildId: identity.buildId,
       bindingManifestRevision: identity.manifest.revision,
       bindingManifestSha256: identity.manifestSha256,
-      admissionRevision: "1",
-      runtimeContractId: runtimeEvidence.runtimeContractId,
-      runtimeTargetId: runtimeEvidence.runtimeTargetId,
-      runtimeTargetSha256: runtimeEvidence.runtimeTargetSha256,
-      profileVersionId: runtimeEvidence.profileVersionId,
-      priceVersionId: runtimeEvidence.priceVersionId,
-      providerId: runtimeEvidence.providerId,
-      codeCapabilityId: runtimeEvidence.codeCapabilityId,
-      codeCapabilitySha256: runtimeEvidence.codeCapabilitySha256,
-      legalBundleVersion: runtimeEvidence.legalBundleVersion,
-      legalManifestId: runtimeEvidence.legalManifestId,
-      displayDisclosureKey: runtimeEvidence.displayDisclosureKey,
     };
     const parse = (deployment: typeof admission) =>
       parseVersionedExecutionSnapshot(

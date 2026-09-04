@@ -118,13 +118,16 @@ const controlState = {
 const runtimeReadbackRequest = {
   operation: "record_runtime_readback" as const,
   reviewedDeploymentId: "11111111-1111-4111-8111-111111111111",
+  admissionId: "12121212-1212-4212-8212-121212121212",
+  admissionRevision: "9",
+  targetSetSha256: "e".repeat(64),
   policyVersionId: "55555555-5555-4555-8555-555555555555",
   validationReportIds: ["77777777-7777-4777-8777-777777777777"],
 };
 function runtimeReadback() {
   const checkedAt = new Date(Date.now() - 1_000);
   return {
-    schemaVersion: "admin_runtime_readback_v1" as const,
+    schemaVersion: "admin_runtime_readback_v2" as const,
     reportId: "88888888-8888-4888-8888-888888888888",
     closingCycleId: controlState.closingCycleId,
     controlRevision: controlState.controlRevision,
@@ -135,6 +138,9 @@ function runtimeReadback() {
     runtimeBuildId: "build-2026-09-04",
     bindingManifestRevision: "manifest-2026-09-04",
     bindingManifestSha256: "a".repeat(64),
+    admissionId: runtimeReadbackRequest.admissionId,
+    admissionRevision: runtimeReadbackRequest.admissionRevision,
+    targetSetSha256: runtimeReadbackRequest.targetSetSha256,
     validationReportIds: runtimeReadbackRequest.validationReportIds,
     effectiveRoutes: [{
       profileVersionId: "99999999-9999-4999-8999-999999999999",
@@ -540,11 +546,14 @@ describe("Admin runtime readback HTTP boundary", () => {
     });
     expect(produceReadback).toHaveBeenCalledWith({
       reviewedDeploymentId: runtimeReadbackRequest.reviewedDeploymentId,
+      admissionId: runtimeReadbackRequest.admissionId,
+      admissionRevision: runtimeReadbackRequest.admissionRevision,
+      targetSetSha256: runtimeReadbackRequest.targetSetSha256,
       policyVersionId: runtimeReadbackRequest.policyVersionId,
       validationReportIds: runtimeReadbackRequest.validationReportIds,
     });
     expect(await response.json()).toMatchObject({
-      schemaVersion: "admin_runtime_readback_v1",
+      schemaVersion: "admin_runtime_readback_v2",
       policyVersionId: runtimeReadbackRequest.policyVersionId,
     });
   });

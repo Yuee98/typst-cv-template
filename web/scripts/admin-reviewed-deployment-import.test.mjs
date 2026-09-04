@@ -4,6 +4,8 @@ import {
   parseReviewedDeploymentImport,
   reviewedDeploymentImportSql,
   runReviewedDeploymentImport,
+  parseRuntimeAdmissionImport,
+  runtimeAdmissionImportSql,
 } from "./admin-reviewed-deployment-import.mjs";
 
 const future = "2099-01-01T00:00:00.000Z";
@@ -86,4 +88,51 @@ it("prints by default and requires exact environment acknowledgement to execute"
       env: expect.objectContaining({ PGUSER: "postgres.preview-project" }),
     }),
   );
+});
+
+it("requires an exact canonical v2 deployment target set", () => {
+  const admission = {
+    schemaVersion: "admin_runtime_admission_import_v2",
+    reviewedDeploymentId: input.id,
+    targets: [{
+      runtimeContractId: "runtime.mimo.v2",
+      runtimeTargetId: "target.mimo.v2",
+      validationReportId: "22222222-2222-4222-8222-222222222222",
+    }, {
+      runtimeContractId: "runtime.deepseek.v2",
+      runtimeTargetId: "target.deepseek.v2",
+      validationReportId: "33333333-3333-4333-8333-333333333333",
+    }],
+    reason: "operator admission",
+  };
+  const parsed = parseRuntimeAdmissionImport(admission);
+  expect(parsed.targets.map((target) => target.runtimeTargetId)).toEqual([
+    "target.deepseek.v2", "target.mimo.v2",
+  ]);
+  const sql = runtimeAdmissionImportSql(admission);
+  expect(sql).toContain("admin_admit_runtime_deployment_v2");
+  expect(sql).toContain("::jsonb");
+  expect(sql).not.toContain("\\nbegin;");
+  expect(() => parseRuntimeAdmissionImport({
+    ...admission,
+    targets: [...admission.targets, admission.targets[0]],
+  })).toThrow(/unique/);
+  expect(() => parseRuntimeAdmissionImport({
+    ...admission,
+    targets: [{ ...admission.targets[0], targetId: "forged" }],
+  })).toThrow();
+
+  const spawn = vi.fn().mockReturnValue({ status: 0 });
+  expect(() => runReviewedDeploymentImport([
+    "--execute", "--ack", "preview/preview-project", "input.json",
+  ], {
+    readFile: () => JSON.stringify(admission), spawn,
+    env: { PGHOST: "db.example.test", PGDATABASE: "postgres", PGUSER: "postgres.preview-project" },
+  })).toThrow(/acknowledgement/);
+  expect(runReviewedDeploymentImport([
+    "--execute", "--ack", `admission/${input.id}`, "input.json",
+  ], {
+    readFile: () => JSON.stringify(admission), spawn,
+    env: { PGHOST: "db.example.test", PGDATABASE: "postgres", PGUSER: "postgres.preview-project" },
+  })).toBe(0);
 });

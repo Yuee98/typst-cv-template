@@ -21,13 +21,16 @@ const environment = {
 };
 const input = {
   reviewedDeploymentId: "22222222-2222-4222-8222-222222222222",
+  admissionId: "99999999-9999-4999-8999-999999999999",
+  admissionRevision: "9",
+  targetSetSha256: "d".repeat(64),
   policyVersionId: "33333333-3333-4333-8333-333333333333",
   validationReportIds: ["44444444-4444-4444-8444-444444444444"],
 };
 function report() {
   const checkedAt = new Date(Date.now() - 1_000);
   return {
-    schemaVersion: "admin_runtime_readback_v1",
+    schemaVersion: "admin_runtime_readback_v2",
     reportId: "55555555-5555-4555-8555-555555555555",
     closingCycleId: "66666666-6666-4666-8666-666666666666",
     controlRevision: "7",
@@ -40,6 +43,9 @@ function report() {
     bindingManifestSha256: createHash("sha256")
       .update(JSON.stringify(manifest))
       .digest("hex"),
+    admissionId: "99999999-9999-4999-8999-999999999999",
+    admissionRevision: "9",
+    targetSetSha256: "d".repeat(64),
     validationReportIds: input.validationReportIds,
     effectiveRoutes: [{
       profileVersionId: "77777777-7777-4777-8777-777777777777",
@@ -66,8 +72,11 @@ describe("trusted Admin runtime readback producer", () => {
       client: { rpc },
     });
     expect(result.reportId).toBe(report().reportId);
-    expect(rpc).toHaveBeenCalledWith("record_admin_runtime_readback_v1", {
+    expect(rpc).toHaveBeenCalledWith("record_admin_runtime_readback_v2", {
       p_reviewed_deployment_id: input.reviewedDeploymentId,
+      p_admission_id: input.admissionId,
+      p_admission_revision: input.admissionRevision,
+      p_target_set_sha256: input.targetSetSha256,
       p_policy_version_id: input.policyVersionId,
       p_validation_report_ids: input.validationReportIds,
       p_observed_runtime_build_id: environment.AI_RUNTIME_BUILD_ID,
@@ -78,6 +87,7 @@ describe("trusted Admin runtime readback producer", () => {
 
   it.each([
     { name: "crossed deployment", patch: { reviewedDeploymentId: "77777777-7777-4777-8777-777777777777" } },
+    { name: "crossed admission", patch: { admissionId: "77777777-7777-4777-8777-777777777777" } },
     { name: "crossed build", patch: { runtimeBuildId: "other-build" } },
     { name: "extra output", patch: { credential: "hidden-value" } },
     {

@@ -94,6 +94,9 @@ const safeMutationResultSchema = z.discriminatedUnion("schemaVersion", [
     lifecycleAuditId: uuid.optional(),
     validationReportIds: z.array(uuid).min(1).max(32).optional(),
     readbackReportId: uuid.optional(),
+    admissionId: uuid.optional(),
+    admissionRevision: decimalRevisionSchema.optional(),
+    targetSetSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   }),
   z.strictObject({
     schemaVersion: z.literal("admin_membership_result_v1"),
@@ -233,6 +236,9 @@ export type AdminValidationReport = z.infer<
 export const adminRuntimeReadbackRequestSchema = z.strictObject({
   operation: z.literal("record_runtime_readback"),
   reviewedDeploymentId: uuid,
+  admissionId: uuid,
+  admissionRevision: decimalRevisionSchema.refine((value) => value !== "0"),
+  targetSetSha256: z.string().regex(/^[0-9a-f]{64}$/),
   policyVersionId: uuid,
   validationReportIds: z.array(uuid).min(1).max(32).refine(
     (values) => new Set(values).size === values.length,
@@ -244,7 +250,7 @@ export type AdminRuntimeReadbackRequest = z.infer<
 >;
 
 export const adminRuntimeReadbackSchema = z.strictObject({
-  schemaVersion: z.literal("admin_runtime_readback_v1"),
+  schemaVersion: z.literal("admin_runtime_readback_v2"),
   reportId: uuid,
   closingCycleId: uuid,
   controlRevision: decimalRevisionSchema,
@@ -255,6 +261,9 @@ export const adminRuntimeReadbackSchema = z.strictObject({
   runtimeBuildId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,199}$/),
   bindingManifestRevision: codeId,
   bindingManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  admissionId: uuid,
+  admissionRevision: decimalRevisionSchema,
+  targetSetSha256: z.string().regex(/^[0-9a-f]{64}$/),
   validationReportIds: z.array(uuid).min(1).max(32),
   effectiveRoutes: z.array(z.strictObject({
     profileVersionId: uuid,

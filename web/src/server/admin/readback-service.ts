@@ -13,6 +13,9 @@ import { createServerAdminClient } from "../supabase/admin-client";
 
 const inputSchema = z.strictObject({
   reviewedDeploymentId: z.string().uuid(),
+  admissionId: z.string().uuid(),
+  admissionRevision: z.string().regex(/^[1-9][0-9]{0,18}$/u),
+  targetSetSha256: z.string().regex(/^[0-9a-f]{64}$/u),
   policyVersionId: z.string().uuid(),
   validationReportIds: z.array(z.string().uuid()).min(1).max(32).refine(
     (values) => new Set(values).size === values.length,
@@ -56,8 +59,11 @@ export async function produceAdminRuntimeReadback(
   }
 
   const client = dependencies.client ?? createServerAdminClient();
-  const result = await client.rpc("record_admin_runtime_readback_v1", {
+  const result = await client.rpc("record_admin_runtime_readback_v2", {
     p_reviewed_deployment_id: parsed.data.reviewedDeploymentId,
+    p_admission_id: parsed.data.admissionId,
+    p_admission_revision: parsed.data.admissionRevision,
+    p_target_set_sha256: parsed.data.targetSetSha256,
     p_policy_version_id: parsed.data.policyVersionId,
     p_validation_report_ids: parsed.data.validationReportIds,
     p_observed_runtime_build_id: runtime.buildId,
@@ -72,6 +78,9 @@ export async function produceAdminRuntimeReadback(
   const observedIds = [...report.data.validationReportIds].sort();
   if (
     report.data.reviewedDeploymentId !== parsed.data.reviewedDeploymentId ||
+    report.data.admissionId !== parsed.data.admissionId ||
+    report.data.admissionRevision !== parsed.data.admissionRevision ||
+    report.data.targetSetSha256 !== parsed.data.targetSetSha256 ||
     report.data.policyVersionId !== parsed.data.policyVersionId ||
     report.data.runtimeBuildId !== runtime.buildId ||
     report.data.bindingManifestRevision !== runtime.manifest.revision ||

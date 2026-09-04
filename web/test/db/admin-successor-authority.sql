@@ -54,5 +54,21 @@ where n.nspname = 'public'
     'get_admin_validation_candidate_v1',
     'record_admin_validation_report_v1',
     'get_admin_runtime_validation_v1',
-    'get_ai_polish_execution_snapshot_v3'
+    'get_ai_polish_execution_snapshot_v3',
+    'admin_admit_runtime_deployment_v2',
+    'admin_assert_runtime_admission_sealed_v2',
+    'admin_cutover_authority_legacy_internal_v1',
+    'admin_cutover_authority_v2',
+    'admin_guard_runtime_admission_parent_v2',
+    'admin_guard_runtime_authority_receipt_v2',
+    'admin_reopen_ai_v1',
+    'admin_revoke_runtime_deployment_v2',
+    'admin_runtime_target_set_sha256_v2',
+    'admin_validate_runtime_admission_target_v2',
+    'get_ai_polish_execution_snapshot_v4',
+    'guard_ai_attempt_runtime_admission_v2',
+    'guard_ai_provider_attempt_ledger',
+    'record_admin_runtime_readback_v1',
+    'record_admin_runtime_readback_v2',
+    'start_ai_polish_provider_attempt_v3'
   );

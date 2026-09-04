@@ -72,6 +72,34 @@ export const runtimeDeploymentAdmissionSchema = z.strictObject({
 });
 export type RuntimeDeploymentAdmissionV1 = z.infer<typeof runtimeDeploymentAdmissionSchema>;
 
+export const runtimeDeploymentAdmissionV2Schema = z.strictObject({
+  schemaVersion: z.literal("runtime_deployment_admission_v2"),
+  admissionId: uuid,
+  reviewedDeploymentId: uuid,
+  validationReportId: uuid,
+  environment: z.enum(["local", "preview", "production"]),
+  projectRef: z.string().min(1).max(100),
+  runtimeBuildId: buildId,
+  bindingManifestRevision: codeId,
+  bindingManifestSha256: sha256,
+  admissionRevision: z.string().regex(/^[1-9][0-9]{0,18}$/u),
+  targetSetSha256: sha256,
+  runtimeContractId: codeId,
+  runtimeTargetId: codeId,
+  runtimeTargetSha256: sha256,
+  profileVersionId: uuid,
+  priceVersionId: uuid,
+  providerId: uuid,
+  codeCapabilityId: codeId,
+  codeCapabilitySha256: sha256,
+  legalBundleVersion: codeId,
+  legalManifestId: codeId,
+  displayDisclosureKey: codeId,
+});
+export type RuntimeDeploymentAdmissionV2 = z.infer<
+  typeof runtimeDeploymentAdmissionV2Schema
+>;
+
 export interface RuntimeDeploymentEnvironment {
   readonly AI_RUNTIME_BUILD_ID?: string;
   readonly AI_PROVIDER_BINDING_MANIFEST?: string;
@@ -131,8 +159,14 @@ export function canonicalProviderBindingManifest(
     schemaVersion: manifest.schemaVersion,
     revision: manifest.revision,
     bindings: [...manifest.bindings]
+      // Credential names are restricted ASCII. Compare code units directly so
+      // the manifest digest does not depend on the host ICU locale.
       .sort((left, right) =>
-        left.credentialEnvName.localeCompare(right.credentialEnvName),
+        left.credentialEnvName === right.credentialEnvName
+          ? 0
+          : left.credentialEnvName < right.credentialEnvName
+            ? -1
+            : 1,
       )
       .map((binding) => ({
         credentialEnvName: binding.credentialEnvName,
