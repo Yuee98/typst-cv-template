@@ -52,6 +52,9 @@ describe("CFG-001 successor-compatible membership source", () => {
       "20260904014000_admin_runtime_admission_readback_v2.sql",
       "20260904016000_attempt_admission_receipt_seal.sql",
       "20260904017000_runtime_authority_receipt_v2.sql",
+      "20260904020000_admin_effective_membership_guard.sql",
+      "20260904021000_start_ai_polish_provider_attempt_v4.sql",
+      "20260904022000_admin_readback_cutover_authority_v3.sql",
     ].map((name) => readFileSync(new URL(`../../../supabase/migrations/${name}`, import.meta.url), "utf8"));
     const declared = sources.flatMap((source) => [...source.matchAll(/create function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
     const manifest = new Set<string>(NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1.map(([name]) => name));
@@ -593,11 +596,11 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["admin_reopen_ai_v1", "p_environment text, p_project_ref text, p_readback_report_id uuid, p_expected_closing_cycle_id uuid, p_expected_control_revision bigint, p_expected_policy_version_id uuid, p_expected_config_generation bigint, p_reason text, p_idempotency_key uuid", "f", true, "e7594f0d007c476b96a18d99376148638e5b08766fa224c50df7ef498497373e"],
   ["admin_get_ai_control_state_v1", "p_environment text, p_project_ref text", "f", true, "de5c4ebd4b15bb270c2f43be808aab6350713278502ce26f942974e98ba6b191"],
   ["admin_cutover_authority_legacy_internal_v1", "p_reviewed_deployment_id uuid, p_validation_report_ids uuid[], p_expected_environment_revision bigint, p_expected_control_revision bigint, p_reason text", "f", true, "aa682bf3e24ae883ffe23b7382ec27c21095f1b9c16c2435e273a1550c0dfaf6"],
-  ["admin_cutover_authority_v2", "p_reviewed_deployment_id uuid, p_admission_id uuid, p_validation_report_ids uuid[], p_expected_environment_revision bigint, p_expected_control_revision bigint, p_reason text", "f", true, "57b7c61c9975e959d3da84d8f6609e20d3cbfb91c90ad3d6275ee6353b421fa4"],
+  ["admin_cutover_authority_v2", "p_reviewed_deployment_id uuid, p_admission_id uuid, p_validation_report_ids uuid[], p_expected_environment_revision bigint, p_expected_control_revision bigint, p_reason text", "f", true, "ed7e8aef5445d64153932bf8b919eaa27fd99dddc44f76dd35d8ea6347455822"],
   ["admin_json_jcs_v1", "p_value jsonb", "f", false, "d3b0cf98d2c015e64dc870578a148b1a1d4bf312b7fe4f8138c135382f4492ba"],
   ["admin_json_jcs_sha256_v1", "p_value jsonb", "f", false, "d9df9752380bf66e65b5e56025595f9993b04e667613c1071cecbba4687521eb"],
   ["admin_assert_reason_v1", "p_reason text", "f", false, "53e07731744a82c8b0660948f2ff2eb7b5ca5b0e45a7b4a11236fd1aaad852c7"],
-  ["admin_set_membership_v1", "p_environment text, p_project_ref text, p_target_user_id uuid, p_enabled boolean, p_expected_revision bigint, p_reason text, p_idempotency_key uuid", "f", true, "9ca714f6605617fb508beea902e4bb4227a5e53a01b496daac43ce151253705c"],
+  ["admin_set_membership_v1", "p_environment text, p_project_ref text, p_target_user_id uuid, p_enabled boolean, p_expected_revision bigint, p_reason text, p_idempotency_key uuid", "f", true, "f9ac25d58a9e8cc373251161e2f9c434f34b492480e885e322f6f22fb1bcc6dc"],
   ["admin_update_provider_defaults_v1", "p_environment text, p_project_ref text, p_provider_id uuid, p_display_name text, p_default_adapter_id text, p_default_endpoint_url text, p_default_credential_env_name text, p_default_model_id text, p_archived boolean, p_expected_revision bigint, p_reason text, p_idempotency_key uuid", "f", true, "ff483b3925fdf23b8b8cbd1a40c0573a1ab5a300d38769602ca9edcdd957b8d9"],
   ["admin_create_provider_profile_v1", "p_environment text, p_project_ref text, p_provider_id uuid, p_profile_key text, p_display_name text, p_model_vendor text, p_reason text, p_idempotency_key uuid", "f", true, "bfc66dc7e65678488768fccd1d6758f049a147541adeba818f15d9096e6849c8"],
   ["admin_create_profile_version_v2", "p_environment text, p_project_ref text, p_profile_id uuid, p_expected_latest_version integer, p_adapter_id text, p_wire_api_kind text, p_endpoint_url text, p_credential_env_name text, p_model_id text, p_capability_contract_id text, p_cache_policy_id text, p_legal_manifest_id text, p_display_disclosure_key text, p_config jsonb, p_reason text, p_idempotency_key uuid", "f", true, "4562cf47ed29b9d7520b583bfed2b5bb79bc455e9677592ac89835eea0a47aa9"],
@@ -628,8 +631,9 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["guard_ai_attempt_runtime_admission_v2", "", "f", false, "913c99103f3d984fae9272bbdabc065a2709f0ac11a3b7b1800afc47cf0382b4"],
   ["guard_ai_provider_attempt_ledger", "", "f", false, "d9875f2678d79aa6d6affda1c5f94f23a8a518434a365886a057215fe8d18482"],
   ["admin_guard_runtime_authority_receipt_v2", "", "f", false, "9f35a9f444fe5258b25fe6930464444dccea784bec9cb91c854198b9f4080796"],
-  ["record_admin_runtime_readback_v2", "p_reviewed_deployment_id uuid, p_admission_id uuid, p_admission_revision bigint, p_target_set_sha256 text, p_policy_version_id uuid, p_validation_report_ids uuid[], p_observed_runtime_build_id text, p_observed_binding_manifest_revision text, p_observed_binding_manifest_sha256 text", "f", true, "eb6981da4aaf4732ef8479addfa39dc73e50660d40a7bdc36e1f402a5b49474b"],
+  ["record_admin_runtime_readback_v2", "p_reviewed_deployment_id uuid, p_admission_id uuid, p_admission_revision bigint, p_target_set_sha256 text, p_policy_version_id uuid, p_validation_report_ids uuid[], p_observed_runtime_build_id text, p_observed_binding_manifest_revision text, p_observed_binding_manifest_sha256 text", "f", true, "58258fa666910888118cf450f083bb54bf5b5745c7dbec54f90252f0375ef040"],
   ["start_ai_polish_provider_attempt_v3", "p_reservation_id uuid, p_attempt_no integer, p_admission_id uuid, p_reviewed_deployment_id uuid, p_validation_report_id uuid, p_environment text, p_project_ref text, p_runtime_build_id text, p_binding_manifest_revision text, p_binding_manifest_sha256 text, p_admission_revision bigint, p_target_set_sha256 text, p_runtime_contract_id text, p_runtime_target_id text, p_runtime_target_sha256 text", "f", true, "aadf672903e41e8e414f730e31e8bb7b9f6887afe5c27e2782f1ec6f0da1940b"],
+  ["start_ai_polish_provider_attempt_v4", "p_reservation_id uuid, p_attempt_no integer, p_runtime_admission jsonb", "f", true, "b3d1cd34904796312a8e90be6b388731475baa48e0d069b014c7d4f8392dc9f2"],
   ["admin_get_ai_analytics_v1", "p_environment text, p_project_ref text, p_from timestamp with time zone, p_to timestamp with time zone", "f", true, "ccb418c09a90f0284f714dbb986c5f7658106341bb0a39d89821a6c4f28caef2"],
 ] as const;
 const SUCCESSOR_ROUTINE_VALUES_SQL = NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1
@@ -1532,6 +1536,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             "get_admin_runtime_validation_v1",
             "start_ai_polish_provider_attempt_v2",
             "start_ai_polish_provider_attempt_v3",
+            "start_ai_polish_provider_attempt_v4",
             "get_ai_polish_execution_snapshot_v4",
             "record_admin_runtime_readback_v1",
             "record_admin_runtime_readback_v2",

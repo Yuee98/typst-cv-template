@@ -70,5 +70,6 @@ where n.nspname = 'public'
     'guard_ai_provider_attempt_ledger',
     'record_admin_runtime_readback_v1',
     'record_admin_runtime_readback_v2',
-    'start_ai_polish_provider_attempt_v3'
+    'start_ai_polish_provider_attempt_v3',
+    'start_ai_polish_provider_attempt_v4'
   );

@@ -917,41 +917,19 @@ export async function startPolishProviderAttemptV2(
   ) {
     throw localContractErrorV2();
   }
-  const functionName = params.runtimeAdmission
-    ? "start_ai_polish_provider_attempt_v3"
-    : "start_ai_polish_provider_attempt";
   const args = freezeRpcValueV2(
-    params.runtimeAdmission
-      ? {
-          p_reservation_id: reservationId,
-          p_attempt_no: params.attemptNo,
-          p_admission_id: params.runtimeAdmission.admissionId,
-          p_reviewed_deployment_id:
-            params.runtimeAdmission.reviewedDeploymentId,
-          p_validation_report_id:
-            params.runtimeAdmission.validationReportId,
-          p_environment: params.runtimeAdmission.environment,
-          p_project_ref: params.runtimeAdmission.projectRef,
-          p_runtime_build_id: params.runtimeAdmission.runtimeBuildId,
-          p_binding_manifest_revision:
-            params.runtimeAdmission.bindingManifestRevision,
-          p_binding_manifest_sha256:
-            params.runtimeAdmission.bindingManifestSha256,
-          p_admission_revision: params.runtimeAdmission.admissionRevision,
-          p_target_set_sha256: params.runtimeAdmission.targetSetSha256,
-          p_runtime_contract_id:
-            params.runtimeAdmission.runtimeContractId,
-          p_runtime_target_id: params.runtimeAdmission.runtimeTargetId,
-          p_runtime_target_sha256:
-            params.runtimeAdmission.runtimeTargetSha256,
-        }
-      : {
-          p_reservation_id: reservationId,
-          p_attempt_no: params.attemptNo,
-        },
+    {
+      p_reservation_id: reservationId,
+      p_attempt_no: params.attemptNo,
+      p_runtime_admission: params.runtimeAdmission ?? null,
+    },
   );
 
-  const first = await observeRpcV2(client, functionName, args);
+  const first = await observeRpcV2(
+    client,
+    "start_ai_polish_provider_attempt_v4",
+    args,
+  );
   let firstAmbiguity: unknown;
   if (first.kind === "response") {
     try {
@@ -978,7 +956,11 @@ export async function startPolishProviderAttemptV2(
     firstAmbiguity = first.cause;
   }
 
-  const second = await observeRpcV2(client, functionName, args);
+  const second = await observeRpcV2(
+    client,
+    "start_ai_polish_provider_attempt_v4",
+    args,
+  );
   if (second.kind === "ambiguous") {
     throw new PolishLifecycleV2RpcError("ATTEMPT_START_UNKNOWN", {
       reason: "RPC_ERROR",

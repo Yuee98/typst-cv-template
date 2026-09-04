@@ -344,6 +344,19 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     return result.data as StartReceipt | StartDenial;
   }
 
+  async function startSuccessorAttempt(
+    reservationId: string,
+    attemptNo: number,
+  ): Promise<StartReceipt | StartDenial> {
+    const result = await service.rpc("start_ai_polish_provider_attempt_v4", {
+      p_reservation_id: reservationId,
+      p_attempt_no: attemptNo,
+      p_runtime_admission: null,
+    });
+    expect(result.error).toBeNull();
+    return result.data as StartReceipt | StartDenial;
+  }
+
   function startAttemptSql(
     reservationId: string,
     attemptNo: 1 | 2,
@@ -736,6 +749,16 @@ describe.skipIf(!RUN_DB_TESTS)("V2 provider attempt start RPC (real DB)", () => 
     const denied = await startAttempt(reservationId, 1);
     expect(denied).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
     await assertUnstarted(reservationId, globalBefore);
+  });
+
+  it("keeps the v1 start semantics available through the cutover successor", async () => {
+    const user = await makeUser("attempt-start-successor-v1");
+    const reservation = await reserveV2(user);
+    const started = await startSuccessorAttempt(reservation.reservationId, 1);
+    expect(started).toMatchObject({ ok: true, attemptNo: 1, alreadyStarted: false });
+
+    const replay = await startSuccessorAttempt(reservation.reservationId, 1);
+    expect(replay).toMatchObject({ ok: true, attemptNo: 1, alreadyStarted: true });
   });
 
   it("copies the exact frozen route and aliases while keeping the parent reserved", async () => {
