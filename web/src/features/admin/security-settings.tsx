@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AdminMessages } from "./messages";
@@ -34,9 +35,9 @@ export function AdminSecuritySettings({
   const [message, setMessage] = useState<string | null>(null);
   const mounted = useRef(true);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (clearMessage = true) => {
     setBusy(true);
-    setMessage(null);
+    if (clearMessage) setMessage(null);
     try {
       const [{ data, error }, assurance] = await Promise.all([
         client.auth.mfa.listFactors(),
@@ -114,7 +115,7 @@ export function AdminSecuritySettings({
       setCode("");
       setMessage(t.verified);
       await client.auth.refreshSession();
-      await refresh();
+      await refresh(false);
     } catch {
       setMessage(t.invalidTotp);
     } finally {
@@ -132,7 +133,7 @@ export function AdminSecuritySettings({
       setCode("");
       setMessage(t.unenrolled);
       await client.auth.refreshSession();
-      await refresh();
+      await refresh(false);
     } catch {
       setMessage(t.securityUnavailable);
     } finally {
@@ -174,7 +175,14 @@ export function AdminSecuritySettings({
       {enrollment && (
         <div className="space-y-3 rounded border border-border p-3">
           <p className="text-sm">{t.scanQr}</p>
-          <img src={enrollment.qrCode} alt={t.qrCode} className="size-40 rounded bg-white p-2" />
+          <Image
+            src={enrollment.qrCode}
+            alt={t.qrCode}
+            width={160}
+            height={160}
+            unoptimized
+            className="size-40 rounded bg-white p-2"
+          />
           <p className="break-all text-xs text-foreground-muted">{t.secret}: {enrollment.secret}</p>
           <p className="break-all text-xs text-foreground-muted">{t.manualUri}: {enrollment.uri}</p>
           <div className="flex gap-2">

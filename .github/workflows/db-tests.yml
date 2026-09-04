@@ -31,6 +31,10 @@ on:
       - "web/scripts/run-db-tests.test.mjs"
       - "web/scripts/admin-reviewed-deployment-import.mjs"
       - "web/scripts/admin-reviewed-deployment-import.test.mjs"
+      - "web/scripts/run-admin-e2e-server.mjs"
+      - "web/scripts/run-admin-e2e.mjs"
+      - "web/e2e/**"
+      - "web/playwright.admin.config.ts"
       - "web/vitest.config.mts"
       - "web/src/lib/cv/cloud-storage.ts"
       - "web/src/lib/legal/legal-display-v2.ts"
@@ -70,7 +74,7 @@ jobs:
   db-tests:
     name: Web (real-DB tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     env:
       NEXT_TELEMETRY_DISABLED: "1"
@@ -120,6 +124,12 @@ jobs:
 
       - name: Run CFG-003 fresh-reset gate
         run: node web/scripts/run-cfg003-fresh-reset.mjs
+
+      - name: Install Chromium for Admin Auth E2E
+        run: pnpm --filter web test:e2e:install
+
+      - name: Run local Supabase Admin Auth UI E2E
+        run: pnpm --filter web test:e2e:admin
 
       # Required mode makes status, local-API, and child-process failures hard
       # CI errors. The runner accepts only HTTP loopback endpoints and clears
