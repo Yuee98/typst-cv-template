@@ -14,18 +14,18 @@ describe.skipIf(!RUN_DB_TESTS)("B3/B4 runtime authority readback", () => {
             and definition_sha256 ~ '^[0-9a-f]{64}$'),
         'manifestReadback', position('readbackAuthority' in pg_get_functiondef(
           'public.admin_cutover_authority_v2(uuid,uuid,uuid[],bigint,bigint,text)'::regprocedure)) > 0,
-        'v3Shape', position('admin_runtime_authority_manifest_v3' in pg_get_constraintdef(
-          (select oid from pg_constraint where conname='admin_runtime_authority_manifest_shape_v3'
+        'v4Shape', position('admin_runtime_authority_manifest_v4' in pg_get_constraintdef(
+          (select oid from pg_constraint where conname='admin_runtime_authority_manifest_shape_v4'
             and conrelid='public.admin_runtime_authority_receipts_v2'::regclass))) > 0
       );
     `);
     const line = result.stdout.split(/\r?\n/u).map((v: string) => v.trim()).findLast((v: string) => v.startsWith("{"));
     expect(line).toBeTruthy();
     const value = JSON.parse(line!);
-    expect(value.expected).toBeGreaterThanOrEqual(9);
+    expect(value.expected).toBe(18);
     expect(value.readback).toBe(true);
     expect(value.manifestReadback).toBe(true);
-    expect(value.v3Shape).toBe(true);
+    expect(value.v4Shape).toBe(true);
   });
 
   it("binds readback to the complete sealed target tuple", () => {

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   createAnonClient,
@@ -11,6 +12,9 @@ import {
 } from "./helpers";
 import {
   authorSyntheticRuntimeContract,
+  authorSyntheticRuntimeContractSet,
+  DEEPSEEK_LEGAL_MANIFEST_ID,
+  DEEPSEEK_LEGAL_MANIFEST_SHA256,
   INITIAL_LEGAL_BUNDLE_VERSION,
   runOwnerSql,
 } from "./runtime-contract-fixtures";
@@ -30,6 +34,30 @@ const mimoCapabilityId =
   "runtime-capability.mimo-responses-v1.2026-09-04";
 const capabilitySha256 =
   "4e5a92750f77f148e6422dcf05b03d99333b357879dba5fdb7248d16dd08bdf2";
+
+function totpCode(secret: string, at = Date.now()): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const character of secret.replaceAll("=", "").toUpperCase()) {
+    const value = alphabet.indexOf(character);
+    if (value < 0) throw new Error("invalid TOTP secret");
+    bits += value.toString(2).padStart(5, "0");
+  }
+  const bytes = Buffer.alloc(Math.floor(bits.length / 8));
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(bits.slice(index * 8, index * 8 + 8), 2);
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 30_000)));
+  const digest = createHmac("sha1", bytes).update(counter).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary =
+    ((digest[offset] & 0x7f) << 24) |
+    ((digest[offset + 1] & 0xff) << 16) |
+    ((digest[offset + 2] & 0xff) << 8) |
+    (digest[offset + 3] & 0xff);
+  return (binary % 1_000_000).toString().padStart(6, "0");
+}
 
 describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
   let service: SupabaseClient;
@@ -521,6 +549,139 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
         grant execute on function public.get_ai_polish_execution_snapshot_v4(uuid,uuid,text,text,text,text,text) to service_role;
       end;
       $tamper_grant$;
+      do $tamper_readback_delegate$
+      begin
+        begin
+          create or replace function public.record_admin_runtime_readback_v1(
+            p_reviewed_deployment_id uuid,p_policy_version_id uuid,
+            p_validation_report_ids uuid[],p_observed_runtime_build_id text,
+            p_observed_binding_manifest_revision text,
+            p_observed_binding_manifest_sha256 text
+          ) returns jsonb language plpgsql security definer set search_path='' as $stub$
+          begin return jsonb_build_object('tampered',true); end;
+          $stub$;
+          perform public.admin_cutover_authority_v2(
+            '${reviewedDeploymentId}',(select admission_id
+              from public.admin_admitted_runtime_deployments_v2
+              where reviewed_deployment_id='${reviewedDeploymentId}'),
+            array['${reportId}'::uuid],0,0,
+            'readback delegate tamper must rollback');
+          raise exception 'readback delegate tamper unexpectedly accepted';
+        exception when others then
+          if sqlerrm not like '%CUTOVER_AUTHORITY_MISMATCH%' then raise; end if;
+        end;
+        if (select control_plane_mode from public.admin_environment where id=true) <> 'legacy'
+           or (select closing_cycle_id from public.admin_ai_control_state_v1 where id=true) is not null
+           or not has_function_privilege('service_role',
+             'public.start_ai_polish_provider_attempt(uuid,integer)','EXECUTE')
+           or exists (select 1 from public.admin_runtime_authority_receipts_v2
+             where admission_id=(select admission_id
+               from public.admin_admitted_runtime_deployments_v2
+               where reviewed_deployment_id='${reviewedDeploymentId}')) then
+          raise exception 'readback delegate tamper rollback evidence failed';
+        end if;
+      end;
+      $tamper_readback_delegate$;
+      do $tamper_cutover_delegate$
+      begin
+        begin
+          create or replace function public.admin_cutover_authority_legacy_internal_v1(
+            p_reviewed_deployment_id uuid,p_validation_report_ids uuid[],
+            p_expected_environment_revision bigint,
+            p_expected_control_revision bigint,p_reason text
+          ) returns jsonb language plpgsql security definer set search_path='' as $stub$
+          begin
+            return jsonb_build_object('activePolicyVersionId',(
+              select active_routing_policy_version_id
+              from public.ai_feature_config where id=true));
+          end;
+          $stub$;
+          perform public.admin_cutover_authority_v2(
+            '${reviewedDeploymentId}',(select admission_id
+              from public.admin_admitted_runtime_deployments_v2
+              where reviewed_deployment_id='${reviewedDeploymentId}'),
+            array['${reportId}'::uuid],0,0,
+            'cutover delegate tamper must rollback');
+          raise exception 'cutover delegate tamper unexpectedly accepted';
+        exception when others then
+          if sqlerrm not like '%CUTOVER_AUTHORITY_MISMATCH%' then raise; end if;
+        end;
+        if (select control_plane_mode from public.admin_environment where id=true) <> 'legacy'
+           or (select closing_cycle_id from public.admin_ai_control_state_v1 where id=true) is not null
+           or not has_function_privilege('service_role',
+             'public.start_ai_polish_provider_attempt(uuid,integer)','EXECUTE')
+           or exists (select 1 from public.admin_runtime_authority_receipts_v2
+             where admission_id=(select admission_id
+               from public.admin_admitted_runtime_deployments_v2
+               where reviewed_deployment_id='${reviewedDeploymentId}')) then
+          raise exception 'cutover delegate tamper rollback evidence failed';
+        end if;
+      end;
+      $tamper_cutover_delegate$;
+      do $tamper_start_core$
+      begin
+        begin
+          create or replace function public.start_ai_polish_provider_attempt_internal(
+            p_reservation_id uuid,p_attempt_no integer
+          ) returns jsonb language plpgsql security definer set search_path='' as $stub$
+          begin return jsonb_build_object('tampered',true); end;
+          $stub$;
+          perform public.admin_cutover_authority_v2(
+            '${reviewedDeploymentId}',(select admission_id
+              from public.admin_admitted_runtime_deployments_v2
+              where reviewed_deployment_id='${reviewedDeploymentId}'),
+            array['${reportId}'::uuid],0,0,
+            'start core tamper must rollback');
+          raise exception 'start core tamper unexpectedly accepted';
+        exception when others then
+          if sqlerrm not like '%CUTOVER_AUTHORITY_MISMATCH%' then raise; end if;
+        end;
+        if (select control_plane_mode from public.admin_environment where id=true) <> 'legacy'
+           or (select closing_cycle_id from public.admin_ai_control_state_v1 where id=true) is not null
+           or not has_function_privilege('service_role',
+             'public.start_ai_polish_provider_attempt(uuid,integer)','EXECUTE')
+           or exists (select 1 from public.admin_runtime_authority_receipts_v2
+             where admission_id=(select admission_id
+               from public.admin_admitted_runtime_deployments_v2
+               where reviewed_deployment_id='${reviewedDeploymentId}')) then
+          raise exception 'start core tamper rollback evidence failed';
+        end if;
+      end;
+      $tamper_start_core$;
+      do $tamper_report_validator$
+      begin
+        begin
+          create or replace function public.admin_assert_policy_validation_reports_v2(
+            p_policy_version_id uuid,p_validation_report_ids uuid[],
+            p_at timestamptz
+          ) returns jsonb language plpgsql security definer set search_path='' as $stub$
+          begin
+            return public.admin_assert_policy_validation_reports_legacy_internal_v1(
+              p_policy_version_id,p_validation_report_ids,p_at);
+          end;
+          $stub$;
+          perform public.admin_cutover_authority_v2(
+            '${reviewedDeploymentId}',(select admission_id
+              from public.admin_admitted_runtime_deployments_v2
+              where reviewed_deployment_id='${reviewedDeploymentId}'),
+            array['${reportId}'::uuid],0,0,
+            'report validator tamper must rollback');
+          raise exception 'report validator tamper unexpectedly accepted';
+        exception when others then
+          if sqlerrm not like '%CUTOVER_AUTHORITY_MISMATCH%' then raise; end if;
+        end;
+        if (select control_plane_mode from public.admin_environment where id=true) <> 'legacy'
+           or (select closing_cycle_id from public.admin_ai_control_state_v1 where id=true) is not null
+           or not has_function_privilege('service_role',
+             'public.start_ai_polish_provider_attempt(uuid,integer)','EXECUTE')
+           or exists (select 1 from public.admin_runtime_authority_receipts_v2
+             where admission_id=(select admission_id
+               from public.admin_admitted_runtime_deployments_v2
+               where reviewed_deployment_id='${reviewedDeploymentId}')) then
+          raise exception 'report validator tamper rollback evidence failed';
+        end if;
+      end;
+      $tamper_report_validator$;
       set local session_replication_role=replica;
       update public.admin_validation_reports_v1 set
         checked_at=statement_timestamp()-interval '12 minutes',
@@ -611,5 +772,302 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
     expect(output).toContain('"targetSetSha256"');
     expect(output).toContain(`"policyVersionId": "${policyId}"`);
     expect(output).toContain('"freshReadback": true');
+  });
+
+  it("requires one fresh report per route through cutover, readback, and reopen", async () => {
+    const suffix = crypto.randomUUID();
+    const secondProfileId = crypto.randomUUID();
+    const secondProfileVersionId = crypto.randomUUID();
+    const secondPriceVersionId = crypto.randomUUID();
+    const policyId = crypto.randomUUID();
+    const secondProfileKey = `test.admin.validation.second.${suffix}`;
+    const secondDisplayKey = `test-display.${suffix.replaceAll("-", "")}`;
+    const runtimeSet = authorSyntheticRuntimeContractSet([
+      {
+        profileKey: "deepseek.official.deepseek-v4-flash.chat.v1",
+        legalManifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
+        manifestSha256: DEEPSEEK_LEGAL_MANIFEST_SHA256,
+      },
+      {
+        profileKey: secondProfileKey,
+        legalManifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
+        manifestSha256: DEEPSEEK_LEGAL_MANIFEST_SHA256,
+      },
+    ]);
+    const [routeA, routeB] = runtimeSet.targets;
+
+    runOwnerSql(String.raw`
+      begin;
+      set local session_replication_role=replica;
+      insert into public.ai_provider_profiles
+      select (jsonb_populate_record(
+        null::public.ai_provider_profiles,
+        to_jsonb(source) || jsonb_build_object(
+          'id','${secondProfileId}','profile_key','${secondProfileKey}',
+          'display_name','Second validation route','created_at',clock_timestamp()
+        )
+      )).* from public.ai_provider_profiles source
+      where source.profile_key='deepseek.official.deepseek-v4-flash.chat.v1';
+
+      insert into public.ai_provider_profile_versions
+      select (jsonb_populate_record(
+        null::public.ai_provider_profile_versions,
+        to_jsonb(source) || jsonb_build_object(
+          'id','${secondProfileVersionId}','profile_id','${secondProfileId}',
+          'version',1,'display_disclosure_key','${secondDisplayKey}',
+          'created_at',clock_timestamp(),'validated_at',clock_timestamp(),
+          'activated_at',null,'retired_at',null
+        )
+      )).* from public.ai_provider_profile_versions source
+      where source.id='${profileVersionId}';
+
+      insert into public.ai_price_versions
+      select (jsonb_populate_record(
+        null::public.ai_price_versions,
+        to_jsonb(source) || jsonb_build_object(
+          'id','${secondPriceVersionId}',
+          'profile_version_id','${secondProfileVersionId}',
+          'version',1,'components_sealed_at',clock_timestamp()
+        )
+      )).* from public.ai_price_versions source
+      where source.id='${priceVersionId}';
+      insert into public.ai_price_components(price_version_id,component,nanos_per_million)
+      select '${secondPriceVersionId}',component,nanos_per_million
+      from public.ai_price_components where price_version_id='${priceVersionId}';
+
+      insert into public.ai_legal_display_versions_v2
+      select (jsonb_populate_record(
+        null::public.ai_legal_display_versions_v2,
+        to_jsonb(source) || jsonb_build_object(
+          'display_disclosure_key','${secondDisplayKey}',
+          'created_at',clock_timestamp(),'sealed_at',clock_timestamp()
+        )
+      )).* from public.ai_legal_display_versions_v2 source
+      where source.display_disclosure_key='${displayKey}'
+        and source.legal_bundle_version='${INITIAL_LEGAL_BUNDLE_VERSION}';
+
+      insert into public.ai_runtime_target_bindings_v2(
+        runtime_contract_id,runtime_target_id,runtime_target_sha256,
+        route_descriptor_id,route_descriptor_sha256,profile_version_id,
+        price_version_id,provider_id,recipient_key,code_capability_id,
+        code_capability_sha256,gateway_kind,adapter_kind,wire_api_kind,
+        endpoint_url,credential_env_name,model_id,capability_contract_id,
+        cache_policy_id,calculator_kind,legal_bundle_version,legal_manifest_id,
+        legal_manifest_sha256,display_disclosure_key,external_evidence_ids
+      )
+      select membership.runtime_contract_id,membership.runtime_target_id,
+        membership.runtime_target_sha256,membership.route_descriptor_id,
+        membership.route_descriptor_sha256,version.id,price.id,provider.id,
+        provider.recipient_key,capability.code_capability_id,
+        capability.descriptor_sha256,profile.gateway_kind,version.adapter_kind,
+        version.wire_api_kind,version.endpoint_url,version.credential_env_name,
+        version.model_id,version.capability_contract_id,version.cache_policy_id,
+        price.calculator_kind,'${INITIAL_LEGAL_BUNDLE_VERSION}',
+        membership.legal_manifest_id,membership.manifest_sha256,
+        version.display_disclosure_key,array['evidence.synthetic-two-route']
+      from public.ai_service_runtime_contract_targets membership
+      join public.ai_provider_profiles profile
+        on profile.profile_key=membership.profile_key
+      join public.ai_provider_profile_versions version on version.id=case
+        when membership.profile_key='${secondProfileKey}'
+          then '${secondProfileVersionId}'::uuid
+        else '${profileVersionId}'::uuid end
+      join public.ai_price_versions price on price.id=case
+        when membership.profile_key='${secondProfileKey}'
+          then '${secondPriceVersionId}'::uuid
+        else '${priceVersionId}'::uuid end
+      join public.ai_providers provider on provider.id=profile.provider_id
+      join public.ai_runtime_code_capabilities_v2 capability
+        on capability.code_capability_id='${capabilityId}'
+      where membership.runtime_contract_id='${runtimeSet.runtimeContractId}';
+      commit;
+    `);
+
+    const validationArgs = (runtimeTargetId: string) => ({
+      p_reviewed_deployment_id: reviewedDeploymentId,
+      p_runtime_contract_id: runtimeSet.runtimeContractId,
+      p_runtime_target_id: runtimeTargetId,
+      p_observed_runtime_build_id: runtimeBuildId,
+      p_observed_binding_manifest_revision: bindingRevision,
+      p_observed_binding_manifest_sha256: bindingManifestSha256,
+      p_observed_code_capability_sha256: capabilitySha256,
+      p_endpoint_policy_valid: true,
+      p_manifest_binding_valid: true,
+      p_credential_configured: true,
+      p_compiled_capability_valid: true,
+    });
+    const reportA1 = await service.rpc(
+      "record_admin_validation_report_v1",
+      validationArgs(routeA.runtimeTargetId),
+    );
+    const reportA2 = await service.rpc(
+      "record_admin_validation_report_v1",
+      validationArgs(routeA.runtimeTargetId),
+    );
+    const reportB1 = await service.rpc(
+      "record_admin_validation_report_v1",
+      validationArgs(routeB.runtimeTargetId),
+    );
+    for (const report of [reportA1, reportA2, reportB1]) {
+      expect(report.error).toBeNull();
+      expect(report.data?.passed).toBe(true);
+    }
+    const reportA1Id = (reportA1.data as { reportId: string }).reportId;
+    const reportA2Id = (reportA2.data as { reportId: string }).reportId;
+    const reportB1Id = (reportB1.data as { reportId: string }).reportId;
+
+    const enrolled = await admin.auth.mfa.enroll({
+      factorType: "totp",
+      friendlyName: `two-route-${suffix}`,
+    });
+    expect(enrolled.error).toBeNull();
+    if (!enrolled.data?.id || !enrolled.data.totp?.secret) {
+      throw new Error("local TOTP enrollment returned no factor");
+    }
+    const verified = await admin.auth.mfa.challengeAndVerify({
+      factorId: enrolled.data.id,
+      code: totpCode(enrolled.data.totp.secret),
+    });
+    expect(verified.error).toBeNull();
+    if (!verified.data?.access_token) {
+      throw new Error("local TOTP verification returned no token");
+    }
+    const claims = Buffer.from(
+      verified.data.access_token.split(".")[1],
+      "base64url",
+    ).toString();
+    const rules = JSON.stringify({
+      schemaVersion: "routing_rules_v1",
+      defaultRoute: {
+        profileVersionId,
+        priceVersionId,
+      },
+      windows: [
+        {
+          weekdays: [1, 2, 3, 4, 5, 6, 7],
+          startMinute: 0,
+          endMinute: 1,
+          route: {
+            profileVersionId: secondProfileVersionId,
+            priceVersionId: secondPriceVersionId,
+          },
+        },
+      ],
+    });
+
+    const output = runOwnerSql(String.raw`
+      begin;
+      set local session_replication_role=replica;
+      insert into public.ai_routing_policy_versions(
+        id,policy_key,version,status,timezone,rules,default_profile_version_id,
+        legal_bundle_version,config_sha256,runtime_contract_id,
+        validated_at,created_at
+      ) values (
+        '${policyId}','test.admin.validation.multiroute.${suffix}',1,'canary',
+        'Asia/Shanghai',${literal(rules)}::jsonb,'${profileVersionId}',
+        '${INITIAL_LEGAL_BUNDLE_VERSION}','${"9".repeat(64)}',
+        '${runtimeSet.runtimeContractId}',clock_timestamp(),clock_timestamp()
+      );
+      update public.ai_feature_config set ai_polish_enabled=false,
+        active_routing_policy_version_id='${policyId}' where id=true;
+      set local session_replication_role=origin;
+
+      select public.admin_admit_runtime_deployment_v2(
+        '${reviewedDeploymentId}',jsonb_build_array(
+          jsonb_build_object(
+            'runtimeContractId','${runtimeSet.runtimeContractId}',
+            'runtimeTargetId','${routeA.runtimeTargetId}',
+            'validationReportId','${reportA1Id}'
+          ),
+          jsonb_build_object(
+            'runtimeContractId','${runtimeSet.runtimeContractId}',
+            'runtimeTargetId','${routeB.runtimeTargetId}',
+            'validationReportId','${reportB1Id}'
+          )
+        ),'two-route admission proof'
+      );
+      select admission_id,admission_revision,target_set_sha256
+      from public.admin_admitted_runtime_deployments_v2
+      where reviewed_deployment_id='${reviewedDeploymentId}'
+      order by admitted_at desc limit 1 \gset multi_admission_
+
+      do $duplicate_route$
+      begin
+        begin
+          perform public.admin_cutover_authority_v2(
+            '${reviewedDeploymentId}',(
+              select admission_id
+              from public.admin_admitted_runtime_deployments_v2
+              where reviewed_deployment_id='${reviewedDeploymentId}'
+              order by admitted_at desc limit 1
+            ),
+            array['${reportA1Id}'::uuid,'${reportA2Id}'::uuid],0,0,
+            'duplicate route reports must fail'
+          );
+          raise exception 'duplicate route reports unexpectedly accepted';
+        exception when others then
+          if sqlerrm <> 'VALIDATION_REPORT_ROUTE_BIJECTION_MISMATCH' then
+            raise;
+          end if;
+        end;
+        if (select control_plane_mode from public.admin_environment where id=true) <> 'legacy'
+           or (select closing_cycle_id from public.admin_ai_control_state_v1 where id=true) is not null
+           or exists (select 1 from public.admin_runtime_authority_receipts_v2
+             where admission_id=(select admission_id
+               from public.admin_admitted_runtime_deployments_v2
+               where reviewed_deployment_id='${reviewedDeploymentId}'
+               order by admitted_at desc limit 1)) then
+          raise exception 'duplicate route cutover was not atomic';
+        end if;
+      end;
+      $duplicate_route$;
+
+      select public.admin_cutover_authority_v2(
+        '${reviewedDeploymentId}',:'multi_admission_admission_id'::uuid,
+        array['${reportA1Id}'::uuid,'${reportB1Id}'::uuid],0,0,
+        'two-route cutover proof'
+      );
+      set local role service_role;
+      set local request.jwt.claims='{"role":"service_role"}';
+      select (public.record_admin_runtime_readback_v2(
+        '${reviewedDeploymentId}',:'multi_admission_admission_id'::uuid,
+        :'multi_admission_admission_revision'::bigint,
+        :'multi_admission_target_set_sha256','${policyId}',
+        array['${reportA1Id}'::uuid,'${reportB1Id}'::uuid],
+        '${runtimeBuildId}','${bindingRevision}','${bindingManifestSha256}'
+      )->>'reportId') as report_id \gset multi_readback_
+      reset role;
+      select control.closing_cycle_id,control.revision,
+        config.config_generation
+      from public.admin_ai_control_state_v1 control
+      cross join public.ai_feature_config config
+      where control.id=true and config.id=true \gset multi_control_
+      set local role authenticated;
+      set local request.jwt.claims=${literal(claims)};
+      select public.admin_reopen_ai_v1(
+        'local','local',:'multi_readback_report_id'::uuid,
+        :'multi_control_closing_cycle_id'::uuid,
+        :'multi_control_revision'::bigint,'${policyId}',
+        :'multi_control_config_generation'::bigint,
+        'two-route reopen proof','${crypto.randomUUID()}'
+      );
+      reset role;
+      select jsonb_build_object(
+        'routeCount',jsonb_array_length((select effective_routes
+          from public.admin_runtime_readback_reports_v1
+          where id=:'multi_readback_report_id'::uuid)),
+        'reportCount',cardinality((select validation_report_ids
+          from public.admin_runtime_readback_reports_v1
+          where id=:'multi_readback_report_id'::uuid)),
+        'enabled',(select ai_polish_enabled from public.ai_feature_config where id=true)
+      );
+      rollback;
+    `).stdout;
+    expect(output).toContain('"schemaVersion": "admin_authority_cutover_v2"');
+    expect(output).toContain('"readbackReportId":');
+    expect(output).toContain('"operationKind": "ai_reopen"');
+    expect(output).toContain('"routeCount": 2');
+    expect(output).toContain('"reportCount": 2');
+    expect(output).toContain('"enabled": true');
   });
 });
