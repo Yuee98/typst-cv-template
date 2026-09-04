@@ -36,6 +36,7 @@ import {
   type PreparedProviderExecutionV2,
 } from "./prepared-provider-execution-v2";
 import type { RuntimeDeploymentAdmissionV2 } from "./runtime-deployment-v1";
+import type { RuntimeExecutionTargetV2 } from "./execution-snapshot-v2";
 import {
   getPolishExecutionSnapshotV2,
   PolishLifecycleV2RpcError,
@@ -169,6 +170,7 @@ export interface PolishLifecycleV2Input {
 
 export type PolishAdapterResolverV2 = (
   profile: Readonly<ProfileExecutionConfig>,
+  target?: Readonly<RuntimeExecutionTargetV2>,
 ) => PolishInferenceProviderV2 | PreparedProviderExecutionV2;
 
 export interface PolishRouteDepsV2 {
@@ -224,13 +226,17 @@ export function createCodeOwnedPolishAdapterResolverV2(
     fetch?: typeof fetch;
   } = {},
 ): PolishAdapterResolverV2 {
-  return (profile) => {
+  return (profile, target) => {
     let registeredProfile: ProfileExecutionConfig;
     try {
       // Revalidate at the operational boundary so a crossed profile, adapter,
       // credential, endpoint, or other runtime tuple cannot select a provider.
       registeredProfile = validateVersionedProfileExecutionConfig(profile);
     } catch {
+      throw new PolishAdapterUnavailableV2Error();
+    }
+
+    if (registeredProfile.schemaVersion === "profile_execution_config_v2" && target !== undefined) {
       throw new PolishAdapterUnavailableV2Error();
     }
 
@@ -781,7 +787,20 @@ export async function executePolishLifecycleV2(
   let runtimeAdmission: Readonly<RuntimeDeploymentAdmissionV2> | undefined;
   let providerSubjectId: string;
   try {
-    const resolution = deps.resolveProvider(execution.profileExecutionConfig);
+    const resolution = deps.resolveProvider(
+      execution.profileExecutionConfig,
+      execution.schemaVersion === "ai_polish_execution_snapshot_v2"
+        ? {
+            schemaVersion: "runtime_execution_target_v2",
+            runtimeContractId: execution.runtimeEvidence.runtimeContractId,
+            legalBundleVersion: execution.routeSnapshot.legalBundleVersion,
+            profileVersionId: execution.routeSnapshot.profileVersionId,
+            profile: execution.profileExecutionConfig,
+            evidence: execution.runtimeEvidence,
+            deploymentValidation: execution.deploymentValidation,
+          }
+        : undefined,
+    );
     if (
       execution.profileExecutionConfig.schemaVersion ===
       "profile_execution_config_v2"

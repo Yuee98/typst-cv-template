@@ -7,8 +7,11 @@ import {
 } from "./lifecycle-v2-contract";
 import {
   createProviderSecretResolver,
+  prepareProviderTransportV2,
   validateProviderEndpoint,
 } from "./provider-binding-v2";
+import { createPreparedProviderExecutionV2 } from "./prepared-provider-execution-v2";
+import { validateProfileExecutionConfigV2 } from "./profile-execution-v2";
 import {
   EMPTY_RUNTIME_TARGET_RESOLVER_V2,
   type RuntimeExecutionTargetV2,
@@ -95,6 +98,7 @@ export function createReportedRuntimeTargetResolverV2(
  */
 export function createRealPolishRuntimeAuthorityV2(
   env: ServerEnvironment,
+  options: { fetch?: typeof fetch } = {},
 ): RealPolishRuntimeAuthorityV2 {
   if (env.POLISH_FAKE_LLM === "true") {
     throw new Error(
@@ -102,11 +106,48 @@ export function createRealPolishRuntimeAuthorityV2(
     );
   }
 
+  const resolveLegacyProvider = createCodeOwnedPolishAdapterResolverV2({ env });
+  const resolveSecret = createProviderSecretResolver(env);
+
   return Object.freeze({
     // Preserve the legacy DeepSeek target for in-flight/rollback execution
     // while admitting only the exact current combined-v2 target pair.
     runtimeTargetResolver: REAL_POLISH_RUNTIME_TARGET_RESOLVER_V2,
     runtimeTargetResolverV2: createReportedRuntimeTargetResolverV2(env),
-    resolveProvider: createCodeOwnedPolishAdapterResolverV2({ env }),
+    resolveProvider: ((profile, target) => {
+      if (profile.schemaVersion === "profile_execution_config_v2") {
+        if (
+          target === undefined ||
+          target.profile !== profile ||
+          target.deploymentValidation.schemaVersion !==
+            "runtime_deployment_admission_v2"
+        ) {
+          throw new Error("v2 provider authority target is required");
+        }
+        const validatedProfile = validateProfileExecutionConfigV2(profile);
+        const deployment = parseRuntimeDeploymentIdentityV1(env);
+        if (
+          deployment.buildId !== target.deploymentValidation.runtimeBuildId ||
+          deployment.manifestSha256 !==
+            target.deploymentValidation.bindingManifestSha256
+        ) {
+          throw new Error("v2 provider deployment identity changed");
+        }
+        const prepared = prepareProviderTransportV2({
+          profile: validatedProfile,
+          recipient: {
+            providerId: target.evidence.providerId,
+            recipientKey: target.evidence.recipientKey,
+          },
+          manifest: deployment.manifest,
+          expectedManifestRevision:
+            target.deploymentValidation.bindingManifestRevision,
+          runtimeBuildId: target.deploymentValidation.runtimeBuildId,
+          resolveSecret,
+        });
+        return createPreparedProviderExecutionV2(prepared, options.fetch);
+      }
+      return resolveLegacyProvider(profile, target);
+    }) satisfies PolishAdapterResolverV2,
   });
 }
