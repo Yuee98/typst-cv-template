@@ -42,6 +42,7 @@ describe("AdminSecuritySettings", () => {
       code: "123456",
     }));
     expect(screen.queryByText(/do-not-persist-secret/)).toBeNull();
+    expect(screen.getByText(adminMessages.en.verified)).toBeTruthy();
     expect(client.auth.refreshSession).toHaveBeenCalled();
   });
 
