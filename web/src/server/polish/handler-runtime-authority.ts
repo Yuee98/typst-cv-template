@@ -49,6 +49,9 @@ export function createReportedRuntimeTargetResolverV2(
   return (target: RuntimeExecutionTargetV2): boolean => {
     try {
       const report = target.deploymentValidation;
+      if (report.schemaVersion !== "runtime_deployment_admission_v2") {
+        return false;
+      }
       const endpoint = validateProviderEndpoint(target.profile);
       const binding = deployment.manifest.bindings.find(
         (item) =>
@@ -72,8 +75,6 @@ export function createReportedRuntimeTargetResolverV2(
         report.legalBundleVersion === target.legalBundleVersion &&
         report.legalManifestId === target.evidence.legalManifestId &&
         report.displayDisclosureKey === target.evidence.displayDisclosureKey &&
-        (report.schemaVersion === "runtime_deployment_admission_v1" ||
-          Date.parse(report.expiresAt) > Date.now()) &&
         binding?.providerId === target.profile.providerId &&
         binding.recipientKey === target.evidence.recipientKey &&
         binding.origin === new URL(endpoint).origin

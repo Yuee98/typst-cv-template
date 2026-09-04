@@ -257,7 +257,13 @@ export function AdminRuntimeControls({
   const [disableDraft, setDisableDraft] = useState({ confirmation: "", reason: "" });
   const [pointerDraft, setPointerDraft] = useState({ policyVersionId: state.activePolicyVersionId ?? "", validationReportIds: "", confirmation: "", reason: "" });
   const [clearDraft, setClearDraft] = useState({ validationReportIds: "", confirmation: "", reason: "" });
-  const [readbackDraft, setReadbackDraft] = useState({ reviewedDeploymentId: "", validationReportIds: "" });
+  const [readbackDraft, setReadbackDraft] = useState({
+    reviewedDeploymentId: "",
+    admissionId: "",
+    admissionRevision: "",
+    targetSetSha256: "",
+    validationReportIds: "",
+  });
   const [readback, setReadback] = useState<AdminRuntimeReadback | null>(null);
   const [readbackBusy, setReadbackBusy] = useState(false);
   const [readbackError, setReadbackError] = useState<string | null>(null);
@@ -276,6 +282,9 @@ export function AdminRuntimeControls({
         body: JSON.stringify({
           operation: "record_runtime_readback",
           reviewedDeploymentId: readbackDraft.reviewedDeploymentId,
+          admissionId: readbackDraft.admissionId,
+          admissionRevision: readbackDraft.admissionRevision,
+          targetSetSha256: readbackDraft.targetSetSha256,
           policyVersionId: state.activePolicyVersionId,
           validationReportIds: ids(readbackDraft.validationReportIds),
         }),
@@ -345,8 +354,11 @@ export function AdminRuntimeControls({
         </Panel>
         <Panel title={t.recordReadback} disabled={!enabled || state.aiEnabled || !state.activePolicyVersionId}>
           <Input aria-label={t.reviewedDeployment} value={readbackDraft.reviewedDeploymentId} placeholder={t.reviewedDeployment} onChange={(event) => { setReadbackDraft({ ...readbackDraft, reviewedDeploymentId: event.target.value }); setReadback(null); setReadbackError(null); }} />
+          <Input aria-label={t.admissionId} value={readbackDraft.admissionId} placeholder={t.admissionId} onChange={(event) => { setReadbackDraft({ ...readbackDraft, admissionId: event.target.value }); setReadback(null); setReadbackError(null); }} />
+          <Input aria-label={t.admissionRevision} value={readbackDraft.admissionRevision} placeholder={t.admissionRevision} onChange={(event) => { setReadbackDraft({ ...readbackDraft, admissionRevision: event.target.value }); setReadback(null); setReadbackError(null); }} />
+          <Input aria-label={t.targetSetSha256} value={readbackDraft.targetSetSha256} placeholder={t.targetSetSha256} onChange={(event) => { setReadbackDraft({ ...readbackDraft, targetSetSha256: event.target.value }); setReadback(null); setReadbackError(null); }} />
           <Input aria-label={t.validationReports} value={readbackDraft.validationReportIds} placeholder={t.validationReports} onChange={(event) => { setReadbackDraft({ ...readbackDraft, validationReportIds: event.target.value }); setReadback(null); setReadbackError(null); }} />
-          <Button disabled={readbackBusy || !readbackDraft.reviewedDeploymentId || ids(readbackDraft.validationReportIds).length === 0} onClick={() => void recordReadback()}>{t.recordReadback}</Button>
+          <Button disabled={readbackBusy || Object.entries(readbackDraft).some(([key, value]) => key === "validationReportIds" ? ids(value).length === 0 : !value)} onClick={() => void recordReadback()}>{t.recordReadback}</Button>
           {readbackError && <p className="text-sm text-danger-foreground">{readbackError}</p>}
           {readback && <div className="rounded border border-border bg-background p-3 text-xs"><p className="font-medium">{t.readbackRecorded}</p><p className="mt-1 break-all">{t.readbackReport}: {readback.reportId}</p><p className="mt-1">{t.reportExpires}: {readback.expiresAt}</p><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap">{JSON.stringify(readback.effectiveRoutes, null, 2)}</pre></div>}
         </Panel>

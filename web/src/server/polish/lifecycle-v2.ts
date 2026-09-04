@@ -35,6 +35,7 @@ import {
   readPreparedProviderExecutionV2,
   type PreparedProviderExecutionV2,
 } from "./prepared-provider-execution-v2";
+import type { RuntimeDeploymentAdmissionV2 } from "./runtime-deployment-v1";
 import {
   getPolishExecutionSnapshotV2,
   PolishLifecycleV2RpcError,
@@ -777,6 +778,7 @@ export async function executePolishLifecycleV2(
         bindingManifestRevision: string;
       }>
     | undefined;
+  let runtimeAdmission: Readonly<RuntimeDeploymentAdmissionV2> | undefined;
   let providerSubjectId: string;
   try {
     const resolution = deps.resolveProvider(execution.profileExecutionConfig);
@@ -790,6 +792,14 @@ export async function executePolishLifecycleV2(
       );
       provider = prepared.provider;
       runtimeProvenance = prepared.runtimeProvenance;
+      if (
+        execution.schemaVersion !== "ai_polish_execution_snapshot_v2" ||
+        execution.deploymentValidation.schemaVersion !==
+          "runtime_deployment_admission_v2"
+      ) {
+        throw new PolishAdapterUnavailableV2Error();
+      }
+      runtimeAdmission = execution.deploymentValidation;
     } else {
       if (isPreparedProviderExecutionV2(resolution)) {
         throw new PolishAdapterUnavailableV2Error();
@@ -831,6 +841,7 @@ export async function executePolishLifecycleV2(
           attemptNo: started.attemptNo as 1 | 2,
           expectedRoute: execution.routeSnapshot,
           runtimeProvenance,
+          runtimeAdmission,
         });
         admittedAttempts += 1;
         return receipt;

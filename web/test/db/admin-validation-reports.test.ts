@@ -112,7 +112,13 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
         on version.id = price.profile_version_id
       join public.ai_provider_profiles as profile on profile.id = version.profile_id
       where profile.profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
-      order by price.version limit 1;
+        and price.valid_from <= statement_timestamp()
+        and (price.valid_to is null or price.valid_to > statement_timestamp())
+        and (price.provider_effective_from is null
+          or price.provider_effective_from <= statement_timestamp())
+        and (price.provider_effective_to is null
+          or price.provider_effective_to > statement_timestamp())
+      order by price.version desc limit 1;
       insert into public.ai_price_components(price_version_id,component,nanos_per_million)
       select '${priceVersionId}', component, nanos_per_million
       from public.ai_price_components
@@ -122,7 +128,14 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
           on version.id = price.profile_version_id
         join public.ai_provider_profiles as profile on profile.id = version.profile_id
         where profile.profile_key = 'deepseek.official.deepseek-v4-flash.chat.v1'
-          and price.id <> '${priceVersionId}' order by price.version limit 1
+          and price.id <> '${priceVersionId}'
+          and price.valid_from <= statement_timestamp()
+          and (price.valid_to is null or price.valid_to > statement_timestamp())
+          and (price.provider_effective_from is null
+            or price.provider_effective_from <= statement_timestamp())
+          and (price.provider_effective_to is null
+            or price.provider_effective_to > statement_timestamp())
+        order by price.version desc limit 1
       );
 
       with content(value) as (values (jsonb_build_object(
@@ -456,8 +469,18 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
         active_routing_policy_version_id='${policyId}' where id=true;
       set local session_replication_role=origin;
 
-      select public.admin_cutover_authority_v1(
-        '${reviewedDeploymentId}', array['${reportId}'::uuid], 0, 0,
+      select public.admin_admit_runtime_deployment_v2(
+        '${reviewedDeploymentId}',jsonb_build_array(jsonb_build_object(
+          'runtimeContractId','${runtime.runtimeContractId}',
+          'runtimeTargetId','${runtime.runtimeTargetId}',
+          'validationReportId','${reportId}'
+        )),'local sealed runtime admission test'
+      );
+      select public.admin_cutover_authority_v2(
+        '${reviewedDeploymentId}',(
+          select admission_id from public.admin_admitted_runtime_deployments_v2
+          where reviewed_deployment_id='${reviewedDeploymentId}'
+        ),array['${reportId}'::uuid],0,0,
         'local transactional authority cutover test'
       );
       select jsonb_build_object(
@@ -467,25 +490,58 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
           'public.set_ai_routing_policy_pointer_v1(uuid,text,text,text,text,text,timestamptz,text)','EXECUTE'),
         'directGate',has_column_privilege('service_role','public.ai_feature_config','ai_polish_enabled','UPDATE'),
         'dataPlaneProfileLock',has_column_privilege('service_role','public.ai_provider_profile_versions','display_disclosure_key','UPDATE'),
-        'dataPlanePriceLock',has_column_privilege('service_role','public.ai_price_versions','components_sealed_at','UPDATE')
+        'dataPlanePriceLock',has_column_privilege('service_role','public.ai_price_versions','components_sealed_at','UPDATE'),
+        'legacyStart',has_function_privilege('service_role',
+          'public.start_ai_polish_provider_attempt(uuid,integer)','EXECUTE'),
+        'legacySnapshot',has_function_privilege('service_role',
+          'public.get_ai_polish_execution_snapshot_v1(uuid,uuid)','EXECUTE'),
+        'legacySnapshotV3',has_function_privilege('service_role',
+          'public.get_ai_polish_execution_snapshot_v3(uuid,uuid)','EXECUTE'),
+        'successorStart',has_function_privilege('service_role',
+          'public.start_ai_polish_provider_attempt_v3(uuid,integer,uuid,uuid,uuid,text,text,text,text,text,bigint,text,text,text,text)','EXECUTE'),
+        'successorSnapshot',has_function_privilege('service_role',
+          'public.get_ai_polish_execution_snapshot_v4(uuid,uuid,text,text,text,text,text)','EXECUTE'),
+        'successorReadback',has_function_privilege('service_role',
+          'public.record_admin_runtime_readback_v2(uuid,uuid,bigint,text,uuid,uuid[],text,text,text)','EXECUTE'),
+        'authorityReceipt',exists(
+          select 1 from public.admin_runtime_authority_receipts_v2 receipt
+          where receipt.admission_id=(
+            select admission_id from public.admin_admitted_runtime_deployments_v2
+            where reviewed_deployment_id='${reviewedDeploymentId}'
+          ) and receipt.authority_manifest_sha256 ~ '^[0-9a-f]{64}$'
+        )
       );
+      select admission_id,admission_revision,target_set_sha256
+      from public.admin_admitted_runtime_deployments_v2
+      where reviewed_deployment_id='${reviewedDeploymentId}'
+      \gset admission_
       set local role service_role;
       set local request.jwt.claims='{"role":"service_role"}';
-      select public.record_admin_runtime_readback_v1(
-        '${reviewedDeploymentId}','${policyId}',array['${reportId}'::uuid],
+      select public.record_admin_runtime_readback_v2(
+        '${reviewedDeploymentId}', :'admission_admission_id'::uuid,
+        :admission_admission_revision::bigint, :'admission_target_set_sha256',
+        '${policyId}',array['${reportId}'::uuid],
         '${runtimeBuildId}','${bindingRevision}','${bindingManifestSha256}'
       );
       reset role;
       rollback;
     `).stdout;
-    expect(output).toContain('"schemaVersion": "admin_authority_cutover_v1"');
+    expect(output).toContain('"schemaVersion": "admin_authority_cutover_v2"');
     expect(output).toContain('"mode": "jwt_v1"');
     expect(output).toContain('"cycle": true');
     expect(output).toContain('"oldPointerRpc": false');
     expect(output).toContain('"directGate": false');
     expect(output).toContain('"dataPlaneProfileLock": true');
     expect(output).toContain('"dataPlanePriceLock": true');
-    expect(output).toContain('"schemaVersion": "admin_runtime_readback_v1"');
+    expect(output).toContain('"legacyStart": false');
+    expect(output).toContain('"legacySnapshot": false');
+    expect(output).toContain('"legacySnapshotV3": false');
+    expect(output).toContain('"successorStart": true');
+    expect(output).toContain('"successorSnapshot": true');
+    expect(output).toContain('"successorReadback": true');
+    expect(output).toContain('"authorityReceipt": true');
+    expect(output).toContain('"schemaVersion": "admin_runtime_readback_v2"');
+    expect(output).toContain('"targetSetSha256"');
     expect(output).toContain(`"policyVersionId": "${policyId}"`);
     expect(output).toContain(`"validationReportIds": ["${reportId}"]`);
   });

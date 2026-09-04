@@ -80,4 +80,43 @@ describe("AdminRuntimeControls", () => {
       expect((within(group).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
     }
   });
+
+  it("binds runtime readback to the complete admission receipt", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(
+      JSON.stringify({ error: { code: "UNAVAILABLE" } }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    ));
+    render(<AdminRuntimeControls
+      state={{ ...state, aiEnabled: false }}
+      environment="preview"
+      locale="en"
+      accessToken="current-admin-jwt"
+      writesEnabled
+      onRefresh={vi.fn()}
+      t={adminMessages.en}
+    />);
+    const group = screen.getByRole("group", { name: adminMessages.en.recordReadback });
+    const values = {
+      [adminMessages.en.reviewedDeployment]: "22222222-2222-4222-8222-222222222222",
+      [adminMessages.en.admissionId]: "33333333-3333-4333-8333-333333333333",
+      [adminMessages.en.admissionRevision]: "9",
+      [adminMessages.en.targetSetSha256]: "a".repeat(64),
+      [adminMessages.en.validationReports]: "44444444-4444-4444-8444-444444444444",
+    };
+    for (const [label, value] of Object.entries(values)) {
+      fireEvent.change(within(group).getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(within(group).getByRole("button", { name: adminMessages.en.recordReadback }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(JSON.parse(String(init?.body))).toEqual({
+      operation: "record_runtime_readback",
+      reviewedDeploymentId: values[adminMessages.en.reviewedDeployment],
+      admissionId: values[adminMessages.en.admissionId],
+      admissionRevision: values[adminMessages.en.admissionRevision],
+      targetSetSha256: values[adminMessages.en.targetSetSha256],
+      policyVersionId: state.activePolicyVersionId,
+      validationReportIds: [values[adminMessages.en.validationReports]],
+    });
+  });
 });

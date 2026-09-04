@@ -17,9 +17,9 @@ import { resolveRuntimeCodeCapabilityV2 } from "./runtime-code-capability-v2";
 import type { FrozenPriceSnapshotV1 } from "./pricing";
 import {
   runtimeDeploymentValidationSchema,
-  runtimeDeploymentAdmissionSchema,
+  runtimeDeploymentAdmissionV2Schema,
   type RuntimeDeploymentValidationV1,
-  type RuntimeDeploymentAdmissionV1,
+  type RuntimeDeploymentAdmissionV2,
 } from "./runtime-deployment-v1";
 
 const UUID_PATTERN =
@@ -101,7 +101,7 @@ export interface RuntimeExecutionTargetV2 {
   readonly profileVersionId: string;
   readonly profile: Readonly<ProfileExecutionConfigV2>;
   readonly evidence: Readonly<RuntimeExecutionEvidenceV2>;
-  readonly deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV1>;
+  readonly deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV2>;
 }
 
 export type RuntimeTargetResolverV2 = (
@@ -121,7 +121,7 @@ export type ExecutionSnapshotResultV2 =
       profileExecutionConfig: Readonly<ProfileExecutionConfigV2>;
       priceSnapshot: Readonly<FrozenPriceSnapshotV1>;
       runtimeEvidence: Readonly<RuntimeExecutionEvidenceV2>;
-      deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV1>;
+      deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV2>;
     }>;
 
 export type VersionedProfileExecutionConfig =
@@ -256,8 +256,8 @@ export function parseVersionedExecutionSnapshot(
     input.deploymentValidation &&
     typeof input.deploymentValidation === "object" &&
     (input.deploymentValidation as Record<string, unknown>).schemaVersion ===
-      "runtime_deployment_admission_v1"
-      ? runtimeDeploymentAdmissionSchema.parse(input.deploymentValidation)
+      "runtime_deployment_admission_v2"
+      ? runtimeDeploymentAdmissionV2Schema.parse(input.deploymentValidation)
       : runtimeDeploymentValidationSchema.parse(input.deploymentValidation);
   const compiledCapability = (() => {
     try {

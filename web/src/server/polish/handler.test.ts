@@ -320,6 +320,35 @@ describe("handler.ts — valid configurations boot", () => {
     expect(availabilityWithoutToken.status).toBe(401);
   });
 
+  it("keeps the existing v1 real backend bootable before runtime identity rollout", async () => {
+    const { POST, GET, AVAILABILITY_GET } = await importHandler({
+      NODE_ENV: "production",
+      DEEPSEEK_API_KEY: "legacy-v1-key",
+      AI_POLISH_ENABLED: "true",
+      AI_USER_ID_HMAC_SECRET: "secret",
+      AI_RUNTIME_BUILD_ID: undefined,
+      AI_PROVIDER_BINDING_MANIFEST: undefined,
+      ADMIN_ENVIRONMENT: undefined,
+      ...SUPABASE_ENV,
+    });
+    expect(typeof POST).toBe("function");
+    expect(typeof GET).toBe("function");
+    expect(typeof AVAILABILITY_GET).toBe("function");
+  });
+
+  it("rejects a partially configured runtime identity instead of falling back", async () => {
+    await expect(importHandler({
+      NODE_ENV: "production",
+      DEEPSEEK_API_KEY: "legacy-v1-key",
+      AI_POLISH_ENABLED: "true",
+      AI_USER_ID_HMAC_SECRET: "secret",
+      AI_RUNTIME_BUILD_ID: "partial-build",
+      AI_PROVIDER_BINDING_MANIFEST: undefined,
+      ADMIN_ENVIRONMENT: "preview",
+      ...SUPABASE_ENV,
+    })).rejects.toThrow();
+  });
+
   it.each([
     ["development", undefined],
     ["production", "true"],
