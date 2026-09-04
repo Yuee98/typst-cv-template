@@ -476,11 +476,69 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
           'validationReportId','${reportId}'
         )),'local sealed runtime admission test'
       );
+      do $tamper_body$
+      begin
+        begin
+          create or replace function public.start_ai_polish_provider_attempt_v4(
+          p_reservation_id uuid, p_attempt_no integer, p_runtime_admission jsonb
+          ) returns jsonb language plpgsql security definer set search_path = '' as $stub$
+          begin return jsonb_build_object('tampered', true); end;
+          $stub$;
+          perform public.admin_cutover_authority_v2(
+            '${reviewedDeploymentId}',
+            (select admission_id from public.admin_admitted_runtime_deployments_v2
+              where reviewed_deployment_id='${reviewedDeploymentId}'),
+            array['${reportId}'::uuid],0,0,'body tamper must rollback');
+          raise exception 'body tamper unexpectedly accepted';
+        exception when others then
+          if sqlerrm not like '%CUTOVER_AUTHORITY_MISMATCH%' then raise; end if;
+        end;
+        if (select control_plane_mode from public.admin_environment where id=true) <> 'legacy'
+           or (select closing_cycle_id from public.admin_ai_control_state_v1 where id=true) is not null
+           or exists (select 1 from public.admin_runtime_authority_receipts_v2 where admission_id=(select admission_id from public.admin_admitted_runtime_deployments_v2 where reviewed_deployment_id='${reviewedDeploymentId}')) then
+          raise exception 'body tamper rollback evidence failed';
+        end if;
+      end;
+      $tamper_body$;
+      do $tamper_grant$
+      begin
+        revoke execute on function public.get_ai_polish_execution_snapshot_v4(uuid,uuid,text,text,text,text,text) from service_role;
+        begin
+          perform public.admin_cutover_authority_v2(
+            '${reviewedDeploymentId}',
+            (select admission_id from public.admin_admitted_runtime_deployments_v2
+              where reviewed_deployment_id='${reviewedDeploymentId}'),
+            array['${reportId}'::uuid],0,0,'grant tamper must rollback');
+          raise exception 'grant tamper unexpectedly accepted';
+        exception when others then
+          if sqlerrm not like '%CUTOVER_AUTHORITY_MISMATCH%' then raise; end if;
+        end;
+        if (select control_plane_mode from public.admin_environment where id=true) <> 'legacy'
+           or (select closing_cycle_id from public.admin_ai_control_state_v1 where id=true) is not null
+           or exists (select 1 from public.admin_runtime_authority_receipts_v2 where admission_id=(select admission_id from public.admin_admitted_runtime_deployments_v2 where reviewed_deployment_id='${reviewedDeploymentId}')) then
+          raise exception 'grant tamper rollback evidence failed';
+        end if;
+        grant execute on function public.get_ai_polish_execution_snapshot_v4(uuid,uuid,text,text,text,text,text) to service_role;
+      end;
+      $tamper_grant$;
+      set local session_replication_role=replica;
+      update public.admin_validation_reports_v1 set
+        checked_at=statement_timestamp()-interval '12 minutes',
+        expires_at=statement_timestamp()-interval '3 minutes'
+        where id='${reportId}';
+      set local session_replication_role=origin;
+      set local role service_role;
+      set local request.jwt.claims='{"role":"service_role"}';
+      select (public.record_admin_validation_report_v1(
+        '${reviewedDeploymentId}','${runtime.runtimeContractId}','${runtime.runtimeTargetId}',
+        '${runtimeBuildId}','${bindingRevision}','${bindingManifestSha256}','${capabilitySha256}',
+        true,true,true,true)->>'reportId') as fresh_report_id \gset fresh_
+      reset role;
       select public.admin_cutover_authority_v2(
         '${reviewedDeploymentId}',(
           select admission_id from public.admin_admitted_runtime_deployments_v2
           where reviewed_deployment_id='${reviewedDeploymentId}'
-        ),array['${reportId}'::uuid],0,0,
+        ),array[:'fresh_fresh_report_id'::uuid],0,0,
         'local transactional authority cutover test'
       );
       select jsonb_build_object(
@@ -497,8 +555,10 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
           'public.get_ai_polish_execution_snapshot_v1(uuid,uuid)','EXECUTE'),
         'legacySnapshotV3',has_function_privilege('service_role',
           'public.get_ai_polish_execution_snapshot_v3(uuid,uuid)','EXECUTE'),
-        'successorStart',has_function_privilege('service_role',
+        'legacyStartV3',has_function_privilege('service_role',
           'public.start_ai_polish_provider_attempt_v3(uuid,integer,uuid,uuid,uuid,text,text,text,text,text,bigint,text,text,text,text)','EXECUTE'),
+        'successorStart',has_function_privilege('service_role',
+          'public.start_ai_polish_provider_attempt_v4(uuid,integer,jsonb)','EXECUTE'),
         'successorSnapshot',has_function_privilege('service_role',
           'public.get_ai_polish_execution_snapshot_v4(uuid,uuid,text,text,text,text,text)','EXECUTE'),
         'successorReadback',has_function_privilege('service_role',
@@ -520,10 +580,16 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
       select public.record_admin_runtime_readback_v2(
         '${reviewedDeploymentId}', :'admission_admission_id'::uuid,
         :admission_admission_revision::bigint, :'admission_target_set_sha256',
-        '${policyId}',array['${reportId}'::uuid],
+         '${policyId}',array[:'fresh_fresh_report_id'::uuid],
         '${runtimeBuildId}','${bindingRevision}','${bindingManifestSha256}'
       );
       reset role;
+      select jsonb_build_object('freshReadback',exists(
+        select 1 from public.admin_runtime_readback_reports_v1
+        where admission_id=:'admission_admission_id'::uuid
+          and validation_report_ids=array[:'fresh_fresh_report_id'::uuid]
+          and not ('${reportId}'::uuid=any(validation_report_ids))
+      ));
       rollback;
     `).stdout;
     expect(output).toContain('"schemaVersion": "admin_authority_cutover_v2"');
@@ -536,6 +602,7 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
     expect(output).toContain('"legacyStart": false');
     expect(output).toContain('"legacySnapshot": false');
     expect(output).toContain('"legacySnapshotV3": false');
+    expect(output).toContain('"legacyStartV3": false');
     expect(output).toContain('"successorStart": true');
     expect(output).toContain('"successorSnapshot": true');
     expect(output).toContain('"successorReadback": true');
@@ -543,6 +610,6 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
     expect(output).toContain('"schemaVersion": "admin_runtime_readback_v2"');
     expect(output).toContain('"targetSetSha256"');
     expect(output).toContain(`"policyVersionId": "${policyId}"`);
-    expect(output).toContain(`"validationReportIds": ["${reportId}"]`);
+    expect(output).toContain('"freshReadback": true');
   });
 });

@@ -515,22 +515,10 @@ describe("RT-009 V2 attempt admission", () => {
         runtimeAdmission,
       }),
     ).resolves.toEqual(attemptStart());
-    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v3", {
+    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v4", {
       p_reservation_id: RESERVATION_ID,
       p_attempt_no: 1,
-      p_admission_id: runtimeAdmission.admissionId,
-      p_reviewed_deployment_id: runtimeAdmission.reviewedDeploymentId,
-      p_validation_report_id: runtimeAdmission.validationReportId,
-      p_environment: runtimeAdmission.environment,
-      p_project_ref: runtimeAdmission.projectRef,
-      p_runtime_build_id: "preview-build:abc123",
-      p_binding_manifest_revision: "binding-v1",
-      p_binding_manifest_sha256: runtimeAdmission.bindingManifestSha256,
-      p_admission_revision: runtimeAdmission.admissionRevision,
-      p_target_set_sha256: runtimeAdmission.targetSetSha256,
-      p_runtime_contract_id: runtimeAdmission.runtimeContractId,
-      p_runtime_target_id: runtimeAdmission.runtimeTargetId,
-      p_runtime_target_sha256: runtimeAdmission.runtimeTargetSha256,
+      p_runtime_admission: runtimeAdmission,
     });
   });
 
@@ -558,6 +546,11 @@ describe("RT-009 V2 attempt admission", () => {
       }),
     ).resolves.toEqual(attemptStart());
     expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v4", {
+      p_reservation_id: RESERVATION_ID,
+      p_attempt_no: 1,
+      p_runtime_admission: null,
+    });
   });
 
   it("rejects a first-observation replay and never retries or authorizes transmission", async () => {

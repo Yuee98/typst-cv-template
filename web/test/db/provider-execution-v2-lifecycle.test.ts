@@ -551,21 +551,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     const startArgs = {
       p_reservation_id: reservation.reservationId,
       p_attempt_no: 1,
-      p_admission_id: runtimeAdmission.admissionId,
-      p_reviewed_deployment_id: runtimeAdmission.reviewedDeploymentId,
-      p_validation_report_id: runtimeAdmission.validationReportId,
-      p_environment: runtimeAdmission.environment,
-      p_project_ref: runtimeAdmission.projectRef,
-      p_runtime_build_id: runtimeBuildId,
-      p_binding_manifest_revision: bindingRevision,
-      p_binding_manifest_sha256: runtimeAdmission.bindingManifestSha256,
-      p_admission_revision: runtimeAdmission.admissionRevision,
-      p_target_set_sha256: runtimeAdmission.targetSetSha256,
-      p_runtime_contract_id: runtimeAdmission.runtimeContractId,
-      p_runtime_target_id: runtimeAdmission.runtimeTargetId,
-      p_runtime_target_sha256: runtimeAdmission.runtimeTargetSha256,
+      p_runtime_admission: runtimeAdmission,
     };
-    const start = await service.rpc("start_ai_polish_provider_attempt_v3", startArgs);
+    const start = await service.rpc("start_ai_polish_provider_attempt_v4", startArgs);
     expect(start.error).toBeNull();
     expect(start.data).toMatchObject({
       ok: true,
@@ -575,8 +563,14 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
     });
 
     const replayMismatch = await service.rpc(
-      "start_ai_polish_provider_attempt_v3",
-      { ...startArgs, p_runtime_build_id: "different-build" },
+      "start_ai_polish_provider_attempt_v4",
+      {
+        ...startArgs,
+        p_runtime_admission: {
+          ...runtimeAdmission,
+          runtimeBuildId: "different-build",
+        },
+      },
     );
     expect(replayMismatch.error).toBeNull();
     expect(replayMismatch.data).toEqual({
@@ -619,12 +613,15 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
       );
     `);
     const deniedSecond = await service.rpc(
-      "start_ai_polish_provider_attempt_v3",
+      "start_ai_polish_provider_attempt_v4",
       { ...startArgs, p_attempt_no: 2 },
     );
     expect(deniedSecond.error).toBeNull();
     expect(deniedSecond.data).toEqual({ ok: false, reason: "SERVICE_UNAVAILABLE" });
-    const exactReplay = await service.rpc("start_ai_polish_provider_attempt_v3", startArgs);
+    const exactReplay = await service.rpc(
+      "start_ai_polish_provider_attempt_v4",
+      startArgs,
+    );
     expect(exactReplay.error).toBeNull();
     expect(exactReplay.data).toMatchObject({ ok: true, alreadyStarted: true });
     const revokedSnapshot = await service.rpc("get_ai_polish_execution_snapshot_v4", {

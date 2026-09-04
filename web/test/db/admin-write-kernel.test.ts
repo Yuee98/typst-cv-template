@@ -332,8 +332,12 @@ describe.skipIf(!RUN_DB_TESTS)(
       expect(verified.error).toBeNull();
       const token = verified.data?.access_token;
       if (!token) throw new Error("local TOTP verification returned no token");
+      const claimsText = Buffer.from(
+        token.split(".")[1],
+        "base64url",
+      ).toString();
       const claims = JSON.parse(
-        Buffer.from(token.split(".")[1], "base64url").toString(),
+        claimsText,
       ) as { aal?: unknown; amr?: unknown };
       expect(claims.aal).toBe("aal2");
       expect(claims.amr).toEqual(
@@ -347,6 +351,47 @@ describe.skipIf(!RUN_DB_TESTS)(
       expect(adminWriteAuthoritySchema.parse(current.data).recentTotp).toBe(
         true,
       );
+
+      const lastEffectiveAdmin = runOwnerSql(
+        String.raw`
+          begin;
+          update public.admin_environment set control_plane_mode='jwt_v1' where id=true;
+          insert into public.admin_principals(user_id) values(${literal(ordinaryUser.id)});
+          update auth.users set banned_until=clock_timestamp()+interval '1 day'
+          where id=${literal(ordinaryUser.id)};
+          set local role authenticated;
+          set local request.jwt.claims=${literal(claimsText)};
+          select public.admin_set_membership_v1(
+            'local','local',${literal(adminUser.id)},false,1,
+            'must preserve the last effective Admin','${crypto.randomUUID()}'
+          );
+          rollback;
+        `,
+        { expectFailure: true },
+      );
+      expect(lastEffectiveAdmin.stderr).toContain("LAST_ADMIN");
+
+      const staleMembership = runOwnerSql(String.raw`
+        begin;
+        update public.admin_environment set control_plane_mode='jwt_v1' where id=true;
+        insert into public.admin_principals(user_id) values(${literal(ordinaryUser.id)});
+        update auth.users set banned_until=clock_timestamp()+interval '1 day'
+        where id=${literal(ordinaryUser.id)};
+        set local role authenticated;
+        set local request.jwt.claims=${literal(claimsText)};
+        select public.admin_set_membership_v1(
+          'local','local',${literal(ordinaryUser.id)},false,1,
+          'remove unavailable Admin membership','${crypto.randomUUID()}'
+        );
+        reset role;
+        select jsonb_build_object('targetRevoked',exists(
+          select 1 from public.admin_principals
+          where user_id=${literal(ordinaryUser.id)} and revoked_at is not null
+        ));
+        rollback;
+      `).stdout;
+      expect(staleMembership).toContain('"enabled": false');
+      expect(staleMembership).toContain('"targetRevoked": true');
 
       runOwnerSql(
         `update auth.mfa_factors set last_challenged_at=clock_timestamp()-interval '11 minutes' where id=${literal(factorId)} and user_id=${literal(adminUser.id)};`,
