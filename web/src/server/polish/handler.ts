@@ -91,7 +91,7 @@ import {
   startPolishProviderAttemptV2,
 } from "./quota";
 import { createServerAdminClient } from "@/server/supabase/admin-client";
-import { parseRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
+import { parseOptionalRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
 import { resolveAdminEnvironment } from "../admin/environment";
 
 const env = process.env;
@@ -202,11 +202,8 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
   // identity variables are configured; v4 returns v1 snapshots before it
   // consults these nullable fields and fails closed for every v2 snapshot.
   let runtimeDeploymentIdentity: PolishRouteDepsV2["runtimeDeploymentIdentity"];
-  const hasRuntimeIdentityConfiguration =
-    env.AI_RUNTIME_BUILD_ID !== undefined ||
-    env.AI_PROVIDER_BINDING_MANIFEST !== undefined;
-  if (hasRuntimeIdentityConfiguration) {
-    const deploymentIdentity = parseRuntimeDeploymentIdentityV1(env);
+  const deploymentIdentity = parseOptionalRuntimeDeploymentIdentityV1(env);
+  if (deploymentIdentity) {
     const adminEnvironment = resolveAdminEnvironment(env);
     runtimeDeploymentIdentity = {
       environment: adminEnvironment.name,

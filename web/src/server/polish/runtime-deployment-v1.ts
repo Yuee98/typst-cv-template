@@ -199,3 +199,20 @@ export function parseRuntimeDeploymentIdentityV1(
       .digest("hex"),
   });
 }
+
+export function parseOptionalRuntimeDeploymentIdentityV1(
+  env: RuntimeDeploymentEnvironment,
+): RuntimeDeploymentIdentityV1 | undefined {
+  const buildIdConfigured =
+    env.AI_RUNTIME_BUILD_ID !== undefined && env.AI_RUNTIME_BUILD_ID !== "";
+  const manifestConfigured =
+    env.AI_PROVIDER_BINDING_MANIFEST !== undefined &&
+    env.AI_PROVIDER_BINDING_MANIFEST !== "";
+
+  if (buildIdConfigured !== manifestConfigured) {
+    throw new Error("Runtime deployment identity is partially configured");
+  }
+  if (!buildIdConfigured) return undefined;
+
+  return parseRuntimeDeploymentIdentityV1(env);
+}
