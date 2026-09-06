@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   admittedRuntimeDeploymentSchema,
   isRuntimeDeploymentAdmittedV1,
+  parseOptionalRuntimeDeploymentIdentityV1,
   parseRuntimeDeploymentIdentityV1,
 } from "./runtime-deployment-v1";
 
@@ -44,6 +45,39 @@ const admitted = {
 };
 
 describe("runtime deployment admission identity", () => {
+  it.each([
+    [undefined, undefined],
+    ["", ""],
+  ])("treats an absent or empty deployment identity pair as unavailable", (buildId, bindingManifest) => {
+    expect(parseOptionalRuntimeDeploymentIdentityV1({
+      AI_RUNTIME_BUILD_ID: buildId,
+      AI_PROVIDER_BINDING_MANIFEST: bindingManifest,
+    })).toBeUndefined();
+  });
+
+  it.each([
+    ["build-a", undefined],
+    ["build-a", ""],
+    [undefined, canonical],
+    ["", canonical],
+  ])("rejects a partial deployment identity pair", (buildId, bindingManifest) => {
+    expect(() => parseOptionalRuntimeDeploymentIdentityV1({
+      AI_RUNTIME_BUILD_ID: buildId,
+      AI_PROVIDER_BINDING_MANIFEST: bindingManifest,
+    })).toThrow(/partially configured/u);
+  });
+
+  it("accepts a complete valid pair and rejects malformed non-empty values", () => {
+    expect(parseOptionalRuntimeDeploymentIdentityV1({
+      AI_RUNTIME_BUILD_ID: "build-a",
+      AI_PROVIDER_BINDING_MANIFEST: canonical,
+    })).toEqual(identity);
+    expect(() => parseOptionalRuntimeDeploymentIdentityV1({
+      AI_RUNTIME_BUILD_ID: " ",
+      AI_PROVIDER_BINDING_MANIFEST: "{}",
+    })).toThrow(/Runtime deployment identity is unavailable/u);
+  });
+
   it("models one admitted deployment with multiple exact target identities", () => {
     const result = admittedRuntimeDeploymentSchema.safeParse({
       schemaVersion: "admin_admitted_runtime_deployment_v1",
