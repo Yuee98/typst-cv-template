@@ -142,9 +142,9 @@ AI API 路由（`POST /api/polish`、`GET /api/polish/quota`、`GET /api/polish/
 
 #### 多 Provider 运行时权威与凭据
 
-provider/profile version、精确的 price version、routing policy、legal bundle 和不可重新解释的带版本 runtime contract ID 都是 **DB 权威快照**。服务端在传输前冻结该精确 route；经审核的代码 registry 会约束 adapter、endpoint、credential alias、cache policy 和 legal manifest 引用。环境变量只为这些 alias 提供凭据，不是 provider 或 model 选择器。不得把 `AI_PROVIDER`、`AI_MODEL` 或 `AI_BASE_URL` 加为应用路由变量：这会绕过 DB 验证、审计、canary 和 legal gate。
+provider/profile version、精确的 price version、routing policy、legal bundle 和不可重新解释的带版本 runtime contract ID 都是 **DB 权威快照**。服务端在传输前冻结该精确 route。对于 v2 profile，DB version 保存 endpoint、credential 环境变量名和 model ID；编译后的代码约束 adapter 与 destination policy，经过审核的 deployment manifest 则把每个 credential 名绑定到精确的 Provider、recipient 和 origin。环境变量只为这些 binding 提供凭据，不是 provider 或 model 选择器。不得把 `AI_PROVIDER`、`AI_MODEL` 或 `AI_BASE_URL` 加为应用路由变量：这会绕过 DB 验证、审计、canary 和 legal gate。
 
-`DEEPSEEK_API_KEY` 与 `MIMO_API_KEY` 是当前官方 gateway 的 server-only credential alias。存在 key 不会启用初版 route；仍须有已批准且 active 的 DB profile 与 policy。`OPENROUTER_API_KEY` 仅是后续可选 alias，不属于初版 route；必须另行完成精确 upstream、profile、披露和 activation 审核。任何 provider key 都不得进入浏览器 bundle、数据库、应用日志、ledger 或 error payload。
+`DEEPSEEK_API_KEY` 与 `MIMO_API_KEY` 保留为 legacy v1 server-only alias。当前 seed 的 v2 binding 使用 `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` 和 `AI_PROVIDER_KEY_MIMO_PRIMARY`；v2 还要求 `AI_RUNTIME_BUILD_ID` 与非敏感的 `AI_PROVIDER_BINDING_MANIFEST` 精确匹配已审核 deployment。仅存在 key 不会启用初版 route；仍须有已批准且 active 的 DB profile 与 policy。`OPENROUTER_API_KEY` 仅是后续可选的 v1 alias，不属于初版 route；必须另行完成精确 upstream、profile、披露和 activation 审核。任何 provider key 都不得进入浏览器 bundle、数据库、应用日志、ledger 或 error payload。
 
 ### 部署拓扑
 
@@ -170,7 +170,10 @@ Vercel 项目设置为 **Root Directory** `web`、**Framework Preset** `Next.js`
 |---|---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 测试项目 | 生产项目 | 可公开的项目连接信息 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 测试项目 | 生产项目 | Sensitive；仅服务端 |
-| `DEEPSEEK_API_KEY` / `MIMO_API_KEY` | 仅为已批准的 Preview profile 配置非生产 key；否则留空 | 已批准的 Production profile 应使用独立生产 key | Sensitive server-only credential alias；key 本身不启用路由 |
+| `AI_RUNTIME_BUILD_ID` | 已审核的 Preview build ID | 已审核的 Production build ID | 仅服务端的 v2 runtime identity；必须匹配已登记 deployment |
+| `AI_PROVIDER_BINDING_MANIFEST` | Preview 的 canonical 已审核 manifest JSON | Production 的 canonical 已审核 manifest JSON | 非敏感 v2 binding identity；只包含精确 Provider/recipient/origin binding |
+| `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` / `AI_PROVIDER_KEY_MIMO_PRIMARY` | 仅为已批准的 Preview v2 profile 配置非生产 key；否则留空 | 已批准的 Production v2 profile 使用独立生产 key | Sensitive server-only v2 binding；名称必须匹配 DB profile 与已审核 manifest |
+| `DEEPSEEK_API_KEY` / `MIMO_API_KEY` | 仅在已批准的 Preview v1 profile 仍可能运行时配置非生产 key；否则留空 | 已批准的 Production v1 profile 仍可能运行时使用独立生产 key | Sensitive legacy v1 alias；key 本身不启用路由 |
 | `OPENROUTER_API_KEY` | 初版 route 留空 | 初版 route 留空 | 后续可选 alias，不表示初版启用 |
 | `AI_USER_ID_HMAC_SECRET` | 独立随机 secret | 独立随机 secret | Sensitive；绝不使用 `NEXT_PUBLIC_` 前缀 |
 | `AI_POLISH_ENABLED` | 首次关闭态部署为 `false` | 第一次生产 promotion 前为 `false` | 部署级 API 总闸 |
