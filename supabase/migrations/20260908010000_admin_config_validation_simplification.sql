@@ -440,9 +440,10 @@ declare
   v_evidence jsonb; v_candidates jsonb;
 begin
   if auth.role() is distinct from 'service_role' or auth.uid() is not null then raise exception 'FORBIDDEN' using errcode='42501'; end if;
+  -- Match the environment -> feature -> control order of authenticated writes.
+  select * into v_environment from public.admin_environment where id=true for share;
   select * into v_config from public.ai_feature_config where id=true for share;
   select * into v_control from public.admin_ai_control_state_v1 where id=true for share;
-  select * into v_environment from public.admin_environment where id=true for share;
   select * into v_policy from public.ai_routing_policy_versions where id=p_policy_version_id for share;
   if v_config.id is null or v_control.id is null or v_environment.id is null or v_policy.id is null
      or (v_environment.environment,v_environment.project_ref) is distinct from (p_environment,p_project_ref)
@@ -473,14 +474,14 @@ create function public.record_admin_runtime_readback_v3(
   p_expected_closing_cycle_id uuid,p_expected_control_revision bigint,p_expected_config_generation bigint
 ) returns jsonb language plpgsql security definer set search_path='' as $$
 declare
-  v_now timestamptz:=clock_timestamp(); v_config public.ai_feature_config%rowtype; v_control public.admin_ai_control_state_v1%rowtype;
+  v_now timestamptz; v_config public.ai_feature_config%rowtype; v_control public.admin_ai_control_state_v1%rowtype;
   v_environment public.admin_environment%rowtype; v_policy public.ai_routing_policy_versions%rowtype; v_evidence jsonb;
   v_ids uuid[]; v_routes jsonb; v_routes_sha text; v_expires timestamptz; v_hash text; v_report public.admin_runtime_readback_reports_v2%rowtype;
 begin
   if auth.role() is distinct from 'service_role' or auth.uid() is not null then raise exception 'FORBIDDEN' using errcode='42501'; end if;
+  select * into v_environment from public.admin_environment where id=true for share;
   select * into v_config from public.ai_feature_config where id=true for share;
   select * into v_control from public.admin_ai_control_state_v1 where id=true for share;
-  select * into v_environment from public.admin_environment where id=true for share;
   select * into v_policy from public.ai_routing_policy_versions where id=p_policy_version_id for share;
   if v_config.id is null or v_control.id is null or v_environment.id is null or v_policy.id is null
      or (v_environment.environment,v_environment.project_ref) is distinct from (p_environment,p_project_ref)
@@ -489,7 +490,9 @@ begin
      or v_control.revision is distinct from p_expected_control_revision or v_config.config_generation is distinct from p_expected_config_generation
      or v_policy.legal_bundle_version is distinct from public.current_ai_terms_version() then raise exception 'READBACK_NOT_READY' using errcode='23514'; end if;
   perform public.admin_assert_runtime_authority_receipt_v3(p_environment,p_project_ref);
+  v_now:=clock_timestamp();
   v_evidence:=public.admin_assert_policy_config_reports_v1(v_policy.id,p_validation_report_ids,v_now);
+  v_now:=clock_timestamp();
   select array_agg(id order by id) into v_ids from unnest(p_validation_report_ids) id;
   v_routes:=v_evidence->'effectiveRoutes'; v_routes_sha:=encode(extensions.digest(convert_to(v_routes::text,'UTF8'),'sha256'),'hex');
   v_expires:=least(v_now+interval '10 minutes',(v_evidence->>'expiresAt')::timestamptz);
@@ -551,8 +554,10 @@ begin
      or to_regprocedure('public.admin_create_routing_policy_v2(text,text,text,integer,jsonb,uuid,text,text,uuid[],text,uuid)') is null
      or to_regprocedure('public.admin_transition_routing_policy_v2(text,text,uuid,text,uuid[],text,uuid)') is null
      or to_regprocedure('public.admin_close_price_version_v2(text,text,uuid,timestamptz,uuid,uuid,text,uuid)') is null
-     or to_regprocedure('public.admin_retire_profile_version_v2(text,text,uuid,uuid,text,uuid)') is null
-     or to_regprocedure('public.admin_retire_provider_profile_v2(text,text,uuid,uuid,text,uuid)') is null then raise exception 'CUTOVER_SCHEMA_MISMATCH' using errcode='23514'; end if;
+      or to_regprocedure('public.admin_retire_profile_version_v2(text,text,uuid,uuid,text,uuid)') is null
+      or to_regprocedure('public.admin_retire_provider_profile_v2(text,text,uuid,uuid,text,uuid)') is null
+      or to_regprocedure('public.lock_and_validate_ai_routing_policy_candidate_v2(public.ai_routing_policy_versions,text,timestamptz)') is null
+      or to_regprocedure('public.admin_assert_candidate_policy_config_reports_v2(public.ai_routing_policy_versions,uuid[],timestamptz)') is null then raise exception 'CUTOVER_SCHEMA_MISMATCH' using errcode='23514'; end if;
   revoke all on function public.start_ai_polish_provider_attempt(uuid,integer) from public,anon,authenticated,service_role;
   revoke all on function public.start_ai_polish_provider_attempt_v2(uuid,integer,text,text) from public,anon,authenticated,service_role;
   revoke all on function public.start_ai_polish_provider_attempt_v3(uuid,integer,uuid,uuid,uuid,text,text,text,text,text,bigint,text,text,text,text) from public,anon,authenticated,service_role;
@@ -610,8 +615,8 @@ create function public.admin_reopen_ai_v2(
   p_reason text,p_idempotency_key uuid
 ) returns jsonb language plpgsql security definer set search_path='' as $$
 declare
-  v_actor uuid; v_payload jsonb; v_replay jsonb; v_now timestamptz:=clock_timestamp();
-  v_config public.ai_feature_config%rowtype; v_control public.admin_ai_control_state_v1%rowtype; v_readback public.admin_runtime_readback_reports_v2%rowtype; v_audit uuid; v_result jsonb;
+  v_actor uuid; v_payload jsonb; v_replay jsonb; v_now timestamptz;
+  v_config public.ai_feature_config%rowtype; v_control public.admin_ai_control_state_v1%rowtype; v_readback public.admin_runtime_readback_reports_v2%rowtype; v_audit uuid; v_result jsonb; v_evidence jsonb;
 begin
   v_actor:=public.admin_assert_write_actor_v1(p_environment,p_project_ref,false);
   perform public.admin_assert_jwt_control_mode_v1();
@@ -624,12 +629,16 @@ begin
   select * into v_config from public.ai_feature_config where id=true for update;
   select * into v_control from public.admin_ai_control_state_v1 where id=true for update;
   select * into v_readback from public.admin_runtime_readback_reports_v2 where id=p_readback_report_id for share;
+  -- A lock wait cannot extend operational evidence validity.
+  v_now:=clock_timestamp();
   if v_config.id is null or v_control.id is null or v_readback.id is null
      or v_config.ai_polish_enabled or v_control.closing_cycle_id is distinct from p_expected_closing_cycle_id or v_control.reopened_at is not null
      or v_control.revision is distinct from p_expected_control_revision or v_config.active_routing_policy_version_id is distinct from p_expected_policy_version_id or v_config.config_generation is distinct from p_expected_config_generation
      or (v_readback.environment,v_readback.project_ref,v_readback.closing_cycle_id,v_readback.control_revision,v_readback.config_generation,v_readback.policy_version_id) is distinct from (p_environment,p_project_ref,v_control.closing_cycle_id,v_control.revision,v_config.config_generation,v_config.active_routing_policy_version_id)
      or v_readback.legal_bundle_version is distinct from public.current_ai_terms_version() or v_readback.expires_at<=v_now then raise exception 'NOT_READY' using errcode='23514'; end if;
-  perform public.admin_assert_policy_config_reports_v1(v_readback.policy_version_id,v_readback.validation_report_ids,v_now);
+  v_evidence:=public.admin_assert_policy_config_reports_v1(v_readback.policy_version_id,v_readback.validation_report_ids,v_now);
+  v_now:=clock_timestamp();
+  if v_readback.expires_at<=v_now or (v_evidence->>'expiresAt')::timestamptz<=v_now then raise exception 'NOT_READY' using errcode='23514'; end if;
   update public.ai_feature_config set ai_polish_enabled=true where id=true;
   update public.admin_ai_control_state_v1 set revision=revision+1,reopened_at=clock_timestamp() where id=true returning * into v_control;
   insert into public.admin_audit_events(operation,actor,target_id,reason) values ('ai_reopen',v_actor::text,p_expected_policy_version_id,p_reason) returning id into v_audit;
@@ -768,7 +777,6 @@ begin
      or v_profile.retired_at is not null or v_version.retired_at is not null
      or v_version.execution_schema_version is distinct from 'profile_execution_config_v2'
      or v_capability.code_capability_id is null
-     or v_contract.legal_bundle_version is distinct from public.current_ai_terms_version()
      or v_contract_target.legal_manifest_id is distinct from v_version.legal_manifest_id
      or not exists (
        select 1
@@ -809,6 +817,7 @@ begin
     raise exception 'invalid routing pointer target' using errcode='23514';
   end if;
   perform public.lock_and_validate_ai_routing_policy_row_v1(v_policy,v_policy.status,clock_timestamp());
+  perform public.admin_assert_policy_config_reports_v1(v_policy.id,p_validation_report_ids,clock_timestamp());
   update public.ai_feature_config set active_routing_policy_version_id=v_policy.id,
     routing_updated_by=p_actor,routing_change_reason=p_reason where id=true returning * into v_updated;
   if v_updated.active_routing_policy_version_id is distinct from v_policy.id
@@ -835,6 +844,7 @@ begin
     raise exception 'stale or absent routing pointer' using errcode='23514';
   end if;
   perform public.lock_and_validate_ai_routing_policy_row_v1(v_policy,v_policy.status,clock_timestamp());
+  perform public.admin_assert_policy_config_reports_v1(v_policy.id,p_validation_report_ids,clock_timestamp());
   update public.ai_feature_config set active_routing_policy_version_id=null,
     routing_updated_by=p_actor,routing_change_reason=p_reason where id=true returning * into v_updated;
   if v_updated.active_routing_policy_version_id is not null

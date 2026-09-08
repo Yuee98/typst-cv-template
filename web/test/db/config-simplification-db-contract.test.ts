@@ -25,6 +25,23 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 config-owned runtime contract", () => {
         'configReport', to_regprocedure(
           'public.record_admin_config_validation_report_v2(text,text,text,boolean,boolean,boolean,boolean)'
         ) is not null,
+        'futurePolicyValidator', to_regprocedure(
+          'public.lock_and_validate_ai_routing_policy_candidate_v2(public.ai_routing_policy_versions,text,timestamptz)'
+        ) is not null,
+        'candidateReportCheck', to_regprocedure(
+          'public.admin_assert_candidate_policy_config_reports_v2(public.ai_routing_policy_versions,uuid[],timestamptz)'
+        ) is not null,
+        'futureTransitionTrigger', to_regprocedure(
+          'public.validate_ai_routing_policy_transition_v2()'
+        ) is not null,
+        'futureTransitionTriggerBinding', exists (
+          select 1 from pg_catalog.pg_trigger trigger
+          where trigger.tgrelid='public.ai_routing_policy_versions'::regclass
+            and trigger.tgname='validate_ai_routing_policy_transition_v1'
+            and not trigger.tgisinternal
+            and trigger.tgfoid='public.validate_ai_routing_policy_transition_v2()'::regprocedure
+            and trigger.tgtype=17 and trigger.tgenabled='O'
+        ),
         'snapshotV5', to_regprocedure(
           'public.get_ai_polish_execution_snapshot_v5(uuid,uuid,text,text)'
         ) is not null,
@@ -82,6 +99,10 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 config-owned runtime contract", () => {
     expect(JSON.parse(line!)).toEqual({
       configCandidate: true,
       configReport: true,
+      futurePolicyValidator: true,
+      candidateReportCheck: true,
+      futureTransitionTrigger: true,
+      futureTransitionTriggerBinding: true,
       snapshotV5: true,
       startV5: true,
       readbackV3: true,
@@ -132,6 +153,78 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 authority proof negative paths", () => {
         begin
           perform public.admin_cutover_authority_v3('{}'::uuid[],0,0,'CFG-005 must reject tampered authority');
           raise exception 'tampered authority was accepted';
+        exception when check_violation then
+          if sqlerrm <> 'RUNTIME_AUTHORITY_MISMATCH' then raise; end if;
+        end;
+      end;
+      $assert$;
+      rollback;
+    `);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    [
+      "the delegated TOTP predicate",
+      String.raw`
+        create or replace function public.admin_has_recent_totp_v1(p_actor uuid)
+        returns boolean language sql stable security definer set search_path='' as $$ select true $$;
+      `,
+    ],
+    [
+      "the delegated write-actor predicate",
+      String.raw`
+        create or replace function public.admin_assert_write_actor_v1(
+          p_environment text,p_project_ref text,p_require_recent_totp boolean default false
+        ) returns uuid language sql security definer set search_path='' as $$ select null::uuid $$;
+      `,
+    ],
+  ])("rejects pre-cutover drift in %s", (_name, tamper) => {
+    const result = runOwnerSql(String.raw`
+      begin;
+      select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(issuer)},'CFG-005 delegated authority bootstrap');
+      ${tamper}
+      do $assert$
+      begin
+        begin
+          perform public.admin_cutover_authority_v3('{}'::uuid[],0,0,'CFG-005 delegated authority must reject drift');
+          raise exception 'delegated authority drift was accepted';
+        exception when check_violation then
+          if sqlerrm <> 'RUNTIME_AUTHORITY_MISMATCH' then raise; end if;
+        end;
+      end;
+      $assert$;
+      rollback;
+    `);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    [
+      "the current legal-bundle predicate",
+      String.raw`
+        create or replace function public.current_ai_terms_version()
+        returns text language sql stable set search_path='' as $$ select 'tampered'::text $$;
+      `,
+    ],
+    [
+      "the endpoint-shape predicate",
+      String.raw`
+        create or replace function public.ai_endpoint_shape_v2(p_url text)
+        returns boolean language sql immutable set search_path='' as $$ select true $$;
+      `,
+    ],
+  ])("detects post-cutover drift in %s", (_name, tamper) => {
+    const result = runOwnerSql(String.raw`
+      begin;
+      select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(issuer)},'CFG-005 delegated authority bootstrap');
+      select public.admin_cutover_authority_v3('{}'::uuid[],0,0,'CFG-005 delegated authority cutover');
+      ${tamper}
+      do $assert$
+      begin
+        begin
+          perform public.admin_assert_runtime_authority_receipt_v3('local','local');
+          raise exception 'post-cutover delegated authority drift was accepted';
         exception when check_violation then
           if sqlerrm <> 'RUNTIME_AUTHORITY_MISMATCH' then raise; end if;
         end;

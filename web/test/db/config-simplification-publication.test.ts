@@ -17,8 +17,6 @@ import {
 } from "./helpers";
 import { runOwnerSql } from "./runtime-contract-fixtures";
 
-const CONTEXT = { p_environment: "local", p_project_ref: "local" } as const;
-
 function sql(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
