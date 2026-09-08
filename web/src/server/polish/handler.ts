@@ -91,8 +91,8 @@ import {
   startPolishProviderAttemptV2,
 } from "./quota";
 import { createServerAdminClient } from "@/server/supabase/admin-client";
-import { parseOptionalRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
 import { resolveAdminEnvironment } from "../admin/environment";
+import { runtimeBuildProvenance } from "./build-provenance";
 
 const env = process.env;
 
@@ -147,6 +147,10 @@ const FAKE_AVAILABILITY_ENABLED: PolishAvailabilityDbResult = Object.freeze({
 function buildPolishHandlerDeps(): PolishHandlerDeps {
   // Apply the process-owned fake ceiling before constructing either backend.
   assertFakeLlmDeploymentAllowed(env);
+  const buildProvenance = runtimeBuildProvenance();
+  if (buildProvenance !== null) {
+    console.info(JSON.stringify({ event: "polish.runtime_build", sourceCommit: buildProvenance }));
+  }
 
   // CI smoke mode: fake auth/terms/quota behind an explicit second flag.
   if (env.POLISH_FAKE_BACKEND === "true") {
@@ -197,26 +201,22 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
   // All provider subjects/route tags are server-keyed so raw identity or
   // correlation values cannot cross boundaries.
   const hmacSecret = requireServerEnv("AI_USER_ID_HMAC_SECRET");
-  // The deployment identity is required only for v2 execution. During the
-  // additive rollout an existing v1 route must keep working before the new
-  // identity variables are configured; v4 returns v1 snapshots before it
-  // consults these nullable fields and fails closed for every v2 snapshot.
-  let runtimeDeploymentIdentity: PolishRouteDepsV2["runtimeDeploymentIdentity"];
-  const deploymentIdentity = parseOptionalRuntimeDeploymentIdentityV1(env);
-  if (deploymentIdentity) {
-    const adminEnvironment = resolveAdminEnvironment(env);
-    runtimeDeploymentIdentity = {
-      environment: adminEnvironment.name,
-      projectRef: adminEnvironment.projectRef,
-      runtimeBuildId: deploymentIdentity.buildId,
-      bindingManifestRevision: deploymentIdentity.manifest.revision,
-      bindingManifestSha256: deploymentIdentity.manifestSha256,
-    };
-  } else {
-    runtimeDeploymentIdentity = undefined;
-  }
+  // Environment identity is public configuration, not a hand-maintained
+  // runtime admission token. Its absence keeps v2 unavailable while the
+  // legacy v1 snapshot continues through the additive migration path.
+  const runtimeEnvironment = (() => {
+    try {
+      const adminEnvironment = resolveAdminEnvironment(env);
+      return {
+        environment: adminEnvironment.name,
+        projectRef: adminEnvironment.projectRef,
+      };
+    } catch {
+      return undefined;
+    }
+  })();
   const routesV2: PolishRouteDepsV2 = {
-    runtimeDeploymentIdentity,
+    runtimeEnvironment,
     reserve: (params) => reservePolishRequestV2(adminClient, params),
     getExecutionSnapshot: (params) => getPolishExecutionSnapshotV2(adminClient, params),
     startAttempt: (params) => startPolishProviderAttemptV2(adminClient, params),

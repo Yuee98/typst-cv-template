@@ -8,7 +8,6 @@ import {
   readPreparedProviderExecutionV2,
 } from "./prepared-provider-execution-v2";
 import { validateProfileExecutionConfigV2 } from "./profile-execution-v2";
-import { parseRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
 import {
   DEEPSEEK_MIMO_DEEPSEEK_RUNTIME_EXECUTION_TARGET_V1,
   DEEPSEEK_MIMO_MIMO_RUNTIME_EXECUTION_TARGET_V1,
@@ -30,24 +29,12 @@ describe("real V2 handler runtime authority", () => {
     const profileVersionId = "706513a5-462b-4bba-93b0-53e50661416e";
     const priceVersionId = "d1a481e6-5baf-4b2f-8f2d-da28c2b92ed9";
     const fetchImpl = vi.fn<typeof fetch>();
-    const manifest = {
-      schemaVersion: "ai_provider_bindings_v1",
-      revision: "binding-v2-test",
-      bindings: [
-        {
-          credentialEnvName: profile.credentialEnvName,
-          providerId: profile.providerId,
-          recipientKey: "deepseek",
-          origin: "https://api.deepseek.com",
-        },
-      ],
-    };
     const env = {
-      AI_RUNTIME_BUILD_ID: "build-v2-test",
-      AI_PROVIDER_BINDING_MANIFEST: JSON.stringify(manifest),
+      ADMIN_ENVIRONMENT: "local",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "local-test-key",
       [profile.credentialEnvName]: "test-only-provider-key",
     };
-    const deployment = parseRuntimeDeploymentIdentityV1(env);
     const authority = createRealPolishRuntimeAuthorityV2(
       env,
       { fetch: fetchImpl },
@@ -86,18 +73,10 @@ describe("real V2 handler runtime authority", () => {
         displayDisclosureKey: profile.displayDisclosureKey,
         externalEvidenceIds: ["evidence.v2.test"],
       },
-      deploymentValidation: {
-        schemaVersion: "runtime_deployment_admission_v2" as const,
-        admissionId: "706513a5-462b-4bba-93b0-53e50661416e",
-        reviewedDeploymentId: priceVersionId,
-        validationReportId: "806513a5-462b-4bba-93b0-53e50661416e",
+      runtimeConfigReceipt: {
+        schemaVersion: "runtime_config_receipt_v1" as const,
         environment: "local" as const,
-        projectRef: "test-project",
-        runtimeBuildId: "build-v2-test",
-        bindingManifestRevision: "binding-v2-test",
-        bindingManifestSha256: deployment.manifestSha256,
-        admissionRevision: "1",
-        targetSetSha256: "f".repeat(64),
+        projectRef: "local",
         runtimeContractId: "runtime.v2.test",
         runtimeTargetId: "target.v2.test",
         runtimeTargetSha256: "a".repeat(64),
@@ -113,9 +92,7 @@ describe("real V2 handler runtime authority", () => {
     };
     const execution = authority.resolveProvider(profile, target);
     expect(isPreparedProviderExecutionV2(execution)).toBe(true);
-    expect(readPreparedProviderExecutionV2(execution, profile).runtimeProvenance).toEqual({
-      runtimeBuildId: "build-v2-test", bindingManifestRevision: "binding-v2-test",
-    });
+    expect(readPreparedProviderExecutionV2(execution, profile).provider).toBeDefined();
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(() =>
       authority.resolveProvider(profile, {

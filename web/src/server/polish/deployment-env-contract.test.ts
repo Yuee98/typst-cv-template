@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseOptionalRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
 
 const environmentExampleUrl = new URL("../../../.env.example", import.meta.url);
 const providerSeedMigrationUrl = new URL(
@@ -24,7 +23,7 @@ function parseEnvironmentAssignments(source: string) {
 }
 
 describe("v2 deployment environment contract", () => {
-  it("documents runtime identity and every seeded provider secret binding", () => {
+  it("documents every seeded provider secret binding without deployment identity", () => {
     const environmentExample = readFileSync(environmentExampleUrl, "utf8");
     const migration = readFileSync(providerSeedMigrationUrl, "utf8");
     const { assignments, duplicates } = parseEnvironmentAssignments(environmentExample);
@@ -42,18 +41,11 @@ describe("v2 deployment environment contract", () => {
       "AI_PROVIDER_KEY_MIMO_PRIMARY",
     ]);
 
-    for (const name of [
-      "AI_RUNTIME_BUILD_ID",
-      "AI_PROVIDER_BINDING_MANIFEST",
-      ...seededAliases,
-    ]) {
+    for (const name of seededAliases) {
       expect(assignments.get(name), `${name} must be an empty server-only placeholder`).toBe("");
       expect(name).not.toMatch(/^NEXT_PUBLIC_/u);
     }
-
-    expect(parseOptionalRuntimeDeploymentIdentityV1({
-      AI_RUNTIME_BUILD_ID: assignments.get("AI_RUNTIME_BUILD_ID"),
-      AI_PROVIDER_BINDING_MANIFEST: assignments.get("AI_PROVIDER_BINDING_MANIFEST"),
-    })).toBeUndefined();
+    expect(assignments.has("AI_RUNTIME_BUILD_ID")).toBe(false);
+    expect(assignments.has("AI_PROVIDER_BINDING_MANIFEST")).toBe(false);
   });
 });

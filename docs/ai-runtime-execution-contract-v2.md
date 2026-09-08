@@ -1,6 +1,8 @@
 # AI runtime execution contract v2
 
-Status: successor internal contract. Revision 1 document, fixed vectors, IDs and hashes remain unchanged. Runtime v2 implements the tuple and transport invariants in [provider v2](ai-provider-contract-v2.md).
+Status: superseded by [runtime execution contract v3](ai-runtime-execution-contract-v3.md). This revision records the retired reviewed-deployment/build/manifest admission model; its historical vectors, IDs and hashes remain unchanged.
+
+The remaining text is historical and does not describe the current deployment contract.
 
 The execution snapshot accepts a strict discriminated union of profile_execution_config_v1 and profile_execution_config_v2. Unknown/partial v2 never falls back to v1. The route still freezes exact policy/profile/price/legal/runtime IDs at reservation; retry consumes the same snapshot and never resolves the active pointer again.
 

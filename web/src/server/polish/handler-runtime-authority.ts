@@ -2,12 +2,11 @@ import {
   createCodeOwnedPolishAdapterResolverV2,
   type PolishAdapterResolverV2,
 } from "./lifecycle-v2";
-import {
-  type RuntimeTargetResolverV1,
-} from "./lifecycle-v2-contract";
+import { type RuntimeTargetResolverV1 } from "./lifecycle-v2-contract";
 import {
   createProviderSecretResolver,
   prepareProviderTransportV2,
+  validateProviderCredentialBinding,
   validateProviderEndpoint,
 } from "./provider-binding-v2";
 import { createPreparedProviderExecutionV2 } from "./prepared-provider-execution-v2";
@@ -18,7 +17,6 @@ import {
   type RuntimeTargetResolverV2,
 } from "./execution-snapshot-v2";
 import { resolveAdminEnvironment } from "../admin/environment";
-import { parseRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
 import {
   DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1,
   DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1,
@@ -37,13 +35,38 @@ const REAL_POLISH_RUNTIME_TARGET_RESOLVER_V2: RuntimeTargetResolverV1 =
     DEEPSEEK_RUNTIME_TARGET_RESOLVER_V1(target) ||
     DEEPSEEK_MIMO_RUNTIME_TARGET_RESOLVER_V1(target);
 
+function matchesRuntimeConfigReceipt(
+  target: RuntimeExecutionTargetV2,
+  environment: ReturnType<typeof resolveAdminEnvironment>,
+): boolean {
+  const receipt = target.runtimeConfigReceipt;
+  return (
+    receipt.environment === environment.name &&
+    receipt.projectRef === environment.projectRef &&
+    receipt.runtimeContractId === target.runtimeContractId &&
+    receipt.runtimeTargetId === target.evidence.runtimeTargetId &&
+    receipt.runtimeTargetSha256 === target.evidence.runtimeTargetSha256 &&
+    receipt.profileVersionId === target.profileVersionId &&
+    receipt.priceVersionId === target.evidence.priceVersionId &&
+    receipt.providerId === target.profile.providerId &&
+    receipt.codeCapabilityId === target.evidence.codeCapabilityId &&
+    receipt.codeCapabilitySha256 === target.evidence.codeCapabilitySha256 &&
+    receipt.legalBundleVersion === target.legalBundleVersion &&
+    receipt.legalManifestId === target.evidence.legalManifestId &&
+    receipt.displayDisclosureKey === target.evidence.displayDisclosureKey
+  );
+}
+
+/**
+ * Admission is based on the immutable database receipt plus the code-owned
+ * adapter/recipient/credential policy. There is no deployment-wide identity
+ * or short-lived validation report in the request path.
+ */
 export function createReportedRuntimeTargetResolverV2(
   env: ServerEnvironment,
 ): RuntimeTargetResolverV2 {
-  let deployment: ReturnType<typeof parseRuntimeDeploymentIdentityV1>;
   let environment: ReturnType<typeof resolveAdminEnvironment>;
   try {
-    deployment = parseRuntimeDeploymentIdentityV1(env);
     environment = resolveAdminEnvironment(env);
   } catch {
     return EMPTY_RUNTIME_TARGET_RESOLVER_V2;
@@ -51,37 +74,13 @@ export function createReportedRuntimeTargetResolverV2(
   const resolveSecret = createProviderSecretResolver(env);
   return (target: RuntimeExecutionTargetV2): boolean => {
     try {
-      const report = target.deploymentValidation;
-      if (report.schemaVersion !== "runtime_deployment_admission_v2") {
-        return false;
-      }
-      const endpoint = validateProviderEndpoint(target.profile);
-      const binding = deployment.manifest.bindings.find(
-        (item) =>
-          item.credentialEnvName === target.profile.credentialEnvName,
-      );
+      validateProviderEndpoint(target.profile);
+      validateProviderCredentialBinding(target.profile, {
+        providerId: target.evidence.providerId,
+        recipientKey: target.evidence.recipientKey,
+      });
       resolveSecret(target.profile.credentialEnvName);
-      return (
-        report.environment === environment.name &&
-        report.projectRef === environment.projectRef &&
-        report.runtimeBuildId === deployment.buildId &&
-        report.bindingManifestRevision === deployment.manifest.revision &&
-        report.bindingManifestSha256 === deployment.manifestSha256 &&
-        report.runtimeContractId === target.runtimeContractId &&
-        report.runtimeTargetId === target.evidence.runtimeTargetId &&
-        report.runtimeTargetSha256 === target.evidence.runtimeTargetSha256 &&
-        report.profileVersionId === target.profileVersionId &&
-        report.priceVersionId === target.evidence.priceVersionId &&
-        report.providerId === target.profile.providerId &&
-        report.codeCapabilityId === target.evidence.codeCapabilityId &&
-        report.codeCapabilitySha256 === target.evidence.codeCapabilitySha256 &&
-        report.legalBundleVersion === target.legalBundleVersion &&
-        report.legalManifestId === target.evidence.legalManifestId &&
-        report.displayDisclosureKey === target.evidence.displayDisclosureKey &&
-        binding?.providerId === target.profile.providerId &&
-        binding.recipientKey === target.evidence.recipientKey &&
-        binding.origin === new URL(endpoint).origin
-      );
+      return matchesRuntimeConfigReceipt(target, environment);
     } catch {
       return false;
     }
@@ -89,12 +88,8 @@ export function createReportedRuntimeTargetResolverV2(
 }
 
 /**
- * Real Supabase composition after RT-009A.
- *
- * A deterministic provider is authority only inside the separate two-flag
- * fake-backend composition. Mixing it into a real accounting backend would
- * let synthetic output settle under a DB-frozen provider route, so the legacy
- * single fake-LLM mode is deliberately unsupported for the public V2 handler.
+ * Real Supabase composition after RT-009A. A deterministic provider is
+ * authority only inside the separate two-flag fake-backend composition.
  */
 export function createRealPolishRuntimeAuthorityV2(
   env: ServerEnvironment,
@@ -108,10 +103,15 @@ export function createRealPolishRuntimeAuthorityV2(
 
   const resolveLegacyProvider = createCodeOwnedPolishAdapterResolverV2({ env });
   const resolveSecret = createProviderSecretResolver(env);
+  const environment = (() => {
+    try {
+      return resolveAdminEnvironment(env);
+    } catch {
+      return undefined;
+    }
+  })();
 
   return Object.freeze({
-    // Preserve the legacy DeepSeek target for in-flight/rollback execution
-    // while admitting only the exact current combined-v2 target pair.
     runtimeTargetResolver: REAL_POLISH_RUNTIME_TARGET_RESOLVER_V2,
     runtimeTargetResolverV2: createReportedRuntimeTargetResolverV2(env),
     resolveProvider: ((profile, target) => {
@@ -119,30 +119,18 @@ export function createRealPolishRuntimeAuthorityV2(
         if (
           target === undefined ||
           target.profile !== profile ||
-          target.deploymentValidation.schemaVersion !==
-            "runtime_deployment_admission_v2"
+          environment === undefined ||
+          !matchesRuntimeConfigReceipt(target, environment)
         ) {
           throw new Error("v2 provider authority target is required");
         }
         const validatedProfile = validateProfileExecutionConfigV2(profile);
-        const deployment = parseRuntimeDeploymentIdentityV1(env);
-        if (
-          deployment.buildId !== target.deploymentValidation.runtimeBuildId ||
-          deployment.manifestSha256 !==
-            target.deploymentValidation.bindingManifestSha256
-        ) {
-          throw new Error("v2 provider deployment identity changed");
-        }
         const prepared = prepareProviderTransportV2({
           profile: validatedProfile,
           recipient: {
             providerId: target.evidence.providerId,
             recipientKey: target.evidence.recipientKey,
           },
-          manifest: deployment.manifest,
-          expectedManifestRevision:
-            target.deploymentValidation.bindingManifestRevision,
-          runtimeBuildId: target.deploymentValidation.runtimeBuildId,
           resolveSecret,
         });
         return createPreparedProviderExecutionV2(prepared, options.fetch);

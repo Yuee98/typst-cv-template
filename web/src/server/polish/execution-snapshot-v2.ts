@@ -16,11 +16,9 @@ import {
 import { resolveRuntimeCodeCapabilityV2 } from "./runtime-code-capability-v2";
 import type { FrozenPriceSnapshotV1 } from "./pricing";
 import {
-  runtimeDeploymentValidationSchema,
-  runtimeDeploymentAdmissionV2Schema,
-  type RuntimeDeploymentValidationV1,
-  type RuntimeDeploymentAdmissionV2,
-} from "./runtime-deployment-v1";
+  runtimeConfigReceiptSchema,
+  type RuntimeConfigReceiptV1,
+} from "./runtime-config-receipt-v1";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
@@ -32,7 +30,7 @@ const SUCCESS_KEYS = [
   "profileExecutionConfig",
   "priceSnapshot",
   "runtimeEvidence",
-  "deploymentValidation",
+  "runtimeConfigReceipt",
 ] as const;
 const CODE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,199}$/u;
 const LOWER_HEX_64_PATTERN = /^[0-9a-f]{64}$/u;
@@ -101,7 +99,7 @@ export interface RuntimeExecutionTargetV2 {
   readonly profileVersionId: string;
   readonly profile: Readonly<ProfileExecutionConfigV2>;
   readonly evidence: Readonly<RuntimeExecutionEvidenceV2>;
-  readonly deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV2>;
+  readonly runtimeConfigReceipt: Readonly<RuntimeConfigReceiptV1>;
 }
 
 export type RuntimeTargetResolverV2 = (
@@ -114,14 +112,14 @@ export const EMPTY_RUNTIME_TARGET_RESOLVER_V2: RuntimeTargetResolverV2 = () =>
 export type ExecutionSnapshotResultV2 =
   | ExecutionSnapshotResultV1
   | Readonly<{
-      schemaVersion: "ai_polish_execution_snapshot_v2";
+      schemaVersion: "ai_polish_execution_snapshot_v3";
       ok: true;
       reservationId: string;
       routeSnapshot: RouteSnapshotV1;
       profileExecutionConfig: Readonly<ProfileExecutionConfigV2>;
       priceSnapshot: Readonly<FrozenPriceSnapshotV1>;
       runtimeEvidence: Readonly<RuntimeExecutionEvidenceV2>;
-      deploymentValidation: Readonly<RuntimeDeploymentValidationV1 | RuntimeDeploymentAdmissionV2>;
+      runtimeConfigReceipt: Readonly<RuntimeConfigReceiptV1>;
     }>;
 
 export type VersionedProfileExecutionConfig =
@@ -230,7 +228,7 @@ export function parseVersionedExecutionSnapshot(
   },
 ): ExecutionSnapshotResultV2 {
   const input = record(value);
-  if (input.schemaVersion !== "ai_polish_execution_snapshot_v2") {
+  if (input.schemaVersion !== "ai_polish_execution_snapshot_v3") {
     return parseExecutionSnapshotV1(value, {
       reservationId: expected.reservationId,
       reserveRoute: expected.reserveRoute,
@@ -252,13 +250,9 @@ export function parseVersionedExecutionSnapshot(
   const profile = validateProfileExecutionConfigV2(input.profileExecutionConfig);
   const price = parsePriceSnapshotV1(input.priceSnapshot);
   const evidence = parseRuntimeExecutionEvidenceV2(input.runtimeEvidence);
-  const deploymentValidation =
-    input.deploymentValidation &&
-    typeof input.deploymentValidation === "object" &&
-    (input.deploymentValidation as Record<string, unknown>).schemaVersion ===
-      "runtime_deployment_admission_v2"
-      ? runtimeDeploymentAdmissionV2Schema.parse(input.deploymentValidation)
-      : runtimeDeploymentValidationSchema.parse(input.deploymentValidation);
+  const runtimeConfigReceipt = runtimeConfigReceiptSchema.parse(
+    input.runtimeConfigReceipt,
+  );
   const compiledCapability = (() => {
     try {
       return resolveRuntimeCodeCapabilityV2(evidence.codeCapabilityId);
@@ -299,20 +293,17 @@ export function parseVersionedExecutionSnapshot(
     compiledCapability.capabilityContractId !== evidence.capabilityContractId ||
     compiledCapability.cachePolicyId !== evidence.cachePolicyId ||
     compiledCapability.calculatorKind !== evidence.calculatorKind ||
-    deploymentValidation.runtimeContractId !== evidence.runtimeContractId ||
-    deploymentValidation.runtimeTargetId !== evidence.runtimeTargetId ||
-    deploymentValidation.runtimeTargetSha256 !== evidence.runtimeTargetSha256 ||
-    deploymentValidation.profileVersionId !== evidence.profileVersionId ||
-    deploymentValidation.priceVersionId !== evidence.priceVersionId ||
-    deploymentValidation.providerId !== evidence.providerId ||
-    deploymentValidation.codeCapabilityId !== evidence.codeCapabilityId ||
-    deploymentValidation.codeCapabilitySha256 !== evidence.codeCapabilitySha256 ||
-    deploymentValidation.legalBundleVersion !== evidence.legalBundleVersion ||
-    deploymentValidation.legalManifestId !== evidence.legalManifestId ||
-    deploymentValidation.displayDisclosureKey !== evidence.displayDisclosureKey ||
-    (deploymentValidation.schemaVersion === "runtime_deployment_validation_v1" &&
-      (Date.parse(deploymentValidation.checkedAt) > Date.now() + 30_000 ||
-        Date.parse(deploymentValidation.expiresAt) <= Date.now()))
+    runtimeConfigReceipt.runtimeContractId !== evidence.runtimeContractId ||
+    runtimeConfigReceipt.runtimeTargetId !== evidence.runtimeTargetId ||
+    runtimeConfigReceipt.runtimeTargetSha256 !== evidence.runtimeTargetSha256 ||
+    runtimeConfigReceipt.profileVersionId !== evidence.profileVersionId ||
+    runtimeConfigReceipt.priceVersionId !== evidence.priceVersionId ||
+    runtimeConfigReceipt.providerId !== evidence.providerId ||
+    runtimeConfigReceipt.codeCapabilityId !== evidence.codeCapabilityId ||
+    runtimeConfigReceipt.codeCapabilitySha256 !== evidence.codeCapabilitySha256 ||
+    runtimeConfigReceipt.legalBundleVersion !== evidence.legalBundleVersion ||
+    runtimeConfigReceipt.legalManifestId !== evidence.legalManifestId ||
+    runtimeConfigReceipt.displayDisclosureKey !== evidence.displayDisclosureKey
   ) {
     fail("frozen authority mismatch", "EXECUTION_AUTHORITY_MISMATCH");
   }
@@ -324,7 +315,7 @@ export function parseVersionedExecutionSnapshot(
     profileVersionId: route.profileVersionId,
     profile,
     evidence,
-    deploymentValidation,
+    runtimeConfigReceipt,
   });
   let accepted = false;
   try {
@@ -335,13 +326,13 @@ export function parseVersionedExecutionSnapshot(
   if (!accepted) fail("runtime target unavailable", "RUNTIME_TARGET_UNAVAILABLE");
 
   return Object.freeze({
-    schemaVersion: "ai_polish_execution_snapshot_v2" as const,
+    schemaVersion: "ai_polish_execution_snapshot_v3" as const,
     ok: true as const,
     reservationId: input.reservationId,
     routeSnapshot: route,
     profileExecutionConfig: profile,
     priceSnapshot: price,
     runtimeEvidence: evidence,
-    deploymentValidation,
+    runtimeConfigReceipt,
   });
 }

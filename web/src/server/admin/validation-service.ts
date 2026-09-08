@@ -8,35 +8,24 @@ import {
 import {
   createProviderSecretResolver,
   validateProviderEndpoint,
+  validateProviderCredentialBinding,
 } from "../polish/provider-binding-v2";
 import {
   resolveProfileRuntimeCodeCapabilityV2,
   resolveRuntimeCodeCapabilityV2,
 } from "../polish/runtime-code-capability-v2";
 import { validateProfileExecutionConfigV2 } from "../polish/profile-execution-v2";
-import {
-  parseRuntimeDeploymentIdentityV1,
-  type RuntimeDeploymentEnvironment,
-  type RuntimeDeploymentIdentityV1,
-} from "../polish/runtime-deployment-v1";
+import { resolveAdminEnvironment } from "./environment";
 import { createServerAdminClient } from "../supabase/admin-client";
 
 const codeId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/u);
-const buildId = z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,199}$/u);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const uuid = z.string().uuid();
 
 const candidateSchema = z.strictObject({
-  schemaVersion: z.literal("admin_validation_candidate_v1"),
-  deployment: z.strictObject({
-    id: uuid,
-    environment: z.enum(["local", "preview", "production"]),
-    projectRef: z.string().min(1).max(100),
-    runtimeBuildId: buildId,
-    bindingManifestRevision: codeId,
-    bindingManifestSha256: sha256,
-    validUntil: z.string().datetime({ offset: true }),
-  }),
+  schemaVersion: z.literal("admin_config_validation_candidate_v2"),
+  environment: z.enum(["local", "preview", "production"]),
+  projectRef: z.string().min(1).max(100),
   profileExecutionConfig: z.strictObject({
     schemaVersion: z.literal("profile_execution_config_v2"),
     profileKey: codeId,
@@ -72,12 +61,11 @@ const candidateSchema = z.strictObject({
 export type AdminValidationCandidate = z.infer<typeof candidateSchema>;
 
 export interface ValidationProducerInput {
-  reviewedDeploymentId: string;
   runtimeContractId: string;
   runtimeTargetId: string;
 }
 
-export type ValidationProducerEnvironment = RuntimeDeploymentEnvironment;
+export type ValidationProducerEnvironment = Readonly<Record<string, string | undefined>>;
 
 interface RpcClient {
   rpc(functionName: string, args: Record<string, unknown>): Promise<{
@@ -95,7 +83,6 @@ export class ValidationProducerError extends Error {
 
 function parseInput(input: ValidationProducerInput): ValidationProducerInput {
   const parsed = z.strictObject({
-    reviewedDeploymentId: uuid,
     runtimeContractId: codeId,
     runtimeTargetId: codeId,
   }).safeParse(input);
@@ -103,13 +90,12 @@ function parseInput(input: ValidationProducerInput): ValidationProducerInput {
   return parsed.data;
 }
 
-function observedChecks(
+export function observedConfigChecks(
   candidate: AdminValidationCandidate,
   env: ValidationProducerEnvironment,
-  runtime: RuntimeDeploymentIdentityV1,
 ): {
   endpointPolicy: boolean;
-  manifestBinding: boolean;
+  credentialBinding: boolean;
   credentialConfigured: boolean;
   compiledCapability: boolean;
   observedCodeCapabilitySha256: string;
@@ -123,20 +109,14 @@ function observedChecks(
       return false;
     }
   })();
-  const endpointOrigin = endpointPolicy
-    ? new URL(candidate.profileExecutionConfig.endpointUrl).origin
-    : null;
-  const manifestBinding =
-    runtime.buildId === candidate.deployment.runtimeBuildId &&
-    runtime.manifest.revision === candidate.deployment.bindingManifestRevision &&
-    runtime.manifestSha256 === candidate.deployment.bindingManifestSha256 &&
-    runtime.manifest.bindings.some(
-      (binding) =>
-        binding.credentialEnvName === profile.credentialEnvName &&
-        binding.providerId === profile.providerId &&
-        binding.recipientKey === candidate.runtimeTarget.recipientKey &&
-        endpointOrigin !== null && binding.origin === endpointOrigin,
-    );
+  let credentialBinding = false;
+  try {
+    validateProviderCredentialBinding(profile, {
+      providerId: candidate.runtimeTarget.providerId,
+      recipientKey: candidate.runtimeTarget.recipientKey,
+    });
+    credentialBinding = true;
+  } catch { /* A failed policy check is recorded without exposing credentials. */ }
   let credentialConfigured = false;
   try {
     createProviderSecretResolver(env)(profile.credentialEnvName);
@@ -160,7 +140,7 @@ function observedChecks(
   }
   return {
     endpointPolicy,
-    manifestBinding,
+    credentialBinding,
     credentialConfigured,
     compiledCapability,
     observedCodeCapabilitySha256,
@@ -176,40 +156,34 @@ export async function produceAdminValidationReport(
 ): Promise<AdminValidationReport> {
   const request = parseInput(input);
   const environment = dependencies.environment ?? process.env;
+  const identity = resolveAdminEnvironment(environment);
   const client = dependencies.client ?? createServerAdminClient();
-  const candidateResult = await client.rpc("get_admin_validation_candidate_v1", {
-    p_reviewed_deployment_id: request.reviewedDeploymentId,
+  const candidateResult = await client.rpc("get_admin_config_validation_candidate_v2", {
     p_runtime_contract_id: request.runtimeContractId,
     p_runtime_target_id: request.runtimeTargetId,
   });
   if (candidateResult.error) throw new ValidationProducerError();
   const candidate = candidateSchema.parse(candidateResult.data);
   if (
-    candidate.deployment.id !== request.reviewedDeploymentId ||
+    candidate.environment !== identity.name ||
+    candidate.projectRef !== identity.projectRef ||
     candidate.runtimeTarget.runtimeContractId !== request.runtimeContractId ||
-    candidate.runtimeTarget.runtimeTargetId !== request.runtimeTargetId ||
-    Date.parse(candidate.deployment.validUntil) <= Date.now()
+    candidate.runtimeTarget.runtimeTargetId !== request.runtimeTargetId
   ) {
     throw new ValidationProducerError();
   }
   let checks;
-  let runtime: RuntimeDeploymentIdentityV1;
   try {
-    runtime = parseRuntimeDeploymentIdentityV1(environment);
-    checks = observedChecks(candidate, environment, runtime);
+    checks = observedConfigChecks(candidate, environment);
   } catch {
     throw new ValidationProducerError();
   }
-  const reportResult = await client.rpc("record_admin_validation_report_v1", {
-    p_reviewed_deployment_id: request.reviewedDeploymentId,
+  const reportResult = await client.rpc("record_admin_config_validation_report_v2", {
     p_runtime_contract_id: request.runtimeContractId,
     p_runtime_target_id: request.runtimeTargetId,
-    p_observed_runtime_build_id: runtime.buildId,
-    p_observed_binding_manifest_revision: runtime.manifest.revision,
-    p_observed_binding_manifest_sha256: runtime.manifestSha256,
     p_observed_code_capability_sha256: checks.observedCodeCapabilitySha256,
     p_endpoint_policy_valid: checks.endpointPolicy,
-    p_manifest_binding_valid: checks.manifestBinding,
+    p_credential_binding_valid: checks.credentialBinding,
     p_credential_configured: checks.credentialConfigured,
     p_compiled_capability_valid: checks.compiledCapability,
   });
@@ -218,26 +192,21 @@ export async function produceAdminValidationReport(
   const now = Date.now();
   if (
     Date.parse(report.checkedAt) > now + 30_000 ||
-    Date.parse(report.expiresAt) <= now ||
-    Date.parse(report.expiresAt) > Date.parse(candidate.deployment.validUntil)
+    Date.parse(report.expiresAt) <= now
   ) {
     throw new ValidationProducerError();
   }
   if (
     report.checks.endpointPolicy !== checks.endpointPolicy ||
-    report.checks.manifestBinding !== checks.manifestBinding ||
+    report.checks.credentialBinding !== checks.credentialBinding ||
     report.checks.credentialConfigured !== checks.credentialConfigured ||
     report.checks.compiledCapability !== checks.compiledCapability
   ) {
     throw new ValidationProducerError();
   }
   const expected = {
-    reviewedDeploymentId: candidate.deployment.id,
-    environment: candidate.deployment.environment,
-    projectRef: candidate.deployment.projectRef,
-    runtimeBuildId: runtime.buildId,
-    bindingManifestRevision: runtime.manifest.revision,
-    bindingManifestSha256: runtime.manifestSha256,
+    environment: identity.name,
+    projectRef: identity.projectRef,
     runtimeContractId: candidate.runtimeTarget.runtimeContractId,
     runtimeTargetId: candidate.runtimeTarget.runtimeTargetId,
     runtimeTargetSha256: candidate.runtimeTarget.runtimeTargetSha256,

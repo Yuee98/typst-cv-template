@@ -58,22 +58,22 @@ function rpcError(error: { code?: string; message?: string }): AdminErrorCode {
 
 const mutationRpc: Record<AdminMutationRequest["operation"], { rpc: string; kind: string }> = {
   disable_ai: { rpc: "admin_disable_ai_v1", kind: "ai_disable" },
-  pointer_set: { rpc: "admin_set_ai_routing_pointer_v1", kind: "ai_pointer_set" },
-  pointer_clear: { rpc: "admin_clear_ai_routing_pointer_v1", kind: "ai_pointer_clear" },
-  reopen: { rpc: "admin_reopen_ai_v1", kind: "ai_reopen" },
+  pointer_set: { rpc: "admin_set_ai_routing_pointer_v2", kind: "ai_pointer_set" },
+  pointer_clear: { rpc: "admin_clear_ai_routing_pointer_v2", kind: "ai_pointer_clear" },
+  reopen: { rpc: "admin_reopen_ai_v2", kind: "ai_reopen" },
   membership_set: { rpc: "admin_set_membership_v1", kind: "admin_membership_set" },
   provider_defaults_update: { rpc: "admin_update_provider_defaults_v1", kind: "provider_defaults_update" },
   provider_profile_create: { rpc: "admin_create_provider_profile_v1", kind: "provider_profile_create" },
   profile_version_create: { rpc: "admin_create_profile_version_v2", kind: "profile_version_create" },
   price_version_create: { rpc: "admin_create_price_version_v1", kind: "price_version_create" },
   global_daily_limit_set: { rpc: "admin_set_global_daily_limit_v1", kind: "global_daily_limit_set" },
-  price_seal: { rpc: "admin_seal_price_for_activation_v1", kind: "price_seal" },
-  profile_version_transition: { rpc: "admin_transition_profile_version_v1", kind: "profile_version_transition" },
-  routing_policy_create: { rpc: "admin_create_routing_policy_v1", kind: "routing_policy_create" },
-  routing_policy_transition: { rpc: "admin_transition_routing_policy_v1", kind: "routing_policy_transition" },
-  price_close: { rpc: "admin_close_price_version_v1", kind: "price_close" },
-  profile_version_retire: { rpc: "admin_retire_profile_version_v1", kind: "profile_version_retire" },
-  provider_profile_retire: { rpc: "admin_retire_provider_profile_v1", kind: "provider_profile_retire" },
+  price_seal: { rpc: "admin_seal_price_for_activation_v2", kind: "price_seal" },
+  profile_version_transition: { rpc: "admin_transition_profile_version_v2", kind: "profile_version_transition" },
+  routing_policy_create: { rpc: "admin_create_routing_policy_v2", kind: "routing_policy_create" },
+  routing_policy_transition: { rpc: "admin_transition_routing_policy_v2", kind: "routing_policy_transition" },
+  price_close: { rpc: "admin_close_price_version_v2", kind: "price_close" },
+  profile_version_retire: { rpc: "admin_retire_profile_version_v2", kind: "profile_version_retire" },
+  provider_profile_retire: { rpc: "admin_retire_provider_profile_v2", kind: "provider_profile_retire" },
 };
 
 function mutationArgs(
@@ -92,7 +92,7 @@ function mutationArgs(
     case "profile_version_create": return { ...base, p_profile_id: request.profileId, p_expected_latest_version: request.expectedLatestVersion, p_adapter_id: request.adapterId, p_wire_api_kind: request.wireApiKind, p_endpoint_url: request.endpointUrl, p_credential_env_name: request.credentialEnvName, p_model_id: request.modelId, p_capability_contract_id: request.capabilityContractId, p_cache_policy_id: request.cachePolicyId, p_legal_manifest_id: request.legalManifestId, p_display_disclosure_key: request.displayDisclosureKey, p_config: request.config, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "price_version_create": return { ...base, p_profile_version_id: request.profileVersionId, p_pricing_lane: request.pricingLane, p_expected_latest_version: request.expectedLatestVersion, p_currency: request.currency, p_calculator_kind: request.calculatorKind, p_valid_from: request.validFrom, p_valid_to: request.validTo, p_provider_effective_from: request.providerEffectiveFrom, p_provider_effective_to: request.providerEffectiveTo, p_source_url: request.sourceUrl, p_source_checked_at: request.sourceCheckedAt, p_source_snapshot_sha256: request.sourceSnapshotSha256, p_parameters: request.parameters, p_components: request.components, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "global_daily_limit_set": return { ...base, p_global_daily_limit: request.globalDailyLimit, p_expected_global_daily_limit: request.expectedGlobalDailyLimit, p_expected_control_revision: request.expectedControlRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "price_seal": return { ...base, p_price_version_id: request.priceVersionId, p_runtime_contract_id: request.runtimeContractId, p_reviewed_deployment_id: request.reviewedDeploymentId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
+    case "price_seal": return { ...base, p_price_version_id: request.priceVersionId, p_runtime_contract_id: request.runtimeContractId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "profile_version_transition": return { ...base, p_profile_version_id: request.profileVersionId, p_to_status: request.toStatus, p_validation_report_id: request.validationReportId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "routing_policy_create": return { ...base, p_policy_key: request.policyKey, p_expected_latest_version: request.expectedLatestVersion, p_rules: request.rules, p_default_profile_version_id: request.defaultProfileVersionId, p_legal_bundle_version: request.legalBundleVersion, p_runtime_contract_id: request.runtimeContractId, p_validation_report_ids: request.validationReportIds, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "routing_policy_transition": return { ...base, p_policy_version_id: request.policyVersionId, p_to_status: request.toStatus, p_validation_report_ids: request.validationReportIds, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
@@ -296,10 +296,6 @@ export async function handleAdminPost(
     adminContextSchema.parse(context);
     if (readback.success) {
       const report = await (deps.produceReadback ?? defaults.produceReadback!)({
-        reviewedDeploymentId: readback.data.reviewedDeploymentId,
-        admissionId: readback.data.admissionId,
-        admissionRevision: readback.data.admissionRevision,
-        targetSetSha256: readback.data.targetSetSha256,
         policyVersionId: readback.data.policyVersionId,
         validationReportIds: readback.data.validationReportIds,
       });
@@ -309,12 +305,10 @@ export async function handleAdminPost(
     }
     if (!validation.success) return fail("INVALID_REQUEST");
     const {
-      reviewedDeploymentId,
       runtimeContractId,
       runtimeTargetId,
     } = validation.data;
     const validationInput = {
-      reviewedDeploymentId,
       runtimeContractId,
       runtimeTargetId,
     };

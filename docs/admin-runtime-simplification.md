@@ -1,0 +1,13 @@
+# Runtime configuration simplification — 2026-09-08
+
+This user-approved amendment supersedes the whole-build registration and binding-manifest requirements in the Admin control-plane design and implementation plan (particularly I04–I07). It applies to the successor implementation in PR #37; historical migrations and frozen v1 evidence remain historical records.
+
+The application no longer requires `AI_RUNTIME_BUILD_ID`, `AI_PROVIDER_BINDING_MANIFEST`, a reviewed deployment import, or deployment admission/revocation. A routine compatible web deployment does not need AI configuration registration. The build embeds its source commit for an optional diagnostic startup log; that value is not an execution permission, report identity, or replay condition.
+
+Execution uses the reservation's immutable profile, price, policy, legal and runtime-target references. The running code checks compiled adapter/capability compatibility, official destination rules, the frozen recipient, and the Provider-specific credential prefix before resolving the key or sending. DeepSeek uses `AI_PROVIDER_KEY_DEEPSEEK_*`; MiMo uses `AI_PROVIDER_KEY_MIMO_*`. New suffixes do not need a separate manifest. Existing official endpoint/path rules still apply. The operator remains responsible for putting the correct secret value under the correct name.
+
+Admin validation is about a configuration target in the selected environment/project. Reports remain short-lived evidence for publishing and reopening. Ordinary requests use a strictly versioned immutable target receipt and do not require continuously refreshed reports. Readback rechecks the current process's code and credentials for all effective routes, then binds the result to the closing cycle, pointer, configuration generation, control revision and legal bundle. JWT, membership, TOTP, audit, idempotency and database function/grant checks remain applicable.
+
+Migration application is separate from operator cutover or routing activation. Existing v1 traffic must remain available both before the first Admin bootstrap and before cutover, including already reserved requests and retries. Historical deployment-bound rows must not be rewritten with fabricated identities or new automatic source commits. New configuration operations must have no hidden dependency on those historical rows.
+
+Validation covers both absent removed variables with no deployment-registration rows, forbidden cross-provider credentials/destinations, unsupported code, exact report/route coverage, stale readback, lost-response replay, v1 upgrade compatibility, and the server/static build boundary. See [the successor execution contract](ai-runtime-execution-contract-v3.md).

@@ -1,5 +1,7 @@
 # Admin Control Plane Implementation Plan
 
+> Amendment: [2026-09-08 runtime simplification](admin-runtime-simplification.md) supersedes the manual whole-build registration and binding-manifest portions of this plan. Other invariants remain applicable.
+
 本计划把已经收敛的 [总体方案](admin-control-plane-plan.md) 拆成可独立审查、验证和部署的工作包。代码基线为 `main` / `2783057292cef4ba3889d6bded31ce7863b2270f`，总体方案 SHA-256 为 `149d6ed6d826a0c3cb90e055907900a4632286b3d22edbf9a05e486cd3068167`。本次产物是实施计划，不执行实现、数据库迁移、真实 Provider 调用或线上发布。
 
 ## 1. 交付范围与完成定义

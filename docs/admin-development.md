@@ -13,12 +13,16 @@ Keep a linear feature history. Workers own disjoint files in the shared checkout
 | I03 Provider binding schema | implemented, dark | additive v2 schema applied locally; 15 focused DB tests; v1 rows and authority root preserved |
 | I04 dual runtime | implemented, dark | versioned snapshot/start lifecycle and provenance ledger; v2 resolver rejects every target pending I06 deployment reports |
 | I05 runtime/legal evidence | implemented, dark | compiled capability and target bindings, sealed bilingual display, versioned availability, exact consent and request admission are implemented; production execution remains closed |
-| I06 write kernel and trusted reports | implemented locally, business writes dark | real Auth TOTP/AAL2, committed-operation kernel, owner-reviewed deployment import, service-only reports, v3 execution admission and authenticated validation API |
+| I06 write kernel and trusted reports | revised locally, business writes dark | real Auth TOTP/AAL2, committed-operation kernel, service-only reports and authenticated validation API; the retired per-build admission is superseded below |
 | I07–I10 | pending | dependent on the verified I06 authority and report contracts |
 | I11 optional probe | deferred release | separate full lifecycle gate |
 | I12 environment release | pending | hosted identity/authorization reviewed before mutation |
 
 No hosted migration, real Provider call, secret rotation, deployment promotion or main merge has been performed by this implementation run.
+
+## Runtime-admission simplification (2026-09-08)
+
+The reviewed-deployment importer, `AI_RUNTIME_BUILD_ID`, `AI_PROVIDER_BINDING_MANIFEST`, per-build admission receipt and their matching report/readback fields are retired. They required manually maintained deployment metadata but could not prove the deployed source. The replacement retains the code-supported adapter/capability and exact runtime contract checks, while compiled Provider rules enforce the credential prefix and official origin before a request can transmit. Validation and readback record the current Admin environment/project. A build may write its embedded source commit to a safe startup diagnostic log only; it is not a report field or admission gate. The legacy v1 contract documents remain byte-for-byte historical evidence.
 
 ## Checkpoints
 

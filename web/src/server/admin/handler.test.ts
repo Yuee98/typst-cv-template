@@ -117,30 +117,21 @@ const controlState = {
 };
 const runtimeReadbackRequest = {
   operation: "record_runtime_readback" as const,
-  reviewedDeploymentId: "11111111-1111-4111-8111-111111111111",
-  admissionId: "12121212-1212-4212-8212-121212121212",
-  admissionRevision: "9",
-  targetSetSha256: "e".repeat(64),
   policyVersionId: "55555555-5555-4555-8555-555555555555",
   validationReportIds: ["77777777-7777-4777-8777-777777777777"],
 };
 function runtimeReadback() {
   const checkedAt = new Date(Date.now() - 1_000);
   return {
-    schemaVersion: "admin_runtime_readback_v2" as const,
+    schemaVersion: "admin_runtime_readback_v3" as const,
+    environment: "local" as const,
+    projectRef: "local",
     reportId: "88888888-8888-4888-8888-888888888888",
     closingCycleId: controlState.closingCycleId,
     controlRevision: controlState.controlRevision,
     configGeneration: controlState.configGeneration,
     policyVersionId: runtimeReadbackRequest.policyVersionId,
     legalBundleVersion: "legal.bundle.v1",
-    reviewedDeploymentId: runtimeReadbackRequest.reviewedDeploymentId,
-    runtimeBuildId: "build-2026-09-04",
-    bindingManifestRevision: "manifest-2026-09-04",
-    bindingManifestSha256: "a".repeat(64),
-    admissionId: runtimeReadbackRequest.admissionId,
-    admissionRevision: runtimeReadbackRequest.admissionRevision,
-    targetSetSha256: runtimeReadbackRequest.targetSetSha256,
     validationReportIds: runtimeReadbackRequest.validationReportIds,
     effectiveRoutes: [{
       profileVersionId: "99999999-9999-4999-8999-999999999999",
@@ -161,21 +152,16 @@ function runtimeReadback() {
 
 const validationRequest = {
   operation: "validate_runtime_target" as const,
-  reviewedDeploymentId: "11111111-1111-4111-8111-111111111111",
   runtimeContractId: "runtime.deepseek-v2.v1",
   runtimeTargetId: "runtime-target.deepseek.v1",
 };
 function validationReport() {
   const checkedAt = new Date(Date.now() - 1_000);
   return {
-    schemaVersion: "admin_validation_report_v1" as const,
+    schemaVersion: "admin_config_validation_report_v2" as const,
     reportId: "22222222-2222-4222-8222-222222222222",
-    reviewedDeploymentId: validationRequest.reviewedDeploymentId,
     environment: "local" as const,
     projectRef: "local",
-    runtimeBuildId: "build-2026-09-04",
-    bindingManifestRevision: "manifest-2026-09-04",
-    bindingManifestSha256: "1".repeat(64),
     runtimeContractId: validationRequest.runtimeContractId,
     runtimeTargetId: validationRequest.runtimeTargetId,
     runtimeTargetSha256: "2".repeat(64),
@@ -189,7 +175,7 @@ function validationReport() {
     displayDisclosureKey: "deepseek-official-v1",
     checks: {
       endpointPolicy: true,
-      manifestBinding: true,
+      credentialBinding: true,
       credentialConfigured: true,
       compiledCapability: true,
       databaseBinding: true,
@@ -363,7 +349,7 @@ describe("Admin mutation HTTP boundary", () => {
     }), setupData.deps);
     expect(response.status).toBe(200);
     expect(setupData.rpc).toHaveBeenCalledWith(
-      "admin_create_routing_policy_v1",
+      "admin_create_routing_policy_v2",
       expect.objectContaining({
         p_policy_key: "weekday.v2",
         p_expected_latest_version: "1",
@@ -475,12 +461,11 @@ describe("Admin validation HTTP boundary", () => {
       p_project_ref: "local",
     });
     expect(produceValidation).toHaveBeenCalledWith({
-      reviewedDeploymentId: validationRequest.reviewedDeploymentId,
       runtimeContractId: validationRequest.runtimeContractId,
       runtimeTargetId: validationRequest.runtimeTargetId,
     });
     expect(await response.json()).toMatchObject({
-      schemaVersion: "admin_validation_report_v1",
+      schemaVersion: "admin_config_validation_report_v2",
       passed: true,
     });
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
@@ -545,15 +530,11 @@ describe("Admin runtime readback HTTP boundary", () => {
       p_project_ref: "local",
     });
     expect(produceReadback).toHaveBeenCalledWith({
-      reviewedDeploymentId: runtimeReadbackRequest.reviewedDeploymentId,
-      admissionId: runtimeReadbackRequest.admissionId,
-      admissionRevision: runtimeReadbackRequest.admissionRevision,
-      targetSetSha256: runtimeReadbackRequest.targetSetSha256,
       policyVersionId: runtimeReadbackRequest.policyVersionId,
       validationReportIds: runtimeReadbackRequest.validationReportIds,
     });
     expect(await response.json()).toMatchObject({
-      schemaVersion: "admin_runtime_readback_v2",
+      schemaVersion: "admin_runtime_readback_v3",
       policyVersionId: runtimeReadbackRequest.policyVersionId,
     });
   });

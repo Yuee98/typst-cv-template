@@ -94,9 +94,6 @@ const safeMutationResultSchema = z.discriminatedUnion("schemaVersion", [
     lifecycleAuditId: uuid.optional(),
     validationReportIds: z.array(uuid).min(1).max(32).optional(),
     readbackReportId: uuid.optional(),
-    admissionId: uuid.optional(),
-    admissionRevision: decimalRevisionSchema.optional(),
-    targetSetSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   }),
   z.strictObject({
     schemaVersion: z.literal("admin_membership_result_v1"),
@@ -139,7 +136,6 @@ const safeMutationResultSchema = z.discriminatedUnion("schemaVersion", [
     validTo: timestamp.nullable().optional(),
     lifecycleAuditId: uuid.optional(),
     validationReportId: uuid.optional(),
-    reviewedDeploymentId: uuid.optional(),
   }),
   z.strictObject({
     schemaVersion: z.literal("admin_routing_policy_result_v1"),
@@ -168,7 +164,6 @@ export type AdminCommittedOperation = z.infer<
 
 export const adminValidationRequestSchema = z.strictObject({
   operation: z.literal("validate_runtime_target"),
-  reviewedDeploymentId: uuid,
   runtimeContractId: codeId,
   runtimeTargetId: codeId,
 });
@@ -177,14 +172,10 @@ export type AdminValidationRequest = z.infer<
 >;
 
 export const adminValidationReportSchema = z.strictObject({
-  schemaVersion: z.literal("admin_validation_report_v1"),
+  schemaVersion: z.literal("admin_config_validation_report_v2"),
   reportId: uuid,
-  reviewedDeploymentId: uuid,
   environment: adminEnvironmentSchema,
   projectRef: z.string().min(1).max(100),
-  runtimeBuildId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,199}$/),
-  bindingManifestRevision: codeId,
-  bindingManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
   runtimeContractId: codeId,
   runtimeTargetId: codeId,
   runtimeTargetSha256: z.string().regex(/^[0-9a-f]{64}$/),
@@ -198,7 +189,7 @@ export const adminValidationReportSchema = z.strictObject({
   displayDisclosureKey: codeId,
   checks: z.strictObject({
     endpointPolicy: z.boolean(),
-    manifestBinding: z.boolean(),
+    credentialBinding: z.boolean(),
     credentialConfigured: z.boolean(),
     compiledCapability: z.boolean(),
     databaseBinding: z.boolean(),
@@ -235,10 +226,6 @@ export type AdminValidationReport = z.infer<
 
 export const adminRuntimeReadbackRequestSchema = z.strictObject({
   operation: z.literal("record_runtime_readback"),
-  reviewedDeploymentId: uuid,
-  admissionId: uuid,
-  admissionRevision: decimalRevisionSchema.refine((value) => value !== "0"),
-  targetSetSha256: z.string().regex(/^[0-9a-f]{64}$/),
   policyVersionId: uuid,
   validationReportIds: z.array(uuid).min(1).max(32).refine(
     (values) => new Set(values).size === values.length,
@@ -250,20 +237,15 @@ export type AdminRuntimeReadbackRequest = z.infer<
 >;
 
 export const adminRuntimeReadbackSchema = z.strictObject({
-  schemaVersion: z.literal("admin_runtime_readback_v2"),
+  schemaVersion: z.literal("admin_runtime_readback_v3"),
+  environment: adminEnvironmentSchema,
+  projectRef: z.string().min(1).max(100),
   reportId: uuid,
   closingCycleId: uuid,
   controlRevision: decimalRevisionSchema,
   configGeneration: decimalRevisionSchema,
   policyVersionId: uuid,
   legalBundleVersion: codeId,
-  reviewedDeploymentId: uuid,
-  runtimeBuildId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,199}$/),
-  bindingManifestRevision: codeId,
-  bindingManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  admissionId: uuid,
-  admissionRevision: decimalRevisionSchema,
-  targetSetSha256: z.string().regex(/^[0-9a-f]{64}$/),
   validationReportIds: z.array(uuid).min(1).max(32),
   effectiveRoutes: z.array(z.strictObject({
     profileVersionId: uuid,
@@ -317,7 +299,7 @@ export const adminMutationRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("profile_version_create"), ...mutationBase, profileId: uuid, expectedLatestVersion: revision, adapterId: codeText, wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]), endpointUrl: z.string().url().max(512), credentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), modelId: z.string().min(1).max(200), capabilityContractId: codeText, cachePolicyId: codeText, legalManifestId: codeText, displayDisclosureKey: codeText, config: jsonObject }),
   z.strictObject({ operation: z.literal("price_version_create"), ...mutationBase, profileVersionId: uuid, pricingLane: codeText, expectedLatestVersion: revision, currency: z.string().regex(/^[A-Z]{3}$/), calculatorKind: z.enum(["linear_token_v1", "openai_gpt56_v1"]), validFrom: timestamp, validTo: timestamp.nullable(), providerEffectiveFrom: timestamp.nullable(), providerEffectiveTo: timestamp.nullable(), sourceUrl: z.string().url().refine((value) => value.startsWith("https://")), sourceCheckedAt: timestamp, sourceSnapshotSha256: z.string().regex(/^[0-9a-f]{64}$/), parameters: jsonObject, components: jsonObject }),
   z.strictObject({ operation: z.literal("global_daily_limit_set"), ...mutationBase, globalDailyLimit: z.number().int().nonnegative(), expectedGlobalDailyLimit: z.number().int().nonnegative(), expectedControlRevision: revision }),
-  z.strictObject({ operation: z.literal("price_seal"), ...mutationBase, priceVersionId: uuid, runtimeContractId: codeText, reviewedDeploymentId: uuid }),
+  z.strictObject({ operation: z.literal("price_seal"), ...mutationBase, priceVersionId: uuid, runtimeContractId: codeText }),
   z.strictObject({ operation: z.literal("profile_version_transition"), ...mutationBase, profileVersionId: uuid, toStatus: z.enum(["validated", "canary", "active"]), validationReportId: uuid }),
   z.strictObject({ operation: z.literal("routing_policy_create"), ...mutationBase, policyKey: codeText, expectedLatestVersion: revision, rules: jsonObject, defaultProfileVersionId: uuid, legalBundleVersion: codeText, runtimeContractId: codeText, validationReportIds: policyIds }),
   z.strictObject({ operation: z.literal("routing_policy_transition"), ...mutationBase, policyVersionId: uuid, toStatus: z.enum(["validated", "canary", "active", "retired"]), validationReportIds: policyIds }),

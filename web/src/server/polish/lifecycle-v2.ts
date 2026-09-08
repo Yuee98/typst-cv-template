@@ -35,7 +35,6 @@ import {
   readPreparedProviderExecutionV2,
   type PreparedProviderExecutionV2,
 } from "./prepared-provider-execution-v2";
-import type { RuntimeDeploymentAdmissionV2 } from "./runtime-deployment-v1";
 import type { RuntimeExecutionTargetV2 } from "./execution-snapshot-v2";
 import {
   getPolishExecutionSnapshotV2,
@@ -174,12 +173,9 @@ export type PolishAdapterResolverV2 = (
 ) => PolishInferenceProviderV2 | PreparedProviderExecutionV2;
 
 export interface PolishRouteDepsV2 {
-  readonly runtimeDeploymentIdentity?: Readonly<{
+  readonly runtimeEnvironment?: Readonly<{
     environment: string;
     projectRef: string;
-    runtimeBuildId: string;
-    bindingManifestRevision: string;
-    bindingManifestSha256: string;
   }>;
   readonly reserve: (
     params: Parameters<typeof reservePolishRequestV2>[1],
@@ -748,8 +744,8 @@ export async function executePolishLifecycleV2(
       runtimeTargetResolver: deps.runtimeTargetResolver,
       runtimeTargetResolverV2:
         deps.runtimeTargetResolverV2 ?? EMPTY_RUNTIME_TARGET_RESOLVER_V2,
-      ...(deps.runtimeDeploymentIdentity
-        ? { runtimeIdentity: deps.runtimeDeploymentIdentity }
+      ...(deps.runtimeEnvironment
+        ? { runtimeEnvironment: deps.runtimeEnvironment }
         : {}),
     });
   } catch (error) {
@@ -778,18 +774,12 @@ export async function executePolishLifecycleV2(
   }
 
   let provider: PolishInferenceProviderV2;
-  let runtimeProvenance:
-    | Readonly<{
-        runtimeBuildId: string;
-        bindingManifestRevision: string;
-      }>
-    | undefined;
-  let runtimeAdmission: Readonly<RuntimeDeploymentAdmissionV2> | undefined;
+  let runtimeConfigReceipt: RuntimeExecutionTargetV2["runtimeConfigReceipt"] | undefined;
   let providerSubjectId: string;
   try {
     const resolution = deps.resolveProvider(
       execution.profileExecutionConfig,
-      execution.schemaVersion === "ai_polish_execution_snapshot_v2"
+      execution.schemaVersion === "ai_polish_execution_snapshot_v3"
         ? {
             schemaVersion: "runtime_execution_target_v2",
             runtimeContractId: execution.runtimeEvidence.runtimeContractId,
@@ -797,7 +787,7 @@ export async function executePolishLifecycleV2(
             profileVersionId: execution.routeSnapshot.profileVersionId,
             profile: execution.profileExecutionConfig,
             evidence: execution.runtimeEvidence,
-            deploymentValidation: execution.deploymentValidation,
+            runtimeConfigReceipt: execution.runtimeConfigReceipt,
           }
         : undefined,
     );
@@ -810,15 +800,13 @@ export async function executePolishLifecycleV2(
         execution.profileExecutionConfig,
       );
       provider = prepared.provider;
-      runtimeProvenance = prepared.runtimeProvenance;
       if (
-        execution.schemaVersion !== "ai_polish_execution_snapshot_v2" ||
-        execution.deploymentValidation.schemaVersion !==
-          "runtime_deployment_admission_v2"
+        execution.schemaVersion !== "ai_polish_execution_snapshot_v3" ||
+        execution.runtimeConfigReceipt === undefined
       ) {
         throw new PolishAdapterUnavailableV2Error();
       }
-      runtimeAdmission = execution.deploymentValidation;
+      runtimeConfigReceipt = execution.runtimeConfigReceipt;
     } else {
       if (isPreparedProviderExecutionV2(resolution)) {
         throw new PolishAdapterUnavailableV2Error();
@@ -851,7 +839,7 @@ export async function executePolishLifecycleV2(
         if (
           execution.profileExecutionConfig.schemaVersion ===
             "profile_execution_config_v2" &&
-          runtimeProvenance === undefined
+          runtimeConfigReceipt === undefined
         ) {
           throw new PolishAdapterUnavailableV2Error();
         }
@@ -859,8 +847,7 @@ export async function executePolishLifecycleV2(
           reservationId: reservation.reservationId,
           attemptNo: started.attemptNo as 1 | 2,
           expectedRoute: execution.routeSnapshot,
-          runtimeProvenance,
-          runtimeAdmission,
+          runtimeConfigReceipt,
         });
         admittedAttempts += 1;
         return receipt;

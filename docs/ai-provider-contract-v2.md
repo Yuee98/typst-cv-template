@@ -14,7 +14,7 @@ The profile version fixes all execution fields. Provider directory identity is t
 
 Runtime validates the complete frozen v2 tuple and produces an in-memory endpoint/key/model/adapter config. Transport adapters receive that object; they do not select a profile, read arbitrary environment names or fall back to default URLs. v1 retains its strict registered mappings and can use a legacy preparation wrapper.
 
-Credential names match `^AI_PROVIDER_KEY_[A-Z0-9_]+$` and resolve only from a filtered secret map. A deployment-owned non-secret manifest binds each name to exact recipient/origin and a revision. Admin cannot broaden that manifest. The actual key is never persisted, hashed, displayed or logged. API credentials cannot address other runtime secrets.
+Credential names match `^AI_PROVIDER_KEY_[A-Z0-9_]+$` and resolve only from a filtered secret map. Compiled Provider rules bind each Provider to its allowed credential prefix and exact recipient/origin; Admin cannot broaden those rules. The actual key is never persisted, hashed, displayed or logged. API credentials cannot address other runtime secrets.
 
 Canonical endpoint is HTTPS, without userinfo, query, fragment, IP literals or unapproved ports. Exact approved origin, recipient and adapter/wire path must agree. Redirects fail. Generic custom DNS/proxy destinations remain unavailable until connection-level egress defenses are separately implemented. A syntactically valid endpoint or catalog adapter does not imply recipient authorization or protocol compatibility.
 
