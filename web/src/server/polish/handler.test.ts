@@ -22,8 +22,6 @@ const ENV_KEYS = [
   "AI_POLISH_ENABLED",
   "DEEPSEEK_API_KEY",
   "AI_USER_ID_HMAC_SECRET",
-  "AI_RUNTIME_BUILD_ID",
-  "AI_PROVIDER_BINDING_MANIFEST",
   "AI_PROVIDER_KEY_DEEPSEEK",
   "ADMIN_ENVIRONMENT",
   "NEXT_PUBLIC_SUPABASE_URL",
@@ -278,23 +276,11 @@ describe("handler.ts — valid configurations boot", () => {
   });
 
   it("real provider + real backend boots with complete env", async () => {
-    const manifest = {
-      schemaVersion: "ai_provider_bindings_v1",
-      revision: "handler-test-v1",
-      bindings: [{
-        credentialEnvName: "AI_PROVIDER_KEY_DEEPSEEK",
-        providerId: "11111111-1111-4111-8111-111111111111",
-        recipientKey: "deepseek",
-        origin: "https://api.deepseek.com",
-      }],
-    };
     const { POST, GET, AVAILABILITY_GET } = await importHandler({
       NODE_ENV: "production",
       DEEPSEEK_API_KEY: "key",
       AI_POLISH_ENABLED: "true",
       AI_USER_ID_HMAC_SECRET: "secret",
-      AI_RUNTIME_BUILD_ID: "handler-test-build",
-      AI_PROVIDER_BINDING_MANIFEST: JSON.stringify(manifest),
       AI_PROVIDER_KEY_DEEPSEEK: "provider-key",
       ADMIN_ENVIRONMENT: "preview",
       ...SUPABASE_ENV,
@@ -320,54 +306,18 @@ describe("handler.ts — valid configurations boot", () => {
     expect(availabilityWithoutToken.status).toBe(401);
   });
 
-  it("keeps the existing v1 real backend bootable before runtime identity rollout", async () => {
+  it("keeps the existing v1 real backend bootable without Admin environment configuration", async () => {
     const { POST, GET, AVAILABILITY_GET } = await importHandler({
       NODE_ENV: "production",
       DEEPSEEK_API_KEY: "legacy-v1-key",
       AI_POLISH_ENABLED: "true",
       AI_USER_ID_HMAC_SECRET: "secret",
-      AI_RUNTIME_BUILD_ID: undefined,
-      AI_PROVIDER_BINDING_MANIFEST: undefined,
       ADMIN_ENVIRONMENT: undefined,
       ...SUPABASE_ENV,
     });
     expect(typeof POST).toBe("function");
     expect(typeof GET).toBe("function");
     expect(typeof AVAILABILITY_GET).toBe("function");
-  });
-
-  it("keeps the v1 real backend bootable with empty template identity values", async () => {
-    const { POST, GET, AVAILABILITY_GET } = await importHandler({
-      NODE_ENV: "production",
-      DEEPSEEK_API_KEY: "legacy-v1-key",
-      AI_POLISH_ENABLED: "true",
-      AI_USER_ID_HMAC_SECRET: "secret",
-      AI_RUNTIME_BUILD_ID: "",
-      AI_PROVIDER_BINDING_MANIFEST: "",
-      ADMIN_ENVIRONMENT: undefined,
-      ...SUPABASE_ENV,
-    });
-    expect(typeof POST).toBe("function");
-    expect(typeof GET).toBe("function");
-    expect(typeof AVAILABILITY_GET).toBe("function");
-  });
-
-  it.each([
-    ["partial-build", undefined],
-    ["partial-build", ""],
-    [undefined, "{}"],
-    ["", "{}"],
-  ])("rejects a partially configured runtime identity instead of falling back", async (buildId, bindingManifest) => {
-    await expect(importHandler({
-      NODE_ENV: "production",
-      DEEPSEEK_API_KEY: "legacy-v1-key",
-      AI_POLISH_ENABLED: "true",
-      AI_USER_ID_HMAC_SECRET: "secret",
-      AI_RUNTIME_BUILD_ID: buildId,
-      AI_PROVIDER_BINDING_MANIFEST: bindingManifest,
-      ADMIN_ENVIRONMENT: "preview",
-      ...SUPABASE_ENV,
-    })).rejects.toThrow(/partially configured/u);
   });
 
   it.each([

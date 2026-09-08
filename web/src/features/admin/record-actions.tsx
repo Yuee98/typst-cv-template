@@ -524,17 +524,16 @@ function PriceLifecycle(props: CommonProps) {
   const seal = useAdminMutation(accessToken, t, onRefresh);
   const close = useAdminMutation(accessToken, t, onRefresh);
   const priceId = text(row, "id");
-  const [sealDraft, setSealDraft] = useState({ runtimeContractId: "", reviewedDeploymentId: "", reason: "", confirmation: "" });
+  const [sealDraft, setSealDraft] = useState({ runtimeContractId: "", reason: "", confirmation: "" });
   const [closeDraft, setCloseDraft] = useState({ validTo: new Date().toISOString(), successorPriceVersionId: "", validationReportId: "", reason: "", confirmation: "" });
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title={t.sealPrice} writesEnabled={writesEnabled} t={t}>
         <Input aria-label={t.runtimeContract} value={sealDraft.runtimeContractId} placeholder={t.runtimeContract} onChange={(event) => { setSealDraft({ ...sealDraft, runtimeContractId: event.target.value }); seal.changed(); }} />
-        <Input aria-label={t.reviewedDeployment} value={sealDraft.reviewedDeploymentId} placeholder={t.reviewedDeployment} onChange={(event) => { setSealDraft({ ...sealDraft, reviewedDeploymentId: event.target.value }); seal.changed(); }} />
         <p className="text-xs text-foreground-muted">{t.confirmRecord}: <strong className="break-all">{priceId}</strong></p>
         <Input aria-label={t.confirmation} value={sealDraft.confirmation} placeholder={t.confirmation} onChange={(event) => { setSealDraft({ ...sealDraft, confirmation: event.target.value }); seal.changed(); }} />
         <Input aria-label={t.mutationReason} value={sealDraft.reason} maxLength={500} placeholder={t.mutationReason} onChange={(event) => { setSealDraft({ ...sealDraft, reason: event.target.value }); seal.changed(); }} />
-        <Button disabled={seal.busy || !sealDraft.reason || sealDraft.confirmation !== priceId} onClick={() => void seal.run({ operation: "price_seal", priceVersionId: priceId, runtimeContractId: sealDraft.runtimeContractId, reviewedDeploymentId: sealDraft.reviewedDeploymentId, reason: sealDraft.reason })}>{t.sealPrice}</Button>
+        <Button disabled={seal.busy || !sealDraft.reason || sealDraft.confirmation !== priceId} onClick={() => void seal.run({ operation: "price_seal", priceVersionId: priceId, runtimeContractId: sealDraft.runtimeContractId, reason: sealDraft.reason })}>{t.sealPrice}</Button>
         <Result {...seal} t={t} />
       </Panel>
       <Panel title={t.closePrice} writesEnabled={writesEnabled} t={t}>

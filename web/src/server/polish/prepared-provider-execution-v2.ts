@@ -23,10 +23,6 @@ export interface PreparedProviderExecutionV2 {
 
 interface PreparedProviderExecutionFactsV2 {
   readonly provider: PolishInferenceProviderV2;
-  readonly runtimeProvenance: Readonly<{
-    runtimeBuildId: string;
-    bindingManifestRevision: string;
-  }>;
 }
 
 interface StoredPreparedProviderExecutionV2 {
@@ -47,9 +43,9 @@ function sameProfile(
 }
 
 /**
- * Create the only lifecycle-admissible V2 provider value. The provider and
- * provenance are both derived from one branded prepared transport; callers
- * cannot supply either provenance field independently.
+ * Create the only lifecycle-admissible V2 provider value. The provider is
+ * derived from one branded prepared transport and cannot be supplied by a
+ * caller independently.
  */
 export function createPreparedProviderExecutionV2(
   prepared: PreparedProviderTransportV2,
@@ -100,9 +96,5 @@ export function readPreparedProviderExecutionV2(
   }
   return Object.freeze({
     provider: stored.provider,
-    runtimeProvenance: Object.freeze({
-      runtimeBuildId: stored.prepared.runtimeBuildId,
-      bindingManifestRevision: stored.prepared.bindingManifestRevision,
-    }),
   });
 }

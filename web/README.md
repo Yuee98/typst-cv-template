@@ -49,8 +49,6 @@ start when `CI=true`.
 | `NEXT_PUBLIC_SUPABASE_URL` | `supabase status` → Project URL (local: `http://127.0.0.1:54321`) |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | `supabase status` → Publishable key |
 | `SUPABASE_SERVICE_ROLE_KEY` | `supabase status` → Secret key |
-| `AI_RUNTIME_BUILD_ID` | Required for v2 only; exact reviewed build ID registered for this local deployment |
-| `AI_PROVIDER_BINDING_MANIFEST` | Required for v2 only; canonical non-secret reviewed manifest JSON for the exact Provider/recipient/origin bindings |
 | `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` | DeepSeek console; current seeded v2 binding (real key — billed per token) |
 | `AI_PROVIDER_KEY_MIMO_PRIMARY` | MiMo console; current seeded v2 binding (real key — billed per token) |
 | `DEEPSEEK_API_KEY` | Legacy v1 DeepSeek alias; real key — billed per token |
@@ -59,7 +57,7 @@ start when `CI=true`.
 | `AI_USER_ID_HMAC_SECRET` | generate locally, e.g. `openssl rand -hex 32` |
 | `AI_POLISH_ENABLED` | set to `true` (deployment switch checked by the smoke) |
 
-The database is the runtime authority for the provider/profile version, exact price version, routing policy, legal bundle, and immutable versioned runtime-contract ID; the server freezes that route before a transmission. V2 uses the seeded `AI_PROVIDER_KEY_*` bindings plus a reviewed build ID and binding manifest; v1 continues to use `DEEPSEEK_API_KEY` and `MIMO_API_KEY`. Credentials cannot activate a route by themselves. `OPENROUTER_API_KEY` is deliberately future optional, not initial-route enablement. Never add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing switches: those would bypass DB validation, audit, canary, and legal controls. No key belongs in browser code, database rows, logs, ledger data, or error payloads.
+The database is the runtime authority for the provider/profile version, exact price version, routing policy, legal bundle, and immutable versioned runtime-contract ID; the server freezes that route before a transmission. V2 uses the seeded `AI_PROVIDER_KEY_*` bindings, while compiled code verifies each configured Provider's credential prefix and approved endpoint origin; v1 continues to use `DEEPSEEK_API_KEY` and `MIMO_API_KEY`. Credentials cannot activate a route by themselves. `OPENROUTER_API_KEY` is deliberately future optional, not initial-route enablement. Never add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing switches: those would bypass DB validation, audit, canary, and legal controls. No key belongs in browser code, database rows, logs, ledger data, or error payloads.
 
 The DB-side runtime switch and the exact selected route must already be
 prepared by a separate local driver. The smoke never activates a profile,

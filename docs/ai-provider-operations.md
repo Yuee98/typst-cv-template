@@ -33,14 +33,13 @@ up a newer route. A request start rechecks the kill switch, allowlist, global
 capacity, and frozen-profile availability and fails closed when any is
 unavailable.
 
-Environment variables provide credentials and v2 deployment identity only.
+Environment variables provide credentials only.
 Legacy v1 profiles use the code-owned `DEEPSEEK_API_KEY` and `MIMO_API_KEY`
 aliases. Current seeded v2 profiles use `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` and
-`AI_PROVIDER_KEY_MIMO_PRIMARY`; `AI_RUNTIME_BUILD_ID` and the canonical,
-non-secret `AI_PROVIDER_BINDING_MANIFEST` must exactly match the reviewed
-deployment. A v2 DB version owns its endpoint, credential environment-variable
-name and model ID, while compiled code still constrains adapter support and the
-official destination policy. Do not add or use `AI_PROVIDER`, `AI_MODEL`,
+`AI_PROVIDER_KEY_MIMO_PRIMARY`. A v2 DB version owns its endpoint, credential
+environment-variable name and model ID, while compiled code still constrains
+adapter support, the Provider-specific credential prefix, and the official
+destination origin. Do not add or use `AI_PROVIDER`, `AI_MODEL`,
 `AI_BASE_URL`, or equivalent provider/model/base-URL selector variables. They
 would bypass the versioned, audited DB authority. Test-only endpoint injection
 is forbidden in production.

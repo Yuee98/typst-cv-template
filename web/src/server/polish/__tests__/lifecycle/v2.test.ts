@@ -73,7 +73,7 @@ const ROUTE_V2 = Object.freeze({
   displayDisclosureKey: PROFILE_V2.displayDisclosureKey,
 });
 const EXECUTION_V2 = Object.freeze({
-  schemaVersion: "ai_polish_execution_snapshot_v2" as const,
+  schemaVersion: "ai_polish_execution_snapshot_v3" as const,
   ok: true as const,
   reservationId: RESERVATION_ID,
   routeSnapshot: ROUTE_V2,
@@ -108,19 +108,11 @@ const EXECUTION_V2 = Object.freeze({
     displayDisclosureKey: PROFILE_V2.displayDisclosureKey,
     externalEvidenceIds: Object.freeze(["evidence.synthetic-lifecycle"]),
   }),
-  deploymentValidation: (() => {
+  runtimeConfigReceipt: (() => {
     return Object.freeze({
-      schemaVersion: "runtime_deployment_admission_v2" as const,
-      admissionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee0",
-      reviewedDeploymentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
-      validationReportId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+      schemaVersion: "runtime_config_receipt_v1" as const,
       environment: "local" as const,
       projectRef: "local",
-      runtimeBuildId: "preview-build:lifecycle-v2",
-      bindingManifestRevision: "binding-lifecycle-v2",
-      bindingManifestSha256: "4".repeat(64),
-      admissionRevision: "1",
-      targetSetSha256: "6".repeat(64),
       runtimeContractId: ROUTE_V2.runtimeContractId,
       runtimeTargetId: "runtime-target.synthetic.deepseek.v2",
       runtimeTargetSha256: "1".repeat(64),
@@ -274,8 +266,6 @@ function input(controller = new AbortController()): PolishLifecycleV2Input {
 
 function preparedExecution(
   fetchImpl: typeof fetch,
-  runtimeBuildId = "preview-build:lifecycle-v2",
-  bindingManifestRevision = "binding-lifecycle-v2",
 ): PreparedProviderExecutionV2 {
   const prepared = prepareProviderTransportV2({
     profile: PROFILE_V2,
@@ -283,20 +273,6 @@ function preparedExecution(
       providerId: PROFILE_V2.providerId,
       recipientKey: "deepseek",
     },
-    manifest: {
-      schemaVersion: "ai_provider_bindings_v1",
-      revision: bindingManifestRevision,
-      bindings: [
-        {
-          credentialEnvName: PROFILE_V2.credentialEnvName,
-          providerId: PROFILE_V2.providerId,
-          recipientKey: "deepseek",
-          origin: "https://api.deepseek.com",
-        },
-      ],
-    },
-    expectedManifestRevision: bindingManifestRevision,
-    runtimeBuildId,
     resolveSecret: () => "fake-provider-key",
   });
   return createPreparedProviderExecutionV2(prepared, fetchImpl);
@@ -600,12 +576,8 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
 
     expect(result).toMatchObject({ ok: true, attemptCount: 1 });
     expect(startAttempt).toHaveBeenCalledTimes(1);
-    expect(startAttempt.mock.calls[0][0].runtimeProvenance).toEqual({
-      runtimeBuildId: "preview-build:lifecycle-v2",
-      bindingManifestRevision: "binding-lifecycle-v2",
-    });
-    expect(startAttempt.mock.calls[0][0].runtimeAdmission).toEqual(
-      EXECUTION_V2.deploymentValidation,
+    expect(startAttempt.mock.calls[0][0].runtimeConfigReceipt).toEqual(
+      EXECUTION_V2.runtimeConfigReceipt,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -613,16 +585,8 @@ describe("executePolishLifecycleV2 — dormant pre-network authority", () => {
   it("rejects copied prepared execution objects before DB start or fetch", async () => {
     const fetchA = vi.fn<typeof fetch>();
     const fetchB = vi.fn<typeof fetch>();
-    const executionA = preparedExecution(
-      fetchA,
-      "preview-build:a",
-      "binding-a",
-    );
-    preparedExecution(
-      fetchB,
-      "preview-build:b",
-      "binding-b",
-    );
+    const executionA = preparedExecution(fetchA);
+    preparedExecution(fetchB);
     const crossed = Object.freeze({
       ...executionA,
       provider: { complete: vi.fn() },

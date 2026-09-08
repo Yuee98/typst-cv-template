@@ -100,18 +100,10 @@ const RUNTIME_EVIDENCE_V2 = Object.freeze({
   displayDisclosureKey: ROUTE_V2.displayDisclosureKey,
   externalEvidenceIds: ["evidence.deepseek-v2.test"],
 });
-const RUNTIME_DEPLOYMENT_ADMISSION_V2 = Object.freeze({
-  schemaVersion: "runtime_deployment_admission_v2",
-  admissionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee0",
-  reviewedDeploymentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
-  validationReportId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+const RUNTIME_CONFIG_RECEIPT_V1 = Object.freeze({
+  schemaVersion: "runtime_config_receipt_v1",
   environment: "local",
   projectRef: "local",
-  runtimeBuildId: "local-test-build",
-  bindingManifestRevision: "local-test-manifest",
-  bindingManifestSha256: "4".repeat(64),
-  admissionRevision: "1",
-  targetSetSha256: "6".repeat(64),
   runtimeContractId: RUNTIME_EVIDENCE_V2.runtimeContractId,
   runtimeTargetId: RUNTIME_EVIDENCE_V2.runtimeTargetId,
   runtimeTargetSha256: RUNTIME_EVIDENCE_V2.runtimeTargetSha256,
@@ -126,11 +118,11 @@ const RUNTIME_DEPLOYMENT_ADMISSION_V2 = Object.freeze({
 });
 const executionSuccessV2 = Object.freeze({
   ...executionSuccess,
-  schemaVersion: "ai_polish_execution_snapshot_v2",
+  schemaVersion: "ai_polish_execution_snapshot_v3",
   routeSnapshot: ROUTE_V2,
   profileExecutionConfig: PROFILE_V2,
   runtimeEvidence: RUNTIME_EVIDENCE_V2,
-  deploymentValidation: RUNTIME_DEPLOYMENT_ADMISSION_V2,
+  runtimeConfigReceipt: RUNTIME_CONFIG_RECEIPT_V1,
 });
 const MIMO_PROFILE = resolveProfile("mimo.cn.mimo-v2.5-pro.responses.v1");
 const DEEPSEEK_ENDPOINT = resolveEndpoint(PROFILE.endpointAlias).url;
@@ -398,7 +390,7 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
     });
   });
 
-  it("never falls back to the short-lived v3 RPC when runtime identity is absent", async () => {
+  it("uses the v5 snapshot RPC when environment identity is absent", async () => {
     const unavailable = {
       schemaVersion: "ai_polish_execution_snapshot_v1",
       ok: false,
@@ -417,18 +409,15 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
       kind: "SNAPSHOT_UNAVAILABLE",
       reason: "SERVICE_UNAVAILABLE",
     });
-    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v4", {
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v5", {
       p_reservation_id: RESERVATION_ID,
       p_user_id: USER_ID,
       p_environment: null,
       p_project_ref: null,
-      p_runtime_build_id: null,
-      p_binding_manifest_revision: null,
-      p_binding_manifest_sha256: null,
     });
   });
 
-  it("preserves a v1 snapshot through v4 when runtime identity is absent", async () => {
+  it("preserves a v1 snapshot through v5 when environment identity is absent", async () => {
     const { client, rpc } = sequenceClient({ data: executionSuccess });
     await expect(
       getPolishExecutionSnapshotV2(client, {
@@ -439,14 +428,11 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
         runtimeTargetResolverV2: () => false,
       }),
     ).resolves.toEqual(executionSuccess);
-    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v4", {
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v5", {
       p_reservation_id: RESERVATION_ID,
       p_user_id: USER_ID,
       p_environment: null,
       p_project_ref: null,
-      p_runtime_build_id: null,
-      p_binding_manifest_revision: null,
-      p_binding_manifest_sha256: null,
     });
   });
 
@@ -467,7 +453,7 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
     });
   });
 
-  it("uses the exact admitted deployment identity for ordinary v2 snapshots", async () => {
+  it("uses the environment identity for ordinary v2 snapshots", async () => {
     const { client, rpc } = sequenceClient({ data: executionSuccessV2 });
     await expect(
       getPolishExecutionSnapshotV2(client, {
@@ -476,64 +462,36 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
         reserveRoute: ROUTE_V2,
         runtimeTargetResolver: () => true,
         runtimeTargetResolverV2: () => true,
-        runtimeIdentity: {
+        runtimeEnvironment: {
           environment: "local",
           projectRef: "local",
-          runtimeBuildId: "build-a",
-          bindingManifestRevision: "binding-a",
-          bindingManifestSha256: "a".repeat(64),
         },
       }),
     ).resolves.toEqual(executionSuccessV2);
-    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v4", expect.objectContaining({
+    expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v5", expect.objectContaining({
       p_environment: "local",
       p_project_ref: "local",
-      p_runtime_build_id: "build-a",
-      p_binding_manifest_revision: "binding-a",
-      p_binding_manifest_sha256: "a".repeat(64),
     }));
   });
 });
 
 describe("RT-009 V2 attempt admission", () => {
-  it("freezes the durable runtime admission through the successor start RPC", async () => {
+  it("freezes the durable runtime config receipt through the successor start RPC", async () => {
     const { client, rpc } = sequenceClient({ data: attemptStart() });
-    const runtimeAdmission = {
-      ...RUNTIME_DEPLOYMENT_ADMISSION_V2,
-      runtimeBuildId: "preview-build:abc123",
-      bindingManifestRevision: "binding-v1",
-    };
+    const runtimeConfigReceipt = RUNTIME_CONFIG_RECEIPT_V1;
     await expect(
       startPolishProviderAttemptV2(client, {
         reservationId: RESERVATION_ID,
         attemptNo: 1,
         expectedRoute: ROUTE,
-        runtimeProvenance: {
-          runtimeBuildId: "preview-build:abc123",
-          bindingManifestRevision: "binding-v1",
-        },
-        runtimeAdmission,
+        runtimeConfigReceipt,
       }),
     ).resolves.toEqual(attemptStart());
-    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v4", {
+    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v5", {
       p_reservation_id: RESERVATION_ID,
       p_attempt_no: 1,
-      p_runtime_admission: runtimeAdmission,
+      p_runtime_config_receipt: runtimeConfigReceipt,
     });
-  });
-
-  it("rejects V2 provenance without the exact durable admission receipt", async () => {
-    const { client, rpc } = sequenceClient({ data: attemptStart() });
-    await expect(startPolishProviderAttemptV2(client, {
-      reservationId: RESERVATION_ID,
-      attemptNo: 1,
-      expectedRoute: ROUTE,
-      runtimeProvenance: {
-        runtimeBuildId: "preview-build:abc123",
-        bindingManifestRevision: "binding-v1",
-      },
-    })).rejects.toMatchObject({ kind: "LOCAL_CONTRACT_REJECTED" });
-    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("returns a fresh exact start receipt without replay", async () => {
@@ -546,10 +504,10 @@ describe("RT-009 V2 attempt admission", () => {
       }),
     ).resolves.toEqual(attemptStart());
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v4", {
+    expect(rpc).toHaveBeenCalledWith("start_ai_polish_provider_attempt_v5", {
       p_reservation_id: RESERVATION_ID,
       p_attempt_no: 1,
-      p_runtime_admission: null,
+      p_runtime_config_receipt: null,
     });
   });
 
@@ -569,6 +527,7 @@ describe("RT-009 V2 attempt admission", () => {
   });
 
   it("retries identical arguments once after response loss and accepts its replay", async () => {
+    const runtimeConfigReceipt = RUNTIME_CONFIG_RECEIPT_V1;
     const { client, rpc } = sequenceClient(
       { data: null, error: { message: "response lost" } },
       { data: attemptStart({ alreadyStarted: true }) },
@@ -578,10 +537,18 @@ describe("RT-009 V2 attempt admission", () => {
         reservationId: RESERVATION_ID,
         attemptNo: 1,
         expectedRoute: ROUTE,
+        runtimeConfigReceipt,
       }),
     ).resolves.toMatchObject({ alreadyStarted: true, status: "started" });
     expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "start_ai_polish_provider_attempt_v5",
+      "start_ai_polish_provider_attempt_v5",
+    ]);
     expect(rpc.mock.calls[0][1]).toBe(rpc.mock.calls[1][1]);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_runtime_config_receipt: runtimeConfigReceipt,
+    });
   });
 
   it("never retries a definite start denial and marks two ambiguous observations unknown", async () => {

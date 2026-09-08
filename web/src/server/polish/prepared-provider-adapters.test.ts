@@ -31,10 +31,7 @@ describe.each(["deepseek", "mimo"] as const)("prepared %s transport", kind => {
   function prepared() {
     return prepareProviderTransportV2({
       profile: { ...fixture, modelId }, recipient: { providerId: fixture.providerId, recipientKey: kind === "deepseek" ? "deepseek" : "xiaomi-mimo" },
-      manifest: { schemaVersion: "ai_provider_bindings_v1", revision: "test-binding", bindings: [{
-        credentialEnvName: fixture.credentialEnvName, providerId: fixture.providerId,
-        recipientKey: kind === "deepseek" ? "deepseek" : "xiaomi-mimo", origin: new URL(fixture.endpointUrl).origin,
-      }] }, expectedManifestRevision: "test-binding", runtimeBuildId: "test-build", resolveSecret: () => "fake-key",
+      resolveSecret: () => "fake-key",
     });
   }
   const create = kind === "deepseek" ? createPreparedDeepSeekChatAdapter : createPreparedMimoResponsesAdapter;

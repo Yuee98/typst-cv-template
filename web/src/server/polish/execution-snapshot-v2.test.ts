@@ -9,7 +9,6 @@ import {
 } from "./execution-snapshot-v2";
 import { parseRouteSnapshotV1 } from "./lifecycle-v2-contract";
 import { createReportedRuntimeTargetResolverV2 } from "./handler-runtime-authority";
-import { parseRuntimeDeploymentIdentityV1 } from "./runtime-deployment-v1";
 
 const v1 = runtimeFixture.executionSnapshot.successes[0].value;
 const originalRoute = parseRouteSnapshotV1(v1.routeSnapshot);
@@ -54,43 +53,10 @@ const runtimeEvidence = {
   displayDisclosureKey: route.displayDisclosureKey,
   externalEvidenceIds: ["evidence.deepseek-v2.test"],
 };
-const checkedAt = new Date();
-const deploymentValidation = {
-  schemaVersion: "runtime_deployment_validation_v1",
-  reportId: "40000000-0000-4000-8000-000000000001",
-  reviewedDeploymentId: "40000000-0000-4000-8000-000000000002",
+const runtimeConfigReceipt = {
+  schemaVersion: "runtime_config_receipt_v1",
   environment: "local",
   projectRef: "local",
-  runtimeBuildId: "local-test-build",
-  bindingManifestRevision: "local-test-manifest",
-  bindingManifestSha256: "4".repeat(64),
-  runtimeContractId: runtimeEvidence.runtimeContractId,
-  runtimeTargetId: runtimeEvidence.runtimeTargetId,
-  runtimeTargetSha256: runtimeEvidence.runtimeTargetSha256,
-  profileVersionId: runtimeEvidence.profileVersionId,
-  priceVersionId: runtimeEvidence.priceVersionId,
-  providerId: runtimeEvidence.providerId,
-  codeCapabilityId: runtimeEvidence.codeCapabilityId,
-  codeCapabilitySha256: runtimeEvidence.codeCapabilitySha256,
-  legalBundleVersion: runtimeEvidence.legalBundleVersion,
-  legalManifestId: runtimeEvidence.legalManifestId,
-  displayDisclosureKey: runtimeEvidence.displayDisclosureKey,
-  checkedAt: checkedAt.toISOString(),
-  expiresAt: new Date(checkedAt.getTime() + 10 * 60_000).toISOString(),
-  reportSha256: "5".repeat(64),
-};
-const deploymentAdmission = {
-  schemaVersion: "runtime_deployment_admission_v2",
-  admissionId: "40000000-0000-4000-8000-000000000003",
-  reviewedDeploymentId: deploymentValidation.reviewedDeploymentId,
-  validationReportId: deploymentValidation.reportId,
-  environment: deploymentValidation.environment,
-  projectRef: deploymentValidation.projectRef,
-  runtimeBuildId: deploymentValidation.runtimeBuildId,
-  bindingManifestRevision: deploymentValidation.bindingManifestRevision,
-  bindingManifestSha256: deploymentValidation.bindingManifestSha256,
-  admissionRevision: "1",
-  targetSetSha256: "6".repeat(64),
   runtimeContractId: runtimeEvidence.runtimeContractId,
   runtimeTargetId: runtimeEvidence.runtimeTargetId,
   runtimeTargetSha256: runtimeEvidence.runtimeTargetSha256,
@@ -105,11 +71,11 @@ const deploymentAdmission = {
 };
 const v2 = {
   ...v1,
-  schemaVersion: "ai_polish_execution_snapshot_v2",
+  schemaVersion: "ai_polish_execution_snapshot_v3",
   routeSnapshot: route,
   profileExecutionConfig: v2Profile,
   runtimeEvidence,
-  deploymentValidation,
+  runtimeConfigReceipt,
 };
 const expected = {
   reservationId: v1.reservationId,
@@ -130,7 +96,7 @@ describe("versioned execution snapshot", () => {
   it("accepts one coherent v2 snapshot through an explicit runtime resolver", () => {
     const parsed = parseVersionedExecutionSnapshot(v2, expected);
     expect(parsed).toMatchObject({
-      schemaVersion: "ai_polish_execution_snapshot_v2",
+      schemaVersion: "ai_polish_execution_snapshot_v3",
       profileExecutionConfig: {
         endpointUrl: v2Profile.endpointUrl,
         modelId: v2Profile.modelId,
@@ -142,55 +108,31 @@ describe("versioned execution snapshot", () => {
     });
   });
 
-  it("admits v2 only for the exact current build, project, manifest and secret", () => {
-    const manifest = {
-      schemaVersion: "ai_provider_bindings_v1",
-      revision: "local-test-manifest",
-      bindings: [
-        {
-          credentialEnvName: v2Profile.credentialEnvName,
-          providerId: v2Profile.providerId,
-          recipientKey: runtimeEvidence.recipientKey,
-          origin: new URL(v2Profile.endpointUrl).origin,
-        },
-      ],
-    };
+  it("admits v2 only for the exact environment, receipt and provider secret", () => {
     const environment = {
       ADMIN_ENVIRONMENT: "local",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "local-test-key",
-      AI_RUNTIME_BUILD_ID: "local-test-build",
-      AI_PROVIDER_BINDING_MANIFEST: JSON.stringify(manifest),
       [v2Profile.credentialEnvName]: "local-provider-secret",
     };
-    const identity = parseRuntimeDeploymentIdentityV1(environment);
-    const reported = {
-      ...v2,
-      deploymentValidation: {
-        ...deploymentAdmission,
-        runtimeBuildId: identity.buildId,
-        bindingManifestRevision: identity.manifest.revision,
-        bindingManifestSha256: identity.manifestSha256,
-      },
-    };
     expect(() =>
-      parseVersionedExecutionSnapshot(reported, {
+      parseVersionedExecutionSnapshot(v2, {
         ...expected,
         runtimeTargetResolverV2:
           createReportedRuntimeTargetResolverV2(environment),
       }),
     ).not.toThrow();
     expect(() =>
-      parseVersionedExecutionSnapshot(reported, {
+      parseVersionedExecutionSnapshot(v2, {
         ...expected,
         runtimeTargetResolverV2: createReportedRuntimeTargetResolverV2({
           ...environment,
-          AI_RUNTIME_BUILD_ID: "crossed-build",
+          ADMIN_ENVIRONMENT: "preview",
         }),
       }),
     ).toThrow(/runtime target unavailable/u);
     expect(() =>
-      parseVersionedExecutionSnapshot(reported, {
+      parseVersionedExecutionSnapshot(v2, {
         ...expected,
         runtimeTargetResolverV2: createReportedRuntimeTargetResolverV2({
           ...environment,
@@ -200,37 +142,16 @@ describe("versioned execution snapshot", () => {
     ).toThrow(/runtime target unavailable/u);
   });
 
-  it("uses durable admission without a request-time validation lease", () => {
-    const manifest = {
-      schemaVersion: "ai_provider_bindings_v1",
-      revision: "local-test-manifest",
-      bindings: [
-        {
-          credentialEnvName: v2Profile.credentialEnvName,
-          providerId: v2Profile.providerId,
-          recipientKey: runtimeEvidence.recipientKey,
-          origin: new URL(v2Profile.endpointUrl).origin,
-        },
-      ],
-    };
+  it("uses the durable config receipt without a request-time validation lease", () => {
     const environment = {
       ADMIN_ENVIRONMENT: "local",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "local-test-key",
-      AI_RUNTIME_BUILD_ID: "local-test-build",
-      AI_PROVIDER_BINDING_MANIFEST: JSON.stringify(manifest),
       [v2Profile.credentialEnvName]: "local-provider-secret",
     };
-    const identity = parseRuntimeDeploymentIdentityV1(environment);
-    const admission = {
-      ...deploymentAdmission,
-      runtimeBuildId: identity.buildId,
-      bindingManifestRevision: identity.manifest.revision,
-      bindingManifestSha256: identity.manifestSha256,
-    };
-    const parse = (deployment: typeof admission) =>
+    const parse = (receipt: typeof runtimeConfigReceipt) =>
       parseVersionedExecutionSnapshot(
-        { ...v2, deploymentValidation: deployment },
+        { ...v2, runtimeConfigReceipt: receipt },
         {
           ...expected,
           runtimeTargetResolverV2:
@@ -238,13 +159,13 @@ describe("versioned execution snapshot", () => {
         },
       );
 
-    expect(() => parse(admission)).not.toThrow();
+    expect(() => parse(runtimeConfigReceipt)).not.toThrow();
     expect(() => parse({
-      ...admission,
+      ...runtimeConfigReceipt,
       priceVersionId: "99999999-9999-4999-8999-999999999999",
     })).toThrow(/frozen authority mismatch/u);
     expect(() => parse({
-      ...admission,
+      ...runtimeConfigReceipt,
       legalManifestId: "provider-manifest.crossed-v2",
     })).toThrow(/frozen authority mismatch/u);
   });
@@ -262,8 +183,8 @@ describe("versioned execution snapshot", () => {
       legalBundleVersion: successorBundle,
       legalManifestId: successorManifest,
     };
-    const successorDeploymentValidation = {
-      ...deploymentValidation,
+    const successorRuntimeConfigReceipt = {
+      ...runtimeConfigReceipt,
       legalBundleVersion: successorBundle,
       legalManifestId: successorManifest,
     };
@@ -281,7 +202,7 @@ describe("versioned execution snapshot", () => {
           routeSnapshot: successorRoute,
           profileExecutionConfig: successorProfile,
           runtimeEvidence: successorEvidence,
-          deploymentValidation: successorDeploymentValidation,
+          runtimeConfigReceipt: successorRuntimeConfigReceipt,
         },
         {
           ...expected,
@@ -338,6 +259,12 @@ describe("versioned execution snapshot", () => {
   });
 
   it("rejects unknown versions, crossed bindings and an unavailable runtime", () => {
+    expect(() =>
+      parseVersionedExecutionSnapshot(
+        { ...v2, schemaVersion: "ai_polish_execution_snapshot_v2" },
+        expected,
+      ),
+    ).toThrow();
     expect(() =>
       parseVersionedExecutionSnapshot({ ...v2, schemaVersion: "future" }, expected),
     ).toThrow();

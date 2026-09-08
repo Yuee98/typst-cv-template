@@ -58,7 +58,7 @@ import {
   validateVersionedProfileExecutionConfig,
   type ProfileExecutionConfig,
 } from "./profile-execution-v2";
-import type { RuntimeDeploymentAdmissionV2 } from "./runtime-deployment-v1";
+import type { RuntimeConfigReceiptV1 } from "./runtime-config-receipt-v1";
 import { POLISH_VALIDATION_FAILURE_STAGES } from "./validate";
 
 // ---------------------------------------------------------------------------
@@ -800,12 +800,9 @@ export async function getPolishExecutionSnapshotV2(
     reserveRoute: RouteSnapshotV1;
     runtimeTargetResolver: RuntimeTargetResolverV1;
     runtimeTargetResolverV2: RuntimeTargetResolverV2;
-    runtimeIdentity?: Readonly<{
+    runtimeEnvironment?: Readonly<{
       environment: string;
       projectRef: string;
-      runtimeBuildId: string;
-      bindingManifestRevision: string;
-      bindingManifestSha256: string;
     }>;
   },
 ): Promise<ExecutionSnapshotSuccessV2> {
@@ -814,20 +811,12 @@ export async function getPolishExecutionSnapshotV2(
   const reserveRoute = parseRouteSnapshotInputV2(params.reserveRoute);
   const observation = await observeRpcV2(
     client,
-    // Production always uses the durable-admission wrapper. The nullable
-    // identity preserves legacy v1 execution, while v2 fails closed in v4;
-    // absence must never select the short-lived v3 report path.
-    "get_ai_polish_execution_snapshot_v4",
+    "get_ai_polish_execution_snapshot_v5",
     freezeRpcValueV2({
       p_reservation_id: reservationId,
       p_user_id: userId,
-      p_environment: params.runtimeIdentity?.environment ?? null,
-      p_project_ref: params.runtimeIdentity?.projectRef ?? null,
-      p_runtime_build_id: params.runtimeIdentity?.runtimeBuildId ?? null,
-      p_binding_manifest_revision:
-        params.runtimeIdentity?.bindingManifestRevision ?? null,
-      p_binding_manifest_sha256:
-        params.runtimeIdentity?.bindingManifestSha256 ?? null,
+      p_environment: params.runtimeEnvironment?.environment ?? null,
+      p_project_ref: params.runtimeEnvironment?.projectRef ?? null,
     }),
   );
   if (observation.kind === "ambiguous") {
@@ -893,11 +882,7 @@ export async function startPolishProviderAttemptV2(
     reservationId: string;
     attemptNo: 1 | 2;
     expectedRoute: RouteSnapshotV1;
-    runtimeProvenance?: Readonly<{
-      runtimeBuildId: string;
-      bindingManifestRevision: string;
-    }>;
-    runtimeAdmission?: Readonly<RuntimeDeploymentAdmissionV2>;
+    runtimeConfigReceipt?: Readonly<RuntimeConfigReceiptV1>;
   },
 ): Promise<ProviderAttemptStartV2> {
   const reservationId = requireCanonicalUuidV2(params.reservationId);
@@ -905,29 +890,17 @@ export async function startPolishProviderAttemptV2(
     throw localContractErrorV2();
   }
   const expectedRoute = parseRouteSnapshotInputV2(params.expectedRoute);
-  if (
-    (params.runtimeProvenance === undefined) !==
-      (params.runtimeAdmission === undefined) ||
-    (params.runtimeProvenance !== undefined &&
-      params.runtimeAdmission !== undefined &&
-      (params.runtimeProvenance.runtimeBuildId !==
-        params.runtimeAdmission.runtimeBuildId ||
-        params.runtimeProvenance.bindingManifestRevision !==
-          params.runtimeAdmission.bindingManifestRevision))
-  ) {
-    throw localContractErrorV2();
-  }
   const args = freezeRpcValueV2(
     {
       p_reservation_id: reservationId,
       p_attempt_no: params.attemptNo,
-      p_runtime_admission: params.runtimeAdmission ?? null,
+      p_runtime_config_receipt: params.runtimeConfigReceipt ?? null,
     },
   );
 
   const first = await observeRpcV2(
     client,
-    "start_ai_polish_provider_attempt_v4",
+    "start_ai_polish_provider_attempt_v5",
     args,
   );
   let firstAmbiguity: unknown;
@@ -958,7 +931,7 @@ export async function startPolishProviderAttemptV2(
 
   const second = await observeRpcV2(
     client,
-    "start_ai_polish_provider_attempt_v4",
+    "start_ai_polish_provider_attempt_v5",
     args,
   );
   if (second.kind === "ambiguous") {

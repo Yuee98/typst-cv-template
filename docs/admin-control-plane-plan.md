@@ -1,5 +1,7 @@
 **Admin 配置与 AI 运行管理方案（草案）**
 
+> Amendment: [2026-09-08 runtime simplification](admin-runtime-simplification.md) supersedes the manual whole-build registration and binding-manifest portions of this plan. Other invariants remain applicable.
+
 日期：2026-09-03。代码基线：main，2783057292cef4ba3889d6bded31ce7863b2270f。
 
 本文提出下一阶段设计，不改变现有运行时契约、发布权限或线上状态。Preview 已运行双 Provider 是本次用户提供的背景；本次核对范围为本地最新代码和官方技术资料，未检查线上数据库、部署配置或调用 Provider。

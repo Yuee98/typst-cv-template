@@ -1,15 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import fixtures from "../../../test/fixtures/profile-execution-v2.json";
-import { createProviderSecretResolver, parseProviderBindingManifest, prepareProviderTransportV2, validateProviderEndpoint } from "./provider-binding-v2";
+import { createProviderSecretResolver, prepareProviderTransportV2, validateProviderEndpoint } from "./provider-binding-v2";
 import { validateProfileExecutionConfigV2 } from "./profile-execution-v2";
 
-const manifest = { schemaVersion: "ai_provider_bindings_v1", revision: "local-test-v1", bindings: [{
-  credentialEnvName: fixtures.deepseek.credentialEnvName,
-  providerId: fixtures.deepseek.providerId,
-  recipientKey: "deepseek", origin: "https://api.deepseek.com",
-}] };
-
-describe("deployment-owned v2 binding", () => {
+describe("code-owned v2 provider binding", () => {
   it("never reads a non-provider secret and snapshots only valid names", () => {
     const env = { AI_PROVIDER_KEY_DEEPSEEK_PRIMARY: "test-secret" };
     Object.defineProperty(env, "SUPABASE_SERVICE_ROLE_KEY", { enumerable: true, get() { throw new Error("must never read unrelated secret"); } });
@@ -32,24 +26,25 @@ describe("deployment-owned v2 binding", () => {
     const profile = validateProfileExecutionConfigV2({ ...fixtures.deepseek, endpointUrl });
     expect(() => validateProviderEndpoint(profile)).toThrow();
   });
-  it("binds the namespace secret to the exact legal recipient, provider and manifest revision before reading it", () => {
+  it("binds the namespace secret to the exact code-approved recipient, provider and origin before reading it", () => {
     const resolveSecret = vi.fn().mockReturnValue("fake-provider-key");
-    const input = { profile: fixtures.deepseek, recipient: { providerId: fixtures.deepseek.providerId, recipientKey: "deepseek" },
-      manifest, expectedManifestRevision: "local-test-v1", runtimeBuildId: "local.test-build", resolveSecret };
+    const input = { profile: fixtures.deepseek, recipient: { providerId: fixtures.deepseek.providerId, recipientKey: "deepseek" }, resolveSecret };
     const prepared = prepareProviderTransportV2(input);
     expect(prepared.endpoint).toBe(fixtures.deepseek.endpointUrl);
     expect(prepared.profile.modelId).toBe("synthetic-compatible-model");
     resolveSecret.mockClear();
     for (const override of [
-      { expectedManifestRevision: "stale" },
       { recipient: { ...input.recipient, recipientKey: "xiaomi-mimo" } },
       { profile: { ...fixtures.deepseek, providerId: fixtures.mimo.providerId } },
-      { manifest: { ...manifest, bindings: [{ ...manifest.bindings[0], origin: "https://api.xiaomimimo.com" }] } },
+      { profile: { ...fixtures.deepseek, credentialEnvName: "AI_PROVIDER_KEY_MIMO_PRIMARY" } },
     ]) expect(() => prepareProviderTransportV2({ ...input, ...override })).toThrow();
     expect(resolveSecret).not.toHaveBeenCalled();
   });
-  it("rejects ambiguous or broadened deployment manifests", () => {
-    expect(() => parseProviderBindingManifest({ ...manifest, bindings: [...manifest.bindings, ...manifest.bindings] })).toThrow();
-    expect(() => parseProviderBindingManifest({ ...manifest, secret: "forbidden" })).toThrow();
+  it("rejects a crossed DeepSeek credential name for the MiMo transport", () => {
+    expect(() => prepareProviderTransportV2({
+      profile: { ...fixtures.mimo, credentialEnvName: "AI_PROVIDER_KEY_DEEPSEEK_PRIMARY" },
+      recipient: { providerId: fixtures.mimo.providerId, recipientKey: "xiaomi-mimo" },
+      resolveSecret: () => "fake-provider-key",
+    })).toThrow();
   });
 });
