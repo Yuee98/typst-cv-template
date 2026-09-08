@@ -117,13 +117,6 @@ export function observedConfigChecks(
     });
     credentialBinding = true;
   } catch { /* A failed policy check is recorded without exposing credentials. */ }
-  let credentialConfigured = false;
-  try {
-    createProviderSecretResolver(env)(profile.credentialEnvName);
-    credentialConfigured = true;
-  } catch {
-    credentialConfigured = false;
-  }
   let compiledCapability = false;
   let observedCodeCapabilitySha256 = "0".repeat(64);
   try {
@@ -137,6 +130,18 @@ export function observedConfigChecks(
     observedCodeCapabilitySha256 = compiled.descriptorSha256;
   } catch {
     compiledCapability = false;
+  }
+  // Do not construct the secret resolver until the candidate has passed every
+  // non-secret compatibility check. A rejected target must not be able to
+  // probe whether any provider key is configured.
+  let credentialConfigured = false;
+  if (endpointPolicy && credentialBinding && compiledCapability) {
+    try {
+      createProviderSecretResolver(env)(profile.credentialEnvName);
+      credentialConfigured = true;
+    } catch {
+      credentialConfigured = false;
+    }
   }
   return {
     endpointPolicy,

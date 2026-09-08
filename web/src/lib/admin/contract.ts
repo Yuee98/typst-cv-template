@@ -406,21 +406,41 @@ export const adminPolicySchema = z.strictObject({
   configSha256: z.string().regex(/^[0-9a-f]{64}$/),
   createdAt: timestamp,
 });
+const adminAuditChangeSchema = z.strictObject({
+  fromStatus: z.string().min(1).max(40).optional(),
+  toStatus: z.string().min(1).max(40).optional(),
+  fromValidTo: timestamp.nullable().optional(),
+  toValidTo: timestamp.nullable().optional(),
+  successorPriceVersionId: uuid.nullable().optional(),
+  fromRetiredAt: timestamp.nullable().optional(),
+  toRetiredAt: timestamp.nullable().optional(),
+});
 export const adminAuditSchema = z.strictObject({
   id: uuid,
   occurredAt: timestamp,
   eventSchemaVersion: z.enum([
     "admin_audit_event_v1",
     "lifecycle_audit_event_v1",
+    "config_lifecycle_event_v2",
   ]),
   eventType: z.string().min(1).max(100),
-  source: z.enum(["admin", "lifecycle"]),
+  source: z.enum(["admin", "lifecycle", "config_lifecycle"]),
   sourceId: uuid,
   operationId: uuid.nullable(),
+  correlationAuditId: uuid.nullable().optional(),
   operation: z.string().min(1).max(100),
   actor: z.string().max(200),
   targetId: uuid.nullable(),
   reason: z.string().max(2000),
+  runtimeContractId: codeId.nullable().optional(),
+  validationReportIds: z.array(uuid).max(64).optional(),
+  codeCapabilityId: codeId.nullable().optional(),
+  codeCapabilitySha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .nullable()
+    .optional(),
+  change: adminAuditChangeSchema.optional(),
 });
 const page = <const S extends AdminRecordSection, T extends z.ZodType>(
   section: S,

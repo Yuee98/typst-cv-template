@@ -1,6 +1,6 @@
 # Admin API contract v1
 
-Status: implementation contract. Supersedes no existing AI execution or legal evidence. The accepted implementation plan defines release gates; this document fixes the application boundary used by I02 onward.
+Status: implementation contract. Supersedes no existing AI execution or legal evidence. The accepted implementation plan defines release gates; this document fixes the application boundary used by I02 onward. Runtime configuration follows the [2026-09-08 simplification amendment](admin-runtime-simplification.md).
 
 ## Authentication and environment
 
@@ -8,7 +8,7 @@ Admin pages are generated only for server builds at `/{zh,en}/admin`. Pages init
 
 Every API request verifies its bearer using `auth.getUser(token)` and creates a request-scoped publishable-key client with the same bearer Authorization for RPC. `getUser` does not install a session. The RPC derives actor from `auth.uid()`, requires an authenticated, non-anonymous JWT, a live matching Auth session and an active administrator whose Auth account is confirmed, not banned or deleted. No user metadata role is trusted. DB helpers have fixed empty search paths and no PUBLIC execute grant.
 
-`ADMIN_ENVIRONMENT=local|preview|production` and the Supabase URL identify the server's intended environment. An owner-initialized `admin_environment` row stores environment, project ref and exact Auth issuer. The server passes its expected environment/ref; the DB compares these and the verified JWT issuer. Local URL uses project ref `local`; hosted URLs must be canonical `<ref>.supabase.co`. Preview and Production use distinct projects. The user JWT does not attest a Vercel instance: build/binding claims come from registered deployment evidence and the trusted report producer.
+`ADMIN_ENVIRONMENT=local|preview|production` and the Supabase URL identify the server's intended environment. An owner-initialized `admin_environment` row stores environment, project ref and exact Auth issuer. The server passes its expected environment/ref; the DB compares these and the verified JWT issuer. Local URL uses project ref `local`; hosted URLs must be canonical `<ref>.supabase.co`. Preview and Production use distinct projects. The user JWT does not attest a Vercel instance. The embedded source commit is diagnostic only; the trusted report producer verifies the current process against the selected immutable configuration target.
 
 `admin_principals` holds current membership and revision. Membership changes and business mutations serialize on the environment singleton before checking/locking actor membership. Audit actor IDs are historical values, without cascading Auth foreign keys. User deletion cannot remove an active administrator through Auth service_role; first revoke through the controlled path, preserving the last-admin invariant.
 
@@ -36,11 +36,11 @@ Read-only helpers and mutations take the same membership serialization lock orde
 
 ## Producer grants and control cycle
 
-Authenticated admin mutation RPCs can reference report/evidence IDs, never create reviewed source/legal authority or assert a passed report. Narrow report-record RPCs are service_role-only; source/legal/build import and first-admin bootstrap are DB-owner-only. No direct DML is restored to the application roles.
+Authenticated admin mutation RPCs can reference report/evidence IDs, never assert a passed report. Narrow report-record RPCs are service_role-only; legal-current migration and first-admin bootstrap are DB-owner-only. No direct DML is restored to the application roles.
 
-Pointer set/clear/rollback requires DB gate off and expected generation. A separate closing cycle and control revision bind trusted readback. Reopen requires latest cycle/pointer/current legal bundle/build/binding/evidence; it is a separate step-up mutation. Legal current switch is an owner operation, atomically clearing old pointer before changing current while gate is off. Candidate validation of a future sealed bundle does not admit user requests.
+Pointer set/clear/rollback requires DB gate off and expected generation. A separate closing cycle and control revision bind trusted readback. Reopen requires the latest cycle, pointer, current legal bundle, configuration reports and current-process checks; it is a separate step-up mutation. Candidate validation of a future sealed bundle does not admit user requests. Changing the migration-pinned current legal predicate is deliberately outside the Admin API: a migration-owned DB-operator transition clears the pointer with the gate off, advances the sealed v2 current identity, updates its canonical authority definition and stamps a new authority epoch before activation can resume.
 
-The authority cutover revokes the old DB013 operator signatures and direct UPDATE of `public.ai_feature_config.(ai_polish_enabled,global_daily_limit,enabled_user_allowlist)`, preserves protected data-plane lock privileges, then enables new JWT operations. External deployment/CLI readiness is verified before the transaction; the transaction only asserts DB records. Post-cutover rollback builds must support both execution generations and the new Admin protocol.
+The authority cutover revokes the old DB013 operator signatures and direct UPDATE of `public.ai_feature_config.(ai_polish_enabled,global_daily_limit,enabled_user_allowlist)`, preserves protected data-plane lock privileges, then enables new JWT operations. It has no reviewed-deployment or manual build-registration prerequisite. Post-cutover rollback builds must support both execution generations and the new Admin protocol.
 
 ## Error and cache contract
 

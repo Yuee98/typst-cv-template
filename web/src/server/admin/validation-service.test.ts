@@ -1,5 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
-import { produceAdminValidationReport } from "./validation-service";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AdminValidationCandidate } from "./validation-service";
+
+vi.mock("../polish/provider-binding-v2", async (importOriginal) => {
+ const actual = await importOriginal<typeof import("../polish/provider-binding-v2")>();
+ return {
+  ...actual,
+  createProviderSecretResolver: vi.fn(actual.createProviderSecretResolver),
+ };
+});
+
+import { createProviderSecretResolver } from "../polish/provider-binding-v2";
+import { observedConfigChecks, produceAdminValidationReport } from "./validation-service";
 import { candidate, environment } from "./config-validation-fixtures";
 
 const input = { runtimeContractId: candidate.runtimeTarget.runtimeContractId, runtimeTargetId: candidate.runtimeTarget.runtimeTargetId };
@@ -18,6 +29,9 @@ function setup(data: unknown = report(), config: unknown = candidate) {
  return {rpc, client:{rpc}};
 }
 describe("configuration validation without deployment registration", () => {
+ beforeEach(() => {
+  vi.mocked(createProviderSecretResolver).mockClear();
+ });
  it("validates with only environment identity and Provider credentials", async () => {
   const {rpc,client}=setup();
   const result=await produceAdminValidationReport(input,{environment,client});
@@ -34,13 +48,51 @@ describe("configuration validation without deployment registration", () => {
   expect(result.passed).toBe(false);
   expect(rpc.mock.calls[1][1]).toMatchObject({p_credential_configured:false});
  });
+ it("only resolves a key after all non-secret checks pass", () => {
+  const checks = observedConfigChecks(candidate, environment);
+  expect(checks).toMatchObject({
+   endpointPolicy: true,
+   credentialBinding: true,
+   credentialConfigured: true,
+   compiledCapability: true,
+  });
+  expect(createProviderSecretResolver).toHaveBeenCalledOnce();
+ });
+ it.each<[string, AdminValidationCandidate, string]>([
+  [
+   "a crossed recipient",
+   {...candidate, runtimeTarget: {...candidate.runtimeTarget, recipientKey: "xiaomi-mimo"}},
+   "credentialBinding",
+  ],
+  [
+   "a crossed credential prefix",
+   {...candidate, profileExecutionConfig: {...candidate.profileExecutionConfig, credentialEnvName: "AI_PROVIDER_KEY_MIMO_PRIMARY"}},
+   "credentialBinding",
+  ],
+  [
+   "a forbidden endpoint",
+   {...candidate, profileExecutionConfig: {...candidate.profileExecutionConfig, endpointUrl: "https://attacker.example/chat/completions"}},
+   "endpointPolicy",
+  ],
+  [
+   "an unsupported target capability",
+   {...candidate, runtimeTarget: {...candidate.runtimeTarget, codeCapabilityId: "unsupported.capability.v1"}},
+   "compiledCapability",
+  ],
+ ])("does not resolve a key for %s", (_name, config, failedCheck) => {
+  const checks = observedConfigChecks(config, environment);
+  expect(checks[failedCheck as keyof typeof checks]).toBe(false);
+  expect(checks.credentialConfigured).toBe(false);
+  expect(createProviderSecretResolver).not.toHaveBeenCalled();
+ });
  it.each([
   ["recipient",{...candidate,runtimeTarget:{...candidate.runtimeTarget,recipientKey:"xiaomi-mimo"}}],
   ["credential prefix",{...candidate,profileExecutionConfig:{...candidate.profileExecutionConfig,credentialEnvName:"AI_PROVIDER_KEY_MIMO_PRIMARY"}}],
  ])("records a failed cross-provider %s check",async(_name,config)=>{
-  const {client}=setup(report({credentialBinding:false}),config);
+  const {client}=setup(report({credentialBinding:false,credentialConfigured:false}),config);
   const result=await produceAdminValidationReport(input,{environment:{...environment,AI_PROVIDER_KEY_MIMO_PRIMARY:"other-key"},client});
   expect(result.checks.credentialBinding).toBe(false);
+  expect(result.checks.credentialConfigured).toBe(false);
  });
  it.each([
   ["environment",{...candidate,environment:"preview"}],

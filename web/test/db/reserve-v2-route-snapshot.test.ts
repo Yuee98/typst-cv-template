@@ -1059,6 +1059,9 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       });
       await setDailyUsageCount(service, v2User.id, 0);
 
+      // Seed and assert within one minute; crossing the boundary legitimately
+      // opens a new bucket and would turn this denial fixture into an allow.
+      await settleAwayFromMinuteBoundary(10_000);
       await setCurrentRateBucketCount(service, v2User.id, 3);
       expect((await reserveV2(v2User.id, expected)).data).toMatchObject({
         allowed: false,

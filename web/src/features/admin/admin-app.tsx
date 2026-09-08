@@ -1034,7 +1034,7 @@ function Detail({
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">{t.details}</h1>
       <dl className="grid gap-3 sm:grid-cols-2">
-        {detailLabels(section, t).map(([key, label]) => (
+        {adminDetailLabels(section, t).map(([key, label]) => (
           <div
             key={key}
             className="rounded-lg border border-border bg-surface p-4"
@@ -1107,7 +1107,7 @@ function columns(
     ["reason", t.reason],
   ];
 }
-function detailLabels(
+export function adminDetailLabels(
   section: AdminRecordSection,
   t: AdminMessages,
 ): Array<[string, string]> {
@@ -1204,9 +1204,15 @@ function detailLabels(
     ["source", t.source],
     ["sourceId", t.sourceId],
     ["operationId", t.operationId],
+    ["correlationAuditId", t.correlationAuditId],
     ["operation", t.operation],
     ["actor", t.actor],
     ["targetId", t.targetId],
     ["reason", t.reason],
+    ["runtimeContractId", t.runtimeContract],
+    ["validationReportIds", t.validationReportIds],
+    ["codeCapabilityId", t.codeCapability],
+    ["codeCapabilitySha256", t.codeCapabilityHash],
+    ["change", t.changes],
   ];
 }

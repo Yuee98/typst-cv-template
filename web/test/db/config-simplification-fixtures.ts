@@ -47,7 +47,8 @@ export interface ConfigSimplificationV2Fixture {
   readonly credentialEnvName: "AI_PROVIDER_KEY_DEEPSEEK_PRIMARY";
   readonly modelId: "deepseek-v4-flash";
   readonly displayDisclosureKey: string;
-  readonly legalBundleVersion: typeof INITIAL_LEGAL_BUNDLE_VERSION;
+  readonly legalBundleVersion: string;
+  readonly bundleContractSha256: string;
   readonly legalManifestId: typeof DEEPSEEK_LEGAL_MANIFEST_ID;
   readonly codeCapabilityId: typeof DEEPSEEK_CAPABILITY_ID;
   readonly codeCapabilitySha256: typeof DEEPSEEK_CAPABILITY_SHA256;
@@ -59,6 +60,9 @@ export interface ConfigSimplificationV2FixtureOptions {
    * only valid precondition for exercising admin_seal_price_for_activation_v2.
    */
   readonly prepareOnly?: boolean;
+  /** A sealed successor bundle may be prepared while the old bundle is live. */
+  readonly legalBundleVersion?: string;
+  readonly bundleContractSha256?: string;
 }
 
 export function createConfigSimplificationV2Fixture(
@@ -78,6 +82,10 @@ export function createConfigSimplificationV2Fixture(
     `${Buffer.byteLength(runtimeTargetId, "utf8")}:${runtimeTargetId}:${runtimeTargetSha256}`,
   );
   const displayDisclosureKey = `test.config-display.${suffix}`;
+  const legalBundleVersion =
+    options.legalBundleVersion ?? INITIAL_LEGAL_BUNDLE_VERSION;
+  const bundleContractSha256 =
+    options.bundleContractSha256 ?? INITIAL_LEGAL_BUNDLE_SHA256;
   const fixture: ConfigSimplificationV2Fixture = {
     profileId,
     profileKey,
@@ -92,7 +100,8 @@ export function createConfigSimplificationV2Fixture(
     credentialEnvName: "AI_PROVIDER_KEY_DEEPSEEK_PRIMARY",
     modelId: "deepseek-v4-flash",
     displayDisclosureKey,
-    legalBundleVersion: INITIAL_LEGAL_BUNDLE_VERSION,
+    legalBundleVersion,
+    bundleContractSha256,
     legalManifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
     codeCapabilityId: DEEPSEEK_CAPABILITY_ID,
     codeCapabilitySha256: DEEPSEEK_CAPABILITY_SHA256,
@@ -200,7 +209,7 @@ export function createConfigSimplificationV2Fixture(
       runtime_contract_id,legal_bundle_version,bundle_contract_sha256,runtime_target_set_sha256
     ) values (
       '${fixture.runtimeContractId}','${fixture.legalBundleVersion}',
-      '${INITIAL_LEGAL_BUNDLE_SHA256}','${targetSetSha256}'
+      '${fixture.bundleContractSha256}','${targetSetSha256}'
     );
     insert into public.ai_service_runtime_contract_targets(
       runtime_contract_id,runtime_target_id,runtime_target_sha256,profile_key,

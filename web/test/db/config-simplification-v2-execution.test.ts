@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { spawn } from "node:child_process";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -26,9 +27,10 @@ import {
   deleteTestUser,
   RUN_DB_TESTS,
   signInAsUser,
+  sleep,
   type TestUser,
 } from "./helpers";
-import { runOwnerSql } from "./runtime-contract-fixtures";
+import { runOwnerSql, startOwnerSql, type OwnerSqlResult } from "./runtime-contract-fixtures";
 
 const CONTEXT = { p_environment: "local", p_project_ref: "local" } as const;
 type GrantRole = "public" | "anon" | "authenticated" | "service_role";
@@ -177,6 +179,39 @@ function producerEnvironment(): Readonly<Record<string, string | undefined>> {
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: DB_TEST_ENV.publishableKey,
     AI_PROVIDER_KEY_DEEPSEEK_PRIMARY: "fixture-deepseek-secret",
   };
+}
+
+function holdStateRow(table: "ai_feature_config" | "admin_environment") {
+  const child = spawn("docker", ["exec", "-i", "supabase_db_typst-cv-template", "psql", "-U", "postgres", "-d", "postgres", "--set", "ON_ERROR_STOP=1", "--no-psqlrc"], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let released = false;
+  let readyResolve!: () => void;
+  let readyReject!: (error: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+  const result = new Promise<OwnerSqlResult>((resolve, reject) => {
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; if (stdout.includes("CONTROL_ROW_HELD")) readyResolve(); });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", (error) => { readyReject(error); reject(error); });
+    child.on("close", (status) => {
+      if (!stdout.includes("CONTROL_ROW_HELD")) readyReject(new Error(stderr || "row barrier exited before acquiring its lock"));
+      resolve({ status: status ?? -1, stdout, stderr });
+    });
+  });
+  child.stdin.write(`begin; set local idle_in_transaction_session_timeout='20s'; select id from public.${table} where id=true for update;\n\\echo CONTROL_ROW_HELD\n`);
+  return { ready, result, release: () => { if (!released) { released = true; child.stdin.end("rollback;\n"); } } };
+}
+
+async function waitForDatabaseLock(application: string): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const value = readOwnerJson<{ blocked: boolean }>(`select json_build_object('blocked',exists(select 1 from pg_stat_activity where application_name=${sql(application)} and wait_event_type='Lock'));`);
+    if (value.blocked) return;
+    await sleep(50);
+  }
+  throw new Error(`operation ${application} did not reach its expected database lock`);
 }
 
 describe.skipIf(!RUN_DB_TESTS)(
@@ -391,7 +426,7 @@ describe.skipIf(!RUN_DB_TESTS)(
       if (adminUser) await deleteTestUser(service, adminUser.id);
     });
 
-    it("uses a V3 receipt for controlled one-send transport and settlement after report expiry", async () => {
+    it("uses a V3 receipt for controlled one-send transport and settlement with expired historical reports", async () => {
       const config = await service.from("ai_feature_config").select("config_generation").eq("id", true).single();
       expect(config.error).toBeNull();
       const reserved = await service.rpc("reserve_ai_polish_request_v2", {
@@ -527,6 +562,122 @@ describe.skipIf(!RUN_DB_TESTS)(
         p_idempotency_key: crypto.randomUUID(),
       });
       expect(laterReopen.error).toBeNull();
+    });
+
+    async function closeAndReadback() {
+      const current = await state();
+      if (current.config.ai_polish_enabled) {
+        const disabled = await admin.rpc("admin_disable_ai_v1", {
+          ...CONTEXT, p_expected_control_revision: current.control.revision,
+          p_reason: "prepare control concurrency regression", p_idempotency_key: crypto.randomUUID(),
+        });
+        expect(disabled.error).toBeNull();
+      }
+      reportId = await recordReport();
+      const readback = await produceAdminRuntimeReadback({ policyVersionId, validationReportIds: [reportId] }, {
+        environment: producerEnvironment(),
+        client: { rpc: async (name, args) => (service.rpc as unknown as (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string; message?: string } | null }>)(name, args) },
+      });
+      return { readback, current: await state() };
+    }
+
+    async function authenticatedSql(application: string, statement: string): Promise<OwnerSqlResult> {
+      const token = (await admin.auth.getSession()).data.session!.access_token;
+      const claims = Buffer.from(token.split(".")[1], "base64url").toString();
+      return startOwnerSql(`begin; set local application_name=${sql(application)}; set local statement_timeout='12s'; set local role authenticated; set local request.jwt.claims=${sql(claims)}; ${statement}; rollback;`);
+    }
+
+    it.each(["candidate/pointer", "record/reopen"] as const)("serializes readback versus %s without deadlock", async (kind) => {
+      const { readback, current } = await closeAndReadback();
+      const readerName = `cfg005.reader.${crypto.randomUUID()}`;
+      const writerName = `cfg005.writer.${crypto.randomUUID()}`;
+      // Holding feature state queues readback first. With feature-first reads,
+      // the writer can then hold environment and create the inverse-lock cycle.
+      const barrier = holdStateRow("ai_feature_config");
+      let reader: Promise<OwnerSqlResult> | undefined;
+      let writer: Promise<OwnerSqlResult> | undefined;
+      let results: OwnerSqlResult[] = [];
+      try {
+        await barrier.ready;
+        const statement = kind === "candidate/pointer"
+          ? `select public.get_admin_runtime_readback_candidate_v3(${sql(policyVersionId)},array[${sql(reportId)}::uuid],'local','local')`
+          : `select public.record_admin_runtime_readback_v3('local','local',${sql(policyVersionId)},array[${sql(reportId)}::uuid],${sql(current.control.closing_cycle_id!)},${current.control.revision},${current.config.config_generation})`;
+        reader = startOwnerSql(`begin; set local application_name=${sql(readerName)}; set local statement_timeout='12s'; set local role service_role; set local request.jwt.claims='{"role":"service_role"}'; ${statement}; rollback;`);
+        await waitForDatabaseLock(readerName);
+        writer = authenticatedSql(writerName, kind === "candidate/pointer"
+          ? `select public.admin_clear_ai_routing_pointer_v2('local','local',array[${sql(reportId)}::uuid],${current.control.revision},${sql(policyVersionId)},${current.config.config_generation},'serialize pointer with readback',${sql(crypto.randomUUID())})`
+          : `select public.admin_reopen_ai_v2('local','local',${sql(readback.reportId)},${sql(current.control.closing_cycle_id!)},${current.control.revision},${sql(policyVersionId)},${current.config.config_generation},'serialize reopen with readback',${sql(crypto.randomUUID())})`);
+        await waitForDatabaseLock(writerName);
+        barrier.release();
+        results = await Promise.all([reader, writer]);
+      } finally {
+        barrier.release();
+        await Promise.allSettled([barrier.result, ...(reader ? [reader] : []), ...(writer ? [writer] : [])]);
+      }
+      for (const result of results) {
+        expect(result.stderr).not.toMatch(/deadlock|40P01|lock timeout|statement timeout/iu);
+        expect(result.status, result.stderr).toBe(0);
+      }
+      expect(results).toHaveLength(2);
+      const after = await state();
+      expect(after.config).toEqual(current.config);
+      expect(after.control).toEqual(current.control);
+    });
+
+    it("keeps the gate closed when reopen waits past immutable evidence expiry", async () => {
+      const { readback, current } = await closeAndReadback();
+      const shortReportId = crypto.randomUUID();
+      const shortReadbackId = crypto.randomUUID();
+      const operationId = crypto.randomUUID();
+      const application = `cfg005.expiry.${crypto.randomUUID()}`;
+      const barrier = holdStateRow("admin_environment");
+      let reopen: Promise<OwnerSqlResult> | undefined;
+      let result: OwnerSqlResult | undefined;
+      try {
+        await barrier.ready;
+        // Owner fixtures copy actual validated facts into immutable near-expiry
+        // rows. No guard is disabled and real database time crosses the expiry.
+        runOwnerSql(`
+          insert into public.admin_config_validation_reports_v2(
+            id,environment,project_ref,runtime_contract_id,runtime_target_id,runtime_target_sha256,
+            profile_version_id,price_version_id,provider_id,code_capability_id,code_capability_sha256,
+            legal_bundle_version,legal_manifest_id,display_disclosure_key,endpoint_policy_valid,
+            credential_binding_valid,credential_configured,compiled_capability_valid,database_binding_valid,
+            evidence_ids,checked_at,expires_at,report_sha256)
+          select ${sql(shortReportId)},environment,project_ref,runtime_contract_id,runtime_target_id,runtime_target_sha256,
+            profile_version_id,price_version_id,provider_id,code_capability_id,code_capability_sha256,
+            legal_bundle_version,legal_manifest_id,display_disclosure_key,endpoint_policy_valid,
+            credential_binding_valid,credential_configured,compiled_capability_valid,database_binding_valid,
+            evidence_ids,clock_timestamp()-interval '9 minutes',clock_timestamp()+interval '3 seconds',
+            encode(extensions.digest(${sql(shortReportId)},'sha256'),'hex')
+          from public.admin_config_validation_reports_v2 where id=${sql(reportId)};
+          insert into public.admin_runtime_readback_reports_v2 select (jsonb_populate_record(null::public.admin_runtime_readback_reports_v2,
+            to_jsonb(readback)||jsonb_build_object('id',${sql(shortReadbackId)},'validation_report_ids',jsonb_build_array(${sql(shortReportId)}),
+              'checked_at',clock_timestamp()-interval '9 minutes','expires_at',(select expires_at from public.admin_config_validation_reports_v2 where id=${sql(shortReportId)}),
+              'report_sha256',encode(extensions.digest(${sql(shortReadbackId)},'sha256'),'hex')))).*
+          from public.admin_runtime_readback_reports_v2 readback where id=${sql(readback.reportId)};
+        `);
+        reopen = authenticatedSql(application, `select public.admin_reopen_ai_v2('local','local',${sql(shortReadbackId)},${sql(current.control.closing_cycle_id!)},${current.control.revision},${sql(policyVersionId)},${current.config.config_generation},'reject evidence expired during lock wait',${sql(operationId)})`);
+        await waitForDatabaseLock(application);
+        const deadline = Date.now() + 7_000;
+        let expired = false;
+        while (Date.now() < deadline) {
+          expired = readOwnerJson<{ expired: boolean }>(`select json_build_object('expired',expires_at<clock_timestamp()) from public.admin_runtime_readback_reports_v2 where id=${sql(shortReadbackId)};`).expired;
+          if (expired) break;
+          await sleep(50);
+        }
+        expect(expired).toBe(true);
+        barrier.release();
+        result = await reopen;
+      } finally {
+        barrier.release();
+        await Promise.allSettled([barrier.result, ...(reopen ? [reopen] : [])]);
+      }
+      expect(result?.status).not.toBe(0);
+      expect(result?.stderr).toMatch(/NOT_READY|VALIDATION_REPORT/);
+      expect(result?.stderr).not.toMatch(/deadlock|40P01|lock timeout|statement timeout/iu);
+      expect((await state()).config.ai_polish_enabled).toBe(false);
+      expect(readOwnerJson<{ count: number }>(`select json_build_object('count',count(*)) from public.admin_committed_operations where actor_user_id=${sql(adminUser.id)} and idempotency_key=${sql(operationId)};`).count).toBe(0);
     });
   },
 );
