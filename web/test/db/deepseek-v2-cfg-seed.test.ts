@@ -571,7 +571,7 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["has_accepted_ai_legal_disclosure_v2", "p_user_id uuid, p_legal_bundle_version text, p_display_disclosure_key text", "f", true, "21549d835d5d6165b2da7ba0f1b92cbb879d3305c7affc27723dcc1f878227a7"],
   ["accept_ai_legal_disclosure_v2", "p_expected_user_id uuid, p_legal_bundle_version text, p_display_disclosure_key text, p_content_sha256 text", "f", true, "c7d7e8ae03ecac2c3a4a266ac35a2d9a7a905442843c082d2a616258aba2a163"],
   ["get_ai_legal_display_v2", "p_legal_bundle_version text, p_display_disclosure_key text", "f", true, "a2eba11b407d7f33042e5bf3018dec4eb74396e9aba1bbffdc5b0e96e6165109"],
-  ["get_ai_polish_availability_v2", "p_user_id uuid", "f", true, "65764e7c65797c3796d9cb8470e2f00dcefa300285b943016ea8b0d9491bcd2a"],
+  ["get_ai_polish_availability_v2", "p_user_id uuid", "f", true, "43c1ead021dd26fb27907baae103abd99a2cf025b5c2c7b952263de9eb154c58"],
   ["guard_ai_request_legal_acceptance_v2", "", "f", true, "b557efe180f29392a48c25ae3494d47c2a28f530242ea676b8ebc06dea508396"],
   ["admin_guard_committed_operation_v1", "", "f", false, "0fee26e267566d4ec90ff3429811dfe48eeaecb8f67ecc877be4ba888498115c"],
   ["admin_canonical_operation_payload_sha256_v1", "p_operation_kind text, p_payload jsonb", "f", false, "09a2e7cb5965ddcf849c1beffa034b10bad6c0406bdc5e649027d9e7118aebd2"],
