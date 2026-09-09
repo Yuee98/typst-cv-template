@@ -30,6 +30,7 @@ on:
       - "web/scripts/run-db-tests.mjs"
       - "web/scripts/run-db-tests.test.mjs"
       - "web/scripts/test-admin-bootstrap-upgrade.mjs"
+      - "web/scripts/test-admin-drafts-upgrade.mjs"
       - "web/scripts/run-admin-e2e-server.mjs"
       - "web/scripts/run-admin-e2e.mjs"
       - "web/e2e/**"
@@ -60,7 +61,7 @@ on:
       - "web/test/fixtures/routing-rules-v1.json"
       - "web/src/server/polish/lifecycle*.ts"
       - "web/src/server/polish/quota.ts"
-      - "web/test/fixtures/admin-contract-v2.json"
+      - "web/test/fixtures/admin-contract-v3.json"
       - "web/test/fixtures/profile-execution-v2.json"
       - "web/test/db/**"
       - "web/vitest.db.config.mts"
@@ -119,6 +120,12 @@ jobs:
 
       - name: Run Admin bootstrap predecessor upgrade gate
         run: node web/scripts/test-admin-bootstrap-upgrade.mjs
+
+      - name: Reset to Admin drafts predecessor
+        run: pnpm exec supabase db reset --local --version 20260909110000 --yes
+
+      - name: Run Admin drafts predecessor upgrade gate
+        run: node web/scripts/test-admin-drafts-upgrade.mjs
 
       # Hard-fail proof of the exact post-migration seed cardinality and dark
       # feature state. The runner verifies loopback and resets before running

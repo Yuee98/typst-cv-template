@@ -59,11 +59,12 @@ describe("CFG-001 successor-compatible membership source", () => {
       "20260908020000_admin_configuration_lifecycle.sql",
       "20260908030000_admin_configuration_audit_reads.sql",
       "20260909110000_simplify_admin_bootstrap.sql",
+      "20260910000000_admin_drafts_before_cutover.sql",
     ].map((name) => readFileSync(new URL(`../../../supabase/migrations/${name}`, import.meta.url), "utf8"));
     const declared = sources.flatMap((source) => [...source.matchAll(/create(?: or replace)? function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
     const manifest = new Set<string>(NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1.map(([name]) => name));
     const retired = new Set(["admin_cutover_authority_v1", "admin_bootstrap_v1"]);
-    expect(sources.at(-1)).toContain("drop function public.admin_bootstrap_v1(uuid,text,text,text,text);");
+    expect(readFileSync(new URL("../../../supabase/migrations/20260909110000_simplify_admin_bootstrap.sql", import.meta.url), "utf8")).toContain("drop function public.admin_bootstrap_v1(uuid,text,text,text,text);");
     expect(
       declared
         .filter((name) => !name.startsWith("pg_"))
@@ -549,10 +550,11 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
 // root below deliberately excludes exactly these identities, so any new
 // routine omitted from this manifest still changes the frozen v1 count/hash.
 const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
+  ["admin_create_routing_policy_draft_v1","p_environment text, p_project_ref text, p_policy_key text, p_expected_latest_version integer, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_runtime_contract_id text, p_reason text, p_idempotency_key uuid","f",true,"580ff6c54073123c7964899c45604e867e9c0f625817f01abf7124780d174b41"],
   ["admin_guard_audit_v1", "", "f", false, "c54e2ae27031c4bcec613fd604405625319e6e29cc25b0a0f575a80d64a880ed"],
   ["admin_bootstrap_v2", "p_user_id uuid, p_environment text, p_reason text", "f", true, "8005652dcdc7472fa77e6279abbd0f2dee1f538f6dd9ecd0f980c024a38699cc"],
   ["admin_assert_actor_v1", "p_environment text, p_project_ref text", "f", true, "23dc88563ba7eee6c0eac52443a8e8be28e871f89942c7ded90867a4cabad2c4"],
-  ["admin_get_context_v1", "p_environment text, p_project_ref text", "f", true, "afde48476ff7db45158dcd40f8c0bacddcf4aae842c595fc81c20b82fd7335ae"],
+  ["admin_get_context_v1", "p_environment text, p_project_ref text", "f", true, "5fef924a38395241058fc21a73e8d170389bd9fc21daf8435e1262b3b4581e79"],
   ["admin_records_query_v1", "p_section text", "f", false, "5c17b544cd238f678237a11899e771df9dc613397977f60675becd12482ac563"],
   ["admin_list_records_v1", "p_environment text, p_project_ref text, p_section text, p_limit integer, p_after text, p_search text", "f", true, "5f1a87edaa14aa78f8e116766cbd111e4bb2f459349e4a80938655dcac232c3d"],
   ["admin_get_record_v1", "p_environment text, p_project_ref text, p_section text, p_id uuid", "f", true, "1dc5bbbf6881e29f0b5208fbbef67e4a5398b829a014aa664ec8ee7b16cae36a"],
@@ -608,10 +610,10 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
   ["admin_json_jcs_sha256_v1", "p_value jsonb", "f", false, "d9df9752380bf66e65b5e56025595f9993b04e667613c1071cecbba4687521eb"],
   ["admin_assert_reason_v1", "p_reason text", "f", false, "53e07731744a82c8b0660948f2ff2eb7b5ca5b0e45a7b4a11236fd1aaad852c7"],
   ["admin_set_membership_v1", "p_environment text, p_project_ref text, p_target_user_id uuid, p_enabled boolean, p_expected_revision bigint, p_reason text, p_idempotency_key uuid", "f", true, "f9ac25d58a9e8cc373251161e2f9c434f34b492480e885e322f6f22fb1bcc6dc"],
-  ["admin_update_provider_defaults_v1", "p_environment text, p_project_ref text, p_provider_id uuid, p_display_name text, p_default_adapter_id text, p_default_endpoint_url text, p_default_credential_env_name text, p_default_model_id text, p_archived boolean, p_expected_revision bigint, p_reason text, p_idempotency_key uuid", "f", true, "ff483b3925fdf23b8b8cbd1a40c0573a1ab5a300d38769602ca9edcdd957b8d9"],
-  ["admin_create_provider_profile_v1", "p_environment text, p_project_ref text, p_provider_id uuid, p_profile_key text, p_display_name text, p_model_vendor text, p_reason text, p_idempotency_key uuid", "f", true, "bfc66dc7e65678488768fccd1d6758f049a147541adeba818f15d9096e6849c8"],
-  ["admin_create_profile_version_v2", "p_environment text, p_project_ref text, p_profile_id uuid, p_expected_latest_version integer, p_adapter_id text, p_wire_api_kind text, p_endpoint_url text, p_credential_env_name text, p_model_id text, p_capability_contract_id text, p_cache_policy_id text, p_legal_manifest_id text, p_display_disclosure_key text, p_config jsonb, p_reason text, p_idempotency_key uuid", "f", true, "4562cf47ed29b9d7520b583bfed2b5bb79bc455e9677592ac89835eea0a47aa9"],
-  ["admin_create_price_version_v1", "p_environment text, p_project_ref text, p_profile_version_id uuid, p_pricing_lane text, p_expected_latest_version integer, p_currency text, p_calculator_kind text, p_valid_from timestamp with time zone, p_valid_to timestamp with time zone, p_provider_effective_from timestamp with time zone, p_provider_effective_to timestamp with time zone, p_source_url text, p_source_checked_at timestamp with time zone, p_source_snapshot_sha256 text, p_parameters jsonb, p_components jsonb, p_reason text, p_idempotency_key uuid", "f", true, "acf166c58045e3223a289cb9da36ea6302464343ecfdc7c073e6ec3482b3d5c4"],
+  ["admin_update_provider_defaults_v1", "p_environment text, p_project_ref text, p_provider_id uuid, p_display_name text, p_default_adapter_id text, p_default_endpoint_url text, p_default_credential_env_name text, p_default_model_id text, p_archived boolean, p_expected_revision bigint, p_reason text, p_idempotency_key uuid", "f", true, "db2e615aebc188f0e2581ebf7ffa0a950e2d74b645a4a1f9cc8422e1c088921b"],
+  ["admin_create_provider_profile_v1", "p_environment text, p_project_ref text, p_provider_id uuid, p_profile_key text, p_display_name text, p_model_vendor text, p_reason text, p_idempotency_key uuid", "f", true, "fcdee51c868560c44e4a58adc14f46ecef5a5525de9fcd8e775a2a2e586cd66d"],
+  ["admin_create_profile_version_v2", "p_environment text, p_project_ref text, p_profile_id uuid, p_expected_latest_version integer, p_adapter_id text, p_wire_api_kind text, p_endpoint_url text, p_credential_env_name text, p_model_id text, p_capability_contract_id text, p_cache_policy_id text, p_legal_manifest_id text, p_display_disclosure_key text, p_config jsonb, p_reason text, p_idempotency_key uuid", "f", true, "4c9c8ae03c55d6b39b8b4ce60008d2fd97bdfc853749a723499f4509283645c4"],
+  ["admin_create_price_version_v1", "p_environment text, p_project_ref text, p_profile_version_id uuid, p_pricing_lane text, p_expected_latest_version integer, p_currency text, p_calculator_kind text, p_valid_from timestamp with time zone, p_valid_to timestamp with time zone, p_provider_effective_from timestamp with time zone, p_provider_effective_to timestamp with time zone, p_source_url text, p_source_checked_at timestamp with time zone, p_source_snapshot_sha256 text, p_parameters jsonb, p_components jsonb, p_reason text, p_idempotency_key uuid", "f", true, "13e7bf8a310f856fb620acee79da8a092353898594b63081e853e3481f77d03a"],
   ["admin_set_global_daily_limit_v1", "p_environment text, p_project_ref text, p_global_daily_limit integer, p_expected_global_daily_limit integer, p_expected_control_revision bigint, p_reason text, p_idempotency_key uuid", "f", true, "222414159863be2fe703387ca9db915d5668ac78baf32ddc1169f6efc4fdb0e2"],
   ["admin_runtime_validation_evidence_v1", "p_report_id uuid, p_expected_profile_version_id uuid, p_expected_price_version_id uuid, p_at timestamp with time zone", "f", true, "407a2bf83150039b92bdfd8fd270524e0506258bad456df82867acbb7ed71e45"],
   ["admin_seal_price_for_activation_v1", "p_environment text, p_project_ref text, p_price_version_id uuid, p_runtime_contract_id text, p_reviewed_deployment_id uuid, p_reason text, p_idempotency_key uuid", "f", true, "a57aee1e3b0d813155fa6b587035534e43b30276f2e712bb4d47e5ba3c0e9bc6"],
@@ -1563,6 +1565,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
             "admin_create_provider_profile_v1",
             "admin_create_routing_policy_v1",
             "admin_create_routing_policy_v2",
+            "admin_create_routing_policy_draft_v1",
             "admin_disable_ai_v1",
             "admin_get_ai_analytics_v1",
             "admin_get_ai_control_state_v1",

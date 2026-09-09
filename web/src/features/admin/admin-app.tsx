@@ -359,6 +359,7 @@ export default function AdminApp({
       onSignOut={signOut}
       busy={busy}
       environment={state.context?.environment.name}
+      draftsEnabled={state.context?.capabilities.drafts === true}
       writesEnabled={state.context?.capabilities.writes === true}
       t={t}
     >
@@ -396,6 +397,7 @@ export default function AdminApp({
           environment={state.context.environment.name}
           locale={locale}
           accessToken={session.access_token}
+          draftsEnabled={state.context.capabilities.drafts}
           writesEnabled={state.context.capabilities.writes}
           onRefresh={() => {
             setRefreshToken((current) => current + 1);
@@ -409,6 +411,7 @@ export default function AdminApp({
           locale={locale}
           query={query}
           accessToken={session.access_token}
+          draftsEnabled={state.context?.capabilities.drafts === true}
           writesEnabled={state.context?.capabilities.writes === true}
           onRefresh={() => setRefreshToken((current) => current + 1)}
           onQuery={(next) => {
@@ -545,6 +548,7 @@ function Shell({
   onSignOut,
   busy,
   environment,
+  draftsEnabled,
   writesEnabled,
   t,
   children,
@@ -556,6 +560,7 @@ function Shell({
   onSignOut: () => void;
   busy: boolean;
   environment?: string;
+  draftsEnabled: boolean;
   writesEnabled: boolean;
   t: AdminMessages;
   children: React.ReactNode;
@@ -575,7 +580,7 @@ function Shell({
             {locale === "zh" ? "EN" : "中文"}
           </a>
           <span className="rounded-full border border-border px-2 py-1 text-xs text-foreground-muted">
-            {writesEnabled ? t.writesEnabled : t.readOnly}
+            {writesEnabled ? t.writesEnabled : draftsEnabled ? t.draftsAvailable : t.readOnly}
           </span>
           <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={onSignOut} disabled={busy}>
@@ -907,6 +912,7 @@ function Page({
   locale,
   query,
   accessToken,
+  draftsEnabled,
   writesEnabled,
   onRefresh,
   onQuery,
@@ -917,6 +923,7 @@ function Page({
   locale: string;
   query: Query;
   accessToken: string;
+  draftsEnabled: boolean;
   writesEnabled: boolean;
   onRefresh: () => void;
   onQuery: (query: Query) => void;
@@ -931,6 +938,7 @@ function Page({
         row={rows[0]}
         locale={locale}
         accessToken={accessToken}
+        draftsEnabled={draftsEnabled}
         writesEnabled={writesEnabled}
         onRefresh={onRefresh}
         t={t}
@@ -1018,6 +1026,7 @@ function Detail({
   row,
   locale,
   accessToken,
+  draftsEnabled,
   writesEnabled,
   onRefresh,
   t,
@@ -1026,6 +1035,7 @@ function Detail({
   row: Record<string, unknown>;
   locale: string;
   accessToken: string;
+  draftsEnabled: boolean;
   writesEnabled: boolean;
   onRefresh: () => void;
   t: AdminMessages;
@@ -1050,6 +1060,7 @@ function Detail({
         section={section}
         row={row}
         accessToken={accessToken}
+        draftsEnabled={draftsEnabled}
         writesEnabled={writesEnabled}
         onRefresh={onRefresh}
         t={t}

@@ -69,6 +69,7 @@ const mutationRpc: Record<AdminMutationRequest["operation"], { rpc: string; kind
   global_daily_limit_set: { rpc: "admin_set_global_daily_limit_v1", kind: "global_daily_limit_set" },
   price_seal: { rpc: "admin_seal_price_for_activation_v2", kind: "price_seal" },
   profile_version_transition: { rpc: "admin_transition_profile_version_v2", kind: "profile_version_transition" },
+  routing_policy_draft_create: { rpc: "admin_create_routing_policy_draft_v1", kind: "routing_policy_draft_create" },
   routing_policy_create: { rpc: "admin_create_routing_policy_v2", kind: "routing_policy_create" },
   routing_policy_transition: { rpc: "admin_transition_routing_policy_v2", kind: "routing_policy_transition" },
   price_close: { rpc: "admin_close_price_version_v2", kind: "price_close" },
@@ -95,6 +96,7 @@ function mutationArgs(
     case "global_daily_limit_set": return { ...base, p_global_daily_limit: request.globalDailyLimit, p_expected_global_daily_limit: request.expectedGlobalDailyLimit, p_expected_control_revision: request.expectedControlRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "price_seal": return { ...base, p_price_version_id: request.priceVersionId, p_runtime_contract_id: request.runtimeContractId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "profile_version_transition": return { ...base, p_profile_version_id: request.profileVersionId, p_to_status: request.toStatus, p_validation_report_id: request.validationReportId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
+    case "routing_policy_draft_create": return { ...base, p_policy_key: request.policyKey, p_expected_latest_version: request.expectedLatestVersion, p_rules: request.rules, p_default_profile_version_id: request.defaultProfileVersionId, p_legal_bundle_version: request.legalBundleVersion, p_runtime_contract_id: request.runtimeContractId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "routing_policy_create": return { ...base, p_policy_key: request.policyKey, p_expected_latest_version: request.expectedLatestVersion, p_rules: request.rules, p_default_profile_version_id: request.defaultProfileVersionId, p_legal_bundle_version: request.legalBundleVersion, p_runtime_contract_id: request.runtimeContractId, p_validation_report_ids: request.validationReportIds, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "routing_policy_transition": return { ...base, p_policy_version_id: request.policyVersionId, p_to_status: request.toStatus, p_validation_report_ids: request.validationReportIds, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "price_close": return { ...base, p_price_version_id: request.priceVersionId, p_valid_to: request.validTo, p_successor_price_version_id: request.successorPriceVersionId, p_validation_report_id: request.validationReportId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };

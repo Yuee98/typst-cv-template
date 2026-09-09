@@ -23,7 +23,9 @@ from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in (
-    'admin_guard_audit_v1', 'admin_bootstrap_v2', 'admin_assert_actor_v1',
+    'admin_update_provider_defaults_v1', 'admin_create_provider_profile_v1',
+    'admin_create_profile_version_v2', 'admin_create_price_version_v1',
+    'admin_create_routing_policy_draft_v1', 'admin_guard_audit_v1', 'admin_bootstrap_v2', 'admin_assert_actor_v1',
     'admin_get_context_v1', 'admin_records_query_v1', 'admin_list_records_v1',
     'admin_get_record_v1', 'ai_endpoint_shape_v2',
     'guard_ai_provider_directory_v2', 'guard_ai_profile_provider_v2',

@@ -1,5 +1,7 @@
 # Admin development ledger
 
+The [draft-preparation amendment](admin-draft-preparation.md) supersedes the initial blanket write gate below. Context v3 enables preparation in legacy mode while runtime publication remains gated. Its migration preserves runtime definitions, grants, receipt bytes and authority epochs; the predecessor harness covers uninitialized, legacy AI-on and JWT states. The local browser gate now creates and reads back an immutable draft before cutover, alongside the existing Auth/MFA/membership scenario.
+
 Main feature branch: `codex/admin-control-plane`, based on `main@2783057292cef4ba3889d6bded31ce7863b2270f`. Accepted plan: [implementation plan](admin-control-plane-implementation-plan.md), reviewed SHA `ecba8af39b47f5c84c9486684ed4c106bc4b5f0ab74df76cf5a297a327bcba4f`.
 
 The user authorized implementation, asynchronous development checkpoints in Relay session `6a994932-0c0c-83e8-ba9b-878517117977`, and one economical subagent when useful. Development checkpoints do not consume the final convergence budget. Continue independent implementation while a checkpoint runs; reconcile applicable findings into the same ledger. Final artifact convergence remains a separate, bounded review. Merge into main remains user-owned.

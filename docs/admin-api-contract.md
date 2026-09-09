@@ -18,19 +18,21 @@ All three RPCs below are SECURITY DEFINER, granted only to authenticated; direct
 
 | RPC | Parameters | Return |
 | --- | --- | --- |
-| `admin_get_context_v1` | `p_environment text, p_project_ref text` | `admin_context_v2` |
+| `admin_get_context_v1` | `p_environment text, p_project_ref text` | `admin_context_v3` |
 | `admin_list_records_v1` | environment (ignored ref), `p_section text, p_limit integer=25, p_after text=null, p_search text=null` | `admin_page_v1`, approved section-specific rows |
 | `admin_get_record_v1` | environment/ref, `p_section text, p_id uuid` | approved entity record or not found |
 
 Read sections initially include users, profiles, prices, policies and audit. Provider and analytics sections appear only when their actual catalog/query capabilities ship. Cursor pagination is by immutable ID (audit UUID plus timestamp ordering will use a typed cursor when added); bounded page size 1–100, search at most 100 characters. Reject unknown sections, invalid UUID cursors, unknown query keys and oversized parameters before querying. Other users' email is confined to Users; the signed-in administrator's own email also identifies the current account in Overview. Configuration IDs/aliases belong only to configuration detail; Audit exposes approved public event metadata and typed safe changes. No `select *` JSON serialization or raw ledger/event payload.
 
-The browser contract lives in `web/src/lib/admin/contract.ts`; strict schemas reject extra fields. Environment/control revisions are decimal strings, never lossy JSON bigint numbers. Missing observations are null rather than zero. Feature global limit is calls/day, not currency. A legacy control-plane mode exposes read-only capabilities.
+The browser contract lives in `web/src/lib/admin/contract.ts`; strict schemas reject extra fields. Environment/control revisions are decimal strings, never lossy JSON bigint numbers. Missing observations are null rather than zero. Feature global limit is calls/day, not currency. Context v3 exposes `capabilities.drafts=true` for an authenticated administrator in either mode; `capabilities.writes` remains true only in JWT runtime mode.
 
 ## Mutation kernel (I06/I07)
 
 Each typed mutation has reason, idempotency UUID, expected target revision and its typed payload. The DB computes canonical payload identity. Actor/environment checks plus membership serialization precede the operation lookup; an already committed same-payload operation returns its original result before target state, expected revision, report expiry or original step-up checks. Revoked actor cannot read it. Different payload rejects. Only an absent operation proceeds to lock target/control/candidate, verify current TOTP/evidence/state and atomically commit domain data, audit and operation result. No durable pending/failed row is promised for rolled-back synchronous transactions.
 
-TOTP high-risk authority requires a live session, current verified factor, JWT AAL2 and a recent TOTP AMR timestamp (10 minutes). First enrollment, replacement, factor withdrawal and signout are explicit local Auth test cases. JWT refresh is not reauthentication. One-way emergency disable requires current admin but no step-up. All new mutations remain dark until the separate DB013 privilege cutover.
+TOTP high-risk authority requires a live session, current verified factor, JWT AAL2 and a recent TOTP AMR timestamp (10 minutes). First enrollment, replacement, factor withdrawal and signout are explicit local Auth test cases. JWT refresh is not reauthentication. One-way emergency disable requires current admin but no step-up. Runtime and membership mutations remain gated by the separate authority cutover. Provider defaults, profile identity/version, unsealed price and routing draft creation are available before cutover; they retain actor, input, audit and concurrency checks.
+
+`routing_policy_draft_create` calls `admin_create_routing_policy_draft_v1` with environment/ref, policy key, expected latest version, rules, default profile version, legal bundle, runtime contract, reason and idempotency key. It checks structural/reference validity without readiness reports. Its committed result is `admin_routing_policy_draft_result_v1` with policy ID/key, version, `status=draft` and config hash; its ordinary Admin audit claims no lifecycle evidence. The existing report-bearing `routing_policy_create` operation and replay payload remain unchanged. Stale expected revisions in preparation RPCs raise `CONFLICT` with SQLSTATE `23505`, so PostgREST cannot retry a deterministic application conflict as `40001` serialization failure.
 
 Read-only helpers and mutations take the same membership serialization lock order. AI mutation suffix follows existing config → policy → runtime → profiles ordered by UUID → prices ordered by UUID → quota/ledger. Network operations run outside DB transactions. Apply state/evidence checks again in the new-mutation branch at commit.
 

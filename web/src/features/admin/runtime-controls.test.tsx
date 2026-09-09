@@ -46,7 +46,7 @@ describe("AdminRuntimeControls", () => {
       headers: { "Content-Type": "application/json" },
     }));
     const refresh = vi.fn();
-    render(<AdminRuntimeControls state={state} environment="production" locale="en" accessToken="current-admin-jwt" writesEnabled onRefresh={refresh} t={adminMessages.en} />);
+    render(<AdminRuntimeControls draftsEnabled state={state} environment="production" locale="en" accessToken="current-admin-jwt" writesEnabled onRefresh={refresh} t={adminMessages.en} />);
     const group = screen.getByRole("group", { name: adminMessages.en.disableAi });
     const button = within(group).getByRole("button", { name: adminMessages.en.disableAi });
     expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -67,7 +67,7 @@ describe("AdminRuntimeControls", () => {
   });
 
   it("keeps every runtime operation disabled when authority is dark", () => {
-    render(<AdminRuntimeControls state={{ ...state, writesEnabled: false }} environment="preview" locale="zh" accessToken="token" writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.zh} />);
+    render(<AdminRuntimeControls draftsEnabled state={{ ...state, writesEnabled: false }} environment="preview" locale="zh" accessToken="token" writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.zh} />);
     for (const name of [
       adminMessages.zh.setDailyLimit,
       adminMessages.zh.disableAi,
@@ -81,12 +81,12 @@ describe("AdminRuntimeControls", () => {
     }
   });
 
-  it("validates a runtime target without a deployment admission field", async () => {
+  it("checks a prepared target before runtime writes are enabled", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(
       JSON.stringify({ error: { code: "UNAVAILABLE" } }),
       { status: 503, headers: { "Content-Type": "application/json" } },
     ));
-    render(<AdminRuntimeControls state={state} environment="preview" locale="en" accessToken="current-admin-jwt" writesEnabled onRefresh={vi.fn()} t={adminMessages.en} />);
+    render(<AdminRuntimeControls draftsEnabled state={{ ...state, writesEnabled: false }} environment="preview" locale="en" accessToken="current-admin-jwt" writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
     const group = screen.getByRole("group", { name: adminMessages.en.validationReports });
     fireEvent.change(within(group).getByLabelText(adminMessages.en.runtimeContract), { target: { value: "runtime.deepseek-v2-mimo-v2.5-pro.v2" } });
     fireEvent.change(within(group).getByLabelText(adminMessages.en.targetId), { target: { value: "deepseek.v2.primary" } });
@@ -105,7 +105,7 @@ describe("AdminRuntimeControls", () => {
       JSON.stringify({ error: { code: "UNAVAILABLE" } }),
       { status: 503, headers: { "Content-Type": "application/json" } },
     ));
-    render(<AdminRuntimeControls
+    render(<AdminRuntimeControls draftsEnabled
       state={{ ...state, aiEnabled: false }}
       environment="preview"
       locale="en"

@@ -11,6 +11,7 @@ export const STATIC_AI_DENYLIST = [
   "/api/admin",
   "admin_context_v1",
   "admin_context_v2",
+  "admin_context_v3",
   "admin_page_v1",
   "admin_get_context_v1",
   "Admin Control Plane",
