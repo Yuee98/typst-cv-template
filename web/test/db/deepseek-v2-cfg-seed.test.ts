@@ -58,10 +58,12 @@ describe("CFG-001 successor-compatible membership source", () => {
       "20260908010000_admin_config_validation_simplification.sql",
       "20260908020000_admin_configuration_lifecycle.sql",
       "20260908030000_admin_configuration_audit_reads.sql",
+      "20260909110000_simplify_admin_bootstrap.sql",
     ].map((name) => readFileSync(new URL(`../../../supabase/migrations/${name}`, import.meta.url), "utf8"));
-    const declared = sources.flatMap((source) => [...source.matchAll(/create function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
+    const declared = sources.flatMap((source) => [...source.matchAll(/create(?: or replace)? function public\.([a-z0-9_]+)\s*\(/giu)].map((match) => match[1]));
     const manifest = new Set<string>(NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1.map(([name]) => name));
-    const retired = new Set(["admin_cutover_authority_v1"]);
+    const retired = new Set(["admin_cutover_authority_v1", "admin_bootstrap_v1"]);
+    expect(sources.at(-1)).toContain("drop function public.admin_bootstrap_v1(uuid,text,text,text,text);");
     expect(
       declared
         .filter((name) => !name.startsWith("pg_"))

@@ -39,6 +39,8 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
     ]) {
       runOwnerSql(`begin; select public.admin_bootstrap_v2(${args}); rollback;`, { expectFailure: true });
     }
+    const retired = runOwnerSql("select to_regprocedure('public.admin_bootstrap_v1(uuid,text,text,text,text)') is null as retired;");
+    expect(retired.stdout).toMatch(/\n\s*t\s*\n/u);
     const reason = "Owner's first administrator";
     const bootstrap = `begin; select public.admin_bootstrap_v2(${literal(adminUser.id)},'local',${literal(reason)}); select pg_sleep(0.15); commit;`;
     const concurrent = await Promise.all([startOwnerSql(bootstrap), startOwnerSql(bootstrap)]);

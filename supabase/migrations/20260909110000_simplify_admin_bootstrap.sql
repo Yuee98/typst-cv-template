@@ -2,6 +2,7 @@
 -- Supabase endpoint/key remain deployment configuration. Obsolete identity
 -- columns are historical metadata, never populated or trusted by new callers.
 begin;
+set local search_path='';
 
 -- Serialize with bootstrap and every current Admin read/write before replacing
 -- the authority implementation. A pre-existing JWT authority mismatch aborts
@@ -13,6 +14,29 @@ declare item public.admin_environment%rowtype;
 begin
   select * into item from public.admin_environment where id=true;
   if item.control_plane_mode='jwt_v1' then
+    -- Establish the verifier entry points from the migration-owned catalog
+    -- without executing either one. Otherwise a no-op assertion or cached
+    -- manifest collector could certify its own altered implementation.
+    if exists (
+      select 1
+      from (values
+        ('public.admin_assert_runtime_authority_receipt_v3(text,text)'),
+        ('public.admin_current_runtime_authority_manifest_v3()')
+      ) required(signature)
+      left join public.admin_runtime_authority_expected_v3 expected using(signature)
+      left join pg_catalog.pg_proc proc on proc.oid=pg_catalog.to_regprocedure(required.signature)
+      where expected.signature is null or proc.oid is null
+        or expected.definition_sha256 is distinct from encode(extensions.digest(
+          replace(replace(pg_catalog.pg_get_functiondef(proc.oid),chr(13)||chr(10),chr(10)),chr(13),chr(10)),
+          'sha256'),'hex')
+        or exists (
+          select 1 from pg_catalog.aclexplode(coalesce(proc.proacl,pg_catalog.acldefault('f',proc.proowner))) acl
+          where acl.grantee=0 and acl.privilege_type='EXECUTE'
+        )
+        or pg_catalog.has_function_privilege('anon',proc.oid,'EXECUTE')
+        or pg_catalog.has_function_privilege('authenticated',proc.oid,'EXECUTE') is distinct from expected.authenticated_execute
+        or pg_catalog.has_function_privilege('service_role',proc.oid,'EXECUTE') is distinct from expected.service_role_execute
+    ) then raise exception 'RUNTIME_AUTHORITY_MISMATCH' using errcode='23514'; end if;
     perform public.admin_assert_runtime_authority_receipt_v3(item.environment,item.project_ref);
     insert into pg_temp.admin_bootstrap_upgrade_state values(item.environment);
   end if;
