@@ -26,8 +26,27 @@ const predecessor = `do $$ begin
     raise exception 'Requires an uninitialized local predecessor; never overwrite operator state';
   end if;
 end; $$;`;
+function snapshot() {
+  const result = owner(`select jsonb_build_object(
+    'expected',(select jsonb_agg(to_jsonb(t) order by signature) from public.admin_runtime_authority_expected_v3 t),
+    'receipts',(select jsonb_agg(to_jsonb(t) order by receipt_id) from public.admin_runtime_authority_receipts_v3 t),
+    'environment',(select jsonb_agg(to_jsonb(t)) from public.admin_environment t),
+    'members',(select jsonb_agg(to_jsonb(t) order by user_id) from public.admin_principals t),
+    'features',(select jsonb_agg(to_jsonb(t)) from public.ai_feature_config t),
+    'control',(select jsonb_agg(to_jsonb(t)) from public.admin_ai_control_state_v1 t),
+    'audit',(select jsonb_agg(to_jsonb(t) order by id) from public.admin_audit_events t),
+    'verifiers',(select jsonb_agg(jsonb_build_object('definition',pg_get_functiondef(oid),'acl',proacl::text) order by proname)
+      from pg_proc where oid=any(array[
+        'public.admin_assert_runtime_authority_receipt_v3(text,text)'::regprocedure,
+        'public.admin_current_runtime_authority_manifest_v3()'::regprocedure,
+        'public.admin_assert_reason_v1(text)'::regprocedure]::oid[]))
+  );`);
+  if (result.status !== 0) throw new Error(result.stderr || "Snapshot failed");
+  return result.stdout;
+}
 succeeds(predecessor);
-for (const mode of ["uninitialized", "legacy", "jwt", "tampered-jwt"]) {
+const baseline = snapshot();
+for (const mode of ["uninitialized", "legacy", "jwt", "tampered-jwt", "noop-verifier-jwt", "cached-manifest-jwt"]) {
   const user = randomUUID();
   const setup = `begin;
     insert into auth.users(id,aud,role,email,email_confirmed_at,is_anonymous)
@@ -63,6 +82,8 @@ for (const mode of ["uninitialized", "legacy", "jwt", "tampered-jwt"]) {
       'audit',(select jsonb_agg(to_jsonb(t) order by id) from public.admin_audit_events t)
     ) snapshot;
     create temporary table before_receipts as select receipt_id,to_jsonb(t) snapshot from public.admin_runtime_authority_receipts_v3 t;
+    ${mode === "noop-verifier-jwt" ? `create or replace function public.admin_assert_runtime_authority_receipt_v3(p_environment text,p_project_ref text) returns void language plpgsql security definer set search_path='' as $tampered$ begin null; end; $tampered$;` : ""}
+    ${mode === "cached-manifest-jwt" ? `create or replace function public.admin_current_runtime_authority_manifest_v3() returns jsonb language sql security definer set search_path='' as $tampered$ select authority_manifest from public.admin_runtime_authority_receipts_v3 where environment='local' and authority_scope='jwt_v1' order by authority_epoch desc limit 1; $tampered$;` : ""}
     ${mode === "tampered-jwt" ? `create or replace function public.admin_assert_reason_v1(p_reason text) returns void language plpgsql set search_path='' as $$ begin null; end; $$;` : ""}
   `;
   const checks = `
@@ -91,13 +112,14 @@ for (const mode of ["uninitialized", "legacy", "jwt", "tampered-jwt"]) {
     ` : ""}
     rollback;
   `;
-  const result = owner(setup + body + checks);
-  if (mode === "tampered-jwt") {
+  const result = owner(setup + body + (mode.includes("jwt") && mode !== "jwt" ? "rollback;" : checks));
+  if (mode.includes("jwt") && mode !== "jwt") {
     if (result.status === 0 || !result.stderr.includes("RUNTIME_AUTHORITY_MISMATCH")) {
       throw new Error(result.stderr || "Tampered predecessor was accepted");
     }
   } else if (result.status !== 0) throw new Error(result.stderr || `${mode} upgrade failed`);
   // A failed psql session also rolls back; no candidate or fixture can persist.
   succeeds(predecessor);
+  if (snapshot() !== baseline) throw new Error("Upgrade fixture escaped rollback: " + mode);
   console.log(`Admin bootstrap upgrade: ${mode} passed (rolled back)`);
 }
