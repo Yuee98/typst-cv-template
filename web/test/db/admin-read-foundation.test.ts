@@ -5,6 +5,7 @@ import { createAdminRequestClient } from "@/server/admin/request-client";
 import { handleAdminGet } from "@/server/admin/handler";
 import { createAnonClient, createServiceClient, createTestUser, DB_TEST_ENV, deleteTestUser, RUN_DB_TESTS, signInAsUser, type TestUser } from "./helpers";
 import { runOwnerSql } from "./runtime-contract-fixtures";
+import { prepareAdminBootstrap } from "../../scripts/prepare-admin-bootstrap.mjs";
 
 const base = { p_environment: "local", p_project_ref: "local" };
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -32,8 +33,15 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
     if (!["localhost", "127.0.0.1"].includes(issuer.hostname) || issuer.protocol !== "http:") throw new Error("Local Auth issuer required");
     const exists = runOwnerSql("select count(*) from public.admin_environment;").stdout.match(/\n\s*(\d+)\s*\n/)?.[1];
     if (exists !== "0") throw new Error("Admin tests require an uninitialized local Admin environment; never overwrite operator state");
-    runOwnerSql(`select public.admin_bootstrap_v1(${literal(adminUser.id)},'local','local',${literal(claims.iss)},'local DB test bootstrap');`);
+    const reason = "Owner's \\bootstrap'); select 1; --";
+    runOwnerSql("set standard_conforming_strings=off;\n" + prepareAdminBootstrap({ userId: adminUser.id, environment: "local", reason }, {
+      ADMIN_ENVIRONMENT: "local", NEXT_PUBLIC_SUPABASE_URL: issuer.origin,
+    }));
     ownsEnvironment = true;
+    // The generated SQL must preserve user input as data, independently of
+    // SQL string settings, while the existing DB-owner guard still owns writes.
+    const audit = runOwnerSql(`select reason=${literal(reason)} as reason_matches from public.admin_audit_events where operation='admin_bootstrap' and target_id=${literal(adminUser.id)};`);
+    expect(audit.stdout).toMatch(/\n\s*t\s*\n/u);
   });
 
   afterAll(async () => {
