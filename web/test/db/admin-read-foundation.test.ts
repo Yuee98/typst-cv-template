@@ -31,11 +31,13 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
     sessionId = claims.session_id;
     const issuer = new URL(claims.iss);
     if (!["localhost", "127.0.0.1"].includes(issuer.hostname) || issuer.protocol !== "http:") throw new Error("Local Auth issuer required");
+    expect(claims.iss).toBe("http://127.0.0.1:54321/auth/v1");
     const exists = runOwnerSql("select count(*) from public.admin_environment;").stdout.match(/\n\s*(\d+)\s*\n/)?.[1];
     if (exists !== "0") throw new Error("Admin tests require an uninitialized local Admin environment; never overwrite operator state");
     const reason = "Owner's \\bootstrap'); select 1; --";
     runOwnerSql("set standard_conforming_strings=off;\n" + prepareAdminBootstrap({ userId: adminUser.id, environment: "local", reason }, {
-      ADMIN_ENVIRONMENT: "local", NEXT_PUBLIC_SUPABASE_URL: issuer.origin,
+      // API alias deliberately differs from the actual signed token issuer.
+      ADMIN_ENVIRONMENT: "local", NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321",
     }));
     ownsEnvironment = true;
     // The generated SQL must preserve user input as data, independently of
