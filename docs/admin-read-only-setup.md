@@ -41,7 +41,7 @@ select user_id, revoked_at, revision from public.admin_principals;
 commit;
 ```
 
-Local identity is `local` / `local` and its exact Auth issuer (normally `http://127.0.0.1:54321/auth/v1`). Bootstrap is executable only through a direct database-owner connection and refuses any prior membership. It is not exposed as a service-role or browser bootstrap. Recovery after a lost account remains a direct, separately reviewed DB operator action; there is no automatic takeover.
+Local identity is `local` / `local`. The helper targets this repository's standard local Supabase stack, whose Auth issuer is `http://127.0.0.1:54321/auth/v1`, even when the client API URL uses `localhost`. A custom stack with an overridden Auth issuer must use the direct owner SQL form with its actual issuer; do not use the helper for that configuration. The generated readback includes the stored issuer. Bootstrap is executable only through a direct database-owner connection and refuses any prior membership. It is not exposed as a service-role or browser bootstrap. Recovery after a lost account remains a direct, separately reviewed DB operator action; there is no automatic takeover.
 
 Sign in at the Admin page with the existing email/password or GitHub account. Reads require a confirmed account, current active membership and live session. Revoking membership or banning the Auth account invalidates reads even with an unexpired JWT. Membership prevents cascading Auth deletion. This release exposes Overview, Users, Profiles, Pricing, Routing Policies and Audit as read-only. AI being disabled does not disable Admin access.
 

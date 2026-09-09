@@ -31,12 +31,12 @@ describe("owner bootstrap SQL preparation", () => {
     expect(sql).toContain("commit;");
   });
 
-  it.each(["127.0.0.1", "localhost"])("preserves the %s local Auth issuer", (host) => {
+  it.each(["127.0.0.1", "localhost"])("uses the canonical local Auth issuer with API host %s", (host) => {
     const sql = prepareAdminBootstrap({ ...input, environment: "local" }, {
       ADMIN_ENVIRONMENT: "local", NEXT_PUBLIC_SUPABASE_URL: `http://${host}:54321/`,
     });
     expect(sql).toContain("p_project_ref := E'local'");
-    expect(sql).toContain(`p_auth_issuer := E'http://${host}:54321/auth/v1'`);
+    expect(sql).toContain("p_auth_issuer := E'http://127.0.0.1:54321/auth/v1'");
   });
 
   it("escapes quotes and backslashes in the reason as one SQL literal", () => {

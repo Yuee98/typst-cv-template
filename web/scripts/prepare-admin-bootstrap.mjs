@@ -54,7 +54,11 @@ export function prepareAdminBootstrap({ userId, environment, reason }, env) {
   }
 
   const projectRef = environment === "local" ? "local" : hosted[1];
-  const authIssuer = `${url.origin}/auth/v1`;
+  // This repository's standard local Supabase stack issues tokens using
+  // 127.0.0.1, even when its API is accessed through the localhost alias.
+  const authIssuer = environment === "local"
+    ? "http://127.0.0.1:54321/auth/v1"
+    : `${url.origin}/auth/v1`;
   return `-- First administrator initialization; execute as database owner.
 -- Target environment: ${environment}; project: ${projectRef}
 -- Supabase URL: ${url.origin}
@@ -69,7 +73,7 @@ select public.admin_bootstrap_v1(
   p_reason := ${literal(reason)}
 );
 
-select environment, project_ref, control_plane_mode, revision
+select environment, project_ref, auth_issuer, control_plane_mode, revision
 from public.admin_environment;
 select user_id, revoked_at, revision from public.admin_principals;
 
