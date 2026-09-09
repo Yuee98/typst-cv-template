@@ -97,6 +97,67 @@ test("creates an immutable draft while legacy AI is enabled", async ({ page }) =
   });
 });
 
+test("prepares a new identity, its first version and its first price through the UI", async ({ page }) => {
+  await withLegacyDraftPreparation(async () => {
+    await login(page, E2E_USERS.admin);
+    await page.goto("/en/admin/providers/706513a5-462b-4bba-93b0-53e50661416e");
+    const panel = (name: string) => page.locator("section").filter({ has: page.getByRole("heading", { name, exact: true }) });
+    const submit = async (form: ReturnType<typeof panel>, name = "Create version") => {
+      const response = page.waitForResponse(res => res.url().endsWith("/api/admin") && res.request().method() === "POST");
+      await form.getByRole("button", { name, exact: true }).click();
+      const result = await response;
+      expect(result.status()).toBe(200);
+      return result.json();
+    };
+    const identity = panel("Create profile identity");
+    await identity.getByPlaceholder("Profile key", { exact: true }).fill(`test.ui.first.${Date.now()}`);
+    await identity.getByPlaceholder("Display name", { exact: true }).fill("New draft identity");
+    await identity.getByPlaceholder("Model", { exact: true }).fill("deepseek");
+    await identity.getByPlaceholder("Reason", { exact: true }).fill("prepare new identity");
+    const createdIdentity = await submit(identity, "Create profile identity");
+    const profileId = createdIdentity.result.profileId;
+    await expect(page.getByLabel("Profile ID", { exact: true })).toHaveValue(profileId);
+    // The same first-version entry can be resumed after a reload using this ID.
+    await page.reload();
+    await page.getByLabel("Profile ID", { exact: true }).fill(profileId);
+    await panel("Prepare a profile's first version").getByRole("button", { name: "Apply", exact: true }).click();
+    const version = panel("Create first profile version");
+    await version.getByPlaceholder("Model", { exact: true }).fill("prepared-new-model");
+    await version.getByPlaceholder("Credential env", { exact: true }).fill("AI_PROVIDER_KEY_DRAFT_E2E_NOT_CONFIGURED");
+    await version.getByPlaceholder("Capability contract", { exact: true }).fill("deepseek_chat_json_object_v1");
+    await version.getByPlaceholder("Cache policy", { exact: true }).fill("deepseek_automatic_context_cache_v1");
+    await version.getByPlaceholder("Legal manifest", { exact: true }).fill("deepseek-official-2026-08-23-v1");
+    await version.getByPlaceholder("Disclosure", { exact: true }).fill("draft.ui.future");
+    await version.getByLabel("Adapter configuration (JSON)").fill(JSON.stringify({ thinking: "disabled", structuredOutput: "json_object", providerSubjectField: "user_id" }));
+    await version.getByPlaceholder("Reason", { exact: true }).fill("first version from new identity");
+    const createdVersion = await submit(version);
+    expect(createdVersion.result).toMatchObject({ profileId, version: 1, status: "draft" });
+    const profileVersionId = createdVersion.result.profileVersionId;
+    const price = panel("Create first price for this version");
+    await expect(price.getByText(`Profile version ID: ${profileVersionId}`, { exact: true })).toBeVisible();
+    await version.getByPlaceholder("Reason", { exact: true }).fill("prepare another version later");
+    await expect(price.getByText(`Profile version ID: ${profileVersionId}`, { exact: true })).toBeVisible();
+    await price.getByLabel("Pricing lane", { exact: true }).fill("default");
+    await price.getByPlaceholder("sourceUrl", { exact: true }).fill("https://example.test/prepared-price");
+    await price.getByPlaceholder("sourceSnapshotSha256", { exact: true }).fill("a".repeat(64));
+    await price.getByLabel("Price components (JSON)").fill(JSON.stringify({ input_standard: "100", input_cache_read: "10", output: "200" }));
+    await price.getByPlaceholder("Reason", { exact: true }).fill("first price for new version");
+    const createdPrice = await submit(price);
+    expect(createdPrice.result).toMatchObject({ profileVersionId, pricingLane: "default", version: 1, sealed: false });
+    ownerSql(`do $ownership$ begin
+      if not exists(select 1 from public.ai_price_versions price join public.ai_provider_profile_versions profile on profile.id=price.profile_version_id
+        where price.id=${sql(createdPrice.result.priceVersionId)}::uuid and profile.id=${sql(profileVersionId)}::uuid
+          and profile.profile_id=${sql(profileId)}::uuid and profile.status='draft' and price.components_sealed_at is null)
+        then raise exception 'Wrong first-price ownership'; end if;
+      end $ownership$;`);
+    await page.goto(`/en/admin/prices/${createdPrice.result.priceVersionId}`);
+    await expect(page.getByText(profileVersionId, { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Seal price for activation", exact: true })).toBeDisabled();
+    await page.goto(`/en/admin/audit/${createdPrice.auditId}`);
+    await expect(page.getByText("first price for new version", { exact: true })).toBeVisible();
+  });
+});
+
 test("local Supabase Auth, MFA step-up, membership operation and revocation", async ({ page, browser }) => {
   const ordinary = await browser.newContext();
   const ordinaryPage = await ordinary.newPage();

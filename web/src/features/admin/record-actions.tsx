@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import {
   adminCommittedOperationSchema,
   adminErrorSchema,
+  type AdminCommittedOperation,
   type AdminMutationRequest,
   type AdminRecordSection,
 } from "@/lib/admin/contract";
@@ -49,17 +50,14 @@ function parseIds(value: string) {
 function useAdminMutation(
   accessToken: string,
   t: AdminMessages,
-  onCommitted: () => void,
+  onCommitted: (operation: AdminCommittedOperation) => void,
 ) {
   const [idempotencyKey, setIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [committed, setCommitted] = useState<{
-    operationId: string;
-    auditId: string;
-  } | null>(null);
+  const [committed, setCommitted] = useState<AdminCommittedOperation | null>(null);
   function changed() {
     setIdempotencyKey(crypto.randomUUID());
     setCommitted(null);
@@ -100,11 +98,8 @@ function useAdminMutation(
         setError(t.schemaError);
         return;
       }
-      setCommitted({
-        operationId: parsed.data.operationId,
-        auditId: parsed.data.auditId,
-      });
-      onCommitted();
+      setCommitted(parsed.data);
+      onCommitted(parsed.data);
     } catch {
       // Retain the idempotency key so a response-loss retry is safe.
       setError(t.retryOriginal);
@@ -120,7 +115,7 @@ function Result({
   error,
   t,
 }: {
-  committed: { operationId: string; auditId: string } | null;
+  committed: AdminCommittedOperation | null;
   error: string | null;
   t: AdminMessages;
 }) {
@@ -136,6 +131,9 @@ function Result({
           <p className="mt-1 break-all text-foreground-muted">
             {t.auditId}: {committed.auditId}
           </p>
+          {committed.result.schemaVersion === "admin_profile_identity_result_v1" && <p className="mt-1 break-all">{t.profileId}: {committed.result.profileId}</p>}
+          {committed.result.schemaVersion === "admin_profile_version_result_v1" && <p className="mt-1 break-all">{t.profileVersionId}: {committed.result.profileVersionId}</p>}
+          {committed.result.schemaVersion === "admin_price_version_result_v1" && <p className="mt-1 break-all">{t.priceVersionId}: {committed.result.priceVersionId}</p>}
         </div>
       )}
     </>
@@ -216,7 +214,15 @@ type ProviderDraft = {
 function ProviderActions(props: CommonProps) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
   const defaults = useAdminMutation(accessToken, t, onRefresh);
-  const identity = useAdminMutation(accessToken, t, onRefresh);
+  const [profileIdInput, setProfileIdInput] = useState("");
+  const [firstProfileId, setFirstProfileId] = useState("");
+  const identity = useAdminMutation(accessToken, t, (operation) => {
+    if (operation.result.schemaVersion === "admin_profile_identity_result_v1") {
+      setProfileIdInput(operation.result.profileId);
+      setFirstProfileId(operation.result.profileId);
+    }
+    onRefresh();
+  });
   const [reason, setReason] = useState("");
   const [draft, setDraft] = useState<ProviderDraft>({
     displayName: text(row, "displayName"),
@@ -262,7 +268,7 @@ function ProviderActions(props: CommonProps) {
         })}>{t.saveDefaults}</Button>
         <Result {...defaults} t={t} />
       </Panel>
-      <Panel title={t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
+      <Panel title={t.createProfileIdentity} writesEnabled={draftsEnabled} t={t}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Input value={profile.profileKey} placeholder={t.profileKey} onChange={(event) => { setProfile({ ...profile, profileKey: event.target.value }); identity.changed(); }} />
           <Input value={profile.displayName} placeholder={t.displayName} onChange={(event) => { setProfile({ ...profile, displayName: event.target.value }); identity.changed(); }} />
@@ -273,16 +279,42 @@ function ProviderActions(props: CommonProps) {
           operation: "provider_profile_create",
           providerId: text(row, "id"),
           ...profile,
-        })}>{t.createSuccessor}</Button>
+        })}>{t.createProfileIdentity}</Button>
         <Result {...identity} t={t} />
       </Panel>
+      <Panel title={t.prepareFirstVersion} writesEnabled={draftsEnabled} t={t}>
+        <p className="text-sm text-foreground-muted">{t.firstVersionHint}</p>
+        <Input aria-label={t.profileId} value={profileIdInput} onChange={(event) => setProfileIdInput(event.target.value)} />
+        <Button disabled={!profileIdInput.trim()} onClick={() => setFirstProfileId(profileIdInput.trim())}>{t.apply}</Button>
+      </Panel>
+      {firstProfileId && <ProfileAction
+        {...props}
+        key={firstProfileId}
+        first
+        row={{
+          profileId: firstProfileId, latestVersion: "0", adapterOptions: adapters,
+          suggestedAdapterId: row.defaultAdapterId,
+          wireApiKind: adapters.find(adapter => adapter.adapterId === row.defaultAdapterId)?.wireApiKind,
+          suggestedEndpointUrl: row.defaultEndpointUrl,
+          suggestedCredentialEnvName: row.defaultCredentialEnvName,
+          suggestedModelId: row.defaultModelId,
+        }}
+      />}
     </div>
   );
 }
 
-function ProfileAction(props: CommonProps) {
+function ProfileAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
-  const mutation = useAdminMutation(accessToken, t, onRefresh);
+  const sourceId = text(row, "id") || text(row, "profileId");
+  const [createdVersion, setCreatedVersion] = useState<{ sourceId: string; versionId: string } | null>(null);
+  const priceTargetId = createdVersion?.sourceId === sourceId ? createdVersion.versionId : text(row, "id");
+  const mutation = useAdminMutation(accessToken, t, (operation) => {
+    if (operation.result.schemaVersion === "admin_profile_version_result_v1") {
+      setCreatedVersion({ sourceId, versionId: operation.result.profileVersionId });
+    }
+    onRefresh();
+  });
   const adapters = Array.isArray(row.adapterOptions)
     ? (row.adapterOptions as Array<Record<string, unknown>>)
     : [];
@@ -305,7 +337,8 @@ function ProfileAction(props: CommonProps) {
   };
   return (
     <div className="space-y-4">
-    <Panel title={t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
+    <Panel title={first ? t.firstVersion : t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
+      <p className="break-all text-sm">{t.profileId}: {text(row, "profileId")}</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <select className="rounded border border-border bg-background px-3 py-2 text-sm" value={draft.adapterId} onChange={(event) => {
           const adapter = adapters.find((item) => item.adapterId === event.target.value);
@@ -321,7 +354,7 @@ function ProfileAction(props: CommonProps) {
         <Input value={draft.legalManifestId} placeholder={t.legalManifest} onChange={(event) => update("legalManifestId", event.target.value)} />
         <Input value={draft.displayDisclosureKey} placeholder={t.displayDisclosure} onChange={(event) => update("displayDisclosureKey", event.target.value)} />
       </div>
-      <textarea className="min-h-36 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.config} onChange={(event) => update("config", event.target.value)} />
+      <textarea aria-label={t.profileConfig} className="min-h-36 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.config} onChange={(event) => update("config", event.target.value)} />
       <Input value={draft.reason} maxLength={500} placeholder={t.mutationReason} onChange={(event) => update("reason", event.target.value)} />
       <Button disabled={mutation.busy || !draft.reason} onClick={() => {
         try {
@@ -330,7 +363,7 @@ function ProfileAction(props: CommonProps) {
           void mutation.run({
             operation: "profile_version_create",
             profileId: text(row, "profileId"),
-            expectedLatestVersion: revision(row, "latestVersion"),
+            expectedLatestVersion: first ? "0" : revision(row, "latestVersion"),
             adapterId: draft.adapterId,
             wireApiKind: draft.wireApiKind as "chat_completions_v1" | "responses_v1",
             endpointUrl: draft.endpointUrl,
@@ -349,15 +382,25 @@ function ProfileAction(props: CommonProps) {
       }}>{t.createSuccessor}</Button>
       <Result {...mutation} t={t} />
     </Panel>
-    <ProfileLifecycle {...props} />
+    {!first && <ProfileLifecycle {...props} />}
+    {priceTargetId && <PriceAction
+      {...props}
+      first
+      key={priceTargetId}
+      row={{
+        profileVersionId: priceTargetId,
+        pricingLane: "default", latestVersion: "0", currency: "CNY", calculatorKind: "linear_token_v1",
+      }}
+    />}
     </div>
   );
 }
 
-function PriceAction(props: CommonProps) {
+function PriceAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
   const mutation = useAdminMutation(accessToken, t, onRefresh);
   const [draft, setDraft] = useState({
+    pricingLane: text(row, "pricingLane"),
     currency: text(row, "currency"),
     calculatorKind: text(row, "calculatorKind"),
     validFrom: new Date().toISOString(),
@@ -377,22 +420,27 @@ function PriceAction(props: CommonProps) {
   };
   return (
     <div className="space-y-4">
-    <Panel title={t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
+    <Panel title={first ? t.firstPrice : t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
+      <p className="break-all text-sm">{t.profileVersionId}: {text(row, "profileVersionId")}</p>
+      {first && <>
+        <p className="text-sm text-foreground-muted">{t.firstPriceHint}</p>
+        <Input aria-label={t.pricingLane} value={draft.pricingLane} onChange={(event) => update("pricingLane", event.target.value)} />
+      </>}
       <div className="grid gap-3 sm:grid-cols-2">
         {(["currency", "calculatorKind", "validFrom", "validTo", "providerEffectiveFrom", "providerEffectiveTo", "sourceUrl", "sourceCheckedAt", "sourceSnapshotSha256"] as const).map((key) => (
           <Input key={key} value={draft[key]} placeholder={key} onChange={(event) => update(key, event.target.value)} />
         ))}
       </div>
-      <textarea className="min-h-28 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.parameters} onChange={(event) => update("parameters", event.target.value)} />
-      <textarea className="min-h-28 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.components} onChange={(event) => update("components", event.target.value)} />
+      <textarea aria-label={t.priceParameters} className="min-h-28 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.parameters} onChange={(event) => update("parameters", event.target.value)} />
+      <textarea aria-label={t.priceComponents} className="min-h-28 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.components} onChange={(event) => update("components", event.target.value)} />
       <Input value={draft.reason} placeholder={t.mutationReason} onChange={(event) => update("reason", event.target.value)} />
       <Button disabled={mutation.busy || !draft.reason} onClick={() => {
         try {
           void mutation.run({
             operation: "price_version_create",
             profileVersionId: text(row, "profileVersionId"),
-            pricingLane: text(row, "pricingLane"),
-            expectedLatestVersion: revision(row, "latestVersion"),
+            pricingLane: first ? draft.pricingLane : text(row, "pricingLane"),
+            expectedLatestVersion: first ? "0" : revision(row, "latestVersion"),
             currency: draft.currency,
             calculatorKind: draft.calculatorKind as "linear_token_v1" | "openai_gpt56_v1",
             validFrom: draft.validFrom,
@@ -412,7 +460,7 @@ function PriceAction(props: CommonProps) {
       }}>{t.createSuccessor}</Button>
       <Result {...mutation} t={t} />
     </Panel>
-    <PriceLifecycle {...props} />
+    {!first && <PriceLifecycle {...props} />}
     </div>
   );
 }
