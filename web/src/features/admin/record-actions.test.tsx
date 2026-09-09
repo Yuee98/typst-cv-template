@@ -32,9 +32,77 @@ afterEach(() => {
 });
 
 describe("AdminRecordActions", () => {
+  const newProfileId = "55555555-5555-4555-8555-555555555555";
+  const newVersionId = "66666666-6666-4666-8666-666666666666";
+  const provider = {
+    id: user.id, defaultAdapterId: "deepseek_chat_v1", defaultEndpointUrl: "https://api.deepseek.com/chat/completions",
+    defaultCredentialEnvName: "AI_PROVIDER_KEY_FUTURE", defaultModelId: "future-model",
+    adapterOptions: [{ adapterId: "deepseek_chat_v1", displayName: "DeepSeek Chat", wireApiKind: "chat_completions_v1" }],
+  };
+  const panel = (name: string) => within(screen.getByRole("heading", { name }).closest("section")!);
+  const response = (result: Record<string, unknown>) => new Response(JSON.stringify({ ...committed, result }), { status: 200 });
+  const versionResult = { schemaVersion: "admin_profile_version_result_v1", profileVersionId: newVersionId, profileId: newProfileId, version: 1, status: "draft", configSha256: "a".repeat(64) };
+
+  it("hands a new identity to its first version and that version to its first price", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(response({ schemaVersion: "admin_profile_identity_result_v1", profileId: newProfileId, profileKey: "new.profile", providerId: provider.id }))
+      .mockResolvedValueOnce(response(versionResult))
+      .mockResolvedValueOnce(response({ schemaVersion: "admin_price_version_result_v1", priceVersionId: user.id, profileVersionId: newVersionId, pricingLane: "future", version: 1, sealed: false }));
+    const refresh = vi.fn();
+    render(<AdminRecordActions section="providers" row={provider} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={refresh} t={adminMessages.en} />);
+    const identity = panel(adminMessages.en.createProfileIdentity);
+    fireEvent.change(identity.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "create identity" } });
+    fireEvent.click(identity.getByRole("button", { name: adminMessages.en.createProfileIdentity }));
+    await screen.findByRole("heading", { name: adminMessages.en.firstVersion });
+    expect(screen.getByLabelText(adminMessages.en.profileId)).toHaveProperty("value", newProfileId);
+    const version = panel(adminMessages.en.firstVersion);
+    fireEvent.change(version.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "first version" } });
+    fireEvent.click(version.getByRole("button", { name: adminMessages.en.createSuccessor }));
+    await screen.findByRole("heading", { name: adminMessages.en.firstPrice });
+    const price = panel(adminMessages.en.firstPrice);
+    expect(price.getByText(new RegExp(newVersionId))).toBeTruthy();
+    fireEvent.change(price.getByLabelText(adminMessages.en.pricingLane), { target: { value: "future" } });
+    fireEvent.change(price.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "first price" } });
+    fireEvent.click(price.getByRole("button", { name: adminMessages.en.createSuccessor }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(3));
+    const bodies = vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[1]).toMatchObject({ operation: "profile_version_create", profileId: newProfileId, expectedLatestVersion: "0", adapterId: "deepseek_chat_v1", wireApiKind: "chat_completions_v1", endpointUrl: provider.defaultEndpointUrl });
+    expect(bodies[2]).toMatchObject({ operation: "price_version_create", profileVersionId: newVersionId, pricingLane: "future", expectedLatestVersion: "0" });
+    expect(price.getByText(new RegExp(`${adminMessages.en.priceVersionId}: ${user.id}`))).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: adminMessages.en.transitionStatus })).toBeNull();
+    expect(screen.queryByRole("heading", { name: adminMessages.en.sealPrice })).toBeNull();
+  });
+
+  it("resumes a zero-version identity using its stable Profile ID", async () => {
+    vi.mocked(fetch).mockResolvedValue(response(versionResult));
+    render(<AdminRecordActions section="providers" row={provider} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
+    fireEvent.change(screen.getByLabelText(adminMessages.en.profileId), { target: { value: newProfileId } });
+    fireEvent.click(panel(adminMessages.en.prepareFirstVersion).getByRole("button", { name: adminMessages.en.apply }));
+    const version = panel(adminMessages.en.firstVersion);
+    fireEvent.change(version.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "resume" } });
+    fireEvent.click(version.getByRole("button", { name: adminMessages.en.createSuccessor }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toMatchObject({ profileId: newProfileId, expectedLatestVersion: "0" });
+  });
+
+  it("moves first-price preparation from the opened version to a newly created successor", async () => {
+    vi.mocked(fetch).mockResolvedValue(response({ ...versionResult, version: 2 }));
+    render(<AdminRecordActions section="profiles" row={{ id: user.id, profileId: newProfileId, latestVersion: "1" }} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
+    expect(panel(adminMessages.en.firstPrice).getByText(new RegExp(user.id))).toBeTruthy();
+    fireEvent.change(panel(adminMessages.en.firstPrice).getByLabelText(adminMessages.en.pricingLane), { target: { value: "old-form" } });
+    const version = panel(adminMessages.en.createSuccessor);
+    fireEvent.change(version.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "successor" } });
+    fireEvent.click(version.getByRole("button", { name: adminMessages.en.createSuccessor }));
+    await waitFor(() => expect(panel(adminMessages.en.firstPrice).getByText(new RegExp(newVersionId))).toBeTruthy());
+    expect(panel(adminMessages.en.firstPrice).getByLabelText(adminMessages.en.pricingLane)).toHaveProperty("value", "default");
+    fireEvent.change(version.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "prepare another version" } });
+    expect(panel(adminMessages.en.firstPrice).getByText(new RegExp(newVersionId))).toBeTruthy();
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toMatchObject({ profileId: newProfileId, expectedLatestVersion: "1" });
+  });
+
   it.each(["providers", "profiles", "prices", "policies"] as const)("enables %s preparation while runtime writes remain disabled", section => {
     render(<AdminRecordActions section={section} row={{}} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
-    const create = screen.getByRole("heading", { name: adminMessages.en.createSuccessor }).closest("section")!;
+    const create = screen.getByRole("heading", { name: section === "providers" ? adminMessages.en.createProfileIdentity : adminMessages.en.createSuccessor }).closest("section")!;
     expect(create.querySelector("fieldset")!.disabled).toBe(false);
     if (section !== "providers") {
       const lifecycle = screen.getByRole("heading", { name: section === "prices" ? adminMessages.en.sealPrice : adminMessages.en.transitionStatus }).closest("section")!;

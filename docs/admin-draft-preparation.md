@@ -8,6 +8,8 @@ After first-admin bootstrap, an administrator can prepare configuration while AI
 
 The interface distinguishes **Draft preparation available** from **Runtime changes enabled**. Each operation uses the relevant capability; the interface no longer describes the whole Admin application as read-only merely because runtime cutover has not happened.
 
+Provider detail retains the created Profile ID and opens its first-version form with an expected prior version of zero. To resume after leaving the page, enter the identity's ID from its creation result or Audit. A Profile-version detail, or a newly created version's result, provides a first-price form bound to that exact version. New lanes start with expected prior version zero; existing prices retain their separate successor workflow in Pricing. These entries reuse the existing creation RPCs and do not alter any active price or runtime selection.
+
 | Operation | Available before runtime cutover | Persisted effect |
 | --- | --- | --- |
 | Edit Provider defaults | Yes | Changes defaults for future versions; frozen execution fields remain unchanged |
