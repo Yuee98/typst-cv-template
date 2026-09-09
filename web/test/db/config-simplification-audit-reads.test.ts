@@ -76,7 +76,7 @@ describe.skipIf(!RUN_DB_TESTS)(
       );
       expect(report.error).toBeNull();
       expect(report.data).toMatchObject({
-        schemaVersion: "admin_config_validation_report_v2",
+        schemaVersion: "admin_config_validation_report_v3",
         passed: true,
       });
       return (report.data as { reportId: string }).reportId;
@@ -91,11 +91,6 @@ describe.skipIf(!RUN_DB_TESTS)(
       );
       admin = await signInAsUser(adminUser);
       const ordinary = await signInAsUser(ordinaryUser);
-      const initialToken = (await admin.auth.getSession()).data.session!
-        .access_token;
-      const initialClaims = JSON.parse(
-        Buffer.from(initialToken.split(".")[1], "base64url").toString(),
-      ) as { iss: string };
       ordinaryClaims = Buffer.from(
         (await ordinary.auth.getSession()).data.session!.access_token.split(".")[1],
         "base64url",
@@ -105,7 +100,7 @@ describe.skipIf(!RUN_DB_TESTS)(
       ).stdout.match(/\n\s*(\d+)\s*\n/u)?.[1];
       expect(environments).toBe("0");
       runOwnerSql(
-        `select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(initialClaims.iss)},'CFG-005 audit read bootstrap');`,
+        `select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 audit read bootstrap');`,
       );
       ownsEnvironment = true;
 

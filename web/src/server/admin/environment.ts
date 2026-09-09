@@ -3,7 +3,6 @@ import { adminEnvironmentSchema } from "@/lib/admin/contract";
 
 export interface AdminEnvironment {
   name: "local" | "preview" | "production";
-  projectRef: string;
   supabaseUrl: string;
   publishableKey: string;
 }
@@ -41,7 +40,6 @@ export function resolveAdminEnvironment(
   }
   return {
     name,
-    projectRef: local ? "local" : hosted![1],
     supabaseUrl: url.origin,
     publishableKey,
   };

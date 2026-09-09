@@ -175,7 +175,6 @@ export type PolishAdapterResolverV2 = (
 export interface PolishRouteDepsV2 {
   readonly runtimeEnvironment?: Readonly<{
     environment: string;
-    projectRef: string;
   }>;
   readonly reserve: (
     params: Parameters<typeof reservePolishRequestV2>[1],

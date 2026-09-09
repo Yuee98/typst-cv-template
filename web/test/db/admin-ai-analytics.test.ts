@@ -13,7 +13,7 @@ import {
 import { runOwnerSql } from "./runtime-contract-fixtures";
 
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
-const base = { p_environment: "local", p_project_ref: "local" };
+const base = { p_environment: "local", p_project_ref: null };
 
 describe.skipIf(!RUN_DB_TESTS)("Admin analytics projection", () => {
   let service: SupabaseClient;
@@ -31,11 +31,6 @@ describe.skipIf(!RUN_DB_TESTS)("Admin analytics projection", () => {
     ordinaryUser = await createTestUser(service, "analytics-ordinary");
     admin = await signInAsUser(adminUser);
     ordinary = await signInAsUser(ordinaryUser);
-    const token = (await admin.auth.getSession()).data.session?.access_token;
-    if (!token) throw new Error("analytics admin session missing");
-    const claims = JSON.parse(
-      Buffer.from(token.split(".")[1], "base64url").toString(),
-    ) as { iss?: string };
     const exists = runOwnerSql(
       "select count(*) from public.admin_environment;",
     ).stdout.match(/\n\s*(\d+)\s*\n/)?.[1];
@@ -43,7 +38,7 @@ describe.skipIf(!RUN_DB_TESTS)("Admin analytics projection", () => {
       throw new Error("analytics test requires an uninitialized admin environment");
     }
     runOwnerSql(
-      `select public.admin_bootstrap_v1(${literal(adminUser.id)},'local','local',${literal(claims.iss ?? "")},'analytics test bootstrap');`,
+      `select public.admin_bootstrap_v2(${literal(adminUser.id)},'local','analytics test bootstrap');`,
     );
     ownsEnvironment = true;
     runOwnerSql(String.raw`
@@ -225,7 +220,7 @@ describe.skipIf(!RUN_DB_TESTS)("Admin analytics projection", () => {
     })).error?.code).toBe("42501");
     expect((await admin.rpc("admin_get_ai_analytics_v1", {
       p_environment: "preview",
-      p_project_ref: "local",
+      p_project_ref: null,
       p_from: new Date(to.getTime() - 86_400_000).toISOString(),
       p_to: to.toISOString(),
     })).error?.message).toBe("ENVIRONMENT_MISMATCH");

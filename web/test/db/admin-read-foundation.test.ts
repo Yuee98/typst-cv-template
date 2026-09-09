@@ -4,10 +4,9 @@ import { adminAnalyticsSchema, adminContextSchema, adminPageSchema } from "@/lib
 import { createAdminRequestClient } from "@/server/admin/request-client";
 import { handleAdminGet } from "@/server/admin/handler";
 import { createAnonClient, createServiceClient, createTestUser, DB_TEST_ENV, deleteTestUser, RUN_DB_TESTS, signInAsUser, type TestUser } from "./helpers";
-import { runOwnerSql } from "./runtime-contract-fixtures";
-import { prepareAdminBootstrap } from "../../scripts/prepare-admin-bootstrap.mjs";
+import { runOwnerSql, startOwnerSql } from "./runtime-contract-fixtures";
 
-const base = { p_environment: "local", p_project_ref: "local" };
+const base = { p_environment: "local", p_project_ref: null };
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", () => {
@@ -29,21 +28,39 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
     token = (await admin.auth.getSession()).data.session!.access_token;
     const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
     sessionId = claims.session_id;
-    const issuer = new URL(claims.iss);
-    if (!["localhost", "127.0.0.1"].includes(issuer.hostname) || issuer.protocol !== "http:") throw new Error("Local Auth issuer required");
-    expect(claims.iss).toBe("http://127.0.0.1:54321/auth/v1");
     const exists = runOwnerSql("select count(*) from public.admin_environment;").stdout.match(/\n\s*(\d+)\s*\n/)?.[1];
     if (exists !== "0") throw new Error("Admin tests require an uninitialized local Admin environment; never overwrite operator state");
-    const reason = "Owner's \\bootstrap'); select 1; --";
-    runOwnerSql("set standard_conforming_strings=off;\n" + prepareAdminBootstrap({ userId: adminUser.id, environment: "local", reason }, {
-      // API alias deliberately differs from the actual signed token issuer.
-      ADMIN_ENVIRONMENT: "local", NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321",
-    }));
-    ownsEnvironment = true;
-    // The generated SQL must preserve user input as data, independently of
-    // SQL string settings, while the existing DB-owner guard still owns writes.
+    for (const args of [
+      "null,'local','invalid user'",
+      `${literal(adminUser.id)},null,'invalid environment'`,
+      `${literal(adminUser.id)},'staging','invalid environment'`,
+      `${literal(adminUser.id)},'local',null`,
+      `${literal(adminUser.id)},'local','   '`,
+    ]) {
+      runOwnerSql(`begin; select public.admin_bootstrap_v2(${args}); rollback;`, { expectFailure: true });
+    }
+    const reason = "Owner's first administrator";
+    const bootstrap = `begin; select public.admin_bootstrap_v2(${literal(adminUser.id)},'local',${literal(reason)}); select pg_sleep(0.15); commit;`;
+    const concurrent = await Promise.all([startOwnerSql(bootstrap), startOwnerSql(bootstrap)]);
+    ownsEnvironment = concurrent.some(result => result.status === 0);
+    expect(concurrent.filter(result => result.status === 0)).toHaveLength(1);
+    expect(concurrent.find(result => result.status !== 0)?.stderr).toContain("already been used");
     const audit = runOwnerSql(`select reason=${literal(reason)} as reason_matches from public.admin_audit_events where operation='admin_bootstrap' and target_id=${literal(adminUser.id)};`);
     expect(audit.stdout).toMatch(/\n\s*t\s*\n/u);
+  });
+
+  it("needs no stored project/issuer and ignores the deprecated argument while checking the environment", async () => {
+    const identity = runOwnerSql("select project_ref is null and auth_issuer is null as unbound from public.admin_environment;");
+    expect(identity.stdout).toMatch(/\n\s*t\s*\n/u);
+    const first = await admin.rpc("admin_get_context_v1", base);
+    expect(first.error).toBeNull();
+    expect(first.data.environment).not.toHaveProperty("projectRef");
+    for (const obsolete of ["", "arbitrary-obsolete-project"]) {
+      const next = await admin.rpc("admin_get_context_v1", { ...base, p_project_ref: obsolete });
+      expect(next.error).toBeNull();
+      expect(next.data).toEqual(first.data);
+    }
+    expect((await admin.rpc("admin_get_context_v1", { ...base, p_environment: "preview" })).error?.message).toBe("ENVIRONMENT_MISMATCH");
   });
 
   afterAll(async () => {
@@ -70,13 +87,13 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
   });
 
   it("has no browser or service-role bootstrap, helpers or table privileges", async () => {
-    for (const client of [admin, ordinary, service]) {
-      expect((await client.rpc("admin_bootstrap_v1", { p_user_id: ordinaryUser.id, ...base, p_auth_issuer: "http://127.0.0.1:54321/auth/v1", p_reason: "forged" })).error?.code).toBe("42501");
+    for (const client of [createAnonClient(), admin, ordinary, service]) {
+      expect((await client.rpc("admin_bootstrap_v2", { p_user_id: ordinaryUser.id, p_environment: "local", p_reason: "forged" })).error?.code).toBe("42501");
       expect((await client.rpc("admin_assert_actor_v1", base)).error?.code).toBe("42501");
       expect((await client.from("admin_principals").select("user_id")).error?.code).toBe("42501");
       expect((await client.from("admin_principals").insert({ user_id: ordinaryUser.id })).error?.code).toBe("42501");
     }
-    const duplicate = runOwnerSql(`select public.admin_bootstrap_v1(${literal(ordinaryUser.id)},'local','local','http://127.0.0.1:54321/auth/v1','duplicate');`, { expectFailure: true });
+    const duplicate = runOwnerSql(`select public.admin_bootstrap_v2(${literal(ordinaryUser.id)},'local','duplicate');`, { expectFailure: true });
     expect(duplicate.stderr).toContain("already been used");
   });
 
@@ -104,7 +121,7 @@ describe.skipIf(!RUN_DB_TESTS)("Admin read foundation with real Auth sessions", 
   });
 
   it("verifies actual bearer forwarding through the HTTP handler with AI gate off", async () => {
-    const environment = { name: "local" as const, projectRef: "local", supabaseUrl: DB_TEST_ENV!.url, publishableKey: DB_TEST_ENV!.publishableKey };
+    const environment = { name: "local" as const, supabaseUrl: DB_TEST_ENV!.url, publishableKey: DB_TEST_ENV!.publishableKey };
     const response = await handleAdminGet(new Request("https://web.test/api/admin", { headers: { Authorization: `Bearer ${token}` } }), {
       environment: () => environment, client: createAdminRequestClient,
     });

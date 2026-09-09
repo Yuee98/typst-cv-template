@@ -54,9 +54,8 @@ const runtimeEvidence = {
   externalEvidenceIds: ["evidence.deepseek-v2.test"],
 };
 const runtimeConfigReceipt = {
-  schemaVersion: "runtime_config_receipt_v1",
+  schemaVersion: "runtime_config_receipt_v2",
   environment: "local",
-  projectRef: "local",
   runtimeContractId: runtimeEvidence.runtimeContractId,
   runtimeTargetId: runtimeEvidence.runtimeTargetId,
   runtimeTargetSha256: runtimeEvidence.runtimeTargetSha256,

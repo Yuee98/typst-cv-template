@@ -23,9 +23,8 @@ const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const uuid = z.string().uuid();
 
 const candidateSchema = z.strictObject({
-  schemaVersion: z.literal("admin_config_validation_candidate_v2"),
+  schemaVersion: z.literal("admin_config_validation_candidate_v3"),
   environment: z.enum(["local", "preview", "production"]),
-  projectRef: z.string().min(1).max(100),
   profileExecutionConfig: z.strictObject({
     schemaVersion: z.literal("profile_execution_config_v2"),
     profileKey: codeId,
@@ -171,7 +170,6 @@ export async function produceAdminValidationReport(
   const candidate = candidateSchema.parse(candidateResult.data);
   if (
     candidate.environment !== identity.name ||
-    candidate.projectRef !== identity.projectRef ||
     candidate.runtimeTarget.runtimeContractId !== request.runtimeContractId ||
     candidate.runtimeTarget.runtimeTargetId !== request.runtimeTargetId
   ) {
@@ -211,7 +209,6 @@ export async function produceAdminValidationReport(
   }
   const expected = {
     environment: identity.name,
-    projectRef: identity.projectRef,
     runtimeContractId: candidate.runtimeTarget.runtimeContractId,
     runtimeTargetId: candidate.runtimeTarget.runtimeTargetId,
     runtimeTargetSha256: candidate.runtimeTarget.runtimeTargetSha256,

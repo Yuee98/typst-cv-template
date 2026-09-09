@@ -110,9 +110,8 @@ const EXECUTION_V2 = Object.freeze({
   }),
   runtimeConfigReceipt: (() => {
     return Object.freeze({
-      schemaVersion: "runtime_config_receipt_v1" as const,
+      schemaVersion: "runtime_config_receipt_v2" as const,
       environment: "local" as const,
-      projectRef: "local",
       runtimeContractId: ROUTE_V2.runtimeContractId,
       runtimeTargetId: "runtime-target.synthetic.deepseek.v2",
       runtimeTargetSha256: "1".repeat(64),

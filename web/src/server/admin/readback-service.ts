@@ -13,7 +13,7 @@ const inputSchema = adminRuntimeReadbackRequestSchema.omit({ operation: true });
 const candidateSchema = z.strictObject(adminRuntimeReadbackSchema.shape).omit({
   reportId: true, checkedAt: true, expiresAt: true, reportSha256: true,
 }).extend({
-  schemaVersion: z.literal("admin_runtime_readback_candidate_v3"),
+  schemaVersion: z.literal("admin_runtime_readback_candidate_v4"),
   candidates: z.array(adminValidationCandidateSchema).min(1).max(32),
 });
 export type RuntimeReadbackProducerInput = z.infer<typeof inputSchema>;
@@ -40,14 +40,15 @@ export async function produceAdminRuntimeReadback(
     const identity = resolveAdminEnvironment(env);
     const client = dependencies.client ?? createServerAdminClient();
     const args = {
-      p_environment: identity.name, p_project_ref: identity.projectRef,
+      // Ignored legacy RPC argument; no project identity is derived or stored.
+      p_environment: identity.name, p_project_ref: null,
       p_policy_version_id: request.policyVersionId,
       p_validation_report_ids: request.validationReportIds,
     };
     const result = await client.rpc("get_admin_runtime_readback_candidate_v3", args);
     if (result.error) throw new RuntimeReadbackProducerError();
     const candidate = candidateSchema.parse(result.data);
-    if (candidate.environment !== identity.name || candidate.projectRef !== identity.projectRef ||
+    if (candidate.environment !== identity.name ||
       candidate.policyVersionId !== request.policyVersionId ||
       !sameIds(candidate.validationReportIds, request.validationReportIds) ||
       candidate.candidates.length !== candidate.effectiveRoutes.length) throw new RuntimeReadbackProducerError();
@@ -56,7 +57,7 @@ export async function produceAdminRuntimeReadback(
     // every exact route. A DB report alone cannot prove the current process.
     const unmatched = [...candidate.effectiveRoutes];
     for (const config of candidate.candidates) {
-      if (config.environment !== identity.name || config.projectRef !== identity.projectRef ||
+      if (config.environment !== identity.name ||
         config.runtimeTarget.legalBundleVersion !== candidate.legalBundleVersion) throw new RuntimeReadbackProducerError();
       const index = unmatched.findIndex((route) => Object.entries(route).every(
         ([key, value]) => config.runtimeTarget[key as keyof typeof config.runtimeTarget] === value,
@@ -75,7 +76,7 @@ export async function produceAdminRuntimeReadback(
     });
     if (saved.error) throw new RuntimeReadbackProducerError();
     const report = adminRuntimeReadbackSchema.parse(saved.data);
-    for (const key of ["environment", "projectRef", "closingCycleId", "controlRevision", "configGeneration", "policyVersionId", "legalBundleVersion"] as const) {
+    for (const key of ["environment", "closingCycleId", "controlRevision", "configGeneration", "policyVersionId", "legalBundleVersion"] as const) {
       if (report[key] !== candidate[key]) throw new RuntimeReadbackProducerError();
     }
     const routeKey = (route: typeof report.effectiveRoutes[number]) => JSON.stringify(Object.entries(route).sort(([a], [b]) => a.localeCompare(b)));

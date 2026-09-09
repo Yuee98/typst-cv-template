@@ -87,7 +87,7 @@ describe.skipIf(!RUN_DB_TESTS)(
       );
       expect(report.error).toBeNull();
       expect(report.data).toMatchObject({
-        schemaVersion: "admin_config_validation_report_v2",
+        schemaVersion: "admin_config_validation_report_v3",
         passed: true,
         runtimeTargetId: target.runtimeTargetId,
       });
@@ -99,17 +99,12 @@ describe.skipIf(!RUN_DB_TESTS)(
       adminUser = await createTestUser(service, "config-simplification-publication");
       admin = await signInAsUser(adminUser);
 
-      const initialToken = (await admin.auth.getSession()).data.session!
-        .access_token;
-      const initialClaims = JSON.parse(
-        Buffer.from(initialToken.split(".")[1], "base64url").toString(),
-      ) as { iss: string };
       const environments = runOwnerSql(
         "select count(*) from public.admin_environment;",
       ).stdout.match(/\n\s*(\d+)\s*\n/u)?.[1];
       expect(environments).toBe("0");
       runOwnerSql(
-        `select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(initialClaims.iss)},'CFG-005 publication test bootstrap');`,
+        `select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 publication test bootstrap');`,
       );
       ownsEnvironment = true;
 

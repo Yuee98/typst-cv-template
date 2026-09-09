@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import context from "../../../test/fixtures/admin-contract-v1.json";
+import context from "../../../test/fixtures/admin-contract-v2.json";
 import { handleAdminGet, handleAdminPost } from "./handler";
 import { resolveAdminEnvironment } from "./environment";
 
 const environment = {
   name: "local" as const,
-  projectRef: "local",
   supabaseUrl: "http://127.0.0.1:54321",
   publishableKey: "public-test-key",
 };
@@ -123,9 +122,8 @@ const runtimeReadbackRequest = {
 function runtimeReadback() {
   const checkedAt = new Date(Date.now() - 1_000);
   return {
-    schemaVersion: "admin_runtime_readback_v3" as const,
+    schemaVersion: "admin_runtime_readback_v4" as const,
     environment: "local" as const,
-    projectRef: "local",
     reportId: "88888888-8888-4888-8888-888888888888",
     closingCycleId: controlState.closingCycleId,
     controlRevision: controlState.controlRevision,
@@ -158,10 +156,9 @@ const validationRequest = {
 function validationReport() {
   const checkedAt = new Date(Date.now() - 1_000);
   return {
-    schemaVersion: "admin_config_validation_report_v2" as const,
+    schemaVersion: "admin_config_validation_report_v3" as const,
     reportId: "22222222-2222-4222-8222-222222222222",
     environment: "local" as const,
-    projectRef: "local",
     runtimeContractId: validationRequest.runtimeContractId,
     runtimeTargetId: validationRequest.runtimeTargetId,
     runtimeTargetSha256: "2".repeat(64),
@@ -195,7 +192,7 @@ describe("Admin read HTTP boundary", () => {
     expect(getUser).toHaveBeenCalledWith("user-jwt");
     expect(rpc).toHaveBeenCalledWith("admin_get_context_v1", {
       p_environment: "local",
-      p_project_ref: "local",
+      p_project_ref: null,
     });
     expect(await response.json()).toEqual(context);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
@@ -257,7 +254,7 @@ describe("Admin read HTTP boundary", () => {
       "admin_get_ai_analytics_v1",
       expect.objectContaining({
         p_environment: "local",
-        p_project_ref: "local",
+        p_project_ref: null,
         p_from: expect.any(String),
         p_to: expect.any(String),
       }),
@@ -273,7 +270,7 @@ describe("Admin read HTTP boundary", () => {
     expect(await response.json()).toEqual(controlState);
     expect(setupData.rpc).toHaveBeenCalledWith(
       "admin_get_ai_control_state_v1",
-      { p_environment: "local", p_project_ref: "local" },
+      { p_environment: "local", p_project_ref: null },
     );
     expect(
       (await handleAdminGet(request("?section=controls&limit=1"), setupData.deps))
@@ -458,14 +455,14 @@ describe("Admin validation HTTP boundary", () => {
     expect(getUser).toHaveBeenCalledWith("user-jwt");
     expect(rpc).toHaveBeenCalledWith("admin_get_context_v1", {
       p_environment: "local",
-      p_project_ref: "local",
+      p_project_ref: null,
     });
     expect(produceValidation).toHaveBeenCalledWith({
       runtimeContractId: validationRequest.runtimeContractId,
       runtimeTargetId: validationRequest.runtimeTargetId,
     });
     expect(await response.json()).toMatchObject({
-      schemaVersion: "admin_config_validation_report_v2",
+      schemaVersion: "admin_config_validation_report_v3",
       passed: true,
     });
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
@@ -527,14 +524,14 @@ describe("Admin runtime readback HTTP boundary", () => {
     expect(response.status).toBe(200);
     expect(setupData.rpc).toHaveBeenCalledWith("admin_get_context_v1", {
       p_environment: "local",
-      p_project_ref: "local",
+      p_project_ref: null,
     });
     expect(produceReadback).toHaveBeenCalledWith({
       policyVersionId: runtimeReadbackRequest.policyVersionId,
       validationReportIds: runtimeReadbackRequest.validationReportIds,
     });
     expect(await response.json()).toMatchObject({
-      schemaVersion: "admin_runtime_readback_v3",
+      schemaVersion: "admin_runtime_readback_v4",
       policyVersionId: runtimeReadbackRequest.policyVersionId,
     });
   });
@@ -564,8 +561,9 @@ describe("deployment environment", () => {
     NEXT_PUBLIC_SUPABASE_URL: environment.supabaseUrl,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "public",
   };
-  it("requires explicit environment and exact local/hosted project identity", () => {
-    expect(resolveAdminEnvironment(env).projectRef).toBe("local");
+  it("validates deployment connection settings without creating a project identity", () => {
+    expect(resolveAdminEnvironment(env).name).toBe("local");
+    expect(resolveAdminEnvironment(env)).not.toHaveProperty("projectRef");
     for (const override of [
       { ADMIN_ENVIRONMENT: undefined },
       { ADMIN_ENVIRONMENT: "production" },
@@ -580,7 +578,7 @@ describe("deployment environment", () => {
         ...env,
         ADMIN_ENVIRONMENT: "preview",
         NEXT_PUBLIC_SUPABASE_URL: "https://abc.supabase.co",
-      }).projectRef,
-    ).toBe("abc");
+      }).supabaseUrl,
+    ).toBe("https://abc.supabase.co");
   });
 });

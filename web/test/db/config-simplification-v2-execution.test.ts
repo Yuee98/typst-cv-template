@@ -32,7 +32,7 @@ import {
 } from "./helpers";
 import { runOwnerSql, startOwnerSql, type OwnerSqlResult } from "./runtime-contract-fixtures";
 
-const CONTEXT = { p_environment: "local", p_project_ref: "local" } as const;
+const CONTEXT = { p_environment: "local", p_project_ref: null } as const;
 type GrantRole = "public" | "anon" | "authenticated" | "service_role";
 type PrivilegeSnapshot = Readonly<{
   functions: Readonly<Record<string, Readonly<Record<GrantRole, boolean>>>>;
@@ -253,7 +253,7 @@ describe.skipIf(!RUN_DB_TESTS)(
       });
       expect(candidate.error).toBeNull();
       expect(candidate.data).toMatchObject({
-        schemaVersion: "admin_config_validation_candidate_v2",
+        schemaVersion: "admin_config_validation_candidate_v3",
         profileExecutionConfig: { endpointUrl: fixture.endpointUrl, credentialEnvName: fixture.credentialEnvName },
         runtimeTarget: { runtimeTargetId: fixture.runtimeTargetId },
       });
@@ -271,7 +271,7 @@ describe.skipIf(!RUN_DB_TESTS)(
           },
         },
       );
-      expect(report).toMatchObject({ schemaVersion: "admin_config_validation_report_v2", passed: true });
+      expect(report).toMatchObject({ schemaVersion: "admin_config_validation_report_v3", passed: true });
       return report.reportId;
     }
 
@@ -281,11 +281,9 @@ describe.skipIf(!RUN_DB_TESTS)(
       adminUser = await createTestUser(service, "config-simplification-execution");
       privilegeSnapshot = capturePrivileges();
       admin = await signInAsUser(adminUser);
-      const token = (await admin.auth.getSession()).data.session!.access_token;
-      const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()) as { iss: string };
       const environments = runOwnerSql("select count(*) from public.admin_environment;").stdout.match(/\n\s*(\d+)\s*\n/u)?.[1];
       expect(environments).toBe("0");
-      runOwnerSql(`select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(claims.iss)},'CFG-005 V2 execution bootstrap');`);
+      runOwnerSql(`select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 V2 execution bootstrap');`);
       ownsEnvironment = true;
       fixture = createConfigSimplificationV2Fixture();
 
@@ -368,7 +366,7 @@ describe.skipIf(!RUN_DB_TESTS)(
         p_policy_version_id: policyVersionId, p_validation_report_ids: [reportId], ...CONTEXT,
       });
       expect(readbackCandidate.error).toBeNull();
-      expect(readbackCandidate.data).toMatchObject({ schemaVersion: "admin_runtime_readback_candidate_v3", policyVersionId, validationReportIds: [reportId] });
+      expect(readbackCandidate.data).toMatchObject({ schemaVersion: "admin_runtime_readback_candidate_v4", policyVersionId, validationReportIds: [reportId] });
       const readback = await produceAdminRuntimeReadback(
         { policyVersionId, validationReportIds: [reportId] },
         {
@@ -383,7 +381,7 @@ describe.skipIf(!RUN_DB_TESTS)(
           },
         },
       );
-      expect(readback).toMatchObject({ schemaVersion: "admin_runtime_readback_v3", policyVersionId });
+      expect(readback).toMatchObject({ schemaVersion: "admin_runtime_readback_v4", policyVersionId });
       const readbackReportId = readback.reportId;
       const reopened = await admin.rpc("admin_reopen_ai_v2", {
         ...CONTEXT, p_readback_report_id: readbackReportId,
@@ -481,13 +479,13 @@ describe.skipIf(!RUN_DB_TESTS)(
       }, { fetch: fakeFetch });
       const snapshot = await getPolishExecutionSnapshotV2(service, {
         reservationId, userId: executionUser.id, reserveRoute: route,
-        runtimeEnvironment: { environment: "local", projectRef: "local" },
+        runtimeEnvironment: { environment: "local" },
         runtimeTargetResolver: authority.runtimeTargetResolver,
         runtimeTargetResolverV2: authority.runtimeTargetResolverV2,
       });
       expect(snapshot.schemaVersion).toBe("ai_polish_execution_snapshot_v3");
       if (snapshot.schemaVersion !== "ai_polish_execution_snapshot_v3") throw new Error("V2 reservation did not return the V3 execution envelope");
-      expect(snapshot.runtimeConfigReceipt).toMatchObject({ schemaVersion: "runtime_config_receipt_v1", runtimeTargetId: fixture.runtimeTargetId });
+      expect(snapshot.runtimeConfigReceipt).toMatchObject({ schemaVersion: "runtime_config_receipt_v2", runtimeTargetId: fixture.runtimeTargetId });
       expect(snapshot.runtimeConfigReceipt).not.toHaveProperty("reportId");
       expect(snapshot.runtimeConfigReceipt).not.toHaveProperty("expiresAt");
 
@@ -604,6 +602,43 @@ describe.skipIf(!RUN_DB_TESTS)(
       return { readback, current: await state() };
     }
 
+    it("rejects historical report formats for a new readback or reopen", async () => {
+      const { readback, current } = await closeAndReadback();
+      const historicalReport = crypto.randomUUID();
+      const historicalReadback = crypto.randomUUID();
+      // Owner-only immutable fixtures represent predecessor formats. Existing
+      // rows are never rewritten, even to manufacture a negative case.
+      runOwnerSql(`
+        insert into public.admin_config_validation_reports_v2(id,project_ref,report_schema_version,report_sha256,environment,runtime_contract_id,runtime_target_id,runtime_target_sha256,profile_version_id,price_version_id,provider_id,code_capability_id,code_capability_sha256,legal_bundle_version,legal_manifest_id,display_disclosure_key,endpoint_policy_valid,credential_binding_valid,credential_configured,compiled_capability_valid,database_binding_valid,evidence_ids,checked_at,expires_at)
+        select ${sql(historicalReport)},'local','admin_config_validation_report_v2',encode(extensions.digest(${sql(historicalReport)},'sha256'),'hex'),environment,runtime_contract_id,runtime_target_id,runtime_target_sha256,profile_version_id,price_version_id,provider_id,code_capability_id,code_capability_sha256,legal_bundle_version,legal_manifest_id,display_disclosure_key,endpoint_policy_valid,credential_binding_valid,credential_configured,compiled_capability_valid,database_binding_valid,evidence_ids,checked_at,expires_at
+        from public.admin_config_validation_reports_v2 where id=${sql(reportId)};
+        insert into public.admin_runtime_readback_reports_v2
+        select (jsonb_populate_record(null::public.admin_runtime_readback_reports_v2,
+          to_jsonb(r)||jsonb_build_object('id',${sql(historicalReadback)},'project_ref','local',
+            'report_schema_version','admin_runtime_readback_v3',
+            'report_sha256',encode(extensions.digest(${sql(historicalReadback)},'sha256'),'hex')))).*
+        from public.admin_runtime_readback_reports_v2 r where id=${sql(readback.reportId)};
+      `);
+      const rejected = await service.rpc("get_admin_runtime_readback_candidate_v3", {
+        ...CONTEXT, p_policy_version_id: policyVersionId,
+        p_validation_report_ids: [historicalReport],
+      });
+      expect(rejected.error?.code).toBe("23514");
+      const reopened = await admin.rpc("admin_reopen_ai_v2", {
+        ...CONTEXT, p_readback_report_id: historicalReadback,
+        p_expected_closing_cycle_id: current.control.closing_cycle_id,
+        p_expected_control_revision: current.control.revision,
+        p_expected_policy_version_id: policyVersionId,
+        p_expected_config_generation: current.config.config_generation,
+        p_reason: "historical format cannot authorize a new reopen",
+        p_idempotency_key: crypto.randomUUID(),
+      });
+      expect(reopened.error?.message).toBe("NOT_READY");
+      const after = await state();
+      expect(after.config).toEqual(current.config);
+      expect(after.control).toEqual(current.control);
+    });
+
     async function authenticatedSql(application: string, statement: string): Promise<OwnerSqlResult> {
       const token = (await admin.auth.getSession()).data.session!.access_token;
       const claims = Buffer.from(token.split(".")[1], "base64url").toString();
@@ -662,12 +697,12 @@ describe.skipIf(!RUN_DB_TESTS)(
         // rows. No guard is disabled and real database time crosses the expiry.
         runOwnerSql(`
           insert into public.admin_config_validation_reports_v2(
-            id,environment,project_ref,runtime_contract_id,runtime_target_id,runtime_target_sha256,
+            id,report_schema_version,environment,project_ref,runtime_contract_id,runtime_target_id,runtime_target_sha256,
             profile_version_id,price_version_id,provider_id,code_capability_id,code_capability_sha256,
             legal_bundle_version,legal_manifest_id,display_disclosure_key,endpoint_policy_valid,
             credential_binding_valid,credential_configured,compiled_capability_valid,database_binding_valid,
             evidence_ids,checked_at,expires_at,report_sha256)
-          select ${sql(shortReportId)},environment,project_ref,runtime_contract_id,runtime_target_id,runtime_target_sha256,
+          select ${sql(shortReportId)},report_schema_version,environment,project_ref,runtime_contract_id,runtime_target_id,runtime_target_sha256,
             profile_version_id,price_version_id,provider_id,code_capability_id,code_capability_sha256,
             legal_bundle_version,legal_manifest_id,display_disclosure_key,endpoint_policy_valid,
             credential_binding_valid,credential_configured,compiled_capability_valid,database_binding_valid,

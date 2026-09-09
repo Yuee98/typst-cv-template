@@ -6,7 +6,6 @@ import {
   createTestUser,
   deleteTestUser,
   RUN_DB_TESTS,
-  signInAsUser,
   type TestUser,
 } from "./helpers";
 import { runOwnerSql } from "./runtime-contract-fixtures";
@@ -124,16 +123,10 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 config-owned runtime contract", () => {
 describe.skipIf(!RUN_DB_TESTS)("CFG-005 authority proof negative paths", () => {
   let service: SupabaseClient;
   let adminUser: TestUser;
-  let issuer: string;
 
   beforeAll(async () => {
     service = createServiceClient();
     adminUser = await createTestUser(service, "cfg005-authority-proof");
-    const admin = await signInAsUser(adminUser);
-    const token = (await admin.auth.getSession()).data.session!.access_token;
-    issuer = (JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()) as {
-      iss: string;
-    }).iss;
   });
 
   afterAll(async () => {
@@ -143,7 +136,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 authority proof negative paths", () => {
   it("rejects a pre-cutover definition tamper instead of stamping it", () => {
     const result = runOwnerSql(String.raw`
       begin;
-      select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(issuer)},'CFG-005 authority tamper bootstrap');
+      select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 authority tamper bootstrap');
       create or replace function public.admin_assert_policy_config_reports_v1(
         p_policy_version_id uuid,p_validation_report_ids uuid[],p_at timestamptz
       )
@@ -182,7 +175,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 authority proof negative paths", () => {
   ])("rejects pre-cutover drift in %s", (_name, tamper) => {
     const result = runOwnerSql(String.raw`
       begin;
-      select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(issuer)},'CFG-005 delegated authority bootstrap');
+      select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 delegated authority bootstrap');
       ${tamper}
       do $assert$
       begin
@@ -217,7 +210,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 authority proof negative paths", () => {
   ])("detects post-cutover drift in %s", (_name, tamper) => {
     const result = runOwnerSql(String.raw`
       begin;
-      select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(issuer)},'CFG-005 delegated authority bootstrap');
+      select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 delegated authority bootstrap');
       select public.admin_cutover_authority_v3('{}'::uuid[],0,0,'CFG-005 delegated authority cutover');
       ${tamper}
       do $assert$
@@ -238,7 +231,7 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-005 authority proof negative paths", () => {
   it("rejects a post-cutover old/internal RPC regrant and denies direct internal calls", () => {
     const result = runOwnerSql(String.raw`
       begin;
-      select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(issuer)},'CFG-005 authority regrant bootstrap');
+      select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 authority regrant bootstrap');
       select public.admin_cutover_authority_v3('{}'::uuid[],0,0,'CFG-005 authority regrant cutover');
       do $assert$
       declare v_role text;

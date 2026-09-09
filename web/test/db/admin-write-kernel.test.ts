@@ -15,7 +15,7 @@ import {
 } from "./helpers";
 import { runOwnerSql } from "./runtime-contract-fixtures";
 
-const base = { p_environment: "local", p_project_ref: "local" };
+const base = { p_environment: "local", p_project_ref: null };
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 function totpCode(secret: string, at = Date.now()): string {
@@ -77,7 +77,7 @@ describe.skipIf(!RUN_DB_TESTS)(
         );
       }
       runOwnerSql(
-        `select public.admin_bootstrap_v1(${literal(adminUser.id)},'local','local',${literal(claims.iss)},'local I06 test bootstrap');`,
+        `select public.admin_bootstrap_v2(${literal(adminUser.id)},'local','local I06 test bootstrap');`,
       );
       ownsEnvironment = true;
     });

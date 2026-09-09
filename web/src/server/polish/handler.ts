@@ -209,7 +209,6 @@ function buildPolishHandlerDeps(): PolishHandlerDeps {
       const adminEnvironment = resolveAdminEnvironment(env);
       return {
         environment: adminEnvironment.name,
-        projectRef: adminEnvironment.projectRef,
       };
     } catch {
       return undefined;

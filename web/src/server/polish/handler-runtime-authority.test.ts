@@ -74,9 +74,8 @@ describe("real V2 handler runtime authority", () => {
         externalEvidenceIds: ["evidence.v2.test"],
       },
       runtimeConfigReceipt: {
-        schemaVersion: "runtime_config_receipt_v1" as const,
+        schemaVersion: "runtime_config_receipt_v2" as const,
         environment: "local" as const,
-        projectRef: "local",
         runtimeContractId: "runtime.v2.test",
         runtimeTargetId: "target.v2.test",
         runtimeTargetSha256: "a".repeat(64),

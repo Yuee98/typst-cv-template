@@ -19,8 +19,8 @@ function report(checkOverrides: Record<string, boolean> = {}) {
  const target = Object.fromEntries(Object.entries(candidate.runtimeTarget).filter(([key]) => key !== "recipientKey"));
  const checks = { endpointPolicy: true, credentialBinding: true, credentialConfigured: true, compiledCapability: true, databaseBinding: true, ...checkOverrides };
  return {
-  schemaVersion: "admin_config_validation_report_v2", reportId: "55555555-5555-4555-8555-555555555555",
-  environment: "local", projectRef: "local", ...target, checks, passed: Object.values(checks).every(Boolean),
+  schemaVersion: "admin_config_validation_report_v3", reportId: "55555555-5555-4555-8555-555555555555",
+  environment: "local", ...target, checks, passed: Object.values(checks).every(Boolean),
   evidenceIds: ["evidence.runtime-target"], checkedAt: checkedAt.toISOString(), expiresAt: new Date(checkedAt.getTime()+9*60_000).toISOString(), reportSha256: "b".repeat(64),
  };
 }

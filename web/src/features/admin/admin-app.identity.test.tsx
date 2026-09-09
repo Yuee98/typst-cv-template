@@ -32,16 +32,15 @@ const session = (token: string) => ({
   access_token: token,
   user: { id: token, email: `${token}@example.test` },
 });
-const context = (projectRef: string) => ({
-  schemaVersion: "admin_context_v1",
+const context = (account: string) => ({
+  schemaVersion: "admin_context_v2",
   actor: {
     userId: "00000000-0000-4000-8000-000000000001",
-    email: "admin@example.test",
+    email: account,
     revision: "1",
   },
   environment: {
     name: "local",
-    projectRef,
     controlPlaneMode: "jwt_v1",
     revision: "1",
   },
@@ -128,7 +127,7 @@ describe("AdminApp identity boundaries", () => {
       ),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByText("account-A")).toBeNull();
+    expect(screen.queryByText(/account-A/)).toBeNull();
     expect(screen.getByText("Administrator sign in")).toBeTruthy();
   });
 
@@ -148,13 +147,13 @@ describe("AdminApp identity boundaries", () => {
         new Response(JSON.stringify(context("account-A")), { status: 200 }),
       ),
     );
-    expect(screen.queryByText("account-A")).toBeNull();
+    expect(screen.queryByText(/account-A/)).toBeNull();
     await act(async () =>
       second.resolve(
         new Response(JSON.stringify(context("account-B")), { status: 200 }),
       ),
     );
     await waitFor(() => expect(screen.getByText(/account-B/)).toBeTruthy());
-    expect(screen.queryByText("account-A")).toBeNull();
+    expect(screen.queryByText(/account-A/)).toBeNull();
   });
 });
