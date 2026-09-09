@@ -1,4 +1,4 @@
-# Admin API contract v1
+# Admin API contract
 
 Status: implementation contract. Supersedes no existing AI execution or legal evidence. The accepted implementation plan defines release gates; this document fixes the application boundary used by I02 onward. Runtime configuration follows the [2026-09-08 simplification amendment](admin-runtime-simplification.md).
 
@@ -8,7 +8,7 @@ Admin pages are generated only for server builds at `/{zh,en}/admin`. Pages init
 
 Every API request verifies its bearer using `auth.getUser(token)` and creates a request-scoped publishable-key client with the same bearer Authorization for RPC. `getUser` does not install a session. The RPC derives actor from `auth.uid()`, requires an authenticated, non-anonymous JWT, a live matching Auth session and an active administrator whose Auth account is confirmed, not banned or deleted. No user metadata role is trusted. DB helpers have fixed empty search paths and no PUBLIC execute grant.
 
-`ADMIN_ENVIRONMENT=local|preview|production` and the Supabase URL identify the server's intended environment. An owner-initialized `admin_environment` row stores environment, project ref and exact Auth issuer. The server passes its expected environment/ref; the DB compares these and the verified JWT issuer. Local URL uses project ref `local`; hosted URLs must be canonical `<ref>.supabase.co`. Preview and Production use distinct projects. The user JWT does not attest a Vercel instance. The embedded source commit is diagnostic only; the trusted report producer verifies the current process against the selected immutable configuration target.
+`ADMIN_ENVIRONMENT=local|preview|production` and the Supabase URL identify the server's intended environment. An owner-initialized `admin_environment` row stores the environment label. Supabase URL/key remain deployment connection settings; project ref and Auth issuer are no longer persisted authorization inputs. The server passes its expected environment and the DB verifies the label plus its own Auth user/session. Existing RPC signatures retain an ignored `p_project_ref` argument; the web sends NULL. Hosted URLs must be canonical `<ref>.supabase.co`. Preview and Production use distinct projects. The user JWT does not attest a Vercel instance. The embedded source commit is diagnostic only; the trusted report producer verifies the current process against the selected immutable configuration target.
 
 `admin_principals` holds current membership and revision. Membership changes and business mutations serialize on the environment singleton before checking/locking actor membership. Audit actor IDs are historical values, without cascading Auth foreign keys. User deletion cannot remove an active administrator through Auth service_role; first revoke through the controlled path, preserving the last-admin invariant.
 
@@ -18,11 +18,11 @@ All three RPCs below are SECURITY DEFINER, granted only to authenticated; direct
 
 | RPC | Parameters | Return |
 | --- | --- | --- |
-| `admin_get_context_v1` | `p_environment text, p_project_ref text` | `admin_context_v1` |
-| `admin_list_records_v1` | environment/ref, `p_section text, p_limit integer=25, p_after text=null, p_search text=null` | `admin_page_v1`, approved section-specific rows |
+| `admin_get_context_v1` | `p_environment text, p_project_ref text` | `admin_context_v2` |
+| `admin_list_records_v1` | environment (ignored ref), `p_section text, p_limit integer=25, p_after text=null, p_search text=null` | `admin_page_v1`, approved section-specific rows |
 | `admin_get_record_v1` | environment/ref, `p_section text, p_id uuid` | approved entity record or not found |
 
-Read sections initially include users, profiles, prices, policies and audit. Provider and analytics sections appear only when their actual catalog/query capabilities ship. Cursor pagination is by immutable ID (audit UUID plus timestamp ordering will use a typed cursor when added); bounded page size 1–100, search at most 100 characters. Reject unknown sections, invalid UUID cursors, unknown query keys and oversized parameters before querying. User email is confined to Users. Configuration IDs/aliases belong only to configuration detail; Audit exposes approved public event metadata and typed safe changes. No `select *` JSON serialization or raw ledger/event payload.
+Read sections initially include users, profiles, prices, policies and audit. Provider and analytics sections appear only when their actual catalog/query capabilities ship. Cursor pagination is by immutable ID (audit UUID plus timestamp ordering will use a typed cursor when added); bounded page size 1–100, search at most 100 characters. Reject unknown sections, invalid UUID cursors, unknown query keys and oversized parameters before querying. Other users' email is confined to Users; the signed-in administrator's own email also identifies the current account in Overview. Configuration IDs/aliases belong only to configuration detail; Audit exposes approved public event metadata and typed safe changes. No `select *` JSON serialization or raw ledger/event payload.
 
 The browser contract lives in `web/src/lib/admin/contract.ts`; strict schemas reject extra fields. Environment/control revisions are decimal strings, never lossy JSON bigint numbers. Missing observations are null rather than zero. Feature global limit is calls/day, not currency. A legacy control-plane mode exposes read-only capabilities.
 

@@ -17,8 +17,8 @@ import { resolveRuntimeCodeCapabilityV2 } from "./runtime-code-capability-v2";
 import type { FrozenPriceSnapshotV1 } from "./pricing";
 import {
   runtimeConfigReceiptSchema,
-  type RuntimeConfigReceiptV1,
-} from "./runtime-config-receipt-v1";
+  type RuntimeConfigReceiptV2,
+} from "./runtime-config-receipt-v2";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
@@ -99,7 +99,7 @@ export interface RuntimeExecutionTargetV2 {
   readonly profileVersionId: string;
   readonly profile: Readonly<ProfileExecutionConfigV2>;
   readonly evidence: Readonly<RuntimeExecutionEvidenceV2>;
-  readonly runtimeConfigReceipt: Readonly<RuntimeConfigReceiptV1>;
+  readonly runtimeConfigReceipt: Readonly<RuntimeConfigReceiptV2>;
 }
 
 export type RuntimeTargetResolverV2 = (
@@ -119,7 +119,7 @@ export type ExecutionSnapshotResultV2 =
       profileExecutionConfig: Readonly<ProfileExecutionConfigV2>;
       priceSnapshot: Readonly<FrozenPriceSnapshotV1>;
       runtimeEvidence: Readonly<RuntimeExecutionEvidenceV2>;
-      runtimeConfigReceipt: Readonly<RuntimeConfigReceiptV1>;
+      runtimeConfigReceipt: Readonly<RuntimeConfigReceiptV2>;
     }>;
 
 export type VersionedProfileExecutionConfig =

@@ -115,9 +115,8 @@ export async function setupAdminE2e({ url, secretKey }) {
       created[name] = { ...spec, id: data.user.id };
     }
     ownerSql(`
-      select public.admin_bootstrap_v1(
-        ${sql(created.admin.id)},'local','local',
-        ${sql(new URL(url).origin + "/auth/v1")},
+      select public.admin_bootstrap_v2(
+        ${sql(created.admin.id)},'local',
         'admin UI E2E bootstrap'
       );
       -- The authority-cutover algorithm has its own DB suite. This fixture

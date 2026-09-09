@@ -23,7 +23,7 @@ from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in (
-    'admin_guard_audit_v1', 'admin_bootstrap_v1', 'admin_assert_actor_v1',
+    'admin_guard_audit_v1', 'admin_bootstrap_v2', 'admin_assert_actor_v1',
     'admin_get_context_v1', 'admin_records_query_v1', 'admin_list_records_v1',
     'admin_get_record_v1', 'ai_endpoint_shape_v2',
     'guard_ai_provider_directory_v2', 'guard_ai_profile_provider_v2',
@@ -71,5 +71,17 @@ where n.nspname = 'public'
     'record_admin_runtime_readback_v1',
     'record_admin_runtime_readback_v2',
     'start_ai_polish_provider_attempt_v3',
-    'start_ai_polish_provider_attempt_v4'
+    'start_ai_polish_provider_attempt_v4',
+    'admin_assert_runtime_authority_receipt_v3',
+    'admin_reopen_ai_v2',
+    'get_admin_config_validation_candidate_v2',
+    'record_admin_config_validation_report_v2',
+    'get_admin_runtime_readback_candidate_v3',
+    'record_admin_runtime_readback_v3',
+    'admin_assert_policy_config_reports_v1',
+    'admin_assert_candidate_policy_config_reports_v2',
+    'admin_config_validation_evidence_v2',
+    'admin_cutover_authority_v3',
+    'get_ai_polish_execution_snapshot_v5',
+    'start_ai_polish_provider_attempt_v5'
   );

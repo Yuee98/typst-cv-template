@@ -53,7 +53,9 @@ describe.skipIf(!RUN_DB_TESTS)("provider execution v2 lifecycle", () => {
       throw new Error("v2 execution fixture requires an empty local Admin identity");
     }
     runOwnerSql(
-      `select public.admin_bootstrap_v1('${userId}','local','local','${issuer.replaceAll("'", "''")}','v2 execution report fixture');`,
+      `select public.admin_bootstrap_v2('${userId}','local','v2 execution report fixture');
+       -- This suite intentionally exercises historical deployment/report RPCs.
+       update public.admin_environment set project_ref='local',auth_issuer='${issuer.replaceAll("'", "''")}' where id=true;`,
     );
     reservation = await harness.reserveV2(user);
 

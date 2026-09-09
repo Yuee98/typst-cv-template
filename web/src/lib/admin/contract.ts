@@ -36,7 +36,7 @@ const timestamp = z.string().datetime({ offset: true });
 const codeId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
 
 export const adminContextSchema = z.strictObject({
-  schemaVersion: z.literal("admin_context_v1"),
+  schemaVersion: z.literal("admin_context_v2"),
   actor: z.strictObject({
     userId: uuid,
     email: z.string().nullable(),
@@ -44,7 +44,6 @@ export const adminContextSchema = z.strictObject({
   }),
   environment: z.strictObject({
     name: adminEnvironmentSchema,
-    projectRef: z.string().min(1).max(100),
     controlPlaneMode: z.enum(["legacy", "jwt_v1"]),
     revision: decimalRevisionSchema,
   }),
@@ -172,10 +171,9 @@ export type AdminValidationRequest = z.infer<
 >;
 
 export const adminValidationReportSchema = z.strictObject({
-  schemaVersion: z.literal("admin_config_validation_report_v2"),
+  schemaVersion: z.literal("admin_config_validation_report_v3"),
   reportId: uuid,
   environment: adminEnvironmentSchema,
-  projectRef: z.string().min(1).max(100),
   runtimeContractId: codeId,
   runtimeTargetId: codeId,
   runtimeTargetSha256: z.string().regex(/^[0-9a-f]{64}$/),
@@ -237,9 +235,8 @@ export type AdminRuntimeReadbackRequest = z.infer<
 >;
 
 export const adminRuntimeReadbackSchema = z.strictObject({
-  schemaVersion: z.literal("admin_runtime_readback_v3"),
+  schemaVersion: z.literal("admin_runtime_readback_v4"),
   environment: adminEnvironmentSchema,
-  projectRef: z.string().min(1).max(100),
   reportId: uuid,
   closingCycleId: uuid,
   controlRevision: decimalRevisionSchema,

@@ -72,12 +72,8 @@ describe.skipIf(!RUN_DB_TESTS)(
       service = createServiceClient();
       adminUser = await createTestUser(service, "cfg005-future-legal");
       const admin = await signInAsUser(adminUser);
-      const token = (await admin.auth.getSession()).data.session!.access_token;
-      const issuer = (JSON.parse(
-        Buffer.from(token.split(".")[1], "base64url").toString(),
-      ) as { iss: string }).iss;
       runOwnerSql(
-        `select public.admin_bootstrap_v1(${sql(adminUser.id)},'local','local',${sql(issuer)},'CFG-005 future legal bootstrap');`,
+        `select public.admin_bootstrap_v2(${sql(adminUser.id)},'local','CFG-005 future legal bootstrap');`,
       );
       const enrolled = await admin.auth.mfa.enroll({
         factorType: "totp",
@@ -171,7 +167,7 @@ describe.skipIf(!RUN_DB_TESTS)(
         select json_build_object(
           'authorityEpoch',coalesce((
             select max(authority_epoch) from public.admin_runtime_authority_receipts_v3
-            where environment='local' and project_ref='local' and authority_scope='jwt_v1'
+            where environment='local' and authority_scope='jwt_v1'
           ),0),
           'currentV2Revision',(select revision from public.ai_current_legal_bundle_v2 where singleton)
         )::text;
@@ -342,11 +338,11 @@ describe.skipIf(!RUN_DB_TESTS)(
           v_manifest_sha256:=encode(extensions.digest(convert_to(v_manifest::text,'UTF8'),'sha256'),'hex');
           select coalesce(max(authority_epoch),0)+1 into v_authority_epoch
           from public.admin_runtime_authority_receipts_v3
-          where environment='local' and project_ref='local' and authority_scope='jwt_v1';
+          where environment='local' and authority_scope='jwt_v1';
           insert into public.admin_runtime_authority_receipts_v3(
-            environment,project_ref,authority_scope,authority_epoch,
+            environment,authority_scope,authority_epoch,
             authority_manifest,authority_manifest_sha256
-          ) values ('local','local','jwt_v1',v_authority_epoch,v_manifest,v_manifest_sha256);
+          ) values ('local','jwt_v1',v_authority_epoch,v_manifest,v_manifest_sha256);
           insert into public.admin_audit_events(operation,actor,reason)
           values ('legal_bundle_current_migration','db_operator','CFG-005 switch current legal bundle under closed gate');
           update pg_temp.cfg005_state
@@ -397,8 +393,8 @@ describe.skipIf(!RUN_DB_TESTS)(
             'local','local',v_state.policy_version_id,array['${forwardReportId}'::uuid],
             v_state.closing_cycle_id,v_state.control_revision,v_state.config_generation
           );
-          if v_readback->>'schemaVersion' <> 'admin_runtime_readback_v3' then
-            raise exception 'service readback did not produce V3 evidence';
+          if v_readback->>'schemaVersion' <> 'admin_runtime_readback_v4' then
+            raise exception 'service readback did not produce V4 evidence';
           end if;
           update pg_temp.cfg005_state set readback_report_id=(v_readback->>'reportId')::uuid;
         end;
@@ -426,7 +422,7 @@ describe.skipIf(!RUN_DB_TESTS)(
           'preparedPriceSealed',(select components_sealed_at is not null from public.ai_price_versions where id='${prepared.priceVersionId}'),
           'candidateBundleSealed',(select sealed_at is not null from public.ai_legal_bundle_versions where legal_bundle_version='${futureBundleVersion}'),
           'aiEnabled',(select ai_polish_enabled from public.ai_feature_config where id=true),
-          'authorityEpoch',(select max(authority_epoch) from public.admin_runtime_authority_receipts_v3 where environment='local' and project_ref='local' and authority_scope='jwt_v1')
+          'authorityEpoch',(select max(authority_epoch) from public.admin_runtime_authority_receipts_v3 where environment='local' and authority_scope='jwt_v1')
         )::text;
         rollback;
       `);

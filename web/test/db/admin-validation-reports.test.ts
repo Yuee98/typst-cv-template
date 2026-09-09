@@ -94,7 +94,9 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
       );
     }
     runOwnerSql(
-      `select public.admin_bootstrap_v1(${literal(adminUser.id)},'local','local',${literal(claims.iss)},'local report test bootstrap');`,
+      `select public.admin_bootstrap_v2(${literal(adminUser.id)},'local','local report test bootstrap');
+       -- Historical deployment/report RPC fixtures retain their original metadata.
+       update public.admin_environment set project_ref='local',auth_issuer=${literal(adminIssuer)} where id=true;`,
     );
     ownsEnvironment = true;
 
@@ -365,9 +367,10 @@ describe.skipIf(!RUN_DB_TESTS)("Admin validation report authority", () => {
       p_observed_runtime_build_id: boundedBuildId,
     });
     expect(bounded.error).toBeNull();
-    expect(Date.parse(bounded.data.expiresAt)).toBeLessThanOrEqual(
-      Date.now() + 2 * 60_000,
-    );
+    // Compare against the actual DB-owned deadline, not the host's clock.
+    const deadline = runOwnerSql(`select ${literal(bounded.data.expiresAt)}::timestamptz <= valid_until as bounded
+      from public.admin_reviewed_deployments_v1 where id=${literal(boundedDeploymentId)};`);
+    expect(deadline.stdout).toMatch(/\n\s*t\s*\n/u);
   });
 
   it("rejects unknown observed build, manifest, capability and candidate", async () => {

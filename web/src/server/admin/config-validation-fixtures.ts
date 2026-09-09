@@ -9,9 +9,8 @@ export const environment = {
  AI_PROVIDER_KEY_DEEPSEEK_PRIMARY: "secret-value",
 };
 export const candidate: AdminValidationCandidate = {
-  schemaVersion: "admin_config_validation_candidate_v2",
+  schemaVersion: "admin_config_validation_candidate_v3",
   environment: "local",
-  projectRef: "local",
   profileExecutionConfig: {
     schemaVersion: "profile_execution_config_v2",
     profileKey: "profile.deepseek",

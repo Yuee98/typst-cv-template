@@ -42,7 +42,6 @@ function matchesRuntimeConfigReceipt(
   const receipt = target.runtimeConfigReceipt;
   return (
     receipt.environment === environment.name &&
-    receipt.projectRef === environment.projectRef &&
     receipt.runtimeContractId === target.runtimeContractId &&
     receipt.runtimeTargetId === target.evidence.runtimeTargetId &&
     receipt.runtimeTargetSha256 === target.evidence.runtimeTargetSha256 &&

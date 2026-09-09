@@ -80,7 +80,8 @@ function mutationArgs(
   request: AdminMutationRequest,
   environment: AdminEnvironment,
 ) {
-  const base = { p_environment: environment.name, p_project_ref: environment.projectRef };
+  // The legacy RPC argument is ignored; deployment URLs are not DB identity.
+  const base = { p_environment: environment.name, p_project_ref: null };
   switch (request.operation) {
     case "disable_ai": return { ...base, p_expected_control_revision: request.expectedControlRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "pointer_set": return { ...base, p_policy_version_id: request.policyVersionId, p_validation_report_ids: request.validationReportIds, p_expected_control_revision: request.expectedControlRevision, p_expected_policy_version_id: request.expectedPolicyVersionId, p_expected_config_generation: request.expectedConfigGeneration, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
@@ -160,7 +161,7 @@ export async function handleAdminGet(
       return fail("INVALID_REQUEST");
     }
     const section = query.get("section") ?? "overview";
-    const base = { p_environment: env.name, p_project_ref: env.projectRef };
+    const base = { p_environment: env.name, p_project_ref: null };
     if (section === "overview") {
       if ([...query.keys()].some((key) => key !== "section"))
         return fail("INVALID_REQUEST");
@@ -178,7 +179,7 @@ export async function handleAdminGet(
       const from = new Date(to.getTime() - Number(daysText) * 86_400_000);
       const { data, error } = await client.rpc("admin_get_ai_analytics_v1", {
         p_environment: env.name,
-        p_project_ref: env.projectRef,
+        p_project_ref: null,
         p_from: from.toISOString(),
         p_to: to.toISOString(),
       });
@@ -290,7 +291,7 @@ export async function handleAdminPost(
     if (!validation.success && !readback.success) return fail("INVALID_REQUEST");
     const { data: context, error: contextError } = await client.rpc(
       "admin_get_context_v1",
-      { p_environment: env.name, p_project_ref: env.projectRef },
+      { p_environment: env.name, p_project_ref: null },
     );
     if (contextError) return fail(rpcError(contextError));
     adminContextSchema.parse(context);

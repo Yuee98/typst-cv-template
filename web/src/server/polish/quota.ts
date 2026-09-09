@@ -58,7 +58,7 @@ import {
   validateVersionedProfileExecutionConfig,
   type ProfileExecutionConfig,
 } from "./profile-execution-v2";
-import type { RuntimeConfigReceiptV1 } from "./runtime-config-receipt-v1";
+import type { RuntimeConfigReceiptV2 } from "./runtime-config-receipt-v2";
 import { POLISH_VALIDATION_FAILURE_STAGES } from "./validate";
 
 // ---------------------------------------------------------------------------
@@ -802,7 +802,6 @@ export async function getPolishExecutionSnapshotV2(
     runtimeTargetResolverV2: RuntimeTargetResolverV2;
     runtimeEnvironment?: Readonly<{
       environment: string;
-      projectRef: string;
     }>;
   },
 ): Promise<ExecutionSnapshotSuccessV2> {
@@ -816,7 +815,8 @@ export async function getPolishExecutionSnapshotV2(
       p_reservation_id: reservationId,
       p_user_id: userId,
       p_environment: params.runtimeEnvironment?.environment ?? null,
-      p_project_ref: params.runtimeEnvironment?.projectRef ?? null,
+      // Retained RPC parameter is ignored by the DB; no project binding.
+      p_project_ref: null,
     }),
   );
   if (observation.kind === "ambiguous") {
@@ -882,7 +882,7 @@ export async function startPolishProviderAttemptV2(
     reservationId: string;
     attemptNo: 1 | 2;
     expectedRoute: RouteSnapshotV1;
-    runtimeConfigReceipt?: Readonly<RuntimeConfigReceiptV1>;
+    runtimeConfigReceipt?: Readonly<RuntimeConfigReceiptV2>;
   },
 ): Promise<ProviderAttemptStartV2> {
   const reservationId = requireCanonicalUuidV2(params.reservationId);

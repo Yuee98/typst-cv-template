@@ -13,9 +13,8 @@ const uuid = z.string().uuid();
  * Admin publication and readback, not every user request.
  */
 export const runtimeConfigReceiptSchema = z.strictObject({
-  schemaVersion: z.literal("runtime_config_receipt_v1"),
+  schemaVersion: z.literal("runtime_config_receipt_v2"),
   environment: z.enum(["local", "preview", "production"]),
-  projectRef: z.string().min(1).max(100),
   runtimeContractId: codeId,
   runtimeTargetId: codeId,
   runtimeTargetSha256: sha256,
@@ -29,4 +28,4 @@ export const runtimeConfigReceiptSchema = z.strictObject({
   displayDisclosureKey: codeId,
 });
 
-export type RuntimeConfigReceiptV1 = z.infer<typeof runtimeConfigReceiptSchema>;
+export type RuntimeConfigReceiptV2 = z.infer<typeof runtimeConfigReceiptSchema>;

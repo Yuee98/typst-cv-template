@@ -715,7 +715,7 @@ function Overview({ context, t }: { context: AdminContext; t: AdminMessages }) {
       <div>
         <h1 className="text-2xl font-semibold">{t.overview}</h1>
         <p className="mt-1 text-sm text-foreground-muted">
-          {context.environment.name} · {context.environment.projectRef}
+          {context.environment.name} · {context.actor.email}
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

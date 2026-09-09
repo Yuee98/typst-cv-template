@@ -10,7 +10,6 @@
     "test": "pnpm --filter web test",
     "test:integration": "pnpm --filter web test:integration",
     "metrics:ai": "pnpm --filter web metrics:ai",
-    "admin:bootstrap": "pnpm --filter web --silent admin:bootstrap",
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm --filter web typecheck",
     "sync:typst-assets": "pnpm --filter web sync:typst-assets",

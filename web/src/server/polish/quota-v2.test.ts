@@ -101,9 +101,8 @@ const RUNTIME_EVIDENCE_V2 = Object.freeze({
   externalEvidenceIds: ["evidence.deepseek-v2.test"],
 });
 const RUNTIME_CONFIG_RECEIPT_V1 = Object.freeze({
-  schemaVersion: "runtime_config_receipt_v1",
+  schemaVersion: "runtime_config_receipt_v2",
   environment: "local",
-  projectRef: "local",
   runtimeContractId: RUNTIME_EVIDENCE_V2.runtimeContractId,
   runtimeTargetId: RUNTIME_EVIDENCE_V2.runtimeTargetId,
   runtimeTargetSha256: RUNTIME_EVIDENCE_V2.runtimeTargetSha256,
@@ -464,13 +463,12 @@ describe("RT-009 V2 reserve and execution snapshot wrappers", () => {
         runtimeTargetResolverV2: () => true,
         runtimeEnvironment: {
           environment: "local",
-          projectRef: "local",
         },
       }),
     ).resolves.toEqual(executionSuccessV2);
     expect(rpc).toHaveBeenCalledWith("get_ai_polish_execution_snapshot_v5", expect.objectContaining({
       p_environment: "local",
-      p_project_ref: "local",
+      p_project_ref: null,
     }));
   });
 });
