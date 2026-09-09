@@ -426,6 +426,29 @@ describe.skipIf(!RUN_DB_TESTS)(
       if (adminUser) await deleteTestUser(service, adminUser.id);
     });
 
+    it("serves enabled V2 availability over HTTP after Admin publication and reopen", async () => {
+      const current = await state();
+      const availability = await service.rpc("get_ai_polish_availability_v2", {
+        p_user_id: executionUser.id,
+      });
+      expect(availability.error).toBeNull();
+      expect(availability.data).toMatchObject({
+        schemaVersion: "ai_polish_availability_v2",
+        enabled: true,
+        configGeneration: String(current.config.config_generation),
+        routingPolicyVersionId: policyVersionId,
+        profileVersionId: fixture.profileVersionId,
+        runtimeContractId: fixture.runtimeContractId,
+        legalBundleVersion: fixture.legalBundleVersion,
+        displayDisclosureKey: fixture.displayDisclosureKey,
+        termsAccepted: true,
+        legalDisplay: {
+          legalBundleVersion: fixture.legalBundleVersion,
+          displayDisclosureKey: fixture.displayDisclosureKey,
+        },
+      });
+    });
+
     it("uses a V3 receipt for controlled one-send transport and settlement with expired historical reports", async () => {
       const config = await service.from("ai_feature_config").select("config_generation").eq("id", true).single();
       expect(config.error).toBeNull();

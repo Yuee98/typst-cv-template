@@ -373,12 +373,6 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     });
   }
 
-  async function availabilityV1(userId: string) {
-    return service.rpc("get_ai_polish_availability_v1", {
-      p_user_id: userId,
-    });
-  }
-
   async function expectNoAdmissionRows(userId: string) {
     expect(await getUsageRow(service, userId)).toBeNull();
     expect(await getRateBuckets(service, userId)).toEqual([]);
@@ -548,13 +542,15 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
     `);
   });
 
-  it("returns one coherent selected candidate and changes only exact-bundle acceptance", async () => {
+  it.each(["get_ai_polish_availability_v1", "get_ai_polish_availability_v2"])("%s returns a coherent legacy candidate over HTTP and changes only exact-bundle acceptance", async (rpc) => {
     const user = await createTestUser(service, "availability-route");
     try {
       const fixture = await createActiveFixture({ label: "availability-route" });
       const expected = await expectedRoute(fixture);
 
-      const beforeAcceptance = await availabilityV1(user.id);
+      // Exercise PostgREST, not owner SQL: STABLE RPCs run in READ ONLY
+      // transactions even on POST and cannot acquire the route's row locks.
+      const beforeAcceptance = await service.rpc(rpc, { p_user_id: user.id });
       expect(beforeAcceptance.error).toBeNull();
       expect(beforeAcceptance.data).toEqual({
         enabled: true,
@@ -565,6 +561,9 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
         runtimeContractId: fixture.runtime.runtimeContractId,
         displayDisclosureKey: fixture.selectedNode.displayDisclosureKey,
         termsAccepted: false,
+        ...(rpc === "get_ai_polish_availability_v2"
+          ? { schemaVersion: "ai_polish_availability_v2", legalDisplay: null }
+          : {}),
       });
       await expectNoAdmissionRows(user.id);
 
@@ -575,7 +574,7 @@ describe.skipIf(!RUN_DB_TESTS)("reserve V2 route snapshot (real DB)", () => {
       });
       expect(acceptance.error).toBeNull();
 
-      const afterAcceptance = await availabilityV1(user.id);
+      const afterAcceptance = await service.rpc(rpc, { p_user_id: user.id });
       expect(afterAcceptance.error).toBeNull();
       expect(afterAcceptance.data).toEqual({
         ...beforeAcceptance.data,
