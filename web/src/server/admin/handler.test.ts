@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import context from "../../../test/fixtures/admin-contract-v2.json";
+import context from "../../../test/fixtures/admin-contract-v3.json";
 import { handleAdminGet, handleAdminPost } from "./handler";
 import { resolveAdminEnvironment } from "./environment";
 

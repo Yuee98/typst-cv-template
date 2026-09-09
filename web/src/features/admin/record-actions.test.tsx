@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminMessages } from "./messages";
 import { AdminRecordActions } from "./record-actions";
@@ -32,6 +32,32 @@ afterEach(() => {
 });
 
 describe("AdminRecordActions", () => {
+  it.each(["providers", "profiles", "prices", "policies"] as const)("enables %s preparation while runtime writes remain disabled", section => {
+    render(<AdminRecordActions section={section} row={{}} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
+    const create = screen.getByRole("heading", { name: adminMessages.en.createSuccessor }).closest("section")!;
+    expect(create.querySelector("fieldset")!.disabled).toBe(false);
+    if (section !== "providers") {
+      const lifecycle = screen.getByRole("heading", { name: section === "prices" ? adminMessages.en.sealPrice : adminMessages.en.transitionStatus }).closest("section")!;
+      expect(lifecycle.querySelector("fieldset")!.disabled).toBe(true);
+    }
+  });
+
+  it("saves a policy draft without report IDs and displays its audited result", async () => {
+    const row = { id: user.id, policyKey: "draft.policy", latestVersion: "1", rules: { schemaVersion: "routing_rules_v1", windows: [] }, defaultProfileVersionId: user.id, legalBundleVersion: "future.legal", runtimeContractId: "runtime.test" };
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ...committed, operationKind: "routing_policy_draft_create", result: { schemaVersion: "admin_routing_policy_draft_result_v1", policyVersionId: user.id, policyKey: row.policyKey, version: 2, status: "draft", configSha256: "a".repeat(64) } }), { status: 200 }));
+    render(<AdminRecordActions section="policies" row={row} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
+    const create = within(screen.getByRole("heading", { name: adminMessages.en.createSuccessor }).closest("section")!);
+    expect(create.queryByPlaceholderText(adminMessages.en.validationReports)).toBeNull();
+    fireEvent.change(create.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "prepare now" } });
+    fireEvent.click(create.getByRole("button", { name: adminMessages.en.createSuccessor }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
+    expect(body).toMatchObject({ operation: "routing_policy_draft_create", expectedLatestVersion: "1", reason: "prepare now" });
+    expect(body).not.toHaveProperty("validationReportIds");
+    expect(await create.findByText(adminMessages.en.mutationCommitted)).toBeTruthy();
+    expect(create.getByText(new RegExp(committed.auditId))).toBeTruthy();
+  });
+
   it("submits a user-scoped mutation with the current bearer token", async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify(committed), {
@@ -40,7 +66,7 @@ describe("AdminRecordActions", () => {
       }),
     );
     render(
-      <AdminRecordActions
+      <AdminRecordActions draftsEnabled
         section="users"
         row={user}
         accessToken="current-user-token"
@@ -74,7 +100,7 @@ describe("AdminRecordActions", () => {
   it("retains the same idempotency key after response loss", async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("response lost"));
     render(
-      <AdminRecordActions
+      <AdminRecordActions draftsEnabled
         section="users"
         row={user}
         accessToken="current-user-token"
@@ -101,7 +127,7 @@ describe("AdminRecordActions", () => {
 
   it("keeps controls disabled while DB authority is dark", () => {
     render(
-      <AdminRecordActions
+      <AdminRecordActions draftsEnabled
         section="users"
         row={user}
         accessToken="current-user-token"

@@ -36,7 +36,7 @@ const timestamp = z.string().datetime({ offset: true });
 const codeId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
 
 export const adminContextSchema = z.strictObject({
-  schemaVersion: z.literal("admin_context_v2"),
+  schemaVersion: z.literal("admin_context_v3"),
   actor: z.strictObject({
     userId: uuid,
     email: z.string().nullable(),
@@ -55,7 +55,7 @@ export const adminContextSchema = z.strictObject({
     activePolicyVersionId: uuid.nullable(),
     currentLegalBundle: codeId,
   }),
-  capabilities: z.strictObject({ writes: z.boolean() }),
+  capabilities: z.strictObject({ drafts: z.boolean(), writes: z.boolean() }),
 });
 export type AdminContext = z.infer<typeof adminContextSchema>;
 
@@ -135,6 +135,14 @@ const safeMutationResultSchema = z.discriminatedUnion("schemaVersion", [
     validTo: timestamp.nullable().optional(),
     lifecycleAuditId: uuid.optional(),
     validationReportId: uuid.optional(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal("admin_routing_policy_draft_result_v1"),
+    policyVersionId: uuid,
+    policyKey: codeId,
+    version: z.number().int().positive(),
+    status: z.literal("draft"),
+    configSha256: z.string().regex(/^[0-9a-f]{64}$/),
   }),
   z.strictObject({
     schemaVersion: z.literal("admin_routing_policy_result_v1"),
@@ -298,6 +306,7 @@ export const adminMutationRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("global_daily_limit_set"), ...mutationBase, globalDailyLimit: z.number().int().nonnegative(), expectedGlobalDailyLimit: z.number().int().nonnegative(), expectedControlRevision: revision }),
   z.strictObject({ operation: z.literal("price_seal"), ...mutationBase, priceVersionId: uuid, runtimeContractId: codeText }),
   z.strictObject({ operation: z.literal("profile_version_transition"), ...mutationBase, profileVersionId: uuid, toStatus: z.enum(["validated", "canary", "active"]), validationReportId: uuid }),
+  z.strictObject({ operation: z.literal("routing_policy_draft_create"), ...mutationBase, policyKey: codeText, expectedLatestVersion: revision, rules: jsonObject, defaultProfileVersionId: uuid, legalBundleVersion: codeText, runtimeContractId: codeText }),
   z.strictObject({ operation: z.literal("routing_policy_create"), ...mutationBase, policyKey: codeText, expectedLatestVersion: revision, rules: jsonObject, defaultProfileVersionId: uuid, legalBundleVersion: codeText, runtimeContractId: codeText, validationReportIds: policyIds }),
   z.strictObject({ operation: z.literal("routing_policy_transition"), ...mutationBase, policyVersionId: uuid, toStatus: z.enum(["validated", "canary", "active", "retired"]), validationReportIds: policyIds }),
   z.strictObject({ operation: z.literal("price_close"), ...mutationBase, priceVersionId: uuid, validTo: timestamp, successorPriceVersionId: uuid.nullable(), validationReportId: uuid }),

@@ -33,7 +33,7 @@ const session = (token: string) => ({
   user: { id: token, email: `${token}@example.test` },
 });
 const context = (account: string) => ({
-  schemaVersion: "admin_context_v2",
+  schemaVersion: "admin_context_v3",
   actor: {
     userId: "00000000-0000-4000-8000-000000000001",
     email: account,
@@ -52,7 +52,7 @@ const context = (account: string) => ({
     activePolicyVersionId: null,
     currentLegalBundle: "bundle-v1",
   },
-  capabilities: { writes: false },
+  capabilities: { drafts: true, writes: false },
 });
 
 function deferred<T>() {

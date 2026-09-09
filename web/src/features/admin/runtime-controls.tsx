@@ -230,6 +230,7 @@ function ValidationPanel({
 }
 
 export function AdminRuntimeControls({
+  draftsEnabled,
   state,
   environment,
   locale,
@@ -240,6 +241,7 @@ export function AdminRuntimeControls({
 }: {
   state: AdminControlState;
   environment: string;
+  draftsEnabled: boolean;
   locale: string;
   accessToken: string;
   writesEnabled: boolean;
@@ -310,7 +312,7 @@ export function AdminRuntimeControls({
       </div>
       <ControlStateView state={state} locale={locale} t={t} />
       {!enabled && <p className="rounded border border-border bg-surface p-3 text-sm text-foreground-muted">{t.writesUnavailable}</p>}
-      <ValidationPanel accessToken={accessToken} writesEnabled={enabled} t={t} />
+      <ValidationPanel accessToken={accessToken} writesEnabled={draftsEnabled} t={t} />
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title={t.setDailyLimit} disabled={!enabled}>
           <Input aria-label={t.callsDay} type="number" min={0} value={limitDraft.value} onChange={(event) => { setLimitDraft({ ...limitDraft, value: event.target.value }); limit.changed(); }} />
