@@ -242,7 +242,7 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(steps.map((step) => step.name)).toEqual([
     "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
     "Install dependencies", "Verify DB test runner contract (credential-free)",
-    "Start local Supabase", "Reset to Admin bootstrap predecessor", "Run Admin bootstrap predecessor upgrade gate", "Reset to Admin drafts predecessor", "Run Admin drafts predecessor upgrade gate", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run CFG-003 fresh-reset gate",
+    "Start local Supabase", "Reset to Admin bootstrap predecessor", "Run Admin bootstrap predecessor upgrade gate", "Reset to Admin drafts predecessor", "Run Admin drafts predecessor upgrade gate", "Reset to Admin authoring predecessor", "Run Admin authoring predecessor upgrade gate", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run CFG-003 fresh-reset gate",
     "Install Chromium for Admin Auth E2E", "Run local Supabase Admin Auth UI E2E", "Run real-DB suite",
   ]);
   const commands = {
@@ -252,6 +252,8 @@ function assertWorkflowContract(workflow, normalConfig) {
     upgrade: "node web/scripts/test-admin-bootstrap-upgrade.mjs",
     draftsPredecessor: "pnpm exec supabase db reset --local --version 20260909110000 --yes",
     draftsUpgrade: "node web/scripts/test-admin-drafts-upgrade.mjs",
+    authoringPredecessor: "pnpm exec supabase db reset --local --version 20260910000000 --yes",
+    authoringUpgrade: "node web/scripts/test-admin-authoring-upgrade.mjs",
     cfg001Fresh: "pnpm --filter web test:db:cfg001-fresh",
     cfg002Fresh: "node web/scripts/run-cfg002-fresh-reset.mjs",
     cfg003Fresh: "node web/scripts/run-cfg003-fresh-reset.mjs",
@@ -267,7 +269,9 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(indexes.predecessor).toBeLessThan(indexes.upgrade);
   expect(indexes.upgrade).toBeLessThan(indexes.draftsPredecessor);
   expect(indexes.draftsPredecessor).toBeLessThan(indexes.draftsUpgrade);
-  expect(indexes.draftsUpgrade).toBeLessThan(indexes.cfg001Fresh);
+  expect(indexes.draftsUpgrade).toBeLessThan(indexes.authoringPredecessor);
+  expect(indexes.authoringPredecessor).toBeLessThan(indexes.authoringUpgrade);
+  expect(indexes.authoringUpgrade).toBeLessThan(indexes.cfg001Fresh);
   expect(indexes.cfg001Fresh).toBeLessThan(indexes.cfg002Fresh);
   expect(indexes.cfg002Fresh).toBeLessThan(indexes.cfg003Fresh);
   expect(indexes.cfg003Fresh).toBeLessThan(indexes.e2eInstall);

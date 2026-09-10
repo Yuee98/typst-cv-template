@@ -2,6 +2,8 @@ import "server-only";
 import {
   ADMIN_ERROR_STATUS,
   adminContextSchema,
+  adminAuthoringOptionsSchema,
+  adminOptionKindSchema,
   adminControlStateSchema,
   adminAnalyticsSchema,
   adminPageSchema,
@@ -15,6 +17,7 @@ import {
   type AdminErrorCode,
   type AdminMutationRequest,
 } from "@/lib/admin/contract";
+import { COMPILED_RUNTIME_CODE_CAPABILITIES_V2 } from "../polish/runtime-code-capability-v2";
 import { resolveAdminEnvironment, type AdminEnvironment } from "./environment";
 import { createAdminRequestClient } from "./request-client";
 import { produceAdminValidationReport } from "./validation-service";
@@ -36,6 +39,7 @@ const defaults: Dependencies = {
   produceValidation: produceAdminValidationReport,
   produceReadback: produceAdminRuntimeReadback,
 };
+export const ADMIN_MUTATION_MAX_BYTES = 16_384;
 const headers = { "Cache-Control": "private, no-store", Vary: "Authorization" };
 function fail(code: AdminErrorCode) {
   return Response.json(
@@ -47,7 +51,7 @@ function rpcError(error: { code?: string; message?: string }): AdminErrorCode {
   // Only fixed protocol names; no upstream error prose leaves the server.
   if (error.message === "ENVIRONMENT_MISMATCH") return "ENVIRONMENT_MISMATCH";
   if (error.message === "STEP_UP_REQUIRED") return "STEP_UP_REQUIRED";
-  if (error.message === "IDEMPOTENCY_CONFLICT" || error.message === "CONFLICT" || error.code === "40001") return "CONFLICT";
+  if (error.message === "IDEMPOTENCY_CONFLICT" || error.message === "CONFLICT" || error.code === "40001" || error.code === "23505") return "CONFLICT";
   if (error.message === "NOT_READY" || error.message?.endsWith("_NOT_READY") || error.message === "VALIDATION_REPORT_MISMATCH") return "NOT_READY";
   if (error.code === "42501") return "FORBIDDEN";
   if (error.code === "22023" || error.code === "22P02")
@@ -62,6 +66,7 @@ const mutationRpc: Record<AdminMutationRequest["operation"], { rpc: string; kind
   pointer_clear: { rpc: "admin_clear_ai_routing_pointer_v2", kind: "ai_pointer_clear" },
   reopen: { rpc: "admin_reopen_ai_v2", kind: "ai_reopen" },
   membership_set: { rpc: "admin_set_membership_v1", kind: "admin_membership_set" },
+  provider_create: { rpc: "admin_create_provider_v1", kind: "provider_create" },
   provider_defaults_update: { rpc: "admin_update_provider_defaults_v1", kind: "provider_defaults_update" },
   provider_profile_create: { rpc: "admin_create_provider_profile_v1", kind: "provider_profile_create" },
   profile_version_create: { rpc: "admin_create_profile_version_v2", kind: "profile_version_create" },
@@ -89,6 +94,7 @@ function mutationArgs(
     case "pointer_clear": return { ...base, p_validation_report_ids: request.validationReportIds, p_expected_control_revision: request.expectedControlRevision, p_expected_policy_version_id: request.expectedPolicyVersionId, p_expected_config_generation: request.expectedConfigGeneration, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "reopen": return { ...base, p_readback_report_id: request.readbackReportId, p_expected_closing_cycle_id: request.expectedClosingCycleId, p_expected_control_revision: request.expectedControlRevision, p_expected_policy_version_id: request.expectedPolicyVersionId, p_expected_config_generation: request.expectedConfigGeneration, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "membership_set": return { ...base, p_target_user_id: request.targetUserId, p_enabled: request.enabled, p_expected_revision: request.expectedRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
+    case "provider_create": return { ...base, p_provider_key: request.providerKey, p_recipient_key: request.recipientKey, p_gateway_kind: request.gatewayKind, p_display_name: request.displayName, p_default_adapter_id: request.defaultAdapterId, p_default_endpoint_url: request.defaultEndpointUrl, p_default_credential_env_name: request.defaultCredentialEnvName, p_default_model_id: request.defaultModelId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "provider_defaults_update": return { ...base, p_provider_id: request.providerId, p_display_name: request.displayName, p_default_adapter_id: request.defaultAdapterId, p_default_endpoint_url: request.defaultEndpointUrl, p_default_credential_env_name: request.defaultCredentialEnvName, p_default_model_id: request.defaultModelId, p_archived: request.archived, p_expected_revision: request.expectedRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "provider_profile_create": return { ...base, p_provider_id: request.providerId, p_profile_key: request.profileKey, p_display_name: request.displayName, p_model_vendor: request.modelVendor, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
     case "profile_version_create": return { ...base, p_profile_id: request.profileId, p_expected_latest_version: request.expectedLatestVersion, p_adapter_id: request.adapterId, p_wire_api_kind: request.wireApiKind, p_endpoint_url: request.endpointUrl, p_credential_env_name: request.credentialEnvName, p_model_id: request.modelId, p_capability_contract_id: request.capabilityContractId, p_cache_policy_id: request.cachePolicyId, p_legal_manifest_id: request.legalManifestId, p_display_disclosure_key: request.displayDisclosureKey, p_config: request.config, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
@@ -154,6 +160,28 @@ export async function handleAdminGet(
     );
     if (authError || !auth.user) return fail("UNAUTHORIZED");
     const query = new URL(request.url).searchParams;
+    if (query.get("section") === "options") {
+      const allowed = ["section", "kind", "parent", "search", "after", "id", "limit"];
+      const kind = adminOptionKindSchema.safeParse(query.get("kind"));
+      const limit = query.get("limit") ?? "25";
+      if (!kind.success || [...query.keys()].some(key => !allowed.includes(key) || query.getAll(key).length !== 1)
+        || !/^(?:[1-9]|[1-9][0-9]|100)$/.test(limit)
+        || (query.get("search")?.length ?? 0) > 100
+        || ["parent", "after", "id"].some(key => query.has(key) && !/^[a-z0-9][a-z0-9._-]{0,199}$/.test(query.get(key)!))
+        || (query.has("id") && (query.has("search") || query.has("after")))
+        || (kind.data === "prices" && !query.has("parent"))
+        || (query.has("parent") && !["prices", "versions", "identities"].includes(kind.data))) return fail("INVALID_REQUEST");
+      const { data, error } = await client.rpc("admin_authoring_options_v1", {
+        p_environment: env.name, p_project_ref: null, p_kind: kind.data, p_limit: Number(limit),
+        p_parent: query.get("parent"), p_search: query.get("search"), p_after: query.get("after"), p_id: query.get("id"),
+      });
+      if (error) return fail(rpcError(error));
+      const page = adminAuthoringOptionsSchema.parse(data);
+      if (page.kind !== kind.data) return fail("UNAVAILABLE");
+      if (kind.data === "adapters") page.items = page.items.filter(item =>
+        COMPILED_RUNTIME_CODE_CAPABILITIES_V2.some(capability => capability.adapterKind === item.id && capability.wireApiKind === item.wireApiKind));
+      return Response.json(page, { headers });
+    }
     const allowedKeys = ["section", "limit", "after", "search", "id", "days"];
     if (
       [...query.keys()].some(
@@ -237,6 +265,10 @@ export async function handleAdminGet(
     if (error) return fail(rpcError(error));
     const page = adminPageSchema.parse(data);
     if (page.section !== section) return fail("UNAVAILABLE");
+    for (const row of page.items) {
+      if ("adapterOptions" in row) row.adapterOptions = row.adapterOptions.filter(item =>
+        COMPILED_RUNTIME_CODE_CAPABILITIES_V2.some(capability => capability.adapterKind === item.adapterId && capability.wireApiKind === item.wireApiKind));
+    }
     return Response.json(page, { headers });
   } catch {
     return fail("UNAVAILABLE");
@@ -259,7 +291,7 @@ export async function handleAdminPost(
     request.headers.get("content-type")?.split(";", 1)[0].trim() !==
       "application/json" ||
     (contentLength !== null &&
-      (!/^[0-9]{1,7}$/.test(contentLength) || Number(contentLength) > 4_096))
+      (!/^[0-9]{1,7}$/.test(contentLength) || Number(contentLength) > ADMIN_MUTATION_MAX_BYTES))
   ) {
     return fail("INVALID_REQUEST");
   }
@@ -270,7 +302,7 @@ export async function handleAdminPost(
       bearer[1],
     );
     if (authError || !auth.user) return fail("UNAUTHORIZED");
-    const body = await readBoundedUtf8Body(request, 4_096);
+    const body = await readBoundedUtf8Body(request, ADMIN_MUTATION_MAX_BYTES);
     if (body === null) return fail("INVALID_REQUEST");
     const raw: unknown = JSON.parse(body);
     const mutation = adminMutationRequestSchema.safeParse(raw);

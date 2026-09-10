@@ -127,6 +127,12 @@ jobs:
       - name: Run Admin drafts predecessor upgrade gate
         run: node web/scripts/test-admin-drafts-upgrade.mjs
 
+      - name: Reset to Admin authoring predecessor
+        run: pnpm exec supabase db reset --local --version 20260910000000 --yes
+
+      - name: Run Admin authoring predecessor upgrade gate
+        run: node web/scripts/test-admin-authoring-upgrade.mjs
+
       # Hard-fail proof of the exact post-migration seed cardinality and dark
       # feature state. The runner verifies loopback and resets before running
       # only the order-sensitive CFG-001 suite.

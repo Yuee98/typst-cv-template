@@ -300,6 +300,7 @@ export const adminMutationRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("reopen"), ...mutationBase, readbackReportId: uuid, expectedClosingCycleId: uuid, expectedControlRevision: revision, expectedPolicyVersionId: uuid.nullable(), expectedConfigGeneration: revision }),
   z.strictObject({ operation: z.literal("membership_set"), ...mutationBase, targetUserId: uuid, enabled: z.boolean(), expectedRevision: revision }),
   z.strictObject({ operation: z.literal("provider_defaults_update"), ...mutationBase, providerId: uuid, displayName: z.string().trim().min(1).max(200), defaultAdapterId: codeText, defaultEndpointUrl: z.string().url().max(512), defaultCredentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), defaultModelId: z.string().min(1).max(200), archived: z.boolean(), expectedRevision: revision }),
+  z.strictObject({ operation: z.literal("provider_create"), ...mutationBase, providerKey: codeText, recipientKey: codeText, gatewayKind: z.enum(["custom_compatible", "direct_deepseek", "direct_mimo"]), displayName: z.string().trim().min(1).max(200), defaultAdapterId: codeText, defaultEndpointUrl: z.string().url().max(512), defaultCredentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), defaultModelId: z.string().min(1).max(200) }),
   z.strictObject({ operation: z.literal("provider_profile_create"), ...mutationBase, providerId: uuid, profileKey: codeText, displayName: z.string().trim().min(1).max(200), modelVendor: z.string().trim().min(1).max(200) }),
   z.strictObject({ operation: z.literal("profile_version_create"), ...mutationBase, profileId: uuid, expectedLatestVersion: revision, adapterId: codeText, wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]), endpointUrl: z.string().url().max(512), credentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), modelId: z.string().min(1).max(200), capabilityContractId: codeText, cachePolicyId: codeText, legalManifestId: codeText, displayDisclosureKey: codeText, config: jsonObject }),
   z.strictObject({ operation: z.literal("price_version_create"), ...mutationBase, profileVersionId: uuid, pricingLane: codeText, expectedLatestVersion: revision, currency: z.string().regex(/^[A-Z]{3}$/), calculatorKind: z.enum(["linear_token_v1", "openai_gpt56_v1"]), validFrom: timestamp, validTo: timestamp.nullable(), providerEffectiveFrom: timestamp.nullable(), providerEffectiveTo: timestamp.nullable(), sourceUrl: z.string().url().refine((value) => value.startsWith("https://")), sourceCheckedAt: timestamp, sourceSnapshotSha256: z.string().regex(/^[0-9a-f]{64}$/), parameters: jsonObject, components: jsonObject }),
@@ -562,3 +563,15 @@ export const ADMIN_ERROR_STATUS: Record<AdminErrorCode, number> = {
   NOT_READY: 409,
   UNAVAILABLE: 503,
 };
+
+export const adminOptionKindSchema = z.enum(["adapters", "providers", "identities", "versions", "prices", "runtime_contracts"]);
+export type AdminOptionKind = z.infer<typeof adminOptionKindSchema>;
+export const adminAuthoringOptionSchema = z.strictObject({
+  id: codeId, label: z.string().min(1).max(1000), parentId: codeId.nullable(), status: z.string().max(40),
+  latestVersion: z.number().int().nonnegative().nullable(), wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]).nullable(),
+});
+export type AdminAuthoringOption = z.infer<typeof adminAuthoringOptionSchema>;
+export const adminAuthoringOptionsSchema = z.strictObject({
+  schemaVersion: z.literal("admin_authoring_options_v1"), kind: adminOptionKindSchema,
+  items: z.array(adminAuthoringOptionSchema).max(100), nextCursor: codeId.nullable(),
+});

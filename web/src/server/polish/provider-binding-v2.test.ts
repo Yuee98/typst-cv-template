@@ -48,3 +48,9 @@ describe("code-owned v2 provider binding", () => {
     })).toThrow();
   });
 });
+
+it("keeps custom directory drafts outside executable transports before reading secrets", () => {
+  const resolveSecret = vi.fn(() => "unused-local-secret");
+  expect(() => prepareProviderTransportV2({ profile: { ...fixtures.deepseek, gatewayKind: "custom_compatible", endpointUrl: "https://example.test/chat/completions" }, recipient: { providerId: fixtures.deepseek.providerId, recipientKey: "custom-test" }, resolveSecret })).toThrow();
+  expect(resolveSecret).not.toHaveBeenCalled();
+});
