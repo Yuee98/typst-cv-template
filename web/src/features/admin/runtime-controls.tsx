@@ -102,7 +102,7 @@ function Result({
     <>
       {error && <p className="text-sm text-danger-foreground">{error}</p>}
       {committed && (
-        <div className="rounded border border-border bg-background p-3 text-xs">
+        <div className="rounded border border-border bg-bg p-3 text-xs">
           <p className="font-medium">{t.mutationCommitted}</p>
           <p className="mt-1 break-all">{t.operationId}: {committed.operationId}</p>
           <p className="mt-1 break-all">{t.auditId}: {committed.auditId}</p>
@@ -218,7 +218,7 @@ function ValidationPanel({
       <Button disabled={busy || Object.values(draft).some((value) => !value)} onClick={() => void run()}>{t.apply}</Button>
       {error && <p className="text-sm text-danger-foreground">{error}</p>}
       {report && (
-        <div className="rounded border border-border bg-background p-3 text-xs">
+        <div className="rounded border border-border bg-bg p-3 text-xs">
           <p className="font-medium">{report.passed ? t.complete : t.incomplete}</p>
           <p className="mt-1 break-all">{t.readbackReport}: {report.reportId}</p>
           {Object.entries(report.checks).map(([key, value]) => <p key={key}>{key}: {value ? t.yes : t.no}</p>)}
@@ -348,7 +348,7 @@ export function AdminRuntimeControls({
           <Input aria-label={t.validationReports} value={readbackDraft.validationReportIds} placeholder={t.validationReports} onChange={(event) => { setReadbackDraft({ ...readbackDraft, validationReportIds: event.target.value }); setReadback(null); setReadbackError(null); }} />
           <Button disabled={readbackBusy || ids(readbackDraft.validationReportIds).length === 0} onClick={() => void recordReadback()}>{t.recordReadback}</Button>
           {readbackError && <p className="text-sm text-danger-foreground">{readbackError}</p>}
-          {readback && <div className="rounded border border-border bg-background p-3 text-xs"><p className="font-medium">{t.readbackRecorded}</p><p className="mt-1 break-all">{t.readbackReport}: {readback.reportId}</p><p className="mt-1">{t.reportExpires}: {readback.expiresAt}</p><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap">{JSON.stringify(readback.effectiveRoutes, null, 2)}</pre></div>}
+          {readback && <div className="rounded border border-border bg-bg p-3 text-xs"><p className="font-medium">{t.readbackRecorded}</p><p className="mt-1 break-all">{t.readbackReport}: {readback.reportId}</p><p className="mt-1">{t.reportExpires}: {readback.expiresAt}</p><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap">{JSON.stringify(readback.effectiveRoutes, null, 2)}</pre></div>}
         </Panel>
         <Panel title={t.reopenAi} disabled={!enabled || state.aiEnabled || !state.closingCycleId}>
           <Input aria-label={t.readbackReport} value={reopenDraft.readbackReportId} placeholder={t.readbackReport} onChange={(event) => { setReopenDraft({ ...reopenDraft, readbackReportId: event.target.value }); reopen.changed(); }} />

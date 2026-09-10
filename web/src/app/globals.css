@@ -340,3 +340,14 @@ body {
     width: 210mm !important;
   }
 }
+
+/* Native popup options need explicit colors; they do not inherit utility backgrounds. */
+[data-admin-viewport] select,
+[data-admin-viewport] option,
+[data-admin-viewport] optgroup {
+  background-color: var(--surface);
+  color: var(--foreground);
+}
+[data-admin-viewport] option:disabled {
+  color: var(--foreground-muted);
+}

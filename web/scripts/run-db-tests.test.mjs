@@ -197,7 +197,7 @@ function freshHarness({
   };
 }
 
-const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-cfg003-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/scripts/test-admin-bootstrap-upgrade.mjs", "web/scripts/test-admin-drafts-upgrade.mjs", "web/scripts/run-admin-e2e-server.mjs", "web/scripts/run-admin-e2e.mjs", "web/e2e/**", "web/playwright.admin.config.ts", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/legal-display-v2.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/lib/admin/**", "web/src/server/admin/**", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/deepseek.ts", "web/src/server/polish/mimo.ts", "web/src/server/polish/execution-snapshot-v2.ts", "web/src/server/polish/handler-runtime-authority.ts", "web/src/server/polish/handler.ts", "web/src/server/polish/legal-display-reader-v2.ts", "web/src/server/polish/prepared-provider-execution-v2.ts", "web/src/server/polish/profile-execution-v2.ts", "web/src/server/polish/provider-binding-v2.ts", "web/src/server/polish/runtime-code-capability-v2.ts", "web/src/server/polish/runtime-config-receipt-v2.ts", "web/src/server/polish/g4-routing-policy-seed-v1.ts", "web/src/server/polish/g4-routing-policy-seed-v1.test.ts", "web/src/server/polish/routing-rules-v1.test.ts", "web/test/fixtures/routing-rules-v1.json", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/fixtures/admin-contract-v3.json", "web/test/fixtures/profile-execution-v2.json", "web/test/db/**", "web/vitest.db.config.mts"];
+const REQUIRED_WORKFLOW_PATHS = [".github/workflows/db-tests.yml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "supabase/config.toml", "supabase/migrations/**", "supabase/seed.sql", "web/package.json", "web/scripts/run-cfg001-fresh-reset.mjs", "web/scripts/run-cfg002-fresh-reset.mjs", "web/scripts/run-cfg003-fresh-reset.mjs", "web/scripts/run-db-tests.mjs", "web/scripts/run-db-tests.test.mjs", "web/scripts/test-admin-bootstrap-upgrade.mjs", "web/scripts/test-admin-drafts-upgrade.mjs", "web/scripts/test-admin-authoring-upgrade.mjs", "web/scripts/run-admin-e2e-server.mjs", "web/scripts/run-admin-e2e.mjs", "web/e2e/**", "web/playwright.admin.config.ts", "web/vitest.config.mts", "web/src/lib/cv/cloud-storage.ts", "web/src/lib/legal/legal-display-v2.ts", "web/src/lib/legal/terms-acceptance.ts", "web/src/lib/admin/**", "web/src/lib/routing-rules-v1.ts", "web/src/server/admin/**", "web/src/server/polish/auth.ts", "web/src/server/polish/deepseek-v2-seed-v1.ts", "web/src/server/polish/deepseek-v2-seed-v1.test.ts", "web/src/server/polish/deepseek.ts", "web/src/server/polish/mimo.ts", "web/src/server/polish/execution-snapshot-v2.ts", "web/src/server/polish/handler-runtime-authority.ts", "web/src/server/polish/handler.ts", "web/src/server/polish/legal-display-reader-v2.ts", "web/src/server/polish/prepared-provider-execution-v2.ts", "web/src/server/polish/profile-execution-v2.ts", "web/src/server/polish/provider-binding-v2.ts", "web/src/server/polish/runtime-code-capability-v2.ts", "web/src/server/polish/runtime-config-receipt-v2.ts", "web/src/server/polish/g4-routing-policy-seed-v1.ts", "web/src/server/polish/g4-routing-policy-seed-v1.test.ts", "web/src/server/polish/routing-rules-v1.test.ts", "web/test/fixtures/routing-rules-v1.json", "web/src/server/polish/lifecycle*.ts", "web/src/server/polish/quota.ts", "web/test/fixtures/admin-contract-v3.json", "web/test/fixtures/profile-execution-v2.json", "web/test/db/**", "web/vitest.db.config.mts"];
 
 function assertWorkflowContract(workflow, normalConfig) {
   expect(normalConfig).toMatch(/include:\s*\[[^\]]*"scripts\/\*\*\/\*.test\.mjs"/s);
@@ -242,7 +242,7 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(steps.map((step) => step.name)).toEqual([
     "Checkout", "Setup Supabase CLI", "Setup Node", "Enable Corepack",
     "Install dependencies", "Verify DB test runner contract (credential-free)",
-    "Start local Supabase", "Reset to Admin bootstrap predecessor", "Run Admin bootstrap predecessor upgrade gate", "Reset to Admin drafts predecessor", "Run Admin drafts predecessor upgrade gate", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run CFG-003 fresh-reset gate",
+    "Start local Supabase", "Reset to Admin bootstrap predecessor", "Run Admin bootstrap predecessor upgrade gate", "Reset to Admin drafts predecessor", "Run Admin drafts predecessor upgrade gate", "Reset to Admin authoring predecessor", "Run Admin authoring predecessor upgrade gate", "Run CFG-001 fresh-reset gate", "Run CFG-002 fresh-reset gate", "Run CFG-003 fresh-reset gate",
     "Install Chromium for Admin Auth E2E", "Run local Supabase Admin Auth UI E2E", "Run real-DB suite",
   ]);
   const commands = {
@@ -252,6 +252,8 @@ function assertWorkflowContract(workflow, normalConfig) {
     upgrade: "node web/scripts/test-admin-bootstrap-upgrade.mjs",
     draftsPredecessor: "pnpm exec supabase db reset --local --version 20260909110000 --yes",
     draftsUpgrade: "node web/scripts/test-admin-drafts-upgrade.mjs",
+    authoringPredecessor: "pnpm exec supabase db reset --local --version 20260910000000 --yes",
+    authoringUpgrade: "node web/scripts/test-admin-authoring-upgrade.mjs",
     cfg001Fresh: "pnpm --filter web test:db:cfg001-fresh",
     cfg002Fresh: "node web/scripts/run-cfg002-fresh-reset.mjs",
     cfg003Fresh: "node web/scripts/run-cfg003-fresh-reset.mjs",
@@ -267,7 +269,9 @@ function assertWorkflowContract(workflow, normalConfig) {
   expect(indexes.predecessor).toBeLessThan(indexes.upgrade);
   expect(indexes.upgrade).toBeLessThan(indexes.draftsPredecessor);
   expect(indexes.draftsPredecessor).toBeLessThan(indexes.draftsUpgrade);
-  expect(indexes.draftsUpgrade).toBeLessThan(indexes.cfg001Fresh);
+  expect(indexes.draftsUpgrade).toBeLessThan(indexes.authoringPredecessor);
+  expect(indexes.authoringPredecessor).toBeLessThan(indexes.authoringUpgrade);
+  expect(indexes.authoringUpgrade).toBeLessThan(indexes.cfg001Fresh);
   expect(indexes.cfg001Fresh).toBeLessThan(indexes.cfg002Fresh);
   expect(indexes.cfg002Fresh).toBeLessThan(indexes.cfg003Fresh);
   expect(indexes.cfg003Fresh).toBeLessThan(indexes.e2eInstall);

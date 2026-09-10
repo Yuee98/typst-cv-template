@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+vi.mock("@/components/layout/toolbar/locale-switcher", () => ({ LocaleSwitcher: () => null }));
+import { describe, expect, it, vi } from "vitest";
 import { adminAuditSchema } from "@/lib/admin/contract";
 import { adminMessages } from "./messages";
 import {

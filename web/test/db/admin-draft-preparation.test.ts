@@ -136,6 +136,62 @@ describe.skipIf(!RUN_DB_TESTS)("Admin preparation while legacy AI remains live",
     expect(state()).toEqual(before);
   });
 
+  it("creates provider directories and discovers zero-version identities with bounded options", async () => {
+    const before = state();
+    const request = { operation: "provider_create", providerKey: `test.custom.${crypto.randomUUID()}`, displayName: "Local custom directory", recipientKey: "custom-test", gatewayKind: "custom_compatible", defaultAdapterId: "deepseek_chat_v1", defaultEndpointUrl: "https://example.test/chat/completions", defaultCredentialEnvName: "AI_PROVIDER_KEY_TEST_UNUSED", defaultModelId: "test-model", reason: "prepare custom directory", idempotencyKey: crypto.randomUUID() };
+    const created = await commit(request);
+    expect((await commit(request)).operationId).toBe(created.operationId);
+    expect((await post({ ...request, idempotencyKey: crypto.randomUUID() })).status).toBe(409);
+    expect((await post({ ...request, idempotencyKey: crypto.randomUUID() }, ordinaryToken)).status).toBe(403);
+    if (created.result.schemaVersion !== "admin_provider_result_v1") throw new Error();
+    const concurrent = { ...request, providerKey: 'test.concurrent.' + crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+    const race = await Promise.all([post(concurrent), post({ ...concurrent, idempotencyKey: crypto.randomUUID() })]);
+    expect(race.map(response => response.status).sort()).toEqual([200,409]);
+    const newProvider = created.result.providerId;
+    const identity = await commit({ operation: "provider_profile_create", providerId: newProvider, profileKey: `test.custom.profile.${crypto.randomUUID()}`, displayName: "Custom identity", modelVendor: "custom-test" });
+    if (identity.result.schemaVersion !== "admin_profile_identity_result_v1") throw new Error();
+    const get = (query: string, bearer = token) => handleAdminGet(new Request(`http://local.test/api/admin?section=options&${query}`, { headers: { Authorization: `Bearer ${bearer}` } }), deps);
+    const result = await get(`kind=identities&parent=${newProvider}`);
+    expect(result.status).toBe(200);
+    expect((await result.json()).items).toEqual([expect.objectContaining({ id: identity.result.profileId, latestVersion: 0, parentId: newProvider })]);
+    expect((await (await get(`kind=identities&parent=${providerId}&id=${identity.result.profileId}`)).json()).items).toEqual([]);
+    expect((await get("kind=providers", ordinaryToken)).status).toBe(403);
+    const first = await (await get("kind=providers&limit=1")).json();
+    const next = await (await get(`kind=providers&limit=1&after=${first.nextCursor}`)).json();
+    expect(first.items).toHaveLength(1); expect(next.items).toHaveLength(1); expect(next.items[0].id).not.toBe(first.items[0].id);
+    expect((await (await get(`kind=providers&id=${newProvider}`)).json()).items[0].id).toBe(newProvider);
+    expect((await (await get("kind=providers&search=no-such-provider-unique-marker")).json()).items).toEqual([]);
+    const version = await commit({ operation: "profile_version_create", profileId: identity.result.profileId, expectedLatestVersion: "0", adapterId: "deepseek_chat_v1", wireApiKind: "chat_completions_v1", endpointUrl: request.defaultEndpointUrl, credentialEnvName: request.defaultCredentialEnvName, modelId: request.defaultModelId, capabilityContractId: "deepseek_chat_json_object_v1", cachePolicyId: "deepseek_automatic_context_cache_v1", legalManifestId: "custom-test", displayDisclosureKey: "custom-test", config: { providerSubjectField: "user_id", structuredOutput: "json_object", thinking: "disabled" } });
+    expect(version.result).toMatchObject({ status: "draft" });
+    const prices = await (await get('kind=prices&parent=' + versionId)).json();
+    expect(prices.items).toEqual([expect.objectContaining({ id: priceId, parentId: versionId, status: 'unsealed' })]);
+    expect((await (await get('kind=prices&parent=' + harness.fixture.profileVersionId + '&id=' + priceId)).json()).items).toEqual([]);
+    for (const client of [createAnonClient(), service]) {
+      expect((await client.rpc("admin_authoring_options_v1", { ...base, p_kind: "providers" })).error?.code).toBe("42501");
+      expect((await client.rpc("admin_create_provider_v1", { ...base, p_provider_key: request.providerKey, p_display_name: request.displayName, p_recipient_key: request.recipientKey, p_gateway_kind: request.gatewayKind, p_default_adapter_id: request.defaultAdapterId, p_default_endpoint_url: request.defaultEndpointUrl, p_default_credential_env_name: request.defaultCredentialEnvName, p_default_model_id: request.defaultModelId, p_reason: request.reason, p_idempotency_key: crypto.randomUUID() })).error?.code).toBe("42501");
+    }
+    expect((await admin.rpc("admin_authoring_options_v1", { ...base, p_environment: "preview", p_kind: "providers" })).error?.message).toBe("ENVIRONMENT_MISMATCH");
+    expect(state()).toEqual(before);
+  });
+
+  it("persists all 32 windows through the public API for first and successor policies", async () => {
+    const route = { profileVersionId: versionId, priceVersionId: priceId };
+    const rules = { schemaVersion: "routing_rules_v1", defaultRoute: route, windows: Array.from({ length: 32 }, (_, i) => ({ weekdays: [7,1,2,3,4,5,6], startMinute: i * 40, endMinute: (i + 1) * 40, route })) };
+    const request = { ...policyRequest, policyKey: `test.max.${crypto.randomUUID()}`, rules, reason: "界".repeat(500), idempotencyKey: crypto.randomUUID() };
+    expect(Buffer.byteLength(JSON.stringify(request))).toBeGreaterThan(4096);
+    for (const expectedLatestVersion of ["0", "1"]) {
+      const result = await commit({ ...request, expectedLatestVersion, idempotencyKey: crypto.randomUUID() });
+      if (result.result.schemaVersion !== "admin_routing_policy_draft_result_v1") throw new Error();
+      const stored = ownerJson<{ rules: unknown }>(`select jsonb_build_object('rules',rules) from public.ai_routing_policy_versions where id=${sql(result.result.policyVersionId)};`);
+      expect(stored.rules).toEqual(rules);
+    }
+    for (const invalid of [{ ...rules, windows: [...rules.windows, rules.windows[0]] }, { ...rules, unexpected: true }]) {
+      const body = { ...request, policyKey: `test.invalid.${crypto.randomUUID()}`, rules: invalid, idempotencyKey: crypto.randomUUID() };
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThan(16384);
+      expect((await post(body)).status).not.toBe(200);
+    }
+  });
+
   it("changes only future Provider defaults, including archive behavior", async () => {
     const before = state();
     const frozen = ownerJson(`select to_jsonb(t) from public.ai_provider_profile_versions t where id=${sql(versionId)};`);
@@ -197,7 +253,7 @@ describe.skipIf(!RUN_DB_TESTS)("Admin preparation while legacy AI remains live",
       [`update auth.sessions set not_after=clock_timestamp()-interval '1 hour' where id=${sql(sessionId)};`, `update auth.sessions set not_after=null where id=${sql(sessionId)};`],
     ]) {
       runOwnerSql(changes[0]);
-      try { expect((await admin.rpc("admin_create_provider_profile_v1", identityArgs())).error?.code).toBe("42501"); }
+      try { expect((await admin.rpc("admin_create_provider_profile_v1", identityArgs())).error?.code).toBe("42501"); expect((await admin.rpc("admin_authoring_options_v1", { ...base, p_kind: "providers" })).error?.code).toBe("42501"); }
       finally { runOwnerSql(changes[1]); }
     }
     expect((await admin.from("ai_provider_profile_versions").update({ status: "active" }).eq("id", versionId)).error?.code).toBe("42501");

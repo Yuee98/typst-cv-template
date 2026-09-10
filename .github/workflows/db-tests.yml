@@ -31,6 +31,7 @@ on:
       - "web/scripts/run-db-tests.test.mjs"
       - "web/scripts/test-admin-bootstrap-upgrade.mjs"
       - "web/scripts/test-admin-drafts-upgrade.mjs"
+      - "web/scripts/test-admin-authoring-upgrade.mjs"
       - "web/scripts/run-admin-e2e-server.mjs"
       - "web/scripts/run-admin-e2e.mjs"
       - "web/e2e/**"
@@ -40,6 +41,7 @@ on:
       - "web/src/lib/legal/legal-display-v2.ts"
       - "web/src/lib/legal/terms-acceptance.ts"
       - "web/src/lib/admin/**"
+      - "web/src/lib/routing-rules-v1.ts"
       - "web/src/server/admin/**"
       - "web/src/server/polish/auth.ts"
       - "web/src/server/polish/deepseek-v2-seed-v1.ts"
@@ -126,6 +128,12 @@ jobs:
 
       - name: Run Admin drafts predecessor upgrade gate
         run: node web/scripts/test-admin-drafts-upgrade.mjs
+
+      - name: Reset to Admin authoring predecessor
+        run: pnpm exec supabase db reset --local --version 20260910000000 --yes
+
+      - name: Run Admin authoring predecessor upgrade gate
+        run: node web/scripts/test-admin-authoring-upgrade.mjs
 
       # Hard-fail proof of the exact post-migration seed cardinality and dark
       # feature state. The runner verifies loopback and resets before running

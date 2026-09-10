@@ -10,6 +10,9 @@ import {
   type AdminMutationRequest,
   type AdminRecordSection,
 } from "@/lib/admin/contract";
+import { RoutingRulesForm } from "./routing-rules-form";
+import { routingDraft, serializeRoutingDraft } from "./routing-form-model";
+import { AuthoringSelect } from "./authoring-select";
 import type { AdminMessages } from "./messages";
 
 type Row = Record<string, unknown>;
@@ -47,7 +50,7 @@ function parseIds(value: string) {
     .filter(Boolean);
 }
 
-function useAdminMutation(
+export function useAdminMutation(
   accessToken: string,
   t: AdminMessages,
   onCommitted: (operation: AdminCommittedOperation) => void,
@@ -110,7 +113,7 @@ function useAdminMutation(
   return { busy, changed, committed, error, reject, run };
 }
 
-function Result({
+export function Result({
   committed,
   error,
   t,
@@ -119,6 +122,11 @@ function Result({
   error: string | null;
   t: AdminMessages;
 }) {
+  const result = committed?.result;
+  const target = result?.schemaVersion === "admin_profile_version_result_v1" ? `profiles/${result.profileVersionId}`
+    : result?.schemaVersion === "admin_price_version_result_v1" ? `prices/${result.priceVersionId}`
+    : result?.schemaVersion === "admin_provider_result_v1" ? `providers/${result.providerId}`
+    : result?.schemaVersion === "admin_routing_policy_draft_result_v1" || result?.schemaVersion === "admin_routing_policy_result_v1" ? `policies/${result.policyVersionId}` : null;
   return (
     <>
       {error && <p className="text-sm text-danger-foreground">{error}</p>}
@@ -134,13 +142,14 @@ function Result({
           {committed.result.schemaVersion === "admin_profile_identity_result_v1" && <p className="mt-1 break-all">{t.profileId}: {committed.result.profileId}</p>}
           {committed.result.schemaVersion === "admin_profile_version_result_v1" && <p className="mt-1 break-all">{t.profileVersionId}: {committed.result.profileVersionId}</p>}
           {committed.result.schemaVersion === "admin_price_version_result_v1" && <p className="mt-1 break-all">{t.priceVersionId}: {committed.result.priceVersionId}</p>}
+          {target && <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => window.location.assign(`${window.location.pathname.split("/admin")[0]}/admin/${target}`)}>{t.view}</Button>}
         </div>
       )}
     </>
   );
 }
 
-function Panel({
+export function Panel({
   title,
   writesEnabled,
   t,
@@ -211,14 +220,12 @@ type ProviderDraft = {
   defaultModelId: string;
   archived: boolean;
 };
-function ProviderActions(props: CommonProps) {
+export function ProviderActions(props: CommonProps & { profileOnly?: boolean }) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
   const defaults = useAdminMutation(accessToken, t, onRefresh);
-  const [profileIdInput, setProfileIdInput] = useState("");
   const [firstProfileId, setFirstProfileId] = useState("");
   const identity = useAdminMutation(accessToken, t, (operation) => {
     if (operation.result.schemaVersion === "admin_profile_identity_result_v1") {
-      setProfileIdInput(operation.result.profileId);
       setFirstProfileId(operation.result.profileId);
     }
     onRefresh();
@@ -247,10 +254,10 @@ function ProviderActions(props: CommonProps) {
   };
   return (
     <div className="space-y-4">
-      <Panel title={t.saveDefaults} writesEnabled={draftsEnabled} t={t}>
+      {!props.profileOnly && <Panel title={t.saveDefaults} writesEnabled={draftsEnabled} t={t}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Input value={draft.displayName} placeholder={t.displayName} onChange={(event) => update("displayName", event.target.value)} />
-          <select className="rounded border border-border bg-background px-3 py-2 text-sm" value={draft.defaultAdapterId} onChange={(event) => update("defaultAdapterId", event.target.value)}>
+          <select className="rounded border border-border bg-bg px-3 py-2 text-sm" value={draft.defaultAdapterId} onChange={(event) => update("defaultAdapterId", event.target.value)}>
             {adapters.map((adapter) => <option key={String(adapter.adapterId)} value={String(adapter.adapterId)}>{String(adapter.displayName)}</option>)}
           </select>
           <Input value={draft.defaultEndpointUrl} placeholder={t.defaultEndpoint} onChange={(event) => update("defaultEndpointUrl", event.target.value)} />
@@ -267,7 +274,7 @@ function ProviderActions(props: CommonProps) {
           reason,
         })}>{t.saveDefaults}</Button>
         <Result {...defaults} t={t} />
-      </Panel>
+      </Panel>}
       <Panel title={t.createProfileIdentity} writesEnabled={draftsEnabled} t={t}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Input value={profile.profileKey} placeholder={t.profileKey} onChange={(event) => { setProfile({ ...profile, profileKey: event.target.value }); identity.changed(); }} />
@@ -284,8 +291,7 @@ function ProviderActions(props: CommonProps) {
       </Panel>
       <Panel title={t.prepareFirstVersion} writesEnabled={draftsEnabled} t={t}>
         <p className="text-sm text-foreground-muted">{t.firstVersionHint}</p>
-        <Input aria-label={t.profileId} value={profileIdInput} onChange={(event) => setProfileIdInput(event.target.value)} />
-        <Button disabled={!profileIdInput.trim()} onClick={() => setFirstProfileId(profileIdInput.trim())}>{t.apply}</Button>
+        <AuthoringSelect accessToken={accessToken} kind="identities" parent={text(row, "id")} firstOnly value={firstProfileId} label={t.resumeIdentity} onChange={setFirstProfileId} t={t} />
       </Panel>
       {firstProfileId && <ProfileAction
         {...props}
@@ -304,7 +310,7 @@ function ProviderActions(props: CommonProps) {
   );
 }
 
-function ProfileAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
+export function ProfileAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
   const sourceId = text(row, "id") || text(row, "profileId");
   const [createdVersion, setCreatedVersion] = useState<{ sourceId: string; versionId: string } | null>(null);
@@ -340,7 +346,7 @@ function ProfileAction({ first = false, ...props }: CommonProps & { first?: bool
     <Panel title={first ? t.firstVersion : t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
       <p className="break-all text-sm">{t.profileId}: {text(row, "profileId")}</p>
       <div className="grid gap-3 sm:grid-cols-2">
-        <select className="rounded border border-border bg-background px-3 py-2 text-sm" value={draft.adapterId} onChange={(event) => {
+        <select className="rounded border border-border bg-bg px-3 py-2 text-sm" value={draft.adapterId} onChange={(event) => {
           const adapter = adapters.find((item) => item.adapterId === event.target.value);
           setDraft((current) => ({ ...current, adapterId: event.target.value, wireApiKind: String(adapter?.wireApiKind ?? current.wireApiKind) }));
           mutation.changed();
@@ -354,7 +360,7 @@ function ProfileAction({ first = false, ...props }: CommonProps & { first?: bool
         <Input value={draft.legalManifestId} placeholder={t.legalManifest} onChange={(event) => update("legalManifestId", event.target.value)} />
         <Input value={draft.displayDisclosureKey} placeholder={t.displayDisclosure} onChange={(event) => update("displayDisclosureKey", event.target.value)} />
       </div>
-      <textarea aria-label={t.profileConfig} className="min-h-36 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.config} onChange={(event) => update("config", event.target.value)} />
+      <textarea aria-label={t.profileConfig} className="min-h-36 w-full rounded border border-border bg-bg p-3 font-mono text-sm" value={draft.config} onChange={(event) => update("config", event.target.value)} />
       <Input value={draft.reason} maxLength={500} placeholder={t.mutationReason} onChange={(event) => update("reason", event.target.value)} />
       <Button disabled={mutation.busy || !draft.reason} onClick={() => {
         try {
@@ -396,7 +402,7 @@ function ProfileAction({ first = false, ...props }: CommonProps & { first?: bool
   );
 }
 
-function PriceAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
+export function PriceAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
   const mutation = useAdminMutation(accessToken, t, onRefresh);
   const [draft, setDraft] = useState({
@@ -431,8 +437,8 @@ function PriceAction({ first = false, ...props }: CommonProps & { first?: boolea
           <Input key={key} value={draft[key]} placeholder={key} onChange={(event) => update(key, event.target.value)} />
         ))}
       </div>
-      <textarea aria-label={t.priceParameters} className="min-h-28 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.parameters} onChange={(event) => update("parameters", event.target.value)} />
-      <textarea aria-label={t.priceComponents} className="min-h-28 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.components} onChange={(event) => update("components", event.target.value)} />
+      <textarea aria-label={t.priceParameters} className="min-h-28 w-full rounded border border-border bg-bg p-3 font-mono text-sm" value={draft.parameters} onChange={(event) => update("parameters", event.target.value)} />
+      <textarea aria-label={t.priceComponents} className="min-h-28 w-full rounded border border-border bg-bg p-3 font-mono text-sm" value={draft.components} onChange={(event) => update("components", event.target.value)} />
       <Input value={draft.reason} placeholder={t.mutationReason} onChange={(event) => update("reason", event.target.value)} />
       <Button disabled={mutation.busy || !draft.reason} onClick={() => {
         try {
@@ -465,12 +471,14 @@ function PriceAction({ first = false, ...props }: CommonProps & { first?: boolea
   );
 }
 
-function PolicyAction(props: CommonProps) {
+export function PolicyAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
   const mutation = useAdminMutation(accessToken, t, onRefresh);
+  const [rules, setRules] = useState(() => routingDraft(row.rules, first));
+  let serialized: ReturnType<typeof serializeRoutingDraft> | null = null;
+  try { if (rules) serialized = serializeRoutingDraft(rules); } catch { /* Incomplete form remains editable. */ }
   const [draft, setDraft] = useState({
-    rules: pretty(object(row, "rules")),
-    defaultProfileVersionId: text(row, "defaultProfileVersionId"),
+    policyKey: text(row, "policyKey"),
     legalBundleVersion: text(row, "legalBundleVersion"),
     runtimeContractId: text(row, "runtimeContractId"),
     reason: "",
@@ -482,21 +490,21 @@ function PolicyAction(props: CommonProps) {
   return (
     <div className="space-y-4">
     <Panel title={t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
-      <textarea className="min-h-48 w-full rounded border border-border bg-background p-3 font-mono text-sm" value={draft.rules} onChange={(event) => update("rules", event.target.value)} />
+      {first && <Input aria-label={t.policyKey} value={draft.policyKey} onChange={event => update("policyKey", event.target.value)} />}
+      <RoutingRulesForm value={rules} onChange={value => { setRules(value); mutation.changed(); }} accessToken={accessToken} t={t} />
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input value={draft.defaultProfileVersionId} placeholder={t.defaultProfile} onChange={(event) => update("defaultProfileVersionId", event.target.value)} />
         <Input value={draft.legalBundleVersion} placeholder={t.legalBundle} onChange={(event) => update("legalBundleVersion", event.target.value)} />
-        <Input value={draft.runtimeContractId} placeholder={t.runtimeContract} onChange={(event) => update("runtimeContractId", event.target.value)} />
+        <AuthoringSelect accessToken={accessToken} kind="runtime_contracts" value={draft.runtimeContractId} label={t.runtimeContract} onChange={id => update("runtimeContractId", id)} t={t} />
       </div>
       <Input value={draft.reason} placeholder={t.mutationReason} onChange={(event) => update("reason", event.target.value)} />
-      <Button disabled={mutation.busy || !draft.reason} onClick={() => {
+      <Button disabled={mutation.busy || !draft.reason || !serialized} onClick={() => {
         try {
           void mutation.run({
             operation: "routing_policy_draft_create",
-            policyKey: text(row, "policyKey"),
-            expectedLatestVersion: revision(row, "latestVersion"),
-            rules: JSON.parse(draft.rules) as Record<string, unknown>,
-            defaultProfileVersionId: draft.defaultProfileVersionId,
+            policyKey: first ? draft.policyKey : text(row, "policyKey"),
+            expectedLatestVersion: first ? "0" : revision(row, "latestVersion"),
+            rules: { ...serialized! },
+            defaultProfileVersionId: serialized!.defaultRoute.profileVersionId,
             legalBundleVersion: draft.legalBundleVersion,
             runtimeContractId: draft.runtimeContractId,
             reason: draft.reason,
@@ -507,7 +515,7 @@ function PolicyAction(props: CommonProps) {
       }}>{t.createSuccessor}</Button>
       <Result {...mutation} t={t} />
     </Panel>
-    <PolicyLifecycle {...props} />
+    {!first && <PolicyLifecycle {...props} />}
     </div>
   );
 }
@@ -534,7 +542,7 @@ function ProfileLifecycle(props: CommonProps) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title={t.transitionStatus} writesEnabled={writesEnabled} t={t}>
-        <select aria-label={t.destinationStatus} className="w-full rounded border border-border bg-background px-3 py-2 text-sm" value={draft.toStatus} onChange={(event) => changeTransition("toStatus", event.target.value as typeof draft.toStatus)}>
+        <select aria-label={t.destinationStatus} className="w-full rounded border border-border bg-bg px-3 py-2 text-sm" value={draft.toStatus} onChange={(event) => changeTransition("toStatus", event.target.value as typeof draft.toStatus)}>
           {(["validated", "canary", "active"] as const).map((status) => <option key={status}>{status}</option>)}
         </select>
         <Input aria-label={t.validationReport} value={draft.validationReportId} placeholder={t.validationReport} onChange={(event) => changeTransition("validationReportId", event.target.value)} />
@@ -606,7 +614,7 @@ function PolicyLifecycle(props: CommonProps) {
   };
   return (
     <Panel title={t.transitionStatus} writesEnabled={writesEnabled} t={t}>
-      <select aria-label={t.destinationStatus} className="w-full rounded border border-border bg-background px-3 py-2 text-sm" value={draft.toStatus} onChange={(event) => update("toStatus", event.target.value as typeof draft.toStatus)}>
+      <select aria-label={t.destinationStatus} className="w-full rounded border border-border bg-bg px-3 py-2 text-sm" value={draft.toStatus} onChange={(event) => update("toStatus", event.target.value as typeof draft.toStatus)}>
         {(["validated", "canary", "active", "retired"] as const).map((status) => <option key={status}>{status}</option>)}
       </select>
       <Input aria-label={t.validationReports} value={draft.validationReportIds} placeholder={t.validationReports} onChange={(event) => update("validationReportIds", event.target.value)} />
@@ -619,7 +627,7 @@ function PolicyLifecycle(props: CommonProps) {
   );
 }
 
-type CommonProps = {
+export type CommonProps = {
   draftsEnabled: boolean;
   row: Row;
   accessToken: string;

@@ -550,6 +550,8 @@ const NON_SYSTEM_ROUTINE_AUTHORITY_ROOT_V1 = {
 // root below deliberately excludes exactly these identities, so any new
 // routine omitted from this manifest still changes the frozen v1 count/hash.
 const NON_SYSTEM_ROUTINE_AUTHORITY_SUCCESSOR_V1 = [
+  ["admin_authoring_options_v1", "p_environment text, p_project_ref text, p_kind text, p_parent text, p_search text, p_after text, p_id text, p_limit integer", "f", true, "491e587d3173793b3ae84847c4fb8a4e1794ee4fd1bbad8a4c51f4858dc8c2f4"],
+  ["admin_create_provider_v1", "p_environment text, p_project_ref text, p_provider_key text, p_display_name text, p_recipient_key text, p_gateway_kind text, p_default_adapter_id text, p_default_endpoint_url text, p_default_credential_env_name text, p_default_model_id text, p_reason text, p_idempotency_key uuid", "f", true, "3bda50dee42b5cef057359c49b39b7ed94f17ba0e82af4d12cda7e2dc6709ec8"],
   ["admin_create_routing_policy_draft_v1","p_environment text, p_project_ref text, p_policy_key text, p_expected_latest_version integer, p_rules jsonb, p_default_profile_version_id uuid, p_legal_bundle_version text, p_runtime_contract_id text, p_reason text, p_idempotency_key uuid","f",true,"580ff6c54073123c7964899c45604e867e9c0f625817f01abf7124780d174b41"],
   ["admin_guard_audit_v1", "", "f", false, "c54e2ae27031c4bcec613fd604405625319e6e29cc25b0a0f575a80d64a880ed"],
   ["admin_bootstrap_v2", "p_user_id uuid, p_environment text, p_reason text", "f", true, "8005652dcdc7472fa77e6279abbd0f2dee1f538f6dd9ecd0f980c024a38699cc"],
@@ -1550,6 +1552,8 @@ describe.skipIf(!RUN_DB_TESTS)("CFG-001 DeepSeek V2 dark seed (real DB)", () => 
           publicExecute: false,
           anonExecute: false,
           authenticatedExecute: [
+            "admin_authoring_options_v1",
+            "admin_create_provider_v1",
             "admin_get_context_v1",
             "admin_list_records_v1",
             "admin_get_record_v1",

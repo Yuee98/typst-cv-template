@@ -41,7 +41,7 @@ export function LocaleSwitcher() {
             className={item === locale ? "text-foreground" : undefined}
             onSelect={() => {
               if (item !== locale) {
-                router.replace(pathname, { locale: item });
+                router.replace(`${pathname}${window.location.search}${window.location.hash}`, { locale: item });
               }
             }}
           >

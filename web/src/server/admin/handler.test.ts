@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import context from "../../../test/fixtures/admin-contract-v3.json";
-import { handleAdminGet, handleAdminPost } from "./handler";
+import { ADMIN_MUTATION_MAX_BYTES, handleAdminGet, handleAdminPost } from "./handler";
 import { resolveAdminEnvironment } from "./environment";
 
 const environment = {
@@ -416,7 +416,7 @@ describe("Admin mutation HTTP boundary", () => {
     const response = await handleAdminPost(
       streamingPostRequest([
         new TextEncoder().encode('{"operation":"validate_runtime_target","padding":"'),
-        new Uint8Array(4_096),
+        new Uint8Array(ADMIN_MUTATION_MAX_BYTES),
         new TextEncoder().encode('"}'),
       ], contentLength),
       { ...setupData.deps, produceValidation: producer },
@@ -430,9 +430,9 @@ describe("Admin mutation HTTP boundary", () => {
     const setupData = setup(committed);
     const producer = vi.fn();
     const encoded = new TextEncoder().encode(
-      JSON.stringify({ operation: "validate_runtime_target", padding: "界".repeat(1_400) }),
+      JSON.stringify({ operation: "validate_runtime_target", padding: "界".repeat(6_000) }),
     );
-    expect(encoded.byteLength).toBeGreaterThan(4_096);
+    expect(encoded.byteLength).toBeGreaterThan(ADMIN_MUTATION_MAX_BYTES);
     const response = await handleAdminPost(
       streamingPostRequest([encoded]),
       { ...setupData.deps, produceValidation: producer },
@@ -581,4 +581,22 @@ describe("deployment environment", () => {
       }).supabaseUrl,
     ).toBe("https://abc.supabase.co");
   });
+});
+
+it("fits the maximum UTF-8 routing envelope within its finite HTTP budget", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const route = { profileVersionId: id, priceVersionId: id };
+  const body = { operation: "routing_policy_create", idempotencyKey: id, reason: "界".repeat(500), policyKey: "a".repeat(200), expectedLatestVersion: "2147483647", legalBundleVersion: "b".repeat(200), runtimeContractId: "c".repeat(200), defaultProfileVersionId: id, validationReportIds: Array.from({ length: 32 }, (_, i) => `11111111-1111-4111-8111-${String(i).padStart(12, "0")}`), rules: { schemaVersion: "routing_rules_v1", defaultRoute: route, windows: Array.from({ length: 32 }, (_, i) => ({ weekdays: [1,2,3,4,5,6,7], startMinute: i * 40, endMinute: (i + 1) * 40, route })) } };
+  expect(new TextEncoder().encode(JSON.stringify(body)).byteLength).toBeGreaterThan(4096);
+  expect(new TextEncoder().encode(JSON.stringify(body)).byteLength).toBeLessThanOrEqual(ADMIN_MUTATION_MAX_BYTES);
+});
+it("rejects declared oversize before consuming the stream", async () => {
+  const data = setup();
+  const result = await handleAdminPost(streamingPostRequest([], ADMIN_MUTATION_MAX_BYTES + 1), data.deps);
+  expect(result.status).toBe(400); expect(data.getUser).not.toHaveBeenCalled(); expect(data.rpc).not.toHaveBeenCalled();
+});
+it("returns bounded authoring options without dropping an adapter page cursor", async () => {
+  const data = setup({ schemaVersion: "admin_authoring_options_v1", kind: "adapters", items: [{ id: "unsupported", label: "Future adapter", parentId: null, status: "available", latestVersion: null, wireApiKind: "responses_v1" }], nextCursor: "unsupported" });
+  const result = await handleAdminGet(request("?section=options&kind=adapters&limit=1"), data.deps);
+  expect(result.status).toBe(200); expect(await result.json()).toMatchObject({ items: [], nextCursor: "unsupported" });
 });
