@@ -25,6 +25,7 @@ import {
 import { adminMessages, type AdminMessages } from "./messages";
 import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
 import { AdminSecuritySettings } from "./security-settings";
+import { RoutingRulesSummary } from "./routing-rules-form";
 import { AdminCreateActions } from "./create-actions";
 import { AdminRecordActions } from "./record-actions";
 import { AdminRuntimeControls } from "./runtime-controls";
@@ -1009,8 +1010,9 @@ function Detail({
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">{t.details}</h1>
+      {row.gatewayKind === "custom_compatible" && <p className="text-sm text-foreground-muted">{t.genericProviderHint}</p>}
       <dl className="grid gap-3 sm:grid-cols-2">
-        {adminDetailLabels(section, t).map(([key, label]) => (
+        {adminDetailLabels(section, t).filter(([key]) => section !== "policies" || key !== "rules").map(([key, label]) => (
           <div
             key={key}
             className="rounded-lg border border-border bg-surface p-4"
@@ -1022,6 +1024,7 @@ function Detail({
           </div>
         ))}
       </dl>
+      {section === "policies" && <RoutingRulesSummary value={row.rules} locale={locale} t={t} />}
       <AdminRecordActions
         section={section}
         row={row}

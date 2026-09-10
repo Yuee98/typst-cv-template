@@ -1,5 +1,6 @@
 export const adminMessages = {
   en: {
+    defaultRoute: "Default route", timeWindow: "Time window", startTime: "Start (HH:mm)", endTime: "End (HH:mm, up to 24:00)", addWindow: "Add time window", removeWindow: "Remove window", weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], rulesHint: "Asia/Shanghai · Start included, end excluded. Up to 32 non-overlapping windows. Split overnight periods into two windows.", invalidRules: "Complete all route selections and times. Select weekdays, keep start before end, and avoid overlapping windows on the same weekday.", unsupportedRules: "These rules have an unsupported or invalid shape. Editing is blocked to preserve the stored configuration.",
     createNew: "Create new", cancel: "Cancel", chooseOption: "Select…", chooseParent: "Select a profile version first.", missingOptions: "No matching options. Create the prerequisite record from its management page, or change the search.", noVersions: "No versions", recipientKey: "Recipient key", gatewayKind: "Provider category", genericProviderHint: "Custom providers can be prepared as drafts. Activation requires runtime support for their destination and recipient.", resumeIdentity: "Existing profile identity", newPolicy: "New routing policy",
 
     brand: "Administration",
@@ -226,6 +227,7 @@ export const adminMessages = {
     confirmRecord: "Type this record ID to confirm",
   },
   zh: {
+    defaultRoute: "默认路由", timeWindow: "时间段", startTime: "开始（HH:mm）", endTime: "结束（HH:mm，最晚 24:00）", addWindow: "添加时间段", removeWindow: "删除时间段", weekdays: ["周一", "周二", "周三", "周四", "周五", "周六", "周日"], rulesHint: "Asia/Shanghai · 包含开始、不包含结束。最多 32 个互不重叠的时间段，跨午夜请拆成两个时间段。", invalidRules: "请补全路由和时间、选择星期，确保开始早于结束，且同一天的时间段不重叠。", unsupportedRules: "规则格式不受支持或无效，已阻止编辑以保留现有配置。",
     createNew: "新建", cancel: "取消", chooseOption: "请选择…", chooseParent: "请先选择 Profile 版本。", missingOptions: "没有匹配项。请先在对应管理页面创建关联记录，或修改搜索条件。", noVersions: "尚无版本", recipientKey: "接收方标识", gatewayKind: "Provider 类别", genericProviderHint: "自定义 Provider 可以先准备草稿。激活需要运行时代码支持对应的目标和接收方。", resumeIdentity: "已有 Profile 身份", newPolicy: "新建路由策略",
 
     brand: "管理后台",
@@ -452,5 +454,5 @@ export const adminMessages = {
 } as const;
 
 export type AdminMessages = {
-  [K in keyof (typeof adminMessages)["en"]]: string;
+  [K in keyof (typeof adminMessages)["en"]]: K extends "weekdays" ? readonly string[] : string;
 };

@@ -10,6 +10,8 @@ import {
   type AdminMutationRequest,
   type AdminRecordSection,
 } from "@/lib/admin/contract";
+import { RoutingRulesForm } from "./routing-rules-form";
+import { routingDraft, serializeRoutingDraft } from "./routing-form-model";
 import { AuthoringSelect } from "./authoring-select";
 import type { AdminMessages } from "./messages";
 
@@ -472,10 +474,11 @@ export function PriceAction({ first = false, ...props }: CommonProps & { first?:
 export function PolicyAction({ first = false, ...props }: CommonProps & { first?: boolean }) {
   const { row, accessToken, draftsEnabled, onRefresh, t } = props;
   const mutation = useAdminMutation(accessToken, t, onRefresh);
+  const [rules, setRules] = useState(() => routingDraft(row.rules, first));
+  let serialized: ReturnType<typeof serializeRoutingDraft> | null = null;
+  try { if (rules) serialized = serializeRoutingDraft(rules); } catch { /* Incomplete form remains editable. */ }
   const [draft, setDraft] = useState({
     policyKey: text(row, "policyKey"),
-    rules: pretty(object(row, "rules")),
-    defaultProfileVersionId: text(row, "defaultProfileVersionId"),
     legalBundleVersion: text(row, "legalBundleVersion"),
     runtimeContractId: text(row, "runtimeContractId"),
     reason: "",
@@ -488,21 +491,20 @@ export function PolicyAction({ first = false, ...props }: CommonProps & { first?
     <div className="space-y-4">
     <Panel title={t.createSuccessor} writesEnabled={draftsEnabled} t={t}>
       {first && <Input aria-label={t.policyKey} value={draft.policyKey} onChange={event => update("policyKey", event.target.value)} />}
-      <textarea className="min-h-48 w-full rounded border border-border bg-bg p-3 font-mono text-sm" value={draft.rules} onChange={(event) => update("rules", event.target.value)} />
+      <RoutingRulesForm value={rules} onChange={value => { setRules(value); mutation.changed(); }} accessToken={accessToken} t={t} />
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input value={draft.defaultProfileVersionId} placeholder={t.defaultProfile} onChange={(event) => update("defaultProfileVersionId", event.target.value)} />
         <Input value={draft.legalBundleVersion} placeholder={t.legalBundle} onChange={(event) => update("legalBundleVersion", event.target.value)} />
-        <Input value={draft.runtimeContractId} placeholder={t.runtimeContract} onChange={(event) => update("runtimeContractId", event.target.value)} />
+        <AuthoringSelect accessToken={accessToken} kind="runtime_contracts" value={draft.runtimeContractId} label={t.runtimeContract} onChange={id => update("runtimeContractId", id)} t={t} />
       </div>
       <Input value={draft.reason} placeholder={t.mutationReason} onChange={(event) => update("reason", event.target.value)} />
-      <Button disabled={mutation.busy || !draft.reason} onClick={() => {
+      <Button disabled={mutation.busy || !draft.reason || !serialized} onClick={() => {
         try {
           void mutation.run({
             operation: "routing_policy_draft_create",
             policyKey: first ? draft.policyKey : text(row, "policyKey"),
             expectedLatestVersion: first ? "0" : revision(row, "latestVersion"),
-            rules: JSON.parse(draft.rules) as Record<string, unknown>,
-            defaultProfileVersionId: draft.defaultProfileVersionId,
+            rules: { ...serialized! },
+            defaultProfileVersionId: serialized!.defaultRoute.profileVersionId,
             legalBundleVersion: draft.legalBundleVersion,
             runtimeContractId: draft.runtimeContractId,
             reason: draft.reason,
