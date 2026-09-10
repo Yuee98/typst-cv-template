@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { LogIn, LogOut, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LocaleSwitcher } from "@/components/layout/toolbar/locale-switcher";
 import { ThemeToggle } from "@/components/layout/toolbar/theme-toggle";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
@@ -325,9 +326,6 @@ function AdminContent({
     return (
       <LoginForm
         locale={locale}
-        section={section}
-        recordId={recordId}
-        query={query}
         configured={Boolean(client)}
         busy={busy}
         credentials={credentials}
@@ -343,22 +341,10 @@ function AdminContent({
     const path = adminNavigationPath(locale, next);
     if (path) window.location.assign(path);
   };
-  const otherLocale = locale === "zh" ? "en" : "zh";
-  const translatedRoute = recordId
-    ? `/${otherLocale}/admin/${section}/${encodeURIComponent(recordId)}`
-    : section === "overview"
-      ? `/${otherLocale}/admin`
-      : `/${otherLocale}/admin/${section}`;
-  const translatedQuery = recordId || section === "overview" || section === "controls"
-    ? ""
-    : section === "analytics"
-      ? `?days=${analyticsDays}`
-      : buildAdminQuery(query);
   return (
     <Shell
       active={section}
       locale={locale}
-      translatedRoute={`${translatedRoute}${translatedQuery}`}
       navigate={navigate}
       onSignOut={signOut}
       busy={busy}
@@ -434,9 +420,6 @@ function AdminContent({
 
 function LoginForm({
   locale,
-  section,
-  recordId,
-  query,
   configured,
   busy,
   credentials,
@@ -447,9 +430,6 @@ function LoginForm({
   t,
 }: {
   locale: "zh" | "en";
-  section: AdminSection;
-  recordId?: string;
-  query: Query;
   configured: boolean;
   busy: boolean;
   credentials: { email: string; password: string };
@@ -459,15 +439,9 @@ function LoginForm({
   onSubmit: (event: React.FormEvent) => void;
   t: AdminMessages;
 }) {
-  const otherLocale = locale === "zh" ? "en" : "zh";
-  const route = recordId
-    ? `/${otherLocale}/admin/${section}/${encodeURIComponent(recordId)}`
-    : section === "overview"
-      ? `/${otherLocale}/admin`
-      : `/${otherLocale}/admin/${section}${section === "controls" ? "" : buildAdminQuery(query)}`;
   return (
     <main className="mx-auto min-h-screen max-w-md px-6 pt-5 pb-8">
-      <UtilityBar locale={locale} localeHref={route} t={t} />
+      <UtilityBar locale={locale} t={t} />
       <section className="mt-16 space-y-5 rounded-xl border border-border bg-surface p-6 shadow-sm">
         <div className="flex items-center gap-2">
           <ShieldCheck className="size-5 text-accent" />
@@ -515,11 +489,9 @@ function LoginForm({
 }
 function UtilityBar({
   locale,
-  localeHref,
   t,
 }: {
   locale: string;
-  localeHref: string;
   t: AdminMessages;
 }) {
   return (
@@ -532,12 +504,7 @@ function UtilityBar({
         ← {t.backToEditor}
       </a>
       <div className="flex items-center gap-2">
-        <a
-          href={localeHref}
-          className="rounded-md px-2 py-1 text-sm text-foreground-muted hover:bg-surface-hover"
-        >
-          {locale === "zh" ? "EN" : "中文"}
-        </a>
+        <LocaleSwitcher />
         <ThemeToggle />
       </div>
     </div>
@@ -547,7 +514,6 @@ function UtilityBar({
 function Shell({
   active,
   locale,
-  translatedRoute,
   navigate,
   onSignOut,
   busy,
@@ -559,7 +525,6 @@ function Shell({
 }: {
   active: AdminSection;
   locale: string;
-  translatedRoute: string;
   navigate: (section: AdminSection) => void;
   onSignOut: () => void;
   busy: boolean;
@@ -577,12 +542,7 @@ function Shell({
         </a>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {environment && <span className="rounded border border-border px-2 py-1 text-xs font-semibold">{environment}</span>}
-          <a
-            href={translatedRoute}
-            className="rounded-md px-2 py-1 text-sm text-foreground-muted hover:bg-surface-hover"
-          >
-            {locale === "zh" ? "EN" : "中文"}
-          </a>
+          <LocaleSwitcher />
           <span className="rounded-full border border-border px-2 py-1 text-xs text-foreground-muted">
             {writesEnabled ? t.writesEnabled : draftsEnabled ? t.draftsAvailable : t.readOnly}
           </span>

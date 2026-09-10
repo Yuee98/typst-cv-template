@@ -26,6 +26,8 @@ vi.mock("@/components/layout/toolbar/theme-toggle", () => ({
   ThemeToggle: () => <span />,
 }));
 
+vi.mock("@/components/layout/toolbar/locale-switcher", () => ({ LocaleSwitcher: () => <span /> }));
+
 import AdminApp from "./admin-app";
 
 const session = (token: string) => ({

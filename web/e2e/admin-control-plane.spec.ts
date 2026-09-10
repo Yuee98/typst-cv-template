@@ -227,3 +227,11 @@ test("Admin owns scrolling on short login and long mobile details", async ({ pag
   await expect(page.getByRole("button", { name: "Create version", exact: true }).last()).toBeInViewport();
   expect(await page.getByRole("banner").evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
 });
+
+test("shared locale menu preserves the current Admin URL and theme", async ({ page }) => {
+  await login(page, E2E_USERS.admin);
+  await page.goto("/en/admin/analytics?days=14");
+  await page.getByRole("button", { name: "Interface language", exact: true }).click();
+  await page.getByRole("menuitem", { name: "中文", exact: true }).click();
+  await expect(page).toHaveURL(/\/zh\/admin\/analytics\?days=14$/);
+});
