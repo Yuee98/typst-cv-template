@@ -79,7 +79,11 @@ export function buildAdminQuery(query: Query) {
   return result ? `?${result}` : "";
 }
 
-export default function AdminApp({
+export default function AdminApp(props: Props) {
+  return <div data-admin-viewport className="h-dvh min-w-0 overflow-y-auto"><AdminContent {...props} /></div>;
+}
+
+function AdminContent({
   locale,
   section = "overview",
   recordId,
@@ -462,7 +466,7 @@ function LoginForm({
       ? `/${otherLocale}/admin`
       : `/${otherLocale}/admin/${section}${section === "controls" ? "" : buildAdminQuery(query)}`;
   return (
-    <main className="mx-auto min-h-screen max-w-md px-6 pt-5">
+    <main className="mx-auto min-h-screen max-w-md px-6 pt-5 pb-8">
       <UtilityBar locale={locale} localeHref={route} t={t} />
       <section className="mt-16 space-y-5 rounded-xl border border-border bg-surface p-6 shadow-sm">
         <div className="flex items-center gap-2">
@@ -567,11 +571,11 @@ function Shell({
 }) {
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="flex items-center justify-between border-b border-border px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
         <a href={`/${locale}/admin`} className="font-semibold">
           {t.brand}
         </a>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {environment && <span className="rounded border border-border px-2 py-1 text-xs font-semibold">{environment}</span>}
           <a
             href={translatedRoute}

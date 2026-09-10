@@ -208,3 +208,22 @@ test("local Supabase Auth, MFA step-up, membership operation and revocation", as
   ).toBeVisible();
   await ordinary.close();
 });
+
+test("Admin owns scrolling on short login and long mobile details", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 320 });
+  await page.goto("/en/admin");
+  const viewport = page.locator("[data-admin-viewport]");
+  await page.mouse.move(200, 240);
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(() => viewport.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Continue with GitHub" })).toBeInViewport();
+  await page.setViewportSize({ width: 390, height: 720 });
+  await login(page, E2E_USERS.admin);
+  await page.goto("/en/admin/profiles/11111111-1111-4111-8111-111111111111");
+  await expect(page.getByRole("heading", { name: "Details", exact: true })).toBeVisible();
+  await page.mouse.move(200, 500);
+  await page.mouse.wheel(0, 30000);
+  await expect.poll(() => viewport.evaluate(node => node.scrollTop)).toBeGreaterThan(100);
+  await expect(page.getByRole("button", { name: "Create version", exact: true }).last()).toBeInViewport();
+  expect(await page.getByRole("banner").evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+});
