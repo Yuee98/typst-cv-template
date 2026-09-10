@@ -535,7 +535,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-bg text-foreground">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
         <a href={`/${locale}/admin`} className="font-semibold">
           {t.brand}
@@ -771,7 +771,7 @@ function Analytics({
           <label className="text-sm text-foreground-muted">
             {t.range}
             <select
-              className="ml-2 rounded border border-border bg-background px-3 py-2 text-foreground"
+              className="ml-2 rounded border border-border bg-bg px-3 py-2 text-foreground"
               value={days}
               onChange={(event) => onDays(Number(event.target.value))}
             >
