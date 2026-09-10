@@ -116,11 +116,11 @@ test("prepares a new identity, its first version and its first price through the
     await identity.getByPlaceholder("Reason", { exact: true }).fill("prepare new identity");
     const createdIdentity = await submit(identity, "Create profile identity");
     const profileId = createdIdentity.result.profileId;
-    await expect(page.getByLabel("Profile ID", { exact: true })).toHaveValue(profileId);
+    await expect(page.getByLabel("Existing profile identity", { exact: true })).toHaveValue(profileId);
     // The same first-version entry can be resumed after a reload using this ID.
     await page.reload();
-    await page.getByLabel("Profile ID", { exact: true }).fill(profileId);
-    await panel("Prepare a profile's first version").getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(page.getByLabel("Existing profile identity", { exact: true })).toBeEnabled();
+    await page.getByLabel("Existing profile identity", { exact: true }).selectOption(profileId);
     const version = panel("Create first profile version");
     await version.getByPlaceholder("Model", { exact: true }).fill("prepared-new-model");
     await version.getByPlaceholder("Credential env", { exact: true }).fill("AI_PROVIDER_KEY_DRAFT_E2E_NOT_CONFIGURED");

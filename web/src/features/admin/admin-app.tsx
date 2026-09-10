@@ -25,6 +25,7 @@ import {
 import { adminMessages, type AdminMessages } from "./messages";
 import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
 import { AdminSecuritySettings } from "./security-settings";
+import { AdminCreateActions } from "./create-actions";
 import { AdminRecordActions } from "./record-actions";
 import { AdminRuntimeControls } from "./runtime-controls";
 
@@ -933,6 +934,7 @@ function Page({
           </Button>
         </form>
       </div>
+      <AdminCreateActions section={page.section} locale={locale} accessToken={accessToken} draftsEnabled={draftsEnabled} writesEnabled={writesEnabled} onRefresh={onRefresh} t={t} />
       {rows.length === 0 ? (
         <p className="text-sm text-foreground-muted">{t.empty}</p>
       ) : (

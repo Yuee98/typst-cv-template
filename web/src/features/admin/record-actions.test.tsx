@@ -25,6 +25,8 @@ const committed = {
   committedAt: "2026-09-04T00:00:00.000Z",
 };
 
+vi.mock("./authoring-select", () => ({ AuthoringSelect: ({ label, value, onChange }: { label: string; value: string; onChange: (id: string) => void }) => <input aria-label={label} value={value} onChange={event => onChange(event.target.value)} /> }));
+
 beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
 afterEach(() => {
   cleanup();
@@ -54,7 +56,7 @@ describe("AdminRecordActions", () => {
     fireEvent.change(identity.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "create identity" } });
     fireEvent.click(identity.getByRole("button", { name: adminMessages.en.createProfileIdentity }));
     await screen.findByRole("heading", { name: adminMessages.en.firstVersion });
-    expect(screen.getByLabelText(adminMessages.en.profileId)).toHaveProperty("value", newProfileId);
+    expect(screen.getByLabelText(adminMessages.en.resumeIdentity)).toHaveProperty("value", newProfileId);
     const version = panel(adminMessages.en.firstVersion);
     fireEvent.change(version.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "first version" } });
     fireEvent.click(version.getByRole("button", { name: adminMessages.en.createSuccessor }));
@@ -76,8 +78,7 @@ describe("AdminRecordActions", () => {
   it("resumes a zero-version identity using its stable Profile ID", async () => {
     vi.mocked(fetch).mockResolvedValue(response(versionResult));
     render(<AdminRecordActions section="providers" row={provider} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
-    fireEvent.change(screen.getByLabelText(adminMessages.en.profileId), { target: { value: newProfileId } });
-    fireEvent.click(panel(adminMessages.en.prepareFirstVersion).getByRole("button", { name: adminMessages.en.apply }));
+    fireEvent.change(screen.getByLabelText(adminMessages.en.resumeIdentity), { target: { value: newProfileId } });
     const version = panel(adminMessages.en.firstVersion);
     fireEvent.change(version.getByPlaceholderText(adminMessages.en.mutationReason), { target: { value: "resume" } });
     fireEvent.click(version.getByRole("button", { name: adminMessages.en.createSuccessor }));
@@ -111,7 +112,7 @@ describe("AdminRecordActions", () => {
   });
 
   it("saves a policy draft without report IDs and displays its audited result", async () => {
-    const row = { id: user.id, policyKey: "draft.policy", latestVersion: "1", rules: { schemaVersion: "routing_rules_v1", windows: [] }, defaultProfileVersionId: user.id, legalBundleVersion: "future.legal", runtimeContractId: "runtime.test" };
+    const row = { id: user.id, policyKey: "draft.policy", latestVersion: "1", rules: { schemaVersion: "routing_rules_v1", defaultRoute: { profileVersionId: user.id, priceVersionId: user.id }, windows: [] }, defaultProfileVersionId: user.id, legalBundleVersion: "future.legal", runtimeContractId: "runtime.test" };
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ...committed, operationKind: "routing_policy_draft_create", result: { schemaVersion: "admin_routing_policy_draft_result_v1", policyVersionId: user.id, policyKey: row.policyKey, version: 2, status: "draft", configSha256: "a".repeat(64) } }), { status: 200 }));
     render(<AdminRecordActions section="policies" row={row} accessToken="admin" draftsEnabled writesEnabled={false} onRefresh={vi.fn()} t={adminMessages.en} />);
     const create = within(screen.getByRole("heading", { name: adminMessages.en.createSuccessor }).closest("section")!);

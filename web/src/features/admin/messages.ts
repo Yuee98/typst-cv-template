@@ -1,5 +1,7 @@
 export const adminMessages = {
   en: {
+    createNew: "Create new", cancel: "Cancel", chooseOption: "Select…", chooseParent: "Select a profile version first.", missingOptions: "No matching options. Create the prerequisite record from its management page, or change the search.", noVersions: "No versions", recipientKey: "Recipient key", gatewayKind: "Provider category", genericProviderHint: "Custom providers can be prepared as drafts. Activation requires runtime support for their destination and recipient.", resumeIdentity: "Existing profile identity", newPolicy: "New routing policy",
+
     brand: "Administration",
     loginTitle: "Administrator sign in",
     loginHint: "Sign in with your existing account to open the control plane.",
@@ -224,6 +226,8 @@ export const adminMessages = {
     confirmRecord: "Type this record ID to confirm",
   },
   zh: {
+    createNew: "新建", cancel: "取消", chooseOption: "请选择…", chooseParent: "请先选择 Profile 版本。", missingOptions: "没有匹配项。请先在对应管理页面创建关联记录，或修改搜索条件。", noVersions: "尚无版本", recipientKey: "接收方标识", gatewayKind: "Provider 类别", genericProviderHint: "自定义 Provider 可以先准备草稿。激活需要运行时代码支持对应的目标和接收方。", resumeIdentity: "已有 Profile 身份", newPolicy: "新建路由策略",
+
     brand: "管理后台",
     loginTitle: "管理员登录",
     loginHint: "使用现有账号登录管理控制面板。",
