@@ -1,0 +1,139 @@
+{
+  "scope": "SYNTHETIC_TEXT_LOCAL_DATABASE_REAL_PROVIDER",
+  "timestamp": "2026-11-07T14:12:21.650Z",
+  "hosted_database_used": false,
+  "pricing": "SYNTHETIC_FIXTURE_RATES_NOT_PROVIDER_INVOICE",
+  "generation_request_limit_per_provider": 2,
+  "output_token_limit_per_request": 2048,
+  "required_wire_protocols": {
+    "MIMO": "RESPONSES"
+  },
+  "model_discovery": [
+    {
+      "provider": "MIMO",
+      "status": 200,
+      "model": "mimo-v2.6-flash",
+      "available": true
+    }
+  ],
+  "providers": {
+    "MIMO": {
+      "requested_model": "mimo-v2.6-flash",
+      "selected_option": "opt_Y9FDVH277JN4",
+      "nondefault_selection": false,
+      "transmissions": [
+        {
+          "max_output_tokens": 1804,
+          "endpoint": "https://api.xiaomimimo.com/v1/responses",
+          "wire_protocol": "RESPONSES",
+          "legacy_chat_fields_absent": true,
+          "subject_field": null,
+          "store_parameter_sent": false,
+          "status": 200,
+          "elapsed_ms": 1471,
+          "reported_model_matches": true,
+          "observed_model": "mimo-v2.6-flash",
+          "response_object_matches_protocol": true,
+          "output_message_states": [
+            {
+              "type": "message",
+              "role": "assistant",
+              "status_present": true,
+              "status": "completed"
+            }
+          ],
+          "raw_usage": {
+            "total_tokens": 586,
+            "input_tokens": 564,
+            "output_tokens": 22
+          }
+        }
+      ],
+      "passed": true,
+      "finish_reason": "stop",
+      "normalized_usage": {
+        "schemaVersion": "normalized_usage",
+        "inputTotalTokens": 564,
+        "inputCacheReadTokens": 512,
+        "inputCacheWriteTokens": null,
+        "inputStandardTokens": 52,
+        "outputTokens": 22,
+        "reasoningTokens": 0,
+        "cacheUsageReporting": "unavailable",
+        "usageComplete": true
+      },
+      "validation": "PASSED",
+      "replay_sent_no_request": true,
+      "quota_remaining": 19,
+      "durable_settlement_verified": true
+    }
+  },
+  "cleanup_passed": true,
+  "configuration": {
+    "database": "cv_provider_live_fixture",
+    "database_instance_id": "36778563-4aec-41f2-b097-97643fd72579",
+    "option_ids": {
+      "MIMO": "opt_Y9FDVH277JN4"
+    },
+    "model_ids": {
+      "MIMO": "mimo-v2.6-flash"
+    },
+    "synthetic_pricing": true
+  },
+  "ledger": {
+    "quota": [
+      {
+        "day": "2026-11-07",
+        "charged": "1",
+        "reserved": "0",
+        "incompleteUsageCount": "0",
+        "inputTokensKnownLowerBound": "564",
+        "outputTokensKnownLowerBound": "22"
+      }
+    ],
+    "requests": [
+      {
+        "state": "FINALIZED",
+        "usage": {
+          "output": "22",
+          "reasoning": "0",
+          "cache_read": "512",
+          "cache_write": null,
+          "input_total": "564",
+          "input_standard": "52"
+        },
+        "charged": true,
+        "modelId": "mimo-v2.6-flash",
+        "outcome": "SUCCEEDED",
+        "attempts": [
+          {
+            "state": "SUCCEEDED",
+            "usage": {
+              "output": "22",
+              "reasoning": "0",
+              "cache_read": "512",
+              "cache_write": null,
+              "input_total": "564",
+              "input_standard": "52"
+            },
+            "attemptId": "att_JVYMBCW8J12R",
+            "attemptNo": 1,
+            "transmitted": true,
+            "providerBillable": true,
+            "incompleteReasons": [],
+            "estimatedCostNanos": "148",
+            "knownEstimatedCostNanos": "148"
+          }
+        ],
+        "currency": "CNY",
+        "requestId": "req_36X0H0XE36ZS",
+        "providerCode": "MIMO",
+        "incompleteReasons": [],
+        "estimatedCostNanos": "148",
+        "knownEstimatedCostNanos": "148",
+        "providerReportedCostNanos": null
+      }
+    ],
+    "syntheticPricing": true
+  }
+}

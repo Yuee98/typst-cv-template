@@ -124,70 +124,20 @@ pnpm typecheck
 
 (All are root-level passthroughs of the `web/` package scripts.)
 
-The server-build job in `.github/workflows/ci.yml` starts the built app with CI-only fake auth/quota/provider dependencies and exercises the full API envelope without hosted services. For the local real-DeepSeek + local-Supabase release smoke and metrics commands, see `web/README.md`; that smoke is intentionally excluded from CI because it is billed and mutates its isolated local database.
+The server-build job in `.github/workflows/ci.yml` starts the built app with CI-only fake auth/quota/provider dependencies and exercises the full API envelope without hosted services. Local database checks and read-only Admin metrics are documented in `web/README.md`; ordinary tests never call paid upstream APIs.
 
 The web app syncs the root `style.typ` into `web/public/typst/style.typ` before dev and build, so the root Typst style remains the source of truth.
 
-### AI Polish (server deployments only)
+### AI polish and database
 
-AI polish is implemented for the supported free-text CV fields and is rolled out through three independent gates:
+Users select a Provider/model from the set allowed during the current time window. Published database configuration, pricing and exact disclosure are frozen when a request reserves quota. Both allowed attempts retain that selection. DeepSeek, MiMo and Google Gemini through AI Studio are supported; Google uses native Interactions with `gemini-3.8-flash`.
 
-Experience text can be polished at four scopes: one bullet, one project, every project at one company, or the entire experience section. Other supported sections expose only the scopes that match their data hierarchy.
+Business tables live in private schemas. Clients use read-only views and RPCs guarded by database instance and revision. Every CV entry accepts v7 and the current storage/encryption format. Historical JSON, storage keys and APIs are rejected.
 
-| Gate | Scope | Purpose |
-|---|---|---|
-| `NEXT_PUBLIC_AI_POLISH_ENABLED` | Build-time browser flag | Shows or removes the AI entry points. It is not a security switch. `build:static` refuses `true`, so the Pages artifact can never contain an AI entry point. |
-| `AI_POLISH_ENABLED` | Vercel deployment | Disables all three AI API routes before auth, database access, or provider work. Any value other than the exact string `true` returns `503 AI_DISABLED`. A Vercel env change requires a new deployment. |
-| `public.ai_feature_config.ai_polish_enabled` | Supabase runtime | The immediate operational kill switch. Reserve and provider-start RPCs also enforce the non-empty canary allowlist and global daily limit without a redeploy. |
+See [web development](web/README.md) and the [database contract](docs/database-contract.md) for configuration and local checks. Provider secrets use only `AI_PROVIDER_KEY_DEEPSEEK_*` / `AI_PROVIDER_KEY_MIMO_*` / `AI_PROVIDER_KEY_GEMINI_*`; database profiles reference their names, never their values.
 
-The AI API routes (`POST /api/polish`, `GET /api/polish/quota`, and `GET /api/polish/availability`) exist only in the **server build**. The static Pages export exposes none of these routes and never receives server-only secrets. See `web/.env.example` for the complete environment variable contract.
+### Deployment
 
-#### Multi-provider runtime authority and credentials
+The test Supabase project watches `main`; production watches `release`. Verify the separate database mapping for Vercel Preview/Production and Pages. `Promote Release` advances production manually. Follow the [rebuild runbook](docs/database-rebuild-runbook.md) for the one-time switch.
 
-Provider/profile versions, exact price versions, routing policy, legal bundle, and the immutable versioned runtime-contract ID are **DB-authoritative snapshots**. The server freezes that exact route before transmission. For v2 profiles, the DB version owns the endpoint, credential environment-variable name, and model ID; compiled code constrains the adapter, the Provider-specific credential prefix, and the official destination origin. Environment variables only supply credentials for those bindings. They are not a provider or model selector. Do not add `AI_PROVIDER`, `AI_MODEL`, or `AI_BASE_URL` as application routing variables: doing so would bypass the DB validation, auditing, canary, and legal gates.
-
-`DEEPSEEK_API_KEY` and `MIMO_API_KEY` remain the legacy v1 server-only aliases. The current seeded v2 bindings use `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` and `AI_PROVIDER_KEY_MIMO_PRIMARY`. The initial route does not become enabled merely because a key exists; it still requires an approved active DB profile and policy. `OPENROUTER_API_KEY` is a future optional v1 alias only, remains outside the initial route, and requires a separately reviewed exact upstream, profile, disclosure, and activation. No provider key may enter browser bundles, the database, application logs, or ledger/error payloads.
-
-### Deployment topology
-
-`main` is the staging line and `release` is the production line. Production promotion is deliberately manual:
-
-| Surface | Git source | Build | Database configuration | Trigger |
-|---|---|---|---|---|
-| Vercel Preview | `main` | Server | Dedicated test Supabase project | Push or merge to `main` |
-| Test Supabase | `main` | Migrations in `supabase/` | Its own project; GitHub Integration working directory `.` | Push or merge to `main` |
-| Vercel Production | `release` | Server | Dedicated production Supabase project | `release` moves after promotion |
-| Production Supabase | `release` | Migrations in `supabase/` | Its own project; GitHub Integration working directory `.` | `release` moves after promotion |
-| GitHub Pages | Commit selected by `Promote Release` | Static export | Public Supabase variables only; no AI API or service-role key | The manual promotion workflow |
-
-The `Promote Release` workflow validates the selected commit from `main`, builds the static artifact, atomically advances `release` with an optional production tag, and deploys Pages. The `release` push then triggers Vercel Production and Production Supabase independently; those downstream deployments do not wait for each other or for Pages.
-
-#### One-time environment configuration
-
-Configure the Vercel project with **Root Directory** `web`, **Framework Preset** `Next.js`, **Build Command** `pnpm build:server`, no **Output Directory** override, and **Production Branch** `release`.
-
-Create environment-specific values rather than sharing the production database or HMAC secret with Preview:
-
-| Variable | Preview | Production | Notes |
-|---|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Test project | Production project | Browser-safe project coordinates |
-| `SUPABASE_SERVICE_ROLE_KEY` | Test project | Production project | Sensitive; server only |
-| `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` / `AI_PROVIDER_KEY_MIMO_PRIMARY` | Non-production keys for approved Preview v2 profiles; otherwise leave unset | Separate production keys for approved Production v2 profiles | Sensitive server-only v2 bindings; names must match the DB profile and compiled Provider-specific prefix/origin rules |
-| `DEEPSEEK_API_KEY` / `MIMO_API_KEY` | Non-production keys while an approved Preview v1 profile may run; otherwise leave unset | Separate production keys while an approved Production v1 profile may run | Sensitive legacy v1 aliases; keys alone do not activate routing |
-| `OPENROUTER_API_KEY` | Leave unset for the initial route | Leave unset for the initial route | Future optional alias, not initial-route enablement |
-| `AI_USER_ID_HMAC_SECRET` | Independent random secret | Independent random secret | Sensitive; never expose with `NEXT_PUBLIC_` |
-| `AI_POLISH_ENABLED` | `false` for the initial closed-state deployment | `false` before the first production promotion | Deployment-level API gate |
-| `NEXT_PUBLIC_AI_POLISH_ENABLED` | `false` for the initial closed-state deployment | `false` before the first production promotion | Build-time UI gate |
-
-Do not set `POLISH_FAKE_LLM`, `POLISH_FAKE_BACKEND`, or `NEXT_PUBLIC_AI_POLISH_MOCK` in a hosted deployment. `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL`, and `AI_POLISH_GLOBAL_DAILY_LIMIT` are not application routing variables: the DB selects the reviewed profile/price/policy/legal/runtime snapshot, while the global limit lives in `public.ai_feature_config`.
-
-Use two independent Supabase projects when database branching is unavailable: the test project watches `main`, while the production project watches `release`. Enable `pg_cron` in the `pg_catalog` schema before applying the migrations; the migration schedules `ai-polish-retention-cleanup` and `ai-polish-stale-reconciliation`. In each project's GitHub Integration, “production branch” means the branch deployed to that project—it does not make the test project the user-facing production database.
-
-#### First rollout and later releases
-
-1. With both Vercel flags set to `false`, merge a commit into `main`. Require GitHub CI, the Test Supabase deployment, and the Vercel Preview deployment to succeed. Verify the Preview homepage is `200`, the AI UI is absent, authenticated and unauthenticated AI API requests are blocked by the deployment gate, both cron jobs are active, and no provider request is made.
-2. Configure a non-empty test-user allowlist, enable the test database runtime switch, set the two **Preview** Vercel flags to `true`, and redeploy Preview. Complete the bilingual browser, terms, E2EE warning, quota, cancellation, stale-write, deletion, metrics, and real-provider acceptance checks against the test project.
-3. Run `Promote Release` only after Preview acceptance. Keep both **Production** Vercel flags `false` while the production migrations and first server deployment complete, then verify the closed state before enabling a non-empty production canary allowlist.
-4. Turn on the two Production Vercel flags and redeploy while the database runtime switch remains off. After the exact deployment is verified, enable the database switch for allowlisted canary accounts. Clearing the allowlist for global availability remains a separate manual decision.
-
-After the first rollout, the Vercel flags may remain `true`. For a migration that is not backward-compatible, turn off the database runtime switch before promotion and re-enable it only after the exact production deployment is verified; ordinary releases do not need to toggle Vercel env values.
+This rebuild is being implemented on a local development branch. Test/prod have not been reset or deployed. The new migration chain must not be applied directly over the old history; hosted cutover requires separate authorization and the runbook.

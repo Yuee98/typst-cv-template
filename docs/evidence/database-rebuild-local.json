@@ -1,0 +1,422 @@
+{
+  "record_kind": "LOCAL_PRE_PR_EVIDENCE_SNAPSHOT_NOT_CANDIDATE_PROOF",
+  "date": "2026-11-07",
+  "source_state": {
+    "branch": "codex/database-rebuild",
+    "base_head": "ccbeb1a4fc2baba9dbc2c15a4ba183a1be3558aa",
+    "release_eligible": false,
+    "implementation_had_uncommitted_changes_at_capture": true,
+    "capture_scope": "Measurements collected during local implementation and pre-PR preparation; base_head is the original assessment baseline, not a tested candidate SHA. Later commits do not rebind these measurements. Current PR CI and release proofs must identify their exact head."
+  },
+  "scope": {
+    "local_only": true,
+    "hosted_database_access": false,
+    "hosted_release": false,
+    "paid_provider_calls": true,
+    "paid_provider_generation_requests": 6,
+    "paid_provider_data": "Synthetic smoke text only; no existing CV or hosted database data",
+    "paid_provider_generation_requests_note": "Two initial requests, two Responses-only acceptance requests, one Gemini-only Interactions request and one MiMo-only strict Responses revalidation request. Separate records retain their protocol and migration contexts.",
+    "github_workflows_executed_at_local_capture": false
+  },
+  "checks": {
+    "web_unit": {
+      "files": 78,
+      "tests": 954,
+      "passed": true
+    },
+    "tool_unit": {
+      "tests": 16,
+      "passed": true
+    },
+    "sql": {
+      "files": 7,
+      "assertions": 130,
+      "passed": true
+    },
+    "privileged_owner_negative_fixture": {
+      "assertions": 45,
+      "passed": true,
+      "transaction_rolled_back": true
+    },
+    "auth_data_api": {
+      "files": 4,
+      "tests": 12,
+      "passed": true,
+      "includes_authenticated_commit_regression": true,
+      "includes_three_provider_authenticated_commits": true,
+      "includes_mixed_native_currency_settlement_and_analytics": true
+    },
+    "concurrent_sql_connections": {
+      "passed": true,
+      "scenarios": 6,
+      "controlled_fixture_clock": true,
+      "actual_lock_wait_observed": true,
+      "production_clock_changed": false,
+      "migration_count": 8
+    },
+    "chromium": {
+      "editor": 2,
+      "admin_real_local_auth_totp": 4,
+      "provider_choice_browser_fixtures_and_fake_next_api": 1,
+      "passed": true
+    },
+    "typecheck": true,
+    "lint": true,
+    "server_static_server_builds": true,
+    "static_boundary": true,
+    "generated_public_types_diff_bytes": 0,
+    "fake_http_smoke": true,
+    "disabled_no_credentials_build_and_http_smoke": true,
+    "keepalive": {
+      "actual_local_anonymous_rpc": true,
+      "workflow_step_local_requests": 3,
+      "rejected_invalid_payload_classes": 10,
+      "actionlint_for_keepalive_workflow": true,
+      "remote_workflow_triggered": false
+    },
+    "real_provider_smoke": {
+      "providers": 2,
+      "generation_requests": 2,
+      "wire_protocol": "RESPONSES",
+      "deepseek_endpoint": "https://api.deepseek.com/responses",
+      "mimo_endpoint": "https://api.xiaomimimo.com/v1/responses",
+      "input_tokens": 1144,
+      "output_tokens": 44,
+      "passed": true,
+      "temporary_database_removed": true,
+      "record": "provider-live-local.json",
+      "earlier_generation_requests": 2,
+      "migration_count": 7
+    },
+    "quota_wire_is_canonical_decimal_string": true,
+    "gemini_migration_preservation": {
+      "environments": [
+        "UNINITIALIZED",
+        "LOCAL",
+        "PREVIEW",
+        "PRODUCTION"
+      ],
+      "existing_sealed_content_unchanged": true,
+      "published_profiles_and_policy_unchanged": true,
+      "main_instance_unchanged": true,
+      "ai_disabled": true,
+      "passed": true
+    },
+    "real_gemini_smoke": {
+      "providers": 1,
+      "generation_requests": 1,
+      "wire_protocol": "GEMINI_INTERACTIONS",
+      "endpoint": "https://generativelanguage.googleapis.com/v1/interactions",
+      "model": "gemini-3.8-flash",
+      "input_tokens": 569,
+      "visible_output_tokens": 20,
+      "reasoning_tokens": 0,
+      "billed_output_tokens": 20,
+      "passed": true,
+      "temporary_database_removed": true,
+      "record": "provider-live-gemini-local.json",
+      "migration_count": 8,
+      "billing_tier_verified": false,
+      "production_data_settings_verified": false
+    },
+    "static_boundary_files": 138,
+    "explicit_upstream_model_mismatch": {
+      "providers": [
+        "DEEPSEEK",
+        "MIMO",
+        "GEMINI"
+      ],
+      "successful_output_rejected": true,
+      "known_usage_retained": true,
+      "safe_request_ids_retained": true,
+      "absent_observation_not_invented": true
+    },
+    "mimo_observation_has_no_compatibility_mode": true,
+    "provider_credentials_isolated_from_ordinary_tests": true,
+    "mixed_native_currency_regression": {
+      "passed": true,
+      "providers": [
+        "DEEPSEEK",
+        "MIMO",
+        "GEMINI"
+      ],
+      "currencies": [
+        "CNY",
+        "USD"
+      ],
+      "synthetic_rates": true,
+      "forged_currency_and_cost_not_adopted": true,
+      "cny_nanos": "22",
+      "usd_nanos": "11",
+      "cross_currency_total": false,
+      "finalize_replay_no_duplicate": true
+    },
+    "real_mimo_protocol_revalidation": {
+      "passed": true,
+      "generation_requests": 1,
+      "wire_protocol": "RESPONSES",
+      "model": "mimo-v2.6-flash",
+      "response_object": "response",
+      "nested_message_status": "completed",
+      "known_usage_and_settlement_verified": true,
+      "replay_no_new_send": true,
+      "temporary_database_removed": true,
+      "record": "provider-live-mimo-local.json"
+    },
+    "dead_chat_prompt_projection_removed": true,
+    "canonical_prompt_bytes_unchanged": {
+      "cases": 240,
+      "sha256": "1283856bee6524a5d7ef941ea9bc1b3a8cef5b9fd4a2a2e30d94442ed71a269a"
+    },
+    "vercel_auto_git_deployment_disabled_for_review_branch": "codex/database-rebuild"
+  },
+  "catalog": {
+    "tables": 31,
+    "context": {
+      "ready": true,
+      "environment": "LOCAL",
+      "capabilities": [
+        "DEEPSEEK_RESPONSES",
+        "MIMO_RESPONSES",
+        "GEMINI_INTERACTIONS"
+      ],
+      "contract_code": "cv_app_db_1",
+      "database_instance_id": "896ff262-7761-4635-bae1-1adb0a8bd82c"
+    },
+    "history": [
+      "20261107075418",
+      "20261107075439",
+      "20261107075441",
+      "20261107075442",
+      "20261107085902",
+      "20261107120044",
+      "20261107123028",
+      "20261107132913"
+    ],
+    "bad_owner": 0,
+    "unprotected": 0,
+    "public_tables": 0,
+    "public_execute": 0,
+    "api_table_writes": 0,
+    "privileged_owner": false,
+    "unsafe_functions": 0,
+    "api_owner_members": 0,
+    "owner_outgoing_roles": 0,
+    "owner_platform_column_access": 0,
+    "files": [
+      {
+        "name": "20261107075418_app_foundation.sql",
+        "digest": "9a79affb172fb2bc16b95ffc80ea30a30ebcf19d4ad3d1c1442ca3d7671b3534"
+      },
+      {
+        "name": "20261107075439_app_model.sql",
+        "digest": "e9ae1b9791c43dff19158509ea1b7bf99fdbe79053ec0a7c6f2e92c31aff5965"
+      },
+      {
+        "name": "20261107075441_app_transactions.sql",
+        "digest": "1dbe0719fb4758d20279522840ed8e6f9af2f1d1fdadf7ed279a2468cecee7c8"
+      },
+      {
+        "name": "20261107075442_app_catalog.sql",
+        "digest": "1855bb3f57b1fe7f288d350612d7781144722fc3b83c2465104a49611dd60bb7"
+      },
+      {
+        "name": "20261107085902_app_owner_audit.sql",
+        "digest": "91044b26ed6e912dca4f006ecc4eeeef4de149280e6082fb837b1960e205570d"
+      },
+      {
+        "name": "20261107120044_secure_deferred_policy_graph_validation.sql",
+        "digest": "611749bd110d408918a2fb85011c69ea1b15c5e6d1abdf5f5e04d358b90b1fc8"
+      },
+      {
+        "name": "20261107123028_deepseek_responses_only.sql",
+        "digest": "5b783255a3c3f6f2f1d50d7a4bf5872aeebd9f8cc1beeb38e8416eacd948b7ce"
+      },
+      {
+        "name": "20261107132913_gemini_interactions_provider.sql",
+        "digest": "841fd90d4d563c3c957e1bf4367315800e5552919c06a66737078054741aa636"
+      }
+    ],
+    "baseline_digest": "45d98c91189daa67fe932666781dbae3e5302c7914bdc911981a086ab7454ab5",
+    "migration_manifest_digest": "93588b0b84ad56910773a60950c13c49d44704aee36c939dd9492aade57860af"
+  },
+  "rehearsal": {
+    "method": "application_allowlist",
+    "cleanup_sql_digest": "2830f6c075dc6bf94d09906fa2ee09a005c48f8249c1b4bcff51e8bb026f48f5",
+    "retired_inventory_digest": "f657ea9cc89c0407737579510fa2ac3c718a13c07d80efcba5a4e89dc8c3c6a6",
+    "instance": {
+      "container": "supabase_db_cv-remote-rehearsal",
+      "container_id": "0ccc52531570d2bcaaeb9f984a12cc456654379a5408694cc808c47781ed2c06",
+      "image_id": "sha256:72a9689c89fb1763ec104c75e42f4f7105a7c5cdb917e1235ed1a27aecc1365b",
+      "method": "application_allowlist"
+    },
+    "cli_version": "2.109.0",
+    "source_sha": "ccbeb1a4fc2baba9dbc2c15a4ba183a1be3558aa",
+    "files": [
+      {
+        "name": "20261107075418_app_foundation.sql",
+        "digest": "9a79affb172fb2bc16b95ffc80ea30a30ebcf19d4ad3d1c1442ca3d7671b3534"
+      },
+      {
+        "name": "20261107075439_app_model.sql",
+        "digest": "e9ae1b9791c43dff19158509ea1b7bf99fdbe79053ec0a7c6f2e92c31aff5965"
+      },
+      {
+        "name": "20261107075441_app_transactions.sql",
+        "digest": "1dbe0719fb4758d20279522840ed8e6f9af2f1d1fdadf7ed279a2468cecee7c8"
+      },
+      {
+        "name": "20261107075442_app_catalog.sql",
+        "digest": "1855bb3f57b1fe7f288d350612d7781144722fc3b83c2465104a49611dd60bb7"
+      },
+      {
+        "name": "20261107085902_app_owner_audit.sql",
+        "digest": "91044b26ed6e912dca4f006ecc4eeeef4de149280e6082fb837b1960e205570d"
+      },
+      {
+        "name": "20261107120044_secure_deferred_policy_graph_validation.sql",
+        "digest": "611749bd110d408918a2fb85011c69ea1b15c5e6d1abdf5f5e04d358b90b1fc8"
+      },
+      {
+        "name": "20261107123028_deepseek_responses_only.sql",
+        "digest": "5b783255a3c3f6f2f1d50d7a4bf5872aeebd9f8cc1beeb38e8416eacd948b7ce"
+      },
+      {
+        "name": "20261107132913_gemini_interactions_provider.sql",
+        "digest": "841fd90d4d563c3c957e1bf4367315800e5552919c06a66737078054741aa636"
+      }
+    ],
+    "baseline_digest": "45d98c91189daa67fe932666781dbae3e5302c7914bdc911981a086ab7454ab5",
+    "migration_manifest_digest": "93588b0b84ad56910773a60950c13c49d44704aee36c939dd9492aade57860af",
+    "historical_source_sha": "ccbeb1a4fc2baba9dbc2c15a4ba183a1be3558aa",
+    "old_chain_passed": true,
+    "platform_preservation_passed": true,
+    "remote_mode_resume_passed": true,
+    "container": "supabase_db_cv-remote-rehearsal",
+    "platform_before": {
+      "mfa": "f8bce70b40189b7928fe1aa52bcde8f2a78f2e61565124d88025e10fb05dbc34",
+      "role": "86a642e7a6052f2dee7b069f24f93fe21a4c1018981ead903cba034276f94f8b",
+      "user": "cfc58392eb5502cf228712ba22875ea6e8d2cc0c6988aabbb167091e1a665e01",
+      "bucket": "bf43fa13e93364eca6bb4f752bd7fe5f9af2aea7787d226332ae0c19fa222f51",
+      "object": "e5346bd87dd0b627cc1cbdaca906ae837b1b993863377bb038305f0c2a689a9e",
+      "session": "1c5595a22533f9b336013c670ba65cd8590595d57c08792427a03811ad2cc5cd",
+      "identity": "33062453d4a16cc87b18b84246058ccb8ed40f91ac7a962e5fbe3be80834dafe",
+      "platform_acl": "b15bf348fc2e908e2f2db14bf046b199212032b395086af86005907417bf0e53",
+      "refresh_token": "7e335a06fe17307cb91ac5af7ae79bfb388b2fc68559b8b0b8e048e981c8811d",
+      "unrelated_cron": "aaa2236df2c1d033e6aa3ce9ffa467c011efa5ef53108762fa07a62a2bca4277",
+      "role_membership": "91dfc9d8c50460f23bf1ca09875a958aed6c1dec6805250c96c80d1f379fa369",
+      "platform_versions": "560b8834f7ee60e1093ddecf93291e05cb8d2a901b3a07b929d4edb32a7241cd"
+    },
+    "platform_origin": {
+      "source_container": "supabase_db_typst-cv-template",
+      "target_container": "supabase_db_cv-remote-rehearsal",
+      "metadata_only": true,
+      "ddl_sha256": "4d1fd444bab8655baff32916cdfef9e71cb3f6ee7b5548c2eb1ede9eda9ccde9",
+      "migration_metadata_sha256": "b76eae57ac043b641cc4f2b04dc1c69c7cc133694dca67742335c2f929925927",
+      "platform": {
+        "auth_tables": 23,
+        "storage_tables": 10,
+        "auth_migrations": 77,
+        "postgres_version": "PostgreSQL 17.6 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit",
+        "storage_migrations": 61
+      }
+    },
+    "platform_after": {
+      "mfa": "f8bce70b40189b7928fe1aa52bcde8f2a78f2e61565124d88025e10fb05dbc34",
+      "role": "86a642e7a6052f2dee7b069f24f93fe21a4c1018981ead903cba034276f94f8b",
+      "user": "cfc58392eb5502cf228712ba22875ea6e8d2cc0c6988aabbb167091e1a665e01",
+      "bucket": "bf43fa13e93364eca6bb4f752bd7fe5f9af2aea7787d226332ae0c19fa222f51",
+      "object": "e5346bd87dd0b627cc1cbdaca906ae837b1b993863377bb038305f0c2a689a9e",
+      "session": "1c5595a22533f9b336013c670ba65cd8590595d57c08792427a03811ad2cc5cd",
+      "identity": "33062453d4a16cc87b18b84246058ccb8ed40f91ac7a962e5fbe3be80834dafe",
+      "platform_acl": "b15bf348fc2e908e2f2db14bf046b199212032b395086af86005907417bf0e53",
+      "refresh_token": "7e335a06fe17307cb91ac5af7ae79bfb388b2fc68559b8b0b8e048e981c8811d",
+      "unrelated_cron": "aaa2236df2c1d033e6aa3ce9ffa467c011efa5ef53108762fa07a62a2bca4277",
+      "role_membership": "91dfc9d8c50460f23bf1ca09875a958aed6c1dec6805250c96c80d1f379fa369",
+      "platform_versions": "560b8834f7ee60e1093ddecf93291e05cb8d2a901b3a07b929d4edb32a7241cd"
+    },
+    "checkpoint_loss_recovery_passed": false,
+    "database_instance_id": "7a6457c4-22e0-4b95-aeb1-e3e8fc355855",
+    "new_history": [
+      "20261107075418",
+      "20261107075439",
+      "20261107075441",
+      "20261107075442",
+      "20261107085902",
+      "20261107120044",
+      "20261107123028",
+      "20261107132913"
+    ],
+    "initial_migration_manifest_digest": "45d98c91189daa67fe932666781dbae3e5302c7914bdc911981a086ab7454ab5",
+    "initial_history": [
+      "20261107075418",
+      "20261107075439",
+      "20261107075441",
+      "20261107075442"
+    ],
+    "missing_checkpoint_rebuild_refused": true,
+    "constructed_checkpoint_recovery_passed": true,
+    "checkpoint_fault_method": "TEST_CONSTRUCTED_STATE_ONLY_NO_REPEAT_RESET",
+    "missing_history_and_checkpoint_rebuild_refused": true,
+    "incremental_resume_passed": true
+  },
+  "observed_native_cli_failure": {
+    "method": "native_cli_reset",
+    "cli_version": "2.109.0",
+    "container_id": "207c726950c35c48965de51cd053be3f8ec1a599efc719946fd5f17649783510",
+    "platform_origin": {
+      "source_container": "supabase_db_typst-cv-template",
+      "target_container": "supabase_db_cv-remote-rehearsal",
+      "metadata_only": true,
+      "ddl_sha256": "a1d485544e5a3428c804021da1ed23f28d62febf2fbb5184b4e696c843ca4a0c",
+      "migration_metadata_sha256": "05840a48a16d9d2884d6f80d3f26b5fc8b741999c4aeb4d2ba00ec8279d4f712",
+      "platform": {
+        "auth_tables": 23,
+        "storage_tables": 10,
+        "auth_migrations": 77,
+        "postgres_version": "PostgreSQL 17.6 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit",
+        "storage_migrations": 61
+      }
+    },
+    "platform_before": {
+      "mfa": "f3f13924d4a2a4892f733a2ae4bd2032598d0847b28462edafbb19011fe0d536",
+      "role": "86a642e7a6052f2dee7b069f24f93fe21a4c1018981ead903cba034276f94f8b",
+      "user": "1b6faa7043c614f7f5d7f72972d318325def730a54cecadec2bb35201499309a",
+      "bucket": "3e581d6e869197bd7cf8f3dc95d1c8c1f9e434d84e4e88b3bd9504b7ccd3a7f8",
+      "object": "c704f6aac4a317dd827e66203aa238a284a3b8dc2e1a897b17eb296260ba6ae8",
+      "session": "ddb0104effcb3608b113f26eda82d813d7b6531404aa7cbf48485cfc28a7ccdc"
+    },
+    "platform_after": {
+      "mfa": null,
+      "role": "86a642e7a6052f2dee7b069f24f93fe21a4c1018981ead903cba034276f94f8b",
+      "user": null,
+      "bucket": "3e581d6e869197bd7cf8f3dc95d1c8c1f9e434d84e4e88b3bd9504b7ccd3a7f8",
+      "object": "c704f6aac4a317dd827e66203aa238a284a3b8dc2e1a897b17eb296260ba6ae8",
+      "session": null
+    },
+    "failure": "NATIVE_REMOTE_RESET_TRUNCATES_AUTH_USERS_SESSIONS_MFA",
+    "platform_preservation_passed": false,
+    "retained_for_inspection": true,
+    "scope": "Observed only in the dedicated local remote-mode rehearsal; not asserted for all hosted or future CLI versions.",
+    "interpretation_after_scope_change": "Auth data deletion is now allowed; the historical preservation result remains unchanged. Native reset is still not the implemented method because protected configuration and platform behavior must be verified separately."
+  },
+  "scope_clarification": {
+    "date": "2026-11-07",
+    "auth_and_other_historical_data_may_be_discarded": true,
+    "required_to_preserve": [
+      "original Supabase projects and connection settings",
+      "GitHub OAuth and SSO configuration",
+      "callback and redirect configuration",
+      "keepalive Action and RPC"
+    ],
+    "current_tool_deletes_auth_or_storage": false,
+    "hosted_reset_not_authorized_for_this_turn": true
+  },
+  "local_final_state": {
+    "database_instance_id": "896ff262-7761-4635-bae1-1adb0a8bd82c",
+    "ai_enabled": false,
+    "active_policy_unset": true,
+    "temporary_live_and_concurrency_database_count": 0,
+    "rehearsal_container_stopped_and_preserved": true
+  }
+}

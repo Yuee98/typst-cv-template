@@ -1,0 +1,221 @@
+{
+  "scope": "SYNTHETIC_TEXT_LOCAL_DATABASE_REAL_PROVIDER",
+  "timestamp": "2026-11-07T12:38:33.170Z",
+  "hosted_database_used": false,
+  "pricing": "SYNTHETIC_FIXTURE_RATES_NOT_PROVIDER_INVOICE",
+  "generation_request_limit_per_provider": 2,
+  "output_token_limit_per_request": 2048,
+  "required_wire_protocol": "RESPONSES",
+  "model_discovery": [
+    {
+      "provider": "DEEPSEEK",
+      "status": 200,
+      "model": "deepseek-flash",
+      "available": true
+    },
+    {
+      "provider": "MIMO",
+      "status": 200,
+      "model": "mimo-v2.6-flash",
+      "available": true
+    }
+  ],
+  "providers": {
+    "DEEPSEEK": {
+      "requested_model": "deepseek-flash",
+      "selected_option": "opt_JK32TTXWRDCB",
+      "nondefault_selection": false,
+      "transmissions": [
+        {
+          "max_output_tokens": 1804,
+          "endpoint": "https://api.deepseek.com/responses",
+          "wire_protocol": "RESPONSES",
+          "legacy_chat_fields_absent": true,
+          "subject_field": "user",
+          "store_parameter_sent": false,
+          "status": 200,
+          "elapsed_ms": 112,
+          "reported_model_matches": true,
+          "observed_model": "deepseek-flash",
+          "response_object_is_response": true,
+          "response_store_false": true,
+          "raw_usage": {
+            "total_tokens": 602,
+            "input_tokens": 580,
+            "output_tokens": 22
+          }
+        }
+      ],
+      "passed": true,
+      "finish_reason": "stop",
+      "normalized_usage": {
+        "schemaVersion": "normalized_usage",
+        "inputTotalTokens": 580,
+        "inputCacheReadTokens": 0,
+        "inputCacheWriteTokens": null,
+        "inputStandardTokens": 580,
+        "outputTokens": 22,
+        "reasoningTokens": 0,
+        "cacheUsageReporting": "unavailable",
+        "usageComplete": true
+      },
+      "validation": "PASSED",
+      "replay_sent_no_request": true,
+      "quota_remaining": 19,
+      "durable_settlement_verified": true
+    },
+    "MIMO": {
+      "requested_model": "mimo-v2.6-flash",
+      "selected_option": "opt_S6MREFD5CE38",
+      "nondefault_selection": true,
+      "transmissions": [
+        {
+          "max_output_tokens": 1804,
+          "endpoint": "https://api.xiaomimimo.com/v1/responses",
+          "wire_protocol": "RESPONSES",
+          "legacy_chat_fields_absent": true,
+          "subject_field": null,
+          "store_parameter_sent": false,
+          "status": 200,
+          "elapsed_ms": 5536,
+          "reported_model_matches": true,
+          "observed_model": "mimo-v2.6-flash",
+          "response_object_is_response": true,
+          "raw_usage": {
+            "total_tokens": 586,
+            "input_tokens": 564,
+            "output_tokens": 22
+          }
+        }
+      ],
+      "passed": true,
+      "finish_reason": "stop",
+      "normalized_usage": {
+        "schemaVersion": "normalized_usage",
+        "inputTotalTokens": 564,
+        "inputCacheReadTokens": 512,
+        "inputCacheWriteTokens": null,
+        "inputStandardTokens": 52,
+        "outputTokens": 22,
+        "reasoningTokens": 0,
+        "cacheUsageReporting": "unavailable",
+        "usageComplete": true
+      },
+      "validation": "PASSED",
+      "replay_sent_no_request": true,
+      "quota_remaining": 18,
+      "durable_settlement_verified": true
+    }
+  },
+  "cleanup_passed": true,
+  "configuration": {
+    "database": "cv_provider_live_fixture",
+    "database_instance_id": "c51e4bd5-9801-45d6-a7a9-b640f3039aef",
+    "option_ids": {
+      "DEEPSEEK": "opt_JK32TTXWRDCB",
+      "MIMO": "opt_S6MREFD5CE38"
+    },
+    "model_ids": {
+      "DEEPSEEK": "deepseek-flash",
+      "MIMO": "mimo-v2.6-flash"
+    },
+    "synthetic_pricing": true
+  },
+  "ledger": {
+    "quota": [
+      {
+        "day": "2026-11-07",
+        "charged": "2",
+        "reserved": "0",
+        "incompleteUsageCount": "0",
+        "inputTokensKnownLowerBound": "1144",
+        "outputTokensKnownLowerBound": "44"
+      }
+    ],
+    "requests": [
+      {
+        "state": "FINALIZED",
+        "usage": {
+          "output": "22",
+          "reasoning": "0",
+          "cache_read": "0",
+          "cache_write": null,
+          "input_total": "580",
+          "input_standard": "580"
+        },
+        "charged": true,
+        "modelId": "deepseek-flash",
+        "outcome": "SUCCEEDED",
+        "attempts": [
+          {
+            "state": "SUCCEEDED",
+            "usage": {
+              "output": "22",
+              "reasoning": "0",
+              "cache_read": "0",
+              "cache_write": null,
+              "input_total": "580",
+              "input_standard": "580"
+            },
+            "attemptId": "att_46VBBJR9Z4JZ",
+            "attemptNo": 1,
+            "transmitted": true,
+            "providerBillable": true,
+            "incompleteReasons": [],
+            "estimatedCostNanos": "624",
+            "knownEstimatedCostNanos": "624"
+          }
+        ],
+        "currency": "CNY",
+        "requestId": "req_YG84VKRQKPFH",
+        "providerCode": "DEEPSEEK",
+        "incompleteReasons": [],
+        "estimatedCostNanos": "624",
+        "knownEstimatedCostNanos": "624",
+        "providerReportedCostNanos": null
+      },
+      {
+        "state": "FINALIZED",
+        "usage": {
+          "output": "22",
+          "reasoning": "0",
+          "cache_read": "512",
+          "cache_write": null,
+          "input_total": "564",
+          "input_standard": "52"
+        },
+        "charged": true,
+        "modelId": "mimo-v2.6-flash",
+        "outcome": "SUCCEEDED",
+        "attempts": [
+          {
+            "state": "SUCCEEDED",
+            "usage": {
+              "output": "22",
+              "reasoning": "0",
+              "cache_read": "512",
+              "cache_write": null,
+              "input_total": "564",
+              "input_standard": "52"
+            },
+            "attemptId": "att_1GMF9P9H39FB",
+            "attemptNo": 1,
+            "transmitted": true,
+            "providerBillable": true,
+            "incompleteReasons": [],
+            "estimatedCostNanos": "148",
+            "knownEstimatedCostNanos": "148"
+          }
+        ],
+        "currency": "CNY",
+        "requestId": "req_3WFRCMRSWZA2",
+        "providerCode": "MIMO",
+        "incompleteReasons": [],
+        "estimatedCostNanos": "148",
+        "knownEstimatedCostNanos": "148",
+        "providerReportedCostNanos": null
+      }
+    ],
+    "syntheticPricing": true
+  }
+}
