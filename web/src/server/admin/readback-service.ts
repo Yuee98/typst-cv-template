@@ -1,89 +1,54 @@
 import "server-only";
 import { z } from "zod";
-import {
-  adminRuntimeReadbackSchema,
-  adminRuntimeReadbackRequestSchema,
-  type AdminRuntimeReadback,
-} from "@/lib/admin/contract";
+import { adminRuntimeReadbackSchema, externalIdSchema, type AdminRuntimeReadback } from "@/lib/admin/contract";
 import { createServerAdminClient } from "../supabase/admin-client";
 import { resolveAdminEnvironment } from "./environment";
-import { adminValidationCandidateSchema, observedConfigChecks } from "./validation-service";
-
-const inputSchema = adminRuntimeReadbackRequestSchema.omit({ operation: true });
-const candidateSchema = z.strictObject(adminRuntimeReadbackSchema.shape).omit({
-  reportId: true, checkedAt: true, expiresAt: true, reportSha256: true,
-}).extend({
-  schemaVersion: z.literal("admin_runtime_readback_candidate_v4"),
-  candidates: z.array(adminValidationCandidateSchema).min(1).max(32),
+import { observedConfigChecks, type ProducerClient } from "./validation-service";
+export type RuntimeReadbackProducerInput = {
+  database_instance_id: string;
+};
+const candidateSchema = z.object({
+  database_instance_id: z.string().uuid(),
+  environment: z.enum(["LOCAL", "PREVIEW", "PRODUCTION"]),
+  dependency_digest: z.string().regex(/^[0-9a-f]{64}$/),
+  target_id: externalIdSchema,
+  passed: z.boolean(),
+  reasons: z.array(z.string()).max(64),
+  data: z.object({
+    profiles: z.array(z.record(z.string(), z.unknown())).min(1).max(128)
+  })
 });
-export type RuntimeReadbackProducerInput = z.infer<typeof inputSchema>;
-interface RpcClient {
-  rpc(functionName: string, args: Record<string, unknown>): Promise<{
-    data: unknown; error: { code?: string; message?: string } | null;
-  }>;
-}
-export class RuntimeReadbackProducerError extends Error {
-  constructor() { super("Runtime readback could not be produced"); this.name = "RuntimeReadbackProducerError"; }
-}
-function sameIds(left: readonly string[], right: readonly string[]): boolean {
-  const sortedRight = [...right].sort();
-  return left.length === right.length && [...left].sort().every((id, i) => id === sortedRight[i]);
-}
-
-export async function produceAdminRuntimeReadback(
-  input: RuntimeReadbackProducerInput,
-  dependencies: { environment?: Readonly<Record<string, string | undefined>>; client?: RpcClient } = {},
-): Promise<AdminRuntimeReadback> {
-  try {
-    const request = inputSchema.parse(input);
-    const env = dependencies.environment ?? process.env;
-    const identity = resolveAdminEnvironment(env);
-    const client = dependencies.client ?? createServerAdminClient();
-    const args = {
-      // Ignored legacy RPC argument; no project identity is derived or stored.
-      p_environment: identity.name, p_project_ref: null,
-      p_policy_version_id: request.policyVersionId,
-      p_validation_report_ids: request.validationReportIds,
-    };
-    const result = await client.rpc("get_admin_runtime_readback_candidate_v3", args);
-    if (result.error) throw new RuntimeReadbackProducerError();
-    const candidate = candidateSchema.parse(result.data);
-    if (candidate.environment !== identity.name ||
-      candidate.policyVersionId !== request.policyVersionId ||
-      !sameIds(candidate.validationReportIds, request.validationReportIds) ||
-      candidate.candidates.length !== candidate.effectiveRoutes.length) throw new RuntimeReadbackProducerError();
-
-    // Re-observe this server's supported code and configured credentials for
-    // every exact route. A DB report alone cannot prove the current process.
-    const unmatched = [...candidate.effectiveRoutes];
-    for (const config of candidate.candidates) {
-      if (config.environment !== identity.name ||
-        config.runtimeTarget.legalBundleVersion !== candidate.legalBundleVersion) throw new RuntimeReadbackProducerError();
-      const index = unmatched.findIndex((route) => Object.entries(route).every(
-        ([key, value]) => config.runtimeTarget[key as keyof typeof config.runtimeTarget] === value,
-      ));
-      if (index < 0) throw new RuntimeReadbackProducerError();
-      unmatched.splice(index, 1);
-      const checks = observedConfigChecks(config, env);
-      if (!checks.endpointPolicy || !checks.credentialBinding || !checks.credentialConfigured || !checks.compiledCapability)
-        throw new RuntimeReadbackProducerError();
+export async function produceAdminRuntimeReadback(input: RuntimeReadbackProducerInput, dependencies: {
+  environment?: Readonly<Record<string, string | undefined>>;
+  client?: ProducerClient;
+} = {}): Promise<AdminRuntimeReadback> {
+  const request = z.strictObject({
+    database_instance_id: z.string().uuid()
+  }).parse(input);
+  const env = dependencies.environment ?? process.env;
+  const identity = resolveAdminEnvironment(env);
+  const client: ProducerClient = dependencies.client ?? createServerAdminClient();
+  const result = await client.rpc("runtime_readback_candidate", {
+    p_input: {
+      ...request,
+      contract_code: "cv_app_db_1"
     }
-    const saved = await client.rpc("record_admin_runtime_readback_v3", {
-      ...args,
-      p_expected_closing_cycle_id: candidate.closingCycleId,
-      p_expected_control_revision: candidate.controlRevision,
-      p_expected_config_generation: candidate.configGeneration,
-    });
-    if (saved.error) throw new RuntimeReadbackProducerError();
-    const report = adminRuntimeReadbackSchema.parse(saved.data);
-    for (const key of ["environment", "closingCycleId", "controlRevision", "configGeneration", "policyVersionId", "legalBundleVersion"] as const) {
-      if (report[key] !== candidate[key]) throw new RuntimeReadbackProducerError();
+  });
+  if (result.error) throw new Error("Readback unavailable");
+  const candidate = candidateSchema.parse(result.data);
+  if (candidate.database_instance_id !== request.database_instance_id || candidate.environment.toLowerCase() !== identity.name) throw new Error("Readback identity mismatch");
+  const reasons = observedConfigChecks(candidate.data.profiles, env);
+  const saved = await client.rpc("runtime_readback_record", {
+    p_input: {
+      ...request,
+      contract_code: "cv_app_db_1",
+      dependency_digest: candidate.dependency_digest,
+      passed: reasons.length === 0,
+      reasons
     }
-    const routeKey = (route: typeof report.effectiveRoutes[number]) => JSON.stringify(Object.entries(route).sort(([a], [b]) => a.localeCompare(b)));
-    if (!sameIds(report.validationReportIds, request.validationReportIds) ||
-      !sameIds(report.effectiveRoutes.map(routeKey), candidate.effectiveRoutes.map(routeKey)) ||
-      Date.parse(report.checkedAt) > Date.now() + 30_000 || Date.parse(report.expiresAt) <= Date.now())
-      throw new RuntimeReadbackProducerError();
-    return report;
-  } catch { throw new RuntimeReadbackProducerError(); }
+  });
+  if (saved.error) throw new Error("Readback unavailable");
+  const report = adminRuntimeReadbackSchema.parse(saved.data);
+  if (report.policy_version_id !== candidate.target_id || report.dependency_digest !== candidate.dependency_digest || report.passed !== (reasons.length === 0 && candidate.passed) || Date.parse(report.time_expires) <= Date.now() || Date.parse(report.time_expires) - Date.parse(report.time_checked) > 300000) throw new Error("Readback receipt mismatch");
+  return report;
 }

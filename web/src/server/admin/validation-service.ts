@@ -1,232 +1,73 @@
 import "server-only";
-
 import { z } from "zod";
-import {
-  adminValidationReportSchema,
-  type AdminValidationReport,
-} from "@/lib/admin/contract";
-import {
-  createProviderSecretResolver,
-  validateProviderEndpoint,
-  validateProviderCredentialBinding,
-} from "../polish/provider-binding-v2";
-import {
-  resolveProfileRuntimeCodeCapabilityV2,
-  resolveRuntimeCodeCapabilityV2,
-} from "../polish/runtime-code-capability-v2";
-import { validateProfileExecutionConfigV2 } from "../polish/profile-execution-v2";
-import { resolveAdminEnvironment } from "./environment";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
+import { adminValidationReportSchema, externalIdSchema, type AdminValidationReport } from "@/lib/admin/contract";
+import { providerProfileSchema, validateProviderConfiguration } from "../ai/provider";
 import { createServerAdminClient } from "../supabase/admin-client";
-
-const codeId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/u);
-const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
-const uuid = z.string().uuid();
-
-const candidateSchema = z.strictObject({
-  schemaVersion: z.literal("admin_config_validation_candidate_v3"),
-  environment: z.enum(["local", "preview", "production"]),
-  profileExecutionConfig: z.strictObject({
-    schemaVersion: z.literal("profile_execution_config_v2"),
-    profileKey: codeId,
-    providerId: uuid,
-    gatewayKind: z.enum(["direct_deepseek", "direct_mimo"]),
-    adapterKind: z.enum(["deepseek_chat_v1", "mimo_responses_v1"]),
-    wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]),
-    endpointUrl: z.string().min(10).max(512),
-    credentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/u),
-    modelId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u),
-    capabilityContractId: codeId,
-    cachePolicyId: codeId,
-    legalManifestId: codeId,
-    calculatorKind: z.literal("linear_token_v1"),
-    displayDisclosureKey: codeId,
-    config: z.unknown(),
-  }),
-  runtimeTarget: z.strictObject({
-    runtimeContractId: codeId,
-    runtimeTargetId: codeId,
-    runtimeTargetSha256: sha256,
-    profileVersionId: uuid,
-    priceVersionId: uuid,
-    providerId: uuid,
-    recipientKey: codeId,
-    codeCapabilityId: codeId,
-    codeCapabilitySha256: sha256,
-    legalBundleVersion: codeId,
-    legalManifestId: codeId,
-    displayDisclosureKey: codeId,
-  }),
+import { resolveAdminEnvironment } from "./environment";
+const digest = z.string().regex(/^[0-9a-f]{64}$/);
+const inputSchema = z.strictObject({
+  target_kind: z.enum(["PROFILE", "PRICE", "POLICY"]),
+  target_id: externalIdSchema,
+  database_instance_id: z.string().uuid()
 });
-export type AdminValidationCandidate = z.infer<typeof candidateSchema>;
-
-export interface ValidationProducerInput {
-  runtimeContractId: string;
-  runtimeTargetId: string;
-}
-
-export type ValidationProducerEnvironment = Readonly<Record<string, string | undefined>>;
-
-interface RpcClient {
-  rpc(functionName: string, args: Record<string, unknown>): Promise<{
-    data: unknown;
-    error: { code?: string; message?: string } | null;
-  }>;
-}
-
-export class ValidationProducerError extends Error {
-  constructor(message = "Runtime validation could not be produced") {
-    super(message);
-    this.name = "ValidationProducerError";
-  }
-}
-
-function parseInput(input: ValidationProducerInput): ValidationProducerInput {
-  const parsed = z.strictObject({
-    runtimeContractId: codeId,
-    runtimeTargetId: codeId,
-  }).safeParse(input);
-  if (!parsed.success) throw new ValidationProducerError();
-  return parsed.data;
-}
-
-export function observedConfigChecks(
-  candidate: AdminValidationCandidate,
-  env: ValidationProducerEnvironment,
-): {
-  endpointPolicy: boolean;
-  credentialBinding: boolean;
-  credentialConfigured: boolean;
-  compiledCapability: boolean;
-  observedCodeCapabilitySha256: string;
-} {
-  const profile = validateProfileExecutionConfigV2(candidate.profileExecutionConfig);
-  const endpointPolicy = (() => {
+export type ValidationProducerInput = z.infer<typeof inputSchema>;
+export type ProducerClient = Pick<SupabaseClient<Database>, "rpc">;
+export const adminValidationCandidateSchema = z.object({
+  target_kind: z.enum(["PROFILE", "PRICE", "POLICY"]),
+  target_id: externalIdSchema,
+  passed: z.boolean(),
+  reasons: z.array(z.string()).max(64),
+  dependency_digest: digest,
+  database_instance_id: z.string().uuid(),
+  environment: z.enum(["LOCAL", "PREVIEW", "PRODUCTION"]),
+  data: z.object({
+    profiles: z.array(z.record(z.string(), z.unknown())).min(1).max(128)
+  })
+});
+export function observedConfigChecks(profiles: readonly Record<string, unknown>[], environment: Readonly<Record<string, string | undefined>>): string[] {
+  const reasons: string[] = [];
+  for (const record of profiles) {
+    const fields: Record<string, unknown> = {};
+    for (const key of Object.keys(providerProfileSchema.shape)) fields[key] = record[key];
     try {
-      validateProviderEndpoint(profile);
-      return true;
+      validateProviderConfiguration(providerProfileSchema.parse(fields), environment);
     } catch {
-      return false;
-    }
-  })();
-  let credentialBinding = false;
-  try {
-    validateProviderCredentialBinding(profile, {
-      providerId: candidate.runtimeTarget.providerId,
-      recipientKey: candidate.runtimeTarget.recipientKey,
-    });
-    credentialBinding = true;
-  } catch { /* A failed policy check is recorded without exposing credentials. */ }
-  let compiledCapability = false;
-  let observedCodeCapabilitySha256 = "0".repeat(64);
-  try {
-    const compiled = resolveProfileRuntimeCodeCapabilityV2(profile);
-    const targetCapability = resolveRuntimeCodeCapabilityV2(
-      candidate.runtimeTarget.codeCapabilityId,
-    );
-    compiledCapability =
-      compiled.codeCapabilityId === targetCapability.codeCapabilityId &&
-      compiled.descriptorSha256 === candidate.runtimeTarget.codeCapabilitySha256;
-    observedCodeCapabilitySha256 = compiled.descriptorSha256;
-  } catch {
-    compiledCapability = false;
-  }
-  // Do not construct the secret resolver until the candidate has passed every
-  // non-secret compatibility check. A rejected target must not be able to
-  // probe whether any provider key is configured.
-  let credentialConfigured = false;
-  if (endpointPolicy && credentialBinding && compiledCapability) {
-    try {
-      createProviderSecretResolver(env)(profile.credentialEnvName);
-      credentialConfigured = true;
-    } catch {
-      credentialConfigured = false;
+      reasons.push("PROVIDER_CONFIGURATION_INVALID");
     }
   }
-  return {
-    endpointPolicy,
-    credentialBinding,
-    credentialConfigured,
-    compiledCapability,
-    observedCodeCapabilitySha256,
-  };
+  return [...new Set(reasons)];
 }
-
-export async function produceAdminValidationReport(
-  input: ValidationProducerInput,
-  dependencies: {
-    environment?: ValidationProducerEnvironment;
-    client?: RpcClient;
-  } = {},
-): Promise<AdminValidationReport> {
-  const request = parseInput(input);
-  const environment = dependencies.environment ?? process.env;
-  const identity = resolveAdminEnvironment(environment);
-  const client = dependencies.client ?? createServerAdminClient();
-  const candidateResult = await client.rpc("get_admin_config_validation_candidate_v2", {
-    p_runtime_contract_id: request.runtimeContractId,
-    p_runtime_target_id: request.runtimeTargetId,
-  });
-  if (candidateResult.error) throw new ValidationProducerError();
-  const candidate = candidateSchema.parse(candidateResult.data);
-  if (
-    candidate.environment !== identity.name ||
-    candidate.runtimeTarget.runtimeContractId !== request.runtimeContractId ||
-    candidate.runtimeTarget.runtimeTargetId !== request.runtimeTargetId
-  ) {
-    throw new ValidationProducerError();
-  }
-  let checks;
-  try {
-    checks = observedConfigChecks(candidate, environment);
-  } catch {
-    throw new ValidationProducerError();
-  }
-  const reportResult = await client.rpc("record_admin_config_validation_report_v2", {
-    p_runtime_contract_id: request.runtimeContractId,
-    p_runtime_target_id: request.runtimeTargetId,
-    p_observed_code_capability_sha256: checks.observedCodeCapabilitySha256,
-    p_endpoint_policy_valid: checks.endpointPolicy,
-    p_credential_binding_valid: checks.credentialBinding,
-    p_credential_configured: checks.credentialConfigured,
-    p_compiled_capability_valid: checks.compiledCapability,
-  });
-  if (reportResult.error) throw new ValidationProducerError();
-  const report = adminValidationReportSchema.parse(reportResult.data);
-  const now = Date.now();
-  if (
-    Date.parse(report.checkedAt) > now + 30_000 ||
-    Date.parse(report.expiresAt) <= now
-  ) {
-    throw new ValidationProducerError();
-  }
-  if (
-    report.checks.endpointPolicy !== checks.endpointPolicy ||
-    report.checks.credentialBinding !== checks.credentialBinding ||
-    report.checks.credentialConfigured !== checks.credentialConfigured ||
-    report.checks.compiledCapability !== checks.compiledCapability
-  ) {
-    throw new ValidationProducerError();
-  }
-  const expected = {
-    environment: identity.name,
-    runtimeContractId: candidate.runtimeTarget.runtimeContractId,
-    runtimeTargetId: candidate.runtimeTarget.runtimeTargetId,
-    runtimeTargetSha256: candidate.runtimeTarget.runtimeTargetSha256,
-    profileVersionId: candidate.runtimeTarget.profileVersionId,
-    priceVersionId: candidate.runtimeTarget.priceVersionId,
-    providerId: candidate.runtimeTarget.providerId,
-    codeCapabilityId: candidate.runtimeTarget.codeCapabilityId,
-    codeCapabilitySha256: candidate.runtimeTarget.codeCapabilitySha256,
-    legalBundleVersion: candidate.runtimeTarget.legalBundleVersion,
-    legalManifestId: candidate.runtimeTarget.legalManifestId,
-    displayDisclosureKey: candidate.runtimeTarget.displayDisclosureKey,
-  } as const;
-  for (const [key, value] of Object.entries(expected)) {
-    if (report[key as keyof typeof expected] !== value) {
-      throw new ValidationProducerError();
+export async function produceAdminValidationReport(input: ValidationProducerInput, dependencies: {
+  environment?: Readonly<Record<string, string | undefined>>;
+  client?: ProducerClient;
+} = {}): Promise<AdminValidationReport> {
+  const request = inputSchema.parse(input);
+  const env = dependencies.environment ?? process.env;
+  const identity = resolveAdminEnvironment(env);
+  const client: ProducerClient = dependencies.client ?? createServerAdminClient();
+  const result = await client.rpc("config_validation_candidate", {
+    p_input: {
+      ...request,
+      contract_code: "cv_app_db_1"
     }
-  }
+  });
+  if (result.error) throw new Error("Validation unavailable");
+  const candidate = adminValidationCandidateSchema.parse(result.data);
+  if (candidate.database_instance_id !== request.database_instance_id || candidate.environment.toLowerCase() !== identity.name || candidate.target_id !== request.target_id || candidate.target_kind !== request.target_kind) throw new Error("Validation identity mismatch");
+  const reasons = observedConfigChecks(candidate.data.profiles, env);
+  const saved = await client.rpc("config_validation_record", {
+    p_input: {
+      ...request,
+      contract_code: "cv_app_db_1",
+      dependency_digest: candidate.dependency_digest,
+      passed: reasons.length === 0,
+      reasons
+    }
+  });
+  if (saved.error) throw new Error("Validation unavailable");
+  const report = adminValidationReportSchema.parse(saved.data);
+  if (report.target_id !== request.target_id || report.target_kind !== request.target_kind || report.dependency_digest !== candidate.dependency_digest || report.passed !== (reasons.length === 0 && candidate.passed) || Date.parse(report.time_expires) <= Date.now() || Date.parse(report.time_expires) - Date.parse(report.time_checked) > 600000) throw new Error("Validation receipt mismatch");
   return report;
 }
-
-export { candidateSchema as adminValidationCandidateSchema };

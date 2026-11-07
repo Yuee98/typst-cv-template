@@ -1,296 +1,311 @@
+import { bindSupabaseUser } from "@/lib/supabase/user-client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-
+import { z } from "zod";
 import { defaultLocale, type Locale } from "@/i18n/routing";
-import type { EncryptedPayload } from "./encryption";
-import { persistedCvSchema, type CvData } from "./schema";
+import { clientWriteContext, requireAppContext, cloudCacheScope } from "@/lib/supabase/app-context";
+import { encryptedPayloadSchema, type EncryptedPayload } from "./encryption";
+import { cvSchema, type CvData } from "./schema";
 import type { CvDocumentSummary } from "./storage";
-
-type CvDocumentRow = {
-  id: string;
-  title: string;
-  storage_mode: "plain" | "encrypted";
-  data: unknown;
-  encrypted_payload: unknown;
-  schema_version: number;
-  created_at: string;
-  updated_at: string;
-};
-
+const rowSchema = z.object({
+  external_id: z.string().regex(/^cv_[0-9A-HJKMNP-TV-Z]{12}$/),
+  title: z.string(),
+  storage_mode: z.enum(["PLAIN", "ENCRYPTED"]),
+  document_schema_version: z.literal(7),
+  revision: z.string().regex(/^[1-9][0-9]*$/),
+  time_created: z.string(),
+  time_updated: z.string(),
+  data: z.unknown().optional(),
+  encrypted_payload: z.unknown().optional()
+});
+type Row = z.infer<typeof rowSchema>;
 export type CloudCvDocument = CvDocumentSummary & {
   storageKind: "cloud";
   data: CvData;
 };
-
 export type EncryptedCloudCvDocument = CvDocumentSummary & {
   storageKind: "encrypted";
   encryptedPayload: EncryptedPayload;
 };
-
-const cloudStorageMessages = {
-  en: {
-    encryptedNeedsUnlock: "Encrypted CVs need to be unlocked before editing.",
-    schemaMismatch: "Cloud CV data does not match the current CV schema.",
-    notEncrypted: "This cloud CV is not encrypted.",
-    notFound: "Cloud CV was not found.",
-  },
-  zh: {
-    encryptedNeedsUnlock: "加密简历需要先解锁才能编辑。",
-    schemaMismatch: "云端简历数据不符合当前 CV schema。",
-    notEncrypted: "此云端简历未加密。",
-    notFound: "未找到该云端简历。",
-  },
+type Evidence = {
+  owner: string;
+  revision: string;
+  instance: string;
 };
-
-function getCloudStorageMessage(locale: Locale, key: keyof typeof cloudStorageMessages.en) {
-  return cloudStorageMessages[locale]?.[key] ?? cloudStorageMessages.en[key];
-}
-
-const cloudDocumentColumns =
-  "id,title,storage_mode,data,encrypted_payload,schema_version,created_at,updated_at";
-
-function cloudStorageKind(row: Pick<CvDocumentRow, "storage_mode">) {
-  return row.storage_mode === "encrypted" ? "encrypted" : "cloud";
-}
-
-function summaryFromCloudRow(row: CvDocumentRow): CvDocumentSummary {
+const evidence = new WeakMap<SupabaseClient, Map<string, Evidence>>();
+const editingEvidence = new WeakMap<SupabaseClient, Map<string, Evidence>>();
+const pendingCreates = new WeakMap<SupabaseClient, Map<string, string>>();
+const summaryColumns = "external_id,title,storage_mode,document_schema_version,revision,time_created,time_updated";
+async function scopedClient(client: SupabaseClient, expectedUserId?: string) {
+  const {
+    data,
+    error
+  } = await client.auth.getSession();
+  if (error) throw error;
+  const userId = data.session?.user.id;
+  if (!userId || expectedUserId && userId !== expectedUserId) throw new Error("CONFLICT: ACCOUNT_CHANGED");
   return {
-    id: row.id,
+    scoped: await bindSupabaseUser(client, userId),
+    userId
+  };
+}
+function remember(client: SupabaseClient, row: Row, instance: string, owner: string) {
+  let rows = evidence.get(client);
+  if (!rows) {
+    rows = new Map();
+    evidence.set(client, rows);
+  }
+  rows.set(row.external_id, {
+    owner,
+    revision: row.revision,
+    instance
+  });
+}
+export function cloudDocumentOwner(client: SupabaseClient, id: string) {
+  return evidence.get(client)?.get(id)?.owner ?? null;
+}
+export function editingCloudRevision(client: SupabaseClient, id: string) {
+  return editingEvidence.get(client)?.get(id)?.revision ?? null;
+}
+/** Called only when the form actually adopts a loaded document, never by a background refetch. */
+export function activateCloudDocument(client: SupabaseClient, id: string, expectedRevision?: string) {
+  const current = evidence.get(client)?.get(id);
+  if (!current) return;
+  let editing = editingEvidence.get(client);
+  if (!editing) {
+    editing = new Map();
+    editingEvidence.set(client, editing);
+  }
+  editing.clear();
+  editing.set(id, expectedRevision ? {
+    ...current,
+    revision: expectedRevision
+  } : current);
+}
+function summary(row: Row): CvDocumentSummary {
+  return {
+    id: row.external_id,
     title: row.title,
-    storageKind: cloudStorageKind(row),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    storageKind: row.storage_mode === "PLAIN" ? "cloud" : "encrypted",
+    createdAt: row.time_created,
+    updatedAt: row.time_updated
   };
 }
-
-function plainDocumentFromRow(row: CvDocumentRow, locale: Locale): CloudCvDocument {
-  if (row.storage_mode !== "plain") {
-    throw new Error(getCloudStorageMessage(locale, "encryptedNeedsUnlock"));
-  }
-
-  const parsed = persistedCvSchema.safeParse(row.data);
-  if (!parsed.success) {
-    throw new Error(getCloudStorageMessage(locale, "schemaMismatch"));
-  }
-
+function plain(row: Row, locale: Locale): CloudCvDocument {
+  if (row.storage_mode !== "PLAIN") throw new Error(locale === "zh" ? "加密简历需要先解锁才能编辑。" : "Encrypted CVs must be unlocked before editing.");
   return {
-    ...summaryFromCloudRow(row),
+    ...summary(row),
     storageKind: "cloud",
-    data: parsed.data,
+    data: cvSchema.parse(row.data)
   };
 }
-
-function encryptedDocumentFromRow(row: CvDocumentRow, locale: Locale): EncryptedCloudCvDocument {
-  if (row.storage_mode !== "encrypted") {
-    throw new Error(getCloudStorageMessage(locale, "notEncrypted"));
-  }
-
+function encrypted(row: Row, locale: Locale): EncryptedCloudCvDocument {
+  if (row.storage_mode !== "ENCRYPTED") throw new Error(locale === "zh" ? "此云端简历未加密。" : "This CV is not encrypted.");
   return {
-    ...summaryFromCloudRow(row),
+    ...summary(row),
     storageKind: "encrypted",
-    encryptedPayload: row.encrypted_payload as EncryptedPayload,
+    encryptedPayload: encryptedPayloadSchema.parse(row.encrypted_payload)
   };
 }
-
-function requireSingleRow(row: CvDocumentRow | null, locale: Locale) {
-  if (!row) {
-    throw new Error(getCloudStorageMessage(locale, "notFound"));
-  }
-
+async function load(client: SupabaseClient, id: string, expectedUserId?: string) {
+  const {
+    scoped,
+    userId
+  } = await scopedClient(client, expectedUserId);
+  const context = await requireAppContext(client);
+  const {
+    data,
+    error
+  } = await scoped.from("cv_document_contents").select(`${summaryColumns},data,encrypted_payload`).eq("external_id", id).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Cloud CV was not found.");
+  const row = rowSchema.parse(data);
+  remember(client, row, context.database_instance_id, userId);
   return row;
 }
-
-export async function listCloudCvDocuments(supabase: SupabaseClient): Promise<CvDocumentSummary[]> {
-  const { data, error } = await supabase
-    .from("cv_documents")
-    .select(cloudDocumentColumns)
-    .order("updated_at", { ascending: false });
-
-  if (error) {
-    throw error;
-  }
-
-  return ((data ?? []) as CvDocumentRow[]).map(summaryFromCloudRow);
+export async function listCloudCvDocuments(client: SupabaseClient, expectedUserId?: string): Promise<CvDocumentSummary[]> {
+  const {
+    scoped,
+    userId
+  } = await scopedClient(client, expectedUserId);
+  const context = await requireAppContext(client);
+  const {
+    data,
+    error
+  } = await scoped.from("cv_document_summaries").select(summaryColumns).order("time_updated", {
+    ascending: false
+  });
+  if (error) throw error;
+  return z.array(rowSchema).parse(data).map(row => {
+    // List refreshes must not advance the edit baseline of an already loaded document.
+    remember(client, row, context.database_instance_id, userId);
+    return summary(row);
+  });
 }
-
-export async function loadCloudCvDocument(
-  supabase: SupabaseClient,
-  id: string,
-  locale: Locale = defaultLocale,
-): Promise<CloudCvDocument> {
-  const { data, error } = await supabase
-    .from("cv_documents")
-    .select(cloudDocumentColumns)
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return plainDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
+export async function loadCloudCvDocument(client: SupabaseClient, id: string, _locale: Locale = defaultLocale, expectedUserId?: string) {
+  return plain(await load(client, id, expectedUserId), _locale);
 }
-
-export async function loadEncryptedCloudCvDocument(
-  supabase: SupabaseClient,
-  id: string,
-  locale: Locale = defaultLocale,
-): Promise<EncryptedCloudCvDocument> {
-  const { data, error } = await supabase
-    .from("cv_documents")
-    .select(cloudDocumentColumns)
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
+export async function loadEncryptedCloudCvDocument(client: SupabaseClient, id: string, _locale: Locale = defaultLocale, expectedUserId?: string) {
+  return encrypted(await load(client, id, expectedUserId), _locale);
 }
-
-export async function createCloudCvDocument(
-  supabase: SupabaseClient,
-  { title, data }: { title: string; data: CvData },
-  locale: Locale = defaultLocale,
-): Promise<CloudCvDocument> {
-  const { data: row, error } = await supabase
-    .from("cv_documents")
-    .insert({
+type CvMutation = "cv_document_create" | "cv_document_update" | "cv_document_convert" | "cv_document_rename" | "cv_document_delete";
+async function write(client: SupabaseClient, name: CvMutation, input: Record<string, unknown>, id?: string, expectedUserId?: string) {
+  const {
+    scoped,
+    userId
+  } = await scopedClient(client, expectedUserId);
+  const context = await clientWriteContext(client, userId);
+  const previous = id ? editingEvidence.get(client)?.get(id) ?? evidence.get(client)?.get(id) : undefined;
+  if (id && (!previous || previous.instance !== context.database_instance_id)) throw new Error("CONFLICT: Open the current document before changing it.");
+  const payload = {
+    ...input,
+    ...context,
+    ...(id ? {
+      external_id: id,
+      expected_revision: previous!.revision
+    } : {})
+  };
+  const {
+    data,
+    error
+  } = await scoped.rpc(name, {
+    p_input: z.json().parse(JSON.parse(JSON.stringify(payload)))
+  });
+  // A lost response leaves the baseline unchanged. The next write conflicts until the user reads back.
+  if (error) throw error;
+  if (name === "cv_document_delete") {
+    evidence.get(client)?.delete(id!);
+    editingEvidence.get(client)?.delete(id!);
+    return null;
+  }
+  const row = rowSchema.parse(data);
+  remember(client, row, context.database_instance_id, userId);
+  if (id && editingEvidence.get(client)?.has(id)) activateCloudDocument(client, row.external_id);
+  return row;
+}
+async function create(client: SupabaseClient, input: Record<string, unknown>, sourceDocumentId?: string, expectedUserId?: string) {
+  const {
+    userId
+  } = await scopedClient(client, expectedUserId);
+  await requireAppContext(client);
+  let pending = pendingCreates.get(client);
+  if (!pending) {
+    pending = new Map();
+    pendingCreates.set(client, pending);
+  }
+  const payload = JSON.stringify(input);
+  let storageKey: string | null = null;
+  let digest = payload;
+  if (typeof window !== "undefined") {
+    const {
       data,
-      schema_version: data.schemaVersion,
-      storage_mode: "plain",
-      title,
-    })
-    .select(cloudDocumentColumns)
-    .single();
-
-  if (error) {
-    throw error;
+      error
+    } = await client.auth.getUser();
+    if (error) throw error;
+    if (!data.user || data.user.id !== userId) throw new Error("CONFLICT: ACCOUNT_CHANGED");
+    const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+    digest = Array.from(new Uint8Array(bytes), value => value.toString(16).padStart(2, "0")).join("");
+    storageKey = `typst-cv-builder:pending-create:${cloudCacheScope()}:${data.user.id}:${sourceDocumentId ? `source:${encodeURIComponent(sourceDocumentId)}` : digest}`;
   }
-
-  return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null, locale), locale);
+  const raw = storageKey ? window.sessionStorage.getItem(storageKey) : null;
+  const stored = raw ? z.strictObject({
+    key: z.uuid(),
+    digest: z.string()
+  }).parse(JSON.parse(raw)) : null;
+  if (stored && stored.digest !== digest) throw new Error("CONFLICT: Resolve the pending cloud create before changing its content.");
+  const key = stored?.key ?? pending.get(sourceDocumentId ?? payload) ?? crypto.randomUUID();
+  // Persist before sending; the same local source retains one operation across reloads.
+  if (storageKey) window.sessionStorage.setItem(storageKey, JSON.stringify({
+    key,
+    digest
+  }));
+  pending.set(sourceDocumentId ?? payload, key);
+  const row = await write(client, "cv_document_create", {
+    ...input,
+    client_create_key: key
+  }, undefined, userId);
+  pending.delete(sourceDocumentId ?? payload);
+  if (storageKey) window.sessionStorage.removeItem(storageKey);
+  return row!;
 }
-
-export async function createEncryptedCloudCvDocument(
-  supabase: SupabaseClient,
-  { title, encryptedPayload, schemaVersion }: { title: string; encryptedPayload: EncryptedPayload; schemaVersion: number },
-  locale: Locale = defaultLocale,
-): Promise<EncryptedCloudCvDocument> {
-  const { data, error } = await supabase
-    .from("cv_documents")
-    .insert({
-      encrypted_payload: encryptedPayload,
-      schema_version: schemaVersion,
-      storage_mode: "encrypted",
-      title,
-    })
-    .select(cloudDocumentColumns)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
+export async function createCloudCvDocument(client: SupabaseClient, {
+  title,
+  data,
+  sourceDocumentId,
+  expectedUserId
+}: {
+  title: string;
+  data: CvData;
+  sourceDocumentId?: string;
+  expectedUserId?: string;
+}, _locale: Locale = defaultLocale) {
+  return plain(await create(client, {
+    title,
+    data: cvSchema.parse(data),
+    storage_mode: "PLAIN",
+    document_schema_version: 7
+  }, sourceDocumentId, expectedUserId), _locale);
 }
-
-export async function updateCloudCvDocumentData(
-  supabase: SupabaseClient,
-  id: string,
-  data: CvData,
-  locale: Locale = defaultLocale,
-): Promise<CloudCvDocument> {
-  const { data: row, error } = await supabase
-    .from("cv_documents")
-    .update({
-      data,
-      schema_version: data.schemaVersion,
-    })
-    .eq("id", id)
-    .eq("storage_mode", "plain")
-    .select(cloudDocumentColumns)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return plainDocumentFromRow(requireSingleRow(row as CvDocumentRow | null, locale), locale);
+export async function createEncryptedCloudCvDocument(client: SupabaseClient, {
+  title,
+  encryptedPayload,
+  schemaVersion,
+  sourceDocumentId,
+  expectedUserId
+}: {
+  title: string;
+  encryptedPayload: EncryptedPayload;
+  schemaVersion: number;
+  sourceDocumentId?: string;
+  expectedUserId?: string;
+}, _locale: Locale = defaultLocale) {
+  z.literal(7).parse(schemaVersion);
+  return encrypted(await create(client, {
+    title,
+    encrypted_payload: encryptedPayloadSchema.parse(encryptedPayload),
+    storage_mode: "ENCRYPTED",
+    document_schema_version: 7
+  }, sourceDocumentId, expectedUserId), _locale);
 }
-
-export async function updateEncryptedCloudCvDocumentData(
-  supabase: SupabaseClient,
-  id: string,
-  { encryptedPayload, schemaVersion }: { encryptedPayload: EncryptedPayload; schemaVersion: number },
-  locale: Locale = defaultLocale,
-): Promise<EncryptedCloudCvDocument> {
-  const { data, error } = await supabase
-    .from("cv_documents")
-    .update({
-      encrypted_payload: encryptedPayload,
-      schema_version: schemaVersion,
-    })
-    .eq("id", id)
-    .eq("storage_mode", "encrypted")
-    .select(cloudDocumentColumns)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
+export async function updateCloudCvDocumentData(client: SupabaseClient, id: string, data: CvData, _locale: Locale = defaultLocale) {
+  return plain((await write(client, "cv_document_update", {
+    data: cvSchema.parse(data),
+    storage_mode: "PLAIN",
+    document_schema_version: 7
+  }, id))!, _locale);
 }
-
-export async function encryptExistingCloudCvDocument(
-  supabase: SupabaseClient,
-  id: string,
-  { encryptedPayload, schemaVersion }: { encryptedPayload: EncryptedPayload; schemaVersion: number },
-  locale: Locale = defaultLocale,
-): Promise<EncryptedCloudCvDocument> {
-  const { data, error } = await supabase
-    .from("cv_documents")
-    .update({
-      data: null,
-      encrypted_payload: encryptedPayload,
-      schema_version: schemaVersion,
-      storage_mode: "encrypted",
-    })
-    .eq("id", id)
-    .eq("storage_mode", "plain")
-    .select(cloudDocumentColumns)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return encryptedDocumentFromRow(requireSingleRow(data as CvDocumentRow | null, locale), locale);
+export async function updateEncryptedCloudCvDocumentData(client: SupabaseClient, id: string, {
+  encryptedPayload,
+  schemaVersion
+}: {
+  encryptedPayload: EncryptedPayload;
+  schemaVersion: number;
+}, _locale: Locale = defaultLocale) {
+  z.literal(7).parse(schemaVersion);
+  return encrypted((await write(client, "cv_document_update", {
+    encrypted_payload: encryptedPayloadSchema.parse(encryptedPayload),
+    storage_mode: "ENCRYPTED",
+    document_schema_version: 7
+  }, id))!, _locale);
 }
-
-export async function renameCloudCvDocument(
-  supabase: SupabaseClient,
-  id: string,
-  title: string,
-): Promise<CvDocumentSummary> {
-  const { data, error } = await supabase
-    .from("cv_documents")
-    .update({ title })
-    .eq("id", id)
-    .select(cloudDocumentColumns)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return summaryFromCloudRow(requireSingleRow(data as CvDocumentRow | null, defaultLocale));
+export async function encryptExistingCloudCvDocument(client: SupabaseClient, id: string, {
+  encryptedPayload,
+  schemaVersion
+}: {
+  encryptedPayload: EncryptedPayload;
+  schemaVersion: number;
+}, _locale: Locale = defaultLocale) {
+  z.literal(7).parse(schemaVersion);
+  return encrypted((await write(client, "cv_document_convert", {
+    encrypted_payload: encryptedPayloadSchema.parse(encryptedPayload),
+    storage_mode: "ENCRYPTED",
+    document_schema_version: 7
+  }, id))!, _locale);
 }
-
-export async function deleteCloudCvDocument(supabase: SupabaseClient, id: string) {
-  const { error } = await supabase.from("cv_documents").delete().eq("id", id);
-
-  if (error) {
-    throw error;
-  }
+export async function renameCloudCvDocument(client: SupabaseClient, id: string, title: string) {
+  return summary((await write(client, "cv_document_rename", {
+    title
+  }, id))!);
+}
+export async function deleteCloudCvDocument(client: SupabaseClient, id: string) {
+  await write(client, "cv_document_delete", {}, id);
 }

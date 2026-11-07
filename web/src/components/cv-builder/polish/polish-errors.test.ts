@@ -1,97 +1,18 @@
-import { describe, expect, it } from "vitest";
-
-import { POLISH_ERROR_CODES } from "@/lib/polish/contract";
-
-import {
-  classifyPolishError,
-  formatResetAt,
-  isRetryablePolishError,
-  POLISH_TRANSPORT_ERROR_CODES,
-} from "./polish-errors";
-import { POLISH_CLIENT_ERROR_CODES } from "./polish-reducer";
-
-describe("classifyPolishError", () => {
-  it("classifies every contract error code into a known kind", () => {
-    const expected: Record<(typeof POLISH_ERROR_CODES)[number], string> = {
-      INVALID_REQUEST: "invalid_request",
-      UNAUTHORIZED: "auth",
-      AI_TERMS_REQUIRED: "terms_required",
-      REQUEST_IN_PROGRESS: "duplicate",
-      DUPLICATE_REQUEST: "duplicate",
-      AI_ROUTE_CHANGED: "route_changed",
-      PAYLOAD_TOO_LARGE: "too_large",
-      QUOTA_EXCEEDED: "quota_exhausted",
-      RATE_LIMITED: "rate_limited",
-      INTERNAL_ERROR: "upstream",
-      UPSTREAM_ERROR: "upstream",
-      INVALID_MODEL_OUTPUT: "invalid_output",
-      AI_DISABLED: "disabled",
-      SERVICE_UNAVAILABLE: "disabled",
-      UPSTREAM_TIMEOUT: "timeout",
-    };
-    for (const code of POLISH_ERROR_CODES) {
-      expect(classifyPolishError({ code }), `code ${code}`).toBe(expected[code]);
-    }
-  });
-
-  it("classifies reducer client codes", () => {
-    expect(classifyPolishError({ code: POLISH_CLIENT_ERROR_CODES.snapshotStale })).toBe("stale");
-    expect(classifyPolishError({ code: POLISH_CLIENT_ERROR_CODES.invalidResponse })).toBe(
-      "invalid_output",
-    );
-  });
-
-  it("classifies transport codes", () => {
-    expect(classifyPolishError({ code: POLISH_TRANSPORT_ERROR_CODES.networkError })).toBe(
-      "network",
-    );
-    expect(classifyPolishError({ code: POLISH_TRANSPORT_ERROR_CODES.clientTimeout })).toBe(
-      "timeout",
-    );
-    expect(classifyPolishError({ code: POLISH_TRANSPORT_ERROR_CODES.requestAborted })).toBe(
-      "aborted",
-    );
-    expect(classifyPolishError({ code: POLISH_TRANSPORT_ERROR_CODES.invalidResponseBody })).toBe(
-      "invalid_request",
-    );
-  });
-
-  it("falls back to unknown for unrecognized codes", () => {
-    expect(classifyPolishError({ code: "SOME_FUTURE_CODE" })).toBe("unknown");
-  });
-});
-
-describe("isRetryablePolishError", () => {
-  it.each([
-    ["rate_limited", true],
-    ["timeout", true],
-    ["invalid_output", true],
-    ["stale", true],
-    ["network", true],
-    ["upstream", true],
-    ["quota_exhausted", false],
-    ["duplicate", false],
-    ["route_changed", false],
-    ["too_large", false],
-    ["disabled", false],
-    ["auth", false],
-    ["terms_required", false],
-    ["invalid_request", false],
-    ["aborted", false],
-    ["unknown", false],
-  ] as const)("%s → retryable %s", (kind, retryable) => {
-    expect(isRetryablePolishError(kind)).toBe(retryable);
-  });
-});
-
-describe("formatResetAt", () => {
-  it("formats a valid ISO timestamp for the locale", () => {
-    const formatted = formatResetAt("2026-08-03T00:00:00.000Z", "en");
-    expect(formatted).toContain("Aug");
-    expect(formatted).toContain("3");
-  });
-
-  it("falls back to the raw string for unparseable input", () => {
-    expect(formatResetAt("not-a-date", "en")).toBe("not-a-date");
-  });
+import { describe, it, expect } from "vitest";
+import { classifyPolishError, isRetryablePolishError } from "./polish-errors";
+import { PolishApiError } from "./polish-api-error";
+import { toPolishError } from "./polish-flow-request";
+describe("canonical error reason handling", () => {
+  it.each([["FORBIDDEN", "CONSENT_REQUIRED", "terms_required"], ["FORBIDDEN", "NOT_ALLOWED", "forbidden"], ["CONFLICT", "REQUEST_IN_PROGRESS", "duplicate"], ["CONFLICT", "ALREADY_FINALIZED", "duplicate"], ["CONFLICT", "CONFIG_CHANGED", "route_changed"], ["CONFLICT", "OPTION_UNAVAILABLE", "route_changed"], ["CONFLICT", "UNKNOWN_REASON", "unknown"], ["UNAVAILABLE", "HELD", "held"], ["UNAVAILABLE", "FAILED_UPSTREAM", "upstream"], ["UNAVAILABLE", "INVALID_OUTPUT", "invalid_output"], ["CLIENT_UPDATE_REQUIRED", undefined, "client_update"]])("classifies %s/%s as %s", (code, reason, kind) => expect(classifyPolishError({
+    code: code!,
+    reason
+  })).toBe(kind));
+  it.each(["held", "duplicate", "forbidden", "client_update", "network", "timeout", "unknown"] as const)("does not offer resend for %s", kind => expect(isRetryablePolishError(kind)).toBe(false));
+  it("preserves structured reason through the HTTP/reducer boundary", () => expect(toPolishError(new PolishApiError({
+    code: "UNAVAILABLE",
+    reason: "HELD"
+  }))).toMatchObject({
+    code: "UNAVAILABLE",
+    reason: "HELD"
+  }));
 });

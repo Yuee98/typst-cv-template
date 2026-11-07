@@ -1,205 +1,126 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-
 import { errorMessage } from "@/lib/cv/cv-utils";
-import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
-import {
-  clearPendingTermsAcceptance,
-  claimPendingTermsAcceptance,
-  markPendingTermsAcceptance,
-  type PendingTermsAcceptance,
-} from "@/lib/legal/pending-terms-acceptance";
-
+import { acceptCurrentTerms, getCurrentLegal, hasAcceptedTerms, type CurrentTerms } from "@/lib/legal/terms-acceptance";
 export type TermsStatus = "unknown" | "accepted" | "required";
-
 export function useTermsGate({
   tTermsGate,
   userId,
   onError,
-  supabase,
+  supabase
 }: {
   tTermsGate: ReturnType<typeof useTranslations<"TermsGate">>;
   userId: string | null;
   onError: (message: string) => void;
   supabase: SupabaseClient | null;
 }) {
-  const [ownedStatus, setOwnedStatus] = useState<{
-    ownerId: string;
+  const [owned, setOwned] = useState<{
+    userId: string;
     status: TermsStatus;
+    terms: CurrentTerms;
   } | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalChecked, setModalChecked] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
-  const userIdRef = useRef(userId);
-  const operationRef = useRef(0);
+  const owner = useRef(userId);
+  const sequence = useRef(0);
   useLayoutEffect(() => {
-    if (userIdRef.current !== userId) {
-      userIdRef.current = userId;
-      operationRef.current += 1;
+    if (owner.current !== userId) {
+      owner.current = userId;
+      sequence.current += 1;
     }
   }, [userId]);
-  const ownsVisibleState = ownedStatus?.ownerId === userId;
-  const status = ownsVisibleState ? ownedStatus.status : "unknown";
-
-  function isCurrentOwner(ownerId: string | null): ownerId is string {
-    return Boolean(ownerId && userIdRef.current === ownerId);
-  }
-
-  function beginOperation() {
-    operationRef.current += 1;
-    return operationRef.current;
-  }
-
-  function ownsOperation(ownerId: string | null, operation: number): ownerId is string {
-    return isCurrentOwner(ownerId) && operationRef.current === operation;
-  }
-
-  function promptForAcceptance(ownerId: string | null, operation: number) {
-    if (!ownsOperation(ownerId, operation)) {
-      return;
-    }
-
-    setOwnedStatus({ ownerId, status: "required" });
-    setModalOpen(true);
-    setModalChecked(false);
-    setModalError(null);
-    setAccepting(false);
-  }
-
+  const visible = owned?.userId === userId;
+  const status = visible ? owned.status : "unknown";
   function reset() {
-    beginOperation();
-    setOwnedStatus(null);
+    sequence.current++;
+    setOwned(null);
     setModalOpen(false);
     setModalChecked(false);
     setModalError(null);
     setAccepting(false);
   }
-
-  async function refresh(
-    client: SupabaseClient,
-    { showModal = true }: { showModal?: boolean } = {},
-  ) {
-    const ownerId = userId;
-    if (!ownerId) {
-      return false;
-    }
-    const operation = beginOperation();
-
+  async function refresh(client: SupabaseClient, {
+    showModal = true
+  }: {
+    showModal?: boolean;
+  } = {}) {
+    if (!userId) return false;
+    const actor = userId;
+    const seq = ++sequence.current;
     try {
-      const hasPendingAcceptance = await claimPendingTermsAcceptance(ownerId);
-      if (!ownsOperation(ownerId, operation)) {
-        return false;
-      }
-
-      let accepted = await hasAcceptedCurrentTerms(client);
-      if (!ownsOperation(ownerId, operation)) {
-        return false;
-      }
-
-      if (!accepted && hasPendingAcceptance) {
-        await acceptCurrentTerms(client);
-        if (!ownsOperation(ownerId, operation)) {
-          return false;
-        }
-        accepted = true;
-      }
-
-      setOwnedStatus({ ownerId, status: accepted ? "accepted" : "required" });
-      if (!accepted && showModal) {
-        promptForAcceptance(ownerId, operation);
-      }
+      const {
+        terms
+      } = await getCurrentLegal(client);
+      const accepted = await hasAcceptedTerms(client, terms);
+      if (owner.current !== actor || sequence.current !== seq) return false;
+      setOwned({
+        userId: actor,
+        status: accepted ? "accepted" : "required",
+        terms
+      });
+      setModalChecked(false);
+      setModalError(null);
+      setModalOpen(!accepted && showModal);
       return accepted;
-    } catch (termsError) {
-      if (ownsOperation(ownerId, operation)) {
-        setOwnedStatus({ ownerId, status: "unknown" });
-        onError(errorMessage(termsError));
+    } catch (error) {
+      if (owner.current === actor && sequence.current === seq) {
+        setOwned(null);
+        onError(errorMessage(error));
       }
       return false;
     }
   }
-
   async function ensure(client: SupabaseClient | null = supabase) {
-    const ownerId = userId;
-    if (!client || !ownerId) {
-      return false;
-    }
-
-    if (status === "accepted") {
-      return true;
-    }
-
-    return refresh(client);
+    return client && userId ? refresh(client) : false;
   }
-
   async function accept() {
-    const ownerId = userId;
-    if (!supabase || !ownerId) {
+    if (!supabase || !userId || !visible || !owned) {
       setModalError(tTermsGate("signInRequired"));
       return false;
     }
-
-    if (!ownsVisibleState || !modalChecked) {
+    if (!modalChecked) {
       setModalError(tTermsGate("checkBoxRequired"));
       return false;
     }
-
-    const operation = beginOperation();
+    const actor = userId;
+    const seq = ++sequence.current;
+    const target = owned.terms;
     setAccepting(true);
     setModalError(null);
-
     try {
-      await acceptCurrentTerms(supabase);
-      if (!ownsOperation(ownerId, operation)) {
-        return false;
-      }
-      setOwnedStatus({ ownerId, status: "accepted" });
+      await acceptCurrentTerms(supabase, target, actor);
+      if (owner.current !== actor || sequence.current !== seq) return false;
+      setOwned({
+        userId: actor,
+        status: "accepted",
+        terms: target
+      });
       setModalOpen(false);
       setModalChecked(false);
       return true;
-    } catch (termsError) {
-      if (ownsOperation(ownerId, operation)) {
-        setModalError(errorMessage(termsError));
-      }
+    } catch (error) {
+      if (owner.current === actor && sequence.current === seq) setModalError(errorMessage(error));
       return false;
     } finally {
-      if (ownsOperation(ownerId, operation)) {
-        setAccepting(false);
-      }
+      if (owner.current === actor && sequence.current === seq) setAccepting(false);
     }
   }
-
-  async function recordAccepted(client: SupabaseClient, acceptedUserId?: string) {
-    const ownerId = acceptedUserId ?? userId;
-    if (!ownerId) {
-      return;
-    }
-    const operation = beginOperation();
-
-    await acceptCurrentTerms(client);
-    clearPendingTermsAcceptance();
-    if (!ownsOperation(ownerId, operation)) {
-      return;
-    }
-    setOwnedStatus({ ownerId, status: "accepted" });
-  }
-
   return {
-    accepting: ownsVisibleState ? accepting : false,
-    modalChecked: ownsVisibleState ? modalChecked : false,
-    modalError: ownsVisibleState ? modalError : null,
-    modalOpen: ownsVisibleState ? modalOpen : false,
+    accepting: visible ? accepting : false,
+    modalChecked: visible ? modalChecked : false,
+    modalError: visible ? modalError : null,
+    modalOpen: visible ? modalOpen : false,
+    terms: visible ? owned.terms : null,
     status,
     accept,
-    clearPendingAcceptance: clearPendingTermsAcceptance,
     ensure,
-    markPendingAcceptance: (pending: PendingTermsAcceptance) => markPendingTermsAcceptance(pending),
-    recordAccepted,
     refresh,
     reset,
     setModalChecked,
     setModalError,
-    setModalOpen,
+    setModalOpen
   };
 }

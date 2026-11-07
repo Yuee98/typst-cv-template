@@ -35,52 +35,30 @@
 
 import type { Session } from "@supabase/supabase-js";
 import { act, render } from "@testing-library/react";
-import {
-  createRef,
-  useImperativeHandle,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { createRef, useImperativeHandle, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { expect, vi } from "vitest";
-
 import { DEFAULT_SECTION_ORDER, ORDERED_SECTION_IDS, type CvData } from "@/lib/cv/schema";
-import type {
-  PolishAvailabilityResponse,
-  PolishLanguage,
-  PolishPostRequest,
-  PolishQuota,
-  PolishQuotaResponse,
-  PolishSuccessResponse,
-} from "@/lib/polish/contract";
-
+import type { PolishAvailabilityResponse, PolishLanguage, PolishPostRequest, PolishQuota, PolishQuotaResponse, PolishSuccessResponse } from "@/lib/polish/contract";
 import { ENABLED_AVAILABILITY_BODY } from "../client/fixtures";
-import {
-  PolishApiError,
-  type PolishApiClient,
-  type PolishAuthenticatedRequestOptions,
-} from "../../polish-client";
+import { PolishApiError, type PolishApiClient, type PolishAuthenticatedRequestOptions } from "../../polish-client";
 import { POLISH_TRANSPORT_ERROR_CODES } from "../../polish-errors";
 import type { PolishScope } from "../../scope-builder";
-import {
-  usePolishFlow,
-  type PolishFlow,
-  type PolishTermsGateway,
-} from "../../use-polish-flow";
-
+import { usePolishFlow, type PolishFlow, type PolishTermsGateway } from "../../use-polish-flow";
 
 // ---------------------------------------------------------------------------
 // fixtures
 // ---------------------------------------------------------------------------
 
-export const SCOPE: PolishScope = { sectionId: "skills", granularity: "section" };
-
+export const SCOPE: PolishScope = {
+  sectionId: "skills",
+  granularity: "section"
+};
 export function bullet(body: string) {
-  return { body };
+  return {
+    body
+  };
 }
-
 export function makeCvData(): CvData {
   return {
     schemaVersion: 7,
@@ -91,65 +69,70 @@ export function makeCvData(): CvData {
       subtitle: "",
       email: "zhangsan@example.com",
       phone: "13800000000",
-      selfName: "",
+      selfName: ""
     },
-    sectionTitles: Object.fromEntries(
-      ORDERED_SECTION_IDS.map((id) => [
-        id,
-        { title: `${id} title`, isDisplay: true, pageBreakBefore: false },
-      ]),
-    ) as CvData["sectionTitles"],
+    sectionTitles: Object.fromEntries(ORDERED_SECTION_IDS.map(id => [id, {
+      title: `${id} title`,
+      isDisplay: true,
+      pageBreakBefore: false
+    }])) as CvData["sectionTitles"],
     profile: [bullet("五年后端开发经验，专注高并发分布式系统。")],
-    skills: [
-      { label: "编程语言", body: "TypeScript、Go、Rust，熟悉函数式编程范式。" },
-      { label: "框架", body: "React、Next.js、NestJS，有大型项目实战经验。" },
-    ],
-    experience: [
-      {
-        org: "阿里巴巴",
-        date: "2020-2023",
-        projects: [
-          {
-            title: "订单中台",
-            detail: "核心交易链路重构",
-            date: "2021-2023",
-            bullets: [bullet("主导订单系统重构，支撑双 11 峰值每秒 50 万笔下单。")],
-          },
-        ],
-      },
-    ],
-    education: [
-      {
-        org: "清华大学",
-        title: "计算机科学与技术 硕士",
-        detail: "分布式系统方向",
-        date: "2015-2018",
-        bullets: [bullet("研究分布式一致性协议，发表 OSDI 论文一篇。")],
-      },
-    ],
-    research: [
-      {
-        title: "分布式存储副本协议",
-        date: "2017",
-        bullets: [bullet("提出改进的副本同步协议，写入吞吐提升 30%。")],
-      },
-    ],
-    publications: [
-      { authors: "张三", title: "A Paper", venue: "OSDI", year: "2018", url: "https://example.com" },
-    ],
-    additional: [{ label: "语言", body: "英语流利（CET-6），可作为工作语言。" }],
+    skills: [{
+      label: "编程语言",
+      body: "TypeScript、Go、Rust，熟悉函数式编程范式。"
+    }, {
+      label: "框架",
+      body: "React、Next.js、NestJS，有大型项目实战经验。"
+    }],
+    experience: [{
+      org: "阿里巴巴",
+      date: "2020-2023",
+      projects: [{
+        title: "订单中台",
+        detail: "核心交易链路重构",
+        date: "2021-2023",
+        bullets: [bullet("主导订单系统重构，支撑双 11 峰值每秒 50 万笔下单。")]
+      }]
+    }],
+    education: [{
+      org: "清华大学",
+      title: "计算机科学与技术 硕士",
+      detail: "分布式系统方向",
+      date: "2015-2018",
+      bullets: [bullet("研究分布式一致性协议，发表 OSDI 论文一篇。")]
+    }],
+    research: [{
+      title: "分布式存储副本协议",
+      date: "2017",
+      bullets: [bullet("提出改进的副本同步协议，写入吞吐提升 30%。")]
+    }],
+    publications: [{
+      authors: "张三",
+      title: "A Paper",
+      venue: "OSDI",
+      year: "2018",
+      url: "https://example.com"
+    }],
+    additional: [{
+      label: "语言",
+      body: "英语流利（CET-6），可作为工作语言。"
+    }]
   };
 }
-
 export function makeSession(userId: string): Session {
   return {
-    user: { id: userId },
-    access_token: `token-${userId}`,
+    user: {
+      id: userId
+    },
+    access_token: `token-${userId}`
   } as unknown as Session;
 }
-
 export function makeQuota(remaining: number): PolishQuota {
-  return { limit: 20, remaining, resetAt: "2026-08-04T00:00:00Z" };
+  return {
+    limit: 20,
+    remaining,
+    resetAt: "2026-08-04T00:00:00Z"
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +144,6 @@ interface Deferred<T> {
   resolve: (value: T) => void;
   reject: (reason: unknown) => void;
 }
-
 export function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -169,15 +151,17 @@ export function deferred<T>(): Deferred<T> {
     resolve = res;
     reject = rej;
   });
-  return { promise, resolve, reject };
+  return {
+    promise,
+    resolve,
+    reject
+  };
 }
-
 export interface MakeClientOptions {
   /** Keep reads pending so ownership/invalidation can be driven explicitly. */
   deferAvailability?: boolean;
   availabilityResponse?: PolishAvailabilityResponse;
 }
-
 export function makeClient(options: MakeClientOptions = {}) {
   const polishCalls: Array<{
     request: PolishPostRequest;
@@ -185,9 +169,7 @@ export function makeClient(options: MakeClientOptions = {}) {
     signal: AbortSignal | undefined;
     expectedUserId: string;
   }> = [];
-  // Compatibility name for existing ownership tests: these deferred booleans
-  // now resolve the exact availability snapshot's termsAccepted bit. There is
-  // no separate production terms query after UX-004.
+  // Deferred acceptance facts for the selected option in the availability read.
   const hasAcceptedCalls: Array<Deferred<boolean>> = [];
   const availabilityCalls: Array<{
     deferred: Deferred<PolishAvailabilityResponse>;
@@ -203,7 +185,7 @@ export function makeClient(options: MakeClientOptions = {}) {
         request,
         deferred: call,
         signal: requestOptions.signal,
-        expectedUserId: requestOptions.expectedUserId,
+        expectedUserId: requestOptions.expectedUserId
       });
       return call.promise;
     }),
@@ -212,25 +194,24 @@ export function makeClient(options: MakeClientOptions = {}) {
       availabilityCalls.push({
         deferred: call,
         signal: requestOptions.signal,
-        expectedUserId: requestOptions.expectedUserId,
+        expectedUserId: requestOptions.expectedUserId
       });
       if (!options.deferAvailability) {
         const accepted = deferred<boolean>();
         hasAcceptedCalls.push(accepted);
-        void accepted.promise.then(
-          (termsAccepted) => {
-            const response = options.availabilityResponse ?? ENABLED_AVAILABILITY_BODY;
-            call.resolve(
-              response.availability.enabled
-                ? {
-                    ...response,
-                    availability: { ...response.availability, termsAccepted },
-                  }
-                : response,
-            );
-          },
-          (reason) => call.reject(reason),
-        );
+        void accepted.promise.then(termsAccepted => {
+          const response = options.availabilityResponse ?? ENABLED_AVAILABILITY_BODY;
+          call.resolve(response.availability.enabled ? {
+            ...response,
+            availability: {
+              ...response.availability,
+              options: response.availability.options.map(option => ({
+                ...option,
+                status: option.status === "UNAVAILABLE" ? "UNAVAILABLE" as const : termsAccepted ? "READY" as const : "CONSENT_REQUIRED" as const
+              }))
+            }
+          } : response);
+        }, reason => call.reject(reason));
       }
       return call.promise;
     }),
@@ -239,7 +220,7 @@ export function makeClient(options: MakeClientOptions = {}) {
       quotaCalls.push(call);
       quotaOwners.push(_requestOptions.expectedUserId);
       return call.promise;
-    }),
+    })
   };
   return {
     client,
@@ -247,37 +228,41 @@ export function makeClient(options: MakeClientOptions = {}) {
     availabilityCalls,
     hasAcceptedCalls,
     quotaCalls,
-    quotaOwners,
+    quotaOwners
   };
 }
-
 export function makeTermsGateway() {
   type AcceptOptions = Parameters<PolishTermsGateway["accept"]>[0];
   const acceptCalls: Array<Deferred<void> & AcceptOptions> = [];
   const termsGateway: PolishTermsGateway = {
     accept: vi.fn((options: AcceptOptions) => {
       const call = deferred<void>();
-      acceptCalls.push({ ...call, ...options });
+      acceptCalls.push({
+        ...call,
+        ...options
+      });
       return call.promise;
-    }),
+    })
   };
-  return { termsGateway, acceptCalls };
+  return {
+    termsGateway,
+    acceptCalls
+  };
 }
-
-export function successResponse(
-  request: PolishPostRequest,
-  remaining: number,
-  requestId = "srv-req-1",
-): PolishSuccessResponse {
+export function successResponse(request: PolishPostRequest, remaining: number, requestId = "srv-req-1"): PolishSuccessResponse {
   return {
     requestId,
-    items: request.items.map((item) => ({ id: item.id, polished: `润色：${item.text}` })),
-    quota: makeQuota(remaining),
+    items: request.items.map(item => ({
+      id: item.id,
+      polished: `润色：${item.text}`
+    })),
+    quota: makeQuota(remaining)
   };
 }
-
 export function abortError(): PolishApiError {
-  return new PolishApiError({ code: POLISH_TRANSPORT_ERROR_CODES.requestAborted });
+  return new PolishApiError({
+    code: POLISH_TRANSPORT_ERROR_CODES.requestAborted
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +273,6 @@ export interface HarnessHandle {
   flow: PolishFlow | null;
   form: UseFormReturn<CvData> | null;
 }
-
 export interface HarnessProps {
   handleRef: RefObject<HarnessHandle | null>;
   documentId: string | null;
@@ -297,16 +281,17 @@ export interface HarnessProps {
   client: PolishApiClient;
   termsGateway: PolishTermsGateway;
 }
-
 export function Harness({
   handleRef,
   documentId,
   language,
   session,
   client,
-  termsGateway,
+  termsGateway
 }: HarnessProps) {
-  const form = useForm<CvData>({ defaultValues: makeCvData() });
+  const form = useForm<CvData>({
+    defaultValues: makeCvData()
+  });
   const flow = usePolishFlow({
     form,
     documentId,
@@ -314,16 +299,15 @@ export function Harness({
     session,
     supabase: null,
     client,
-    termsGateway,
+    termsGateway
   });
-  useImperativeHandle(handleRef, () => ({ flow, form }));
+  useImperativeHandle(handleRef, () => ({
+    flow,
+    form
+  }));
   return null;
 }
-
-export function renderHarness(
-  overrides?: Partial<Omit<HarnessProps, "handleRef">>,
-  clientOptions?: MakeClientOptions,
-) {
+export function renderHarness(overrides?: Partial<Omit<HarnessProps, "handleRef">>, clientOptions?: MakeClientOptions) {
   const handleRef = createRef<HarnessHandle>();
   const {
     client,
@@ -331,16 +315,19 @@ export function renderHarness(
     availabilityCalls,
     hasAcceptedCalls,
     quotaCalls,
-    quotaOwners,
+    quotaOwners
   } = makeClient(clientOptions);
-  const { termsGateway, acceptCalls } = makeTermsGateway();
+  const {
+    termsGateway,
+    acceptCalls
+  } = makeTermsGateway();
   const props: Omit<HarnessProps, "handleRef"> = {
     documentId: "doc-1",
     language: "zh",
     session: makeSession("user-a"),
     client,
     termsGateway,
-    ...overrides,
+    ...overrides
   };
   const utils = render(<Harness handleRef={handleRef} {...props} />);
   const rerender = (next: Partial<Omit<HarnessProps, "handleRef">>) => {
@@ -366,7 +353,7 @@ export function renderHarness(
       const form = handleRef.current?.form;
       if (!form) throw new Error("form not captured");
       return form;
-    },
+    }
   };
 }
 
@@ -379,7 +366,10 @@ export async function openAccepted(h: ReturnType<typeof renderHarness>, scope: P
   expect(h.hasAcceptedCalls).toHaveLength(1);
   expect(h.availabilityCalls).toHaveLength(1);
   await act(async () => {
-    h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+    h.quotaCalls[0].resolve({
+      requestId: "q-1",
+      quota: makeQuota(5)
+    });
     h.hasAcceptedCalls[0].resolve(true);
   });
   expect(h.flow().terms.status).toBe("accepted");
@@ -393,7 +383,10 @@ export async function openRequiredAndConfirm(h: ReturnType<typeof renderHarness>
     h.flow().open(SCOPE);
   });
   await act(async () => {
-    h.quotaCalls[0].resolve({ requestId: "q-1", quota: makeQuota(5) });
+    h.quotaCalls[0].resolve({
+      requestId: "q-1",
+      quota: makeQuota(5)
+    });
     h.hasAcceptedCalls[0].resolve(false);
   });
   expect(h.flow().terms.status).toBe("required");
@@ -421,9 +414,6 @@ export async function openAndReachPreview(h: ReturnType<typeof renderHarness>) {
   expect(h.flow().state.phase).toBe("preview");
   return request;
 }
-
-
-
 export interface RaceParentHandle {
   flow: PolishFlow | null;
   form: UseFormReturn<CvData> | null;
@@ -445,7 +435,7 @@ export function RaceParent({
   handleRef,
   onCommit,
   client,
-  termsGateway,
+  termsGateway
 }: {
   handleRef: RefObject<RaceParentHandle | null>;
   onCommit: () => void;
@@ -455,7 +445,9 @@ export function RaceParent({
   const [session, setSession] = useState<Session>(() => makeSession("user-a"));
   const [documentId, setDocumentId] = useState("doc-1");
   const [language, setLanguage] = useState<PolishLanguage>("zh");
-  const form = useForm<CvData>({ defaultValues: makeCvData() });
+  const form = useForm<CvData>({
+    defaultValues: makeCvData()
+  });
   const flow = usePolishFlow({
     form,
     documentId,
@@ -463,7 +455,7 @@ export function RaceParent({
     session,
     supabase: null,
     client,
-    termsGateway,
+    termsGateway
   });
   const committedRef = useRef<{
     userId: string;
@@ -471,15 +463,14 @@ export function RaceParent({
     language: PolishLanguage;
   } | null>(null);
   useLayoutEffect(() => {
-    const committed = { userId: session.user.id, documentId, language };
+    const committed = {
+      userId: session.user.id,
+      documentId,
+      language
+    };
     const previous = committedRef.current;
     committedRef.current = committed;
-    if (
-      previous !== null &&
-      (previous.userId !== committed.userId ||
-        previous.documentId !== committed.documentId ||
-        previous.language !== committed.language)
-    ) {
+    if (previous !== null && (previous.userId !== committed.userId || previous.documentId !== committed.documentId || previous.language !== committed.language)) {
       onCommit();
       // Keep this commit task above the Scheduler's 5ms frame budget so the
       // work loop yields to the host before flushing the child's passive
@@ -498,24 +489,28 @@ export function RaceParent({
     form,
     switchSession: (userId: string) => setSession(makeSession(userId)),
     switchDocument: (next: string) => setDocumentId(next),
-    switchLanguage: (next: PolishLanguage) => setLanguage(next),
+    switchLanguage: (next: PolishLanguage) => setLanguage(next)
   }));
   return null;
 }
-
 export function renderRaceParent() {
   const handleRef = createRef<RaceParentHandle>();
-  const { client, polishCalls, hasAcceptedCalls, quotaCalls } = makeClient();
-  const { termsGateway, acceptCalls } = makeTermsGateway();
-  const onCommitRef: { current: (() => void) | null } = { current: null };
-  render(
-    <RaceParent
-      handleRef={handleRef}
-      onCommit={() => onCommitRef.current?.()}
-      client={client}
-      termsGateway={termsGateway}
-    />,
-  );
+  const {
+    client,
+    polishCalls,
+    hasAcceptedCalls,
+    quotaCalls
+  } = makeClient();
+  const {
+    termsGateway,
+    acceptCalls
+  } = makeTermsGateway();
+  const onCommitRef: {
+    current: (() => void) | null;
+  } = {
+    current: null
+  };
+  render(<RaceParent handleRef={handleRef} onCommit={() => onCommitRef.current?.()} client={client} termsGateway={termsGateway} />);
   return {
     handleRef,
     onCommitRef,
@@ -527,7 +522,7 @@ export function renderRaceParent() {
       const flow = handleRef.current?.flow;
       if (!flow) throw new Error("flow not captured");
       return flow;
-    },
+    }
   };
 }
 
@@ -546,34 +541,32 @@ export function renderRaceParent() {
 export async function flushRealScheduling() {
   await Promise.resolve();
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
   });
 }
-
-
 export interface UnmountRaceChildHandle {
   flow: PolishFlow | null;
   form: UseFormReturn<CvData> | null;
 }
-
 export interface UnmountRaceHandle {
   flow: PolishFlow | null;
   form: UseFormReturn<CvData> | null;
   unmountChild: () => void;
 }
-
 export function UnmountRaceChild({
   childRef,
   client,
-  termsGateway,
+  termsGateway
 }: {
   childRef: RefObject<UnmountRaceChildHandle | null>;
   client: PolishApiClient;
   termsGateway: PolishTermsGateway;
 }) {
   const [session] = useState(() => makeSession("user-a"));
-  const form = useForm<CvData>({ defaultValues: makeCvData() });
+  const form = useForm<CvData>({
+    defaultValues: makeCvData()
+  });
   const flow = usePolishFlow({
     form,
     documentId: "doc-1",
@@ -581,9 +574,12 @@ export function UnmountRaceChild({
     session,
     supabase: null,
     client,
-    termsGateway,
+    termsGateway
   });
-  useImperativeHandle(childRef, () => ({ flow, form }));
+  useImperativeHandle(childRef, () => ({
+    flow,
+    form
+  }));
   return null;
 }
 
@@ -600,7 +596,7 @@ export function UnmountRaceParent({
   handleRef,
   onCommit,
   client,
-  termsGateway,
+  termsGateway
 }: {
   handleRef: RefObject<UnmountRaceHandle | null>;
   onCommit: () => void;
@@ -630,26 +626,28 @@ export function UnmountRaceParent({
     get form() {
       return childRef.current?.form ?? null;
     },
-    unmountChild: () => setChildMounted(false),
+    unmountChild: () => setChildMounted(false)
   }));
-  return childMounted ? (
-    <UnmountRaceChild childRef={childRef} client={client} termsGateway={termsGateway} />
-  ) : null;
+  return childMounted ? <UnmountRaceChild childRef={childRef} client={client} termsGateway={termsGateway} /> : null;
 }
-
 export function renderUnmountRace() {
   const handleRef = createRef<UnmountRaceHandle>();
-  const { client, polishCalls, hasAcceptedCalls, quotaCalls } = makeClient();
-  const { termsGateway, acceptCalls } = makeTermsGateway();
-  const onCommitRef: { current: (() => void) | null } = { current: null };
-  render(
-    <UnmountRaceParent
-      handleRef={handleRef}
-      onCommit={() => onCommitRef.current?.()}
-      client={client}
-      termsGateway={termsGateway}
-    />,
-  );
+  const {
+    client,
+    polishCalls,
+    hasAcceptedCalls,
+    quotaCalls
+  } = makeClient();
+  const {
+    termsGateway,
+    acceptCalls
+  } = makeTermsGateway();
+  const onCommitRef: {
+    current: (() => void) | null;
+  } = {
+    current: null
+  };
+  render(<UnmountRaceParent handleRef={handleRef} onCommit={() => onCommitRef.current?.()} client={client} termsGateway={termsGateway} />);
   return {
     handleRef,
     onCommitRef,
@@ -661,6 +659,6 @@ export function renderUnmountRace() {
       const flow = handleRef.current?.flow;
       if (!flow) throw new Error("flow not captured");
       return flow;
-    },
+    }
   };
 }

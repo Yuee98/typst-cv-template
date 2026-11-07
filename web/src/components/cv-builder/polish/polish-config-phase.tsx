@@ -2,20 +2,11 @@
 
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-
 import { Button } from "@/components/ui/button";
 import { Link } from "@/i18n/navigation";
-import {
-  MAX_STYLE_INSTRUCTION_CHARS,
-  POLISH_CONTEXT_LEVELS,
-  POLISH_STYLE_PRESETS,
-  type PolishContextLevel,
-} from "@/lib/polish/contract";
-import { isLegalDisplayV2 } from "@/lib/legal/legal-display-v2";
+import { MAX_STYLE_INSTRUCTION_CHARS, POLISH_CONTEXT_LEVELS, POLISH_STYLE_PRESETS, type PolishContextLevel } from "@/lib/polish/contract";
 import { cn } from "@/lib/utils";
-
 import type { PolishDisclosure } from "./scope-builder";
-import { resolvePolishProviderAnnexHref } from "./polish-provider-annex";
 import type { PolishFlow } from "./use-polish-flow";
 
 /**
@@ -24,44 +15,33 @@ import type { PolishFlow } from "./use-polish-flow";
  * quota, context level, style preset/custom instruction, and the AI terms
  * checkbox. Fires NO request — that only happens on confirm.
  */
-export function PolishConfigPhase({ flow }: { flow: PolishFlow }) {
+export function PolishConfigPhase({
+  flow
+}: {
+  flow: PolishFlow;
+}) {
   const t = useTranslations("PolishDialog");
-  const { state, scopeFailure } = flow;
+  const {
+    state,
+    scopeFailure
+  } = flow;
   const disclosure = state.snapshot?.disclosure ?? null;
-
-  return (
-    <div className="space-y-4">
-      {!flow.signedIn && (
-        <div className="rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted">
+  return <div className="space-y-4">
+      {!flow.signedIn && <div className="rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted">
           {t("signInRequired")}
-        </div>
-      )}
+        </div>}
 
-      {flow.configChangedHint && (
-        <div
-          role="status"
-          className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning-foreground"
-        >
+      {flow.configChangedHint && <div role="status" className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning-foreground">
           {t("configChanged")}
-        </div>
-      )}
+        </div>}
 
-      {scopeFailure !== null ? (
-        <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
+      {scopeFailure !== null ? <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
           {t(`scopeFailures.${scopeFailure}`)}
-        </div>
-      ) : (
-        disclosure && <DisclosureSummary disclosure={disclosure} />
-      )}
+        </div> : disclosure && <DisclosureSummary disclosure={disclosure} />}
 
-      {flow.routeChangedHint && (
-        <div
-          role="status"
-          className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning-foreground"
-        >
+      {flow.routeChangedHint && <div role="status" className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning-foreground">
           {t("routeChanged")}
-        </div>
-      )}
+        </div>}
 
       <AvailabilityDisclosure flow={flow} />
 
@@ -70,150 +50,71 @@ export function PolishConfigPhase({ flow }: { flow: PolishFlow }) {
       <div className="rounded-md border border-border bg-surface-hover px-3 py-2 text-xs leading-5 text-foreground-muted">
         {t("privacyReminder")}
       </div>
-      {flow.encrypted && (
-        <div className="flex items-start gap-2 rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm leading-5 text-warning-foreground">
+      {flow.encrypted && <div className="flex items-start gap-2 rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm leading-5 text-warning-foreground">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
           <p>{t("e2eeWarning")}</p>
-        </div>
-      )}
+        </div>}
 
       <QuotaLine flow={flow} />
       <LevelSelector flow={flow} />
       <StyleSelector flow={flow} />
       <TermsRow flow={flow} />
-    </div>
-  );
+    </div>;
 }
-
-function AvailabilityDisclosure({ flow }: { flow: PolishFlow }) {
+function AvailabilityDisclosure({
+  flow
+}: {
+  flow: PolishFlow;
+}) {
   const t = useTranslations("PolishDialog");
   const locale = useLocale();
   if (!flow.signedIn) return null;
-
   const status = flow.availabilityStatus;
   if (status === "idle" || status === "loading") {
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="flex items-center gap-2 rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted"
-      >
+    return <div role="status" aria-live="polite" className="flex items-center gap-2 rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted">
         <Loader2 className="size-3.5 animate-spin" aria-hidden />
         {t("availability.loading")}
-      </div>
-    );
+      </div>;
   }
-
   if (status === "disabled") {
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted"
-      >
+    return <div role="status" aria-live="polite" className="rounded-md border border-border bg-surface-hover px-3 py-2 text-sm text-foreground-muted">
         {t("availability.disabled")}
-      </div>
-    );
+      </div>;
   }
-
   const candidate = flow.availabilityCandidate;
-  const display = candidate?.displayDisclosure;
-  const legalDisplay = display && "legalDisplay" in display
-    ? display.legalDisplay
-    : null;
-  const isV2Display = isLegalDisplayV2(legalDisplay);
-  const annexHref =
-    display && !isV2Display
-      ? resolvePolishProviderAnnexHref(display.key)
-      : null;
-  if (status === "error" || !candidate || !display || (!isV2Display && !annexHref)) {
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="flex items-center justify-between gap-2 rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground"
-      >
-        <span>
-          {status === "error"
-            ? t("availability.error")
-            : t("availability.unsupportedDisclosure")}
-        </span>
-        <Button type="button" variant="ghost" size="sm" onClick={flow.availabilityRetry}>
-          {t("availability.retry")}
-        </Button>
-      </div>
-    );
-  }
-
-  const localizedDisplay = isV2Display
-    ? legalDisplay[locale.toLowerCase().startsWith("zh") ? "zh" : "en"]
-    : null;
-  const providerName = localizedDisplay?.providerLabel ??
-    display.providerName;
-  const modelName = localizedDisplay?.modelLabel ??
-    display.modelName;
-
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="rounded-md border border-accent-border bg-accent-soft px-3 py-2 text-sm leading-5 text-foreground-muted"
-    >
-      <div className="font-medium text-foreground">{t("availability.heading")}</div>
-      <p>
-        {t("availability.selected", {
-          provider: providerName,
-          model: modelName,
-        })}
-      </p>
-      {localizedDisplay ? (
-        <div className="mt-2 space-y-2 rounded-md border border-accent-border bg-surface px-3 py-2 text-foreground-muted">
-          <div className="text-xs font-medium uppercase tracking-wide text-foreground">
-            {t("availability.reviewedDisclosure")}
-          </div>
-          {localizedDisplay.blocks.map((block, index) =>
-            block.kind === "paragraph" ? (
-              <p key={index} className="whitespace-pre-wrap break-words">
-                {block.text}
-              </p>
-            ) : (
-              <ul key={index} className="list-disc space-y-1 pl-5">
-                {block.items.map((item, itemIndex) => (
-                  <li key={itemIndex} className="whitespace-pre-wrap break-words">
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            ),
-          )}
-        </div>
-      ) : annexHref ? (
-        <Link
-          className="rounded-sm font-medium text-accent-soft-foreground hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          href={annexHref}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {t("availability.annex")}
-        </Link>
-      ) : null}
-    </div>
-  );
+  if (status === "error" || !candidate) return <div role="status"><span>{t("availability.error")}</span><Button type="button" variant="ghost" size="sm" onClick={flow.availabilityRetry}>{t("availability.retry")}</Button></div>;
+  const zh = locale.toLowerCase().startsWith("zh");
+  const selected = candidate.options.find(option => option.optionId === candidate.selectedOptionId);
+  const localized = selected?.legalDisplay[zh ? "zh" : "en"];
+  return <div className="space-y-3 rounded-md border border-accent-border bg-accent-soft px-3 py-2 text-sm">
+    <label className="block font-medium" htmlFor="polish-provider-choice">{zh ? "选择 AI Provider 和模型" : "Choose AI provider and model"}</label>
+    <select id="polish-provider-choice" className="w-full rounded border border-border bg-surface px-2 py-2" value={candidate.selectedOptionId ?? ""} onChange={event => flow.selectOption(event.target.value)}>
+      <option value="" disabled>{zh ? "请选择一个可用选项" : "Select an available option"}</option>
+      {candidate.options.map(option => <option key={option.optionId} value={option.optionId} disabled={option.status === "UNAVAILABLE"}>{option.providerName} · {option.modelName}{option.status === "UNAVAILABLE" ? zh ? "（暂不可用）" : " (unavailable)" : ""}</option>)}
+    </select>
+    {!selected && <p role="status">{zh ? "原选项已失效，请重新选择并确认。" : "Your previous option is unavailable. Select an option and confirm again."}</p>}
+    {localized && <div className="space-y-2 rounded-md border border-accent-border bg-surface px-3 py-2">
+      <div className="font-medium">{localized.providerLabel} · {localized.modelLabel}</div>
+      {localized.blocks.map((block, index) => block.kind === "paragraph" ? <p className="whitespace-pre-wrap break-words" key={index}>{block.text}</p> : <ul className="list-disc pl-5" key={index}>{block.items.map((item, i) => <li key={i}>{item}</li>)}</ul>)}
+    </div>}
+  </div>;
 }
-
-function DisclosureSummary({ disclosure }: { disclosure: PolishDisclosure }) {
+function DisclosureSummary({
+  disclosure
+}: {
+  disclosure: PolishDisclosure;
+}) {
   const t = useTranslations("PolishDialog");
-  return (
-    <details className="group rounded-md border border-border">
+  return <details className="group rounded-md border border-border">
       <summary className="cursor-pointer list-none px-3 py-2 text-sm text-foreground">
         <span className="font-medium">{t("disclosure.heading")}</span>{" "}
         <span className="text-foreground-muted">
           {t("disclosure.summary", {
-            targetCount: disclosure.targets.length,
-            targetChars: disclosure.totalTargetChars,
-            referenceCount: disclosure.references.length,
-            referenceChars: disclosure.totalReferenceChars,
-          })}
+          targetCount: disclosure.targets.length,
+          targetChars: disclosure.totalTargetChars,
+          referenceCount: disclosure.references.length,
+          referenceChars: disclosure.totalReferenceChars
+        })}
         </span>
         <span className="float-right text-xs text-foreground-subtle group-open:hidden">
           {t("disclosure.expand")}
@@ -224,253 +125,177 @@ function DisclosureSummary({ disclosure }: { disclosure: PolishDisclosure }) {
       </summary>
       <div className="space-y-3 border-t border-border px-3 py-2">
         <DisclosureList heading={t("disclosure.targetsHeading")}>
-          {disclosure.targets.map((target) => (
-            <li key={target.id} className="whitespace-pre-wrap break-words">
+          {disclosure.targets.map(target => <li key={target.id} className="whitespace-pre-wrap break-words">
               {target.text}
-            </li>
-          ))}
+            </li>)}
         </DisclosureList>
-        {disclosure.references.length > 0 && (
-          <DisclosureList heading={t("disclosure.referencesHeading")}>
-            {disclosure.references.map((reference, index) => (
-              <li key={index} className="whitespace-pre-wrap break-words">
+        {disclosure.references.length > 0 && <DisclosureList heading={t("disclosure.referencesHeading")}>
+            {disclosure.references.map((reference, index) => <li key={index} className="whitespace-pre-wrap break-words">
                 <span className="text-foreground-subtle">
                   [{reference.label ?? t(`disclosure.roles.${reference.role}`)}]
                 </span>{" "}
                 {reference.text}
-              </li>
-            ))}
-          </DisclosureList>
-        )}
-        {(disclosure.stylePreset || disclosure.styleInstruction) && (
-          <div className="text-xs text-foreground-muted">
-            {disclosure.stylePreset &&
-              t("disclosure.stylePreset", {
-                preset: t(`style.presets.${disclosure.stylePreset}`),
-              })}
-            {disclosure.styleInstruction &&
-              t("disclosure.styleInstruction", { instruction: disclosure.styleInstruction })}
-          </div>
-        )}
+              </li>)}
+          </DisclosureList>}
+        {(disclosure.stylePreset || disclosure.styleInstruction) && <div className="text-xs text-foreground-muted">
+            {disclosure.stylePreset && t("disclosure.stylePreset", {
+          preset: t(`style.presets.${disclosure.stylePreset}`)
+        })}
+            {disclosure.styleInstruction && t("disclosure.styleInstruction", {
+          instruction: disclosure.styleInstruction
+        })}
+          </div>}
       </div>
-    </details>
-  );
+    </details>;
 }
-
 function DisclosureList({
   heading,
-  children,
+  children
 }: {
   heading: string;
   children: React.ReactNode;
 }) {
-  return (
-    <div>
+  return <div>
       <div className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
         {heading}
       </div>
       <ul className="mt-1 max-h-32 list-disc space-y-1 overflow-y-auto pl-5 text-sm leading-5 text-foreground-muted">
         {children}
       </ul>
-    </div>
-  );
+    </div>;
 }
-
-function QuotaLine({ flow }: { flow: PolishFlow }) {
+function QuotaLine({
+  flow
+}: {
+  flow: PolishFlow;
+}) {
   const t = useTranslations("PolishDialog");
   if (!flow.signedIn) return null;
   if (flow.quotaStatus === "loading" || flow.quotaStatus === "idle") {
-    return (
-      <div className="flex items-center gap-2 text-sm text-foreground-muted">
+    return <div className="flex items-center gap-2 text-sm text-foreground-muted">
         <Loader2 className="size-3.5 animate-spin" aria-hidden />
         {t("quota.loading")}
-      </div>
-    );
+      </div>;
   }
   if (flow.quotaStatus === "error") {
-    return (
-      <div className="flex items-center gap-2 text-sm text-danger-foreground">
+    return <div className="flex items-center gap-2 text-sm text-danger-foreground">
         {t("quota.error")}
         <Button type="button" variant="ghost" size="sm" onClick={flow.quotaRetry}>
           {t("quota.retry")}
         </Button>
-      </div>
-    );
+      </div>;
   }
   if (!flow.quota) return null;
-  return (
-    <div className="text-sm text-foreground-muted">
-      {t("quota.remaining", { remaining: flow.quota.remaining, limit: flow.quota.limit })}
-    </div>
-  );
+  return <div className="text-sm text-foreground-muted">
+      {t("quota.remaining", {
+      remaining: flow.quota.remaining,
+      limit: flow.quota.limit
+    })}
+    </div>;
 }
-
-function LevelSelector({ flow }: { flow: PolishFlow }) {
+function LevelSelector({
+  flow
+}: {
+  flow: PolishFlow;
+}) {
   const t = useTranslations("PolishDialog");
   const level = flow.state.params.level;
   // Terms acceptance in flight: the reviewed disclosure is frozen, so the
   // config controls lock until it settles (the hook kills the continuation
   // on any change regardless — this keeps the UI honest about it).
   const locked = flow.terms.status === "accepting";
-  return (
-    <fieldset className="space-y-1.5" disabled={locked}>
+  return <fieldset className="space-y-1.5" disabled={locked}>
       <legend className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
         {t("level.heading")}
       </legend>
       <div className="space-y-1" role="radiogroup">
-        {POLISH_CONTEXT_LEVELS.map((value) => (
-          <label
-            key={value}
-            className={cn(
-              "flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm",
-              level === value
-                ? "border-accent-border bg-accent-soft"
-                : "border-border hover:bg-surface-hover",
-              locked && "pointer-events-none opacity-60",
-            )}
-          >
-            <input
-              type="radio"
-              name="polish-context-level"
-              className="mt-1 size-3.5"
-              checked={level === value}
-              disabled={locked}
-              onChange={() => flow.setLevel(value as PolishContextLevel)}
-            />
+        {POLISH_CONTEXT_LEVELS.map(value => <label key={value} className={cn("flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm", level === value ? "border-accent-border bg-accent-soft" : "border-border hover:bg-surface-hover", locked && "pointer-events-none opacity-60")}>
+            <input type="radio" name="polish-context-level" className="mt-1 size-3.5" checked={level === value} disabled={locked} onChange={() => flow.setLevel(value as PolishContextLevel)} />
             <span>
               <span className="block font-medium text-foreground">{t(`level.l${value}`)}</span>
               <span className="block text-xs leading-5 text-foreground-muted">
                 {t(`level.l${value}Description`)}
               </span>
             </span>
-          </label>
-        ))}
+          </label>)}
       </div>
-    </fieldset>
-  );
+    </fieldset>;
 }
-
-function StyleSelector({ flow }: { flow: PolishFlow }) {
+function StyleSelector({
+  flow
+}: {
+  flow: PolishFlow;
+}) {
   const t = useTranslations("PolishDialog");
   const params = flow.state.params;
   const instruction = params.styleInstruction ?? "";
   // Locked during terms acceptance — see LevelSelector.
   const locked = flow.terms.status === "accepting";
-  return (
-    <div className="space-y-2">
+  return <div className="space-y-2">
       <div className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
         {t("style.heading")}
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {POLISH_STYLE_PRESETS.map((preset) => {
-          const selected = params.stylePreset === preset;
-          return (
-            <button
-              key={preset}
-              type="button"
-              aria-pressed={selected}
-              disabled={locked}
-              onClick={() => flow.setStylePreset(selected ? undefined : preset)}
-              className={cn(
-                "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                selected
-                  ? "border-accent bg-accent text-accent-foreground"
-                  : "border-border bg-surface text-foreground-muted hover:bg-surface-hover",
-              )}
-            >
+        {POLISH_STYLE_PRESETS.map(preset => {
+        const selected = params.stylePreset === preset;
+        return <button key={preset} type="button" aria-pressed={selected} disabled={locked} onClick={() => flow.setStylePreset(selected ? undefined : preset)} className={cn("rounded-full border px-2.5 py-1 text-xs font-medium transition-colors", selected ? "border-accent bg-accent text-accent-foreground" : "border-border bg-surface text-foreground-muted hover:bg-surface-hover")}>
               {t(`style.presets.${preset}`)}
-            </button>
-          );
-        })}
+            </button>;
+      })}
       </div>
       <div className="space-y-1">
-        <textarea
-          value={instruction}
-          maxLength={MAX_STYLE_INSTRUCTION_CHARS}
-          rows={2}
-          disabled={locked}
-          onChange={(event) => flow.setStyleInstruction(event.target.value)}
-          placeholder={t("style.customPlaceholder")}
-          aria-label={t("style.heading")}
-          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none focus:ring-2 focus:ring-ring"
-        />
+        <textarea value={instruction} maxLength={MAX_STYLE_INSTRUCTION_CHARS} rows={2} disabled={locked} onChange={event => flow.setStyleInstruction(event.target.value)} placeholder={t("style.customPlaceholder")} aria-label={t("style.heading")} className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none focus:ring-2 focus:ring-ring" />
         <div className="text-right text-xs text-foreground-subtle">
-          {t("style.counter", { count: instruction.length, max: MAX_STYLE_INSTRUCTION_CHARS })}
+          {t("style.counter", {
+          count: instruction.length,
+          max: MAX_STYLE_INSTRUCTION_CHARS
+        })}
         </div>
       </div>
-    </div>
-  );
+    </div>;
 }
-
-function TermsRow({ flow }: { flow: PolishFlow }) {
+function TermsRow({
+  flow
+}: {
+  flow: PolishFlow;
+}) {
   const t = useTranslations("PolishDialog");
-  const { terms } = flow;
-  if (
-    !flow.signedIn ||
-    flow.availabilityStatus !== "ready" ||
-    terms.status === "accepted" ||
-    terms.status === "unknown"
-  ) {
+  const {
+    terms
+  } = flow;
+  if (!flow.signedIn || flow.availabilityStatus !== "ready" || terms.status === "accepted" || terms.status === "unknown") {
     return null;
   }
   if (terms.status === "checking") {
-    return (
-      <div className="flex items-center gap-2 text-sm text-foreground-muted">
+    return <div className="flex items-center gap-2 text-sm text-foreground-muted">
         <Loader2 className="size-3.5 animate-spin" aria-hidden />
         {t("terms.checking")}
-      </div>
-    );
+      </div>;
   }
   if (terms.status === "error") {
-    return (
-      <div className="flex items-center gap-2 rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
+    return <div className="flex items-center gap-2 rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
         {t("terms.error")}
         <Button type="button" variant="ghost" size="sm" onClick={flow.refreshTerms}>
           {t("terms.retry")}
         </Button>
-      </div>
-    );
+      </div>;
   }
   // required | accepting — the progressive consent checkbox (roadmap).
-  return (
-    <div
-      className={cn(
-        "rounded-md border px-3 py-2",
-        terms.serverRejected
-          ? "border-danger-border bg-danger-soft"
-          : "border-border bg-surface-hover",
-      )}
-    >
+  return <div className={cn("rounded-md border px-3 py-2", terms.serverRejected ? "border-danger-border bg-danger-soft" : "border-border bg-surface-hover")}>
       <label className="flex items-start gap-2 text-sm leading-5 text-foreground-muted">
-        <input
-          type="checkbox"
-          className="mt-1 size-4 rounded border-border-strong"
-          checked={terms.checked}
-          disabled={terms.status === "accepting"}
-          onChange={(event) => terms.setChecked(event.target.checked)}
-        />
+        <input type="checkbox" className="mt-1 size-4 rounded border-border-strong" checked={terms.checked} disabled={terms.status === "accepting"} onChange={event => terms.setChecked(event.target.checked)} />
         <span>
           {t("terms.agreePrefix")}{" "}
-          <Link
-            className="font-medium text-accent-soft-foreground hover:text-accent"
-            href="/ai-terms"
-            target="_blank"
-            rel="noreferrer"
-          >
+          <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/ai-terms" target="_blank" rel="noreferrer">
             {t("terms.aiTerms")}
           </Link>
           .
         </span>
       </label>
-      {terms.serverRejected && (
-        <p className="mt-1 text-xs text-danger-foreground">{t("terms.required")}</p>
-      )}
-      {terms.status === "accepting" && (
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-foreground-muted">
+      {terms.serverRejected && <p className="mt-1 text-xs text-danger-foreground">{t("terms.required")}</p>}
+      {terms.status === "accepting" && <p className="mt-1 flex items-center gap-1.5 text-xs text-foreground-muted">
           <Loader2 className="size-3 animate-spin" aria-hidden />
           {t("terms.accepting")}
-        </p>
-      )}
-    </div>
-  );
+        </p>}
+    </div>;
 }

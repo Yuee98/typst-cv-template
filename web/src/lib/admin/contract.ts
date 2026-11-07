@@ -1,564 +1,269 @@
 import { z } from "zod";
-
-export const ADMIN_SECTIONS = [
-  "overview",
-  "users",
-  "providers",
-  "profiles",
-  "prices",
-  "policies",
-  "controls",
-  "analytics",
-  "audit",
-] as const;
-export type AdminSection = (typeof ADMIN_SECTIONS)[number];
+export const ADMIN_SECTIONS = ["overview", "users", "providers", "profiles", "prices", "policies", "controls", "analytics", "audit"] as const;
 export const adminSectionSchema = z.enum(ADMIN_SECTIONS);
-export const adminRecordSectionSchema = z.enum([
-  "users",
-  "providers",
-  "profiles",
-  "prices",
-  "policies",
-  "audit",
-]);
+export type AdminSection = z.infer<typeof adminSectionSchema>;
+export const adminRecordSectionSchema = z.enum(["users", "providers", "profiles", "prices", "policies", "audit"]);
 export type AdminRecordSection = z.infer<typeof adminRecordSectionSchema>;
-export const adminEnvironmentSchema = z.enum([
-  "local",
-  "preview",
-  "production",
-]);
-export const decimalRevisionSchema = z
-  .string()
-  .regex(/^(0|[1-9][0-9]{0,18})$/)
-  .refine((value) => value.length < 19 || value <= "9223372036854775807");
-const uuid = z.string().uuid();
-const timestamp = z.string().datetime({ offset: true });
-const codeId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
-
-export const adminContextSchema = z.strictObject({
-  schemaVersion: z.literal("admin_context_v3"),
-  actor: z.strictObject({
-    userId: uuid,
-    email: z.string().nullable(),
-    revision: decimalRevisionSchema,
-  }),
-  environment: z.strictObject({
-    name: adminEnvironmentSchema,
-    controlPlaneMode: z.enum(["legacy", "jwt_v1"]),
-    revision: decimalRevisionSchema,
-  }),
-  features: z.strictObject({
-    aiEnabled: z.boolean(),
-    globalDailyLimit: z.number().int().nonnegative(),
-    allowlistedUsers: z.number().int().nonnegative(),
-    configGeneration: decimalRevisionSchema,
-    activePolicyVersionId: uuid.nullable(),
-    currentLegalBundle: codeId,
-  }),
-  capabilities: z.strictObject({ drafts: z.boolean(), writes: z.boolean() }),
+export const adminEnvironmentSchema = z.enum(["local", "preview", "production"]);
+export const decimalRevisionSchema = z.string().regex(/^(0|[1-9][0-9]{0,18})$/).refine(v => BigInt(v) <= BigInt("9223372036854775807"));
+export const externalIdSchema = z.string().regex(/^(prv|prf|pfv|pcv|pol|plv|opt|lgb|lds|ldv|adm|op|val|rbk|evt|req)_[0-9A-HJKMNP-TV-Z]{12}$/);
+const digest = z.string().regex(/^[0-9a-f]{64}$/);
+const code = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/);
+const timestamp = z.string().datetime({
+  offset: true
 });
-export type AdminContext = z.infer<typeof adminContextSchema>;
-
+const json = z.record(z.string(), z.unknown());
+const reason = z.string().trim().min(3).max(500);
+export const clientWriteFields = {
+  contract_code: z.literal("cv_app_db_1"),
+  database_instance_id: z.string().uuid()
+};
+const base = {
+  ...clientWriteFields,
+  operation_key: z.string().uuid(),
+  reason
+};
+const expected = {
+  expected_revision: decimalRevisionSchema
+};
+const lifecycle = {
+  external_id: externalIdSchema,
+  expected_status: z.enum(["DRAFT", "PUBLISHED"]),
+  config_digest: digest,
+  ...expected
+};
+const component = z.enum(["INPUT_STANDARD", "INPUT_CACHE_READ", "INPUT_CACHE_WRITE", "OUTPUT"]);
+const components = z.record(component, decimalRevisionSchema);
+const optionalDefaults = z.strictObject({
+  capability_code: code.nullable(),
+  endpoint_url: z.string().url().max(512).nullable(),
+  credential_ref: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]+$/).nullable(),
+  model_id: z.string().min(1).max(200).nullable()
+});
+export const adminMutationRequestSchema = z.discriminatedUnion("operation", [z.strictObject({
+  operation: z.literal("admin_provider_update"),
+  ...base,
+  ...expected,
+  external_id: externalIdSchema,
+  name: z.string().trim().min(1).max(200),
+  description: z.string().max(2000),
+  defaults: optionalDefaults
+}), z.strictObject({
+  operation: z.literal("admin_profile_create"),
+  ...base,
+  provider_id: externalIdSchema,
+  code,
+  name: z.string().trim().min(1).max(200),
+  description: z.string().max(2000)
+}), z.strictObject({
+  operation: z.literal("admin_policy_create"),
+  ...base,
+  code,
+  name: z.string().trim().min(1).max(200),
+  description: z.string().max(2000)
+}), z.strictObject({
+  operation: z.literal("admin_profile_version_create"),
+  ...base,
+  ...expected,
+  profile_id: externalIdSchema,
+  capability_code: code,
+  endpoint_url: z.string().url().max(512),
+  credential_ref: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]+$/),
+  model_id: z.string().min(1).max(200),
+  adapter_config: json,
+  disclosure_id: externalIdSchema
+}), z.strictObject({
+  operation: z.literal("admin_price_version_create"),
+  ...base,
+  ...expected,
+  profile_version_id: externalIdSchema,
+  lane_code: code,
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  calculator_kind: code,
+  parameters: json,
+  valid_from: timestamp,
+  valid_until: timestamp.nullable(),
+  components
+}), z.strictObject({
+  operation: z.literal("admin_policy_version_create"),
+  ...base,
+  ...expected,
+  policy_id: externalIdSchema,
+  bundle_id: externalIdSchema,
+  options: z.array(z.strictObject({
+    key: code,
+    profile_version_id: externalIdSchema,
+    price_lane_code: code,
+    display_order: z.number().int().nonnegative()
+  })).min(1).max(32),
+  rules: z.array(z.strictObject({
+    ordinal: z.number().int().nonnegative(),
+    is_fallback: z.boolean(),
+    weekday: z.number().int().min(1).max(7).nullable(),
+    start_minute: z.number().int().min(0).max(1439).nullable(),
+    end_minute: z.number().int().min(1).max(1440).nullable(),
+    option_keys: z.array(code).min(1).max(32),
+    default_option_key: code
+  })).min(1).max(128)
+}), ...(["admin_profile_version_publish", "admin_price_version_publish", "admin_policy_version_publish"] as const).map(operation => z.strictObject({
+  operation: z.literal(operation),
+  ...base,
+  ...lifecycle,
+  validation_id: externalIdSchema
+})), ...(["admin_profile_version_retire", "admin_price_version_retire", "admin_policy_version_retire"] as const).map(operation => z.strictObject({
+  operation: z.literal(operation),
+  ...base,
+  ...lifecycle
+})), ...(["admin_profile_retire", "admin_policy_retire"] as const).map(operation => z.strictObject({
+  operation: z.literal(operation),
+  ...base,
+  ...expected,
+  external_id: externalIdSchema
+})), z.strictObject({
+  operation: z.literal("admin_price_version_close"),
+  ...base,
+  ...lifecycle
+}), z.strictObject({
+  operation: z.literal("admin_price_version_replace"),
+  ...base,
+  ...lifecycle,
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  lane_code: code,
+  calculator_kind: code,
+  parameters: json,
+  components,
+  validation_id: externalIdSchema
+}), z.strictObject({
+  operation: z.literal("admin_ai_disable"),
+  ...base,
+  ...expected
+}), z.strictObject({
+  operation: z.literal("admin_ai_set_policy"),
+  ...base,
+  ...expected,
+  policy_version_id: externalIdSchema.nullable(),
+  validation_id: externalIdSchema
+}), z.strictObject({
+  operation: z.literal("admin_ai_reopen"),
+  ...base,
+  ...expected,
+  readback_id: externalIdSchema
+}), z.strictObject({
+  operation: z.literal("admin_ai_update_limits"),
+  ...base,
+  ...expected,
+  user_daily_limit: decimalRevisionSchema,
+  global_daily_limit: decimalRevisionSchema,
+  user_minute_limit: decimalRevisionSchema
+}), z.strictObject({
+  operation: z.literal("admin_ai_set_audience"),
+  ...base,
+  ...expected,
+  audience: z.enum(["ALLOWLIST", "ALL"])
+}), z.strictObject({
+  operation: z.literal("admin_ai_set_allowed_user"),
+  ...base,
+  ...expected,
+  auth_user_id: z.string().uuid(),
+  allowed: z.boolean()
+}), ...(["admin_member_grant", "admin_member_revoke"] as const).map(operation => z.strictObject({
+  operation: z.literal(operation),
+  ...base,
+  auth_user_id: z.string().uuid(),
+  ...expected
+}))]);
+export type AdminMutationRequest = z.infer<typeof adminMutationRequestSchema>;
+export const adminValidationRequestSchema = z.strictObject({
+  operation: z.literal("validate"),
+  ...clientWriteFields,
+  target_kind: z.enum(["PROFILE", "PRICE", "POLICY"]),
+  target_id: externalIdSchema
+});
+export const adminRuntimeReadbackRequestSchema = z.strictObject({
+  operation: z.literal("readback"),
+  ...clientWriteFields
+});
 export const adminControlStateSchema = z.strictObject({
-  schemaVersion: z.literal("admin_ai_control_state_v1"),
-  aiEnabled: z.boolean(),
-  globalDailyLimit: z.number().int().nonnegative(),
-  activePolicyVersionId: uuid.nullable(),
-  configGeneration: decimalRevisionSchema,
-  controlRevision: decimalRevisionSchema,
-  closingCycleId: uuid.nullable(),
-  closedAt: timestamp.nullable(),
-  reopenedAt: timestamp.nullable(),
-  writesEnabled: z.boolean(),
+  enabled: z.boolean(),
+  active_policy_version_id: externalIdSchema.nullable(),
+  audience: z.enum(["ALLOWLIST", "ALL"]),
+  generation: decimalRevisionSchema,
+  close_cycle: decimalRevisionSchema,
+  revision: decimalRevisionSchema,
+  user_daily_limit: decimalRevisionSchema,
+  global_daily_limit: decimalRevisionSchema,
+  user_minute_limit: decimalRevisionSchema
 });
 export type AdminControlState = z.infer<typeof adminControlStateSchema>;
-
-export const adminWriteAuthoritySchema = z.strictObject({
-  schemaVersion: z.literal("admin_write_authority_v1"),
-  actorUserId: uuid,
-  writesEnabled: z.boolean(),
-  recentTotp: z.boolean(),
+export const adminContextSchema = z.strictObject({
+  ready: z.literal(true),
+  capabilities: z.array(z.string()),
+  environment: z.enum(["LOCAL", "PREVIEW", "PRODUCTION"]),
+  database_instance_id: z.string().uuid(),
+  contract_code: z.literal("cv_app_db_1"),
+  member_id: externalIdSchema,
+  aal: z.enum(["aal1", "aal2"]),
+  control: adminControlStateSchema,
+  legal: json
 });
-export type AdminWriteAuthority = z.infer<typeof adminWriteAuthoritySchema>;
-
-const safeMutationResultSchema = z.discriminatedUnion("schemaVersion", [
-  z.strictObject({
-    schemaVersion: z.literal("admin_ai_control_result_v1"),
-    aiEnabled: z.boolean(),
-    controlRevision: decimalRevisionSchema,
-    closingCycleId: uuid.nullable(),
-    configGeneration: decimalRevisionSchema,
-    activePolicyVersionId: uuid.nullable(),
-    globalDailyLimit: z.number().int().nonnegative().optional(),
-    lifecycleAuditId: uuid.optional(),
-    validationReportIds: z.array(uuid).min(1).max(32).optional(),
-    readbackReportId: uuid.optional(),
-  }),
-  z.strictObject({
-    schemaVersion: z.literal("admin_membership_result_v1"),
-    userId: uuid,
-    enabled: z.boolean(),
-    revision: decimalRevisionSchema,
-  }),
-  z.strictObject({
-    schemaVersion: z.literal("admin_provider_result_v1"),
-    providerId: uuid,
-    revision: decimalRevisionSchema,
-    archived: z.boolean(),
-  }),
-  z.strictObject({
-    schemaVersion: z.literal("admin_profile_identity_result_v1"),
-    profileId: uuid,
-    profileKey: codeId,
-    providerId: uuid,
-    retired: z.boolean().optional(),
-    lifecycleAuditId: uuid.optional(),
-    validationReportId: uuid.optional(),
-  }),
-  z.strictObject({
-    schemaVersion: z.literal("admin_profile_version_result_v1"),
-    profileVersionId: uuid,
-    profileId: uuid,
-    version: z.number().int().positive(),
-    status: z.enum(["draft", "validated", "canary", "active", "retired"]),
-    configSha256: z.string().regex(/^[0-9a-f]{64}$/),
-    lifecycleAuditId: uuid.optional(),
-    validationReportId: uuid.optional(),
-  }),
-  z.strictObject({
-    schemaVersion: z.literal("admin_price_version_result_v1"),
-    priceVersionId: uuid,
-    profileVersionId: uuid,
-    pricingLane: codeId,
-    version: z.number().int().positive(),
-    sealed: z.boolean(),
-    validTo: timestamp.nullable().optional(),
-    lifecycleAuditId: uuid.optional(),
-    validationReportId: uuid.optional(),
-  }),
-  z.strictObject({
-    schemaVersion: z.literal("admin_routing_policy_draft_result_v1"),
-    policyVersionId: uuid,
-    policyKey: codeId,
-    version: z.number().int().positive(),
-    status: z.literal("draft"),
-    configSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  }),
-  z.strictObject({
-    schemaVersion: z.literal("admin_routing_policy_result_v1"),
-    policyVersionId: uuid,
-    policyKey: codeId,
-    version: z.number().int().positive(),
-    status: z.enum(["draft", "validated", "canary", "active", "retired"]),
-    configSha256: z.string().regex(/^[0-9a-f]{64}$/),
-    lifecycleAuditId: uuid,
-    validationReportIds: z.array(uuid).min(1).max(32),
-  }),
-]);
-
+export type AdminContext = z.infer<typeof adminContextSchema>;
+export const adminRecordSchema = z.record(z.string(), z.unknown());
+export const adminPageSchema = z.strictObject({
+  records: z.array(adminRecordSchema).max(100),
+  next_cursor: z.string().max(200).nullable()
+});
+export type AdminPage = z.infer<typeof adminPageSchema>;
+export type AdminRecord = z.infer<typeof adminRecordSchema>;
 export const adminCommittedOperationSchema = z.strictObject({
-  schemaVersion: z.literal("admin_committed_operation_v1"),
-  operationId: uuid,
-  operationKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-  idempotencyKey: uuid,
-  result: safeMutationResultSchema,
-  auditId: uuid,
-  committedAt: timestamp,
+  operation_id: externalIdSchema,
+  operation: z.string(),
+  result: json,
+  audit_id: externalIdSchema,
+  time_committed: timestamp
 });
-export type AdminCommittedOperation = z.infer<
-  typeof adminCommittedOperationSchema
->;
-
-export const adminValidationRequestSchema = z.strictObject({
-  operation: z.literal("validate_runtime_target"),
-  runtimeContractId: codeId,
-  runtimeTargetId: codeId,
-});
-export type AdminValidationRequest = z.infer<
-  typeof adminValidationRequestSchema
->;
-
+export type AdminCommittedOperation = z.infer<typeof adminCommittedOperationSchema>;
 export const adminValidationReportSchema = z.strictObject({
-  schemaVersion: z.literal("admin_config_validation_report_v3"),
-  reportId: uuid,
-  environment: adminEnvironmentSchema,
-  runtimeContractId: codeId,
-  runtimeTargetId: codeId,
-  runtimeTargetSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  profileVersionId: uuid,
-  priceVersionId: uuid,
-  providerId: uuid,
-  codeCapabilityId: codeId,
-  codeCapabilitySha256: z.string().regex(/^[0-9a-f]{64}$/),
-  legalBundleVersion: codeId,
-  legalManifestId: codeId,
-  displayDisclosureKey: codeId,
-  checks: z.strictObject({
-    endpointPolicy: z.boolean(),
-    credentialBinding: z.boolean(),
-    credentialConfigured: z.boolean(),
-    compiledCapability: z.boolean(),
-    databaseBinding: z.boolean(),
-  }),
+  external_id: externalIdSchema,
+  target_kind: z.enum(["PROFILE", "PRICE", "POLICY"]),
+  target_id: externalIdSchema,
+  dependency_digest: digest,
   passed: z.boolean(),
-  evidenceIds: z.array(codeId).min(1).max(96).refine(
-    (values) => new Set(values).size === values.length,
-    "evidence IDs must be unique",
-  ),
-  checkedAt: timestamp,
-  expiresAt: timestamp,
-  reportSha256: z.string().regex(/^[0-9a-f]{64}$/),
-}).superRefine((value, context) => {
-  if (value.passed !== Object.values(value.checks).every(Boolean)) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["passed"],
-      message: "passed does not match checks",
-    });
-  }
-  const checkedAt = Date.parse(value.checkedAt);
-  const expiresAt = Date.parse(value.expiresAt);
-  if (expiresAt <= checkedAt || expiresAt - checkedAt > 10 * 60_000) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["expiresAt"],
-      message: "invalid report validity window",
-    });
-  }
+  reasons: z.array(code).max(64),
+  time_checked: timestamp,
+  time_expires: timestamp
 });
-export type AdminValidationReport = z.infer<
-  typeof adminValidationReportSchema
->;
-
-export const adminRuntimeReadbackRequestSchema = z.strictObject({
-  operation: z.literal("record_runtime_readback"),
-  policyVersionId: uuid,
-  validationReportIds: z.array(uuid).min(1).max(32).refine(
-    (values) => new Set(values).size === values.length,
-    "IDs must be unique",
-  ),
-});
-export type AdminRuntimeReadbackRequest = z.infer<
-  typeof adminRuntimeReadbackRequestSchema
->;
-
+export type AdminValidationReport = z.infer<typeof adminValidationReportSchema>;
 export const adminRuntimeReadbackSchema = z.strictObject({
-  schemaVersion: z.literal("admin_runtime_readback_v4"),
-  environment: adminEnvironmentSchema,
-  reportId: uuid,
-  closingCycleId: uuid,
-  controlRevision: decimalRevisionSchema,
-  configGeneration: decimalRevisionSchema,
-  policyVersionId: uuid,
-  legalBundleVersion: codeId,
-  validationReportIds: z.array(uuid).min(1).max(32),
-  effectiveRoutes: z.array(z.strictObject({
-    profileVersionId: uuid,
-    priceVersionId: uuid,
-    runtimeTargetId: codeId,
-    runtimeTargetSha256: z.string().regex(/^[0-9a-f]{64}$/),
-    providerId: uuid,
-    codeCapabilityId: codeId,
-    codeCapabilitySha256: z.string().regex(/^[0-9a-f]{64}$/),
-    legalManifestId: codeId,
-    displayDisclosureKey: codeId,
-  })).min(1).max(32),
-  checkedAt: timestamp,
-  expiresAt: timestamp,
-  reportSha256: z.string().regex(/^[0-9a-f]{64}$/),
-}).superRefine((value, context) => {
-  const checkedAt = Date.parse(value.checkedAt);
-  const expiresAt = Date.parse(value.expiresAt);
-  if (expiresAt <= checkedAt || expiresAt - checkedAt > 10 * 60_000) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["expiresAt"],
-      message: "invalid readback validity window",
-    });
-  }
+  external_id: externalIdSchema,
+  policy_version_id: externalIdSchema,
+  dependency_digest: digest,
+  passed: z.boolean(),
+  reasons: z.array(code).max(64),
+  time_checked: timestamp,
+  time_expires: timestamp
 });
 export type AdminRuntimeReadback = z.infer<typeof adminRuntimeReadbackSchema>;
-
-const mutationReason = z.string().refine((value) => value === value.trim(), "reason must be trimmed").min(1).max(500);
-const idempotencyKey = uuid;
-// Preserve PostgreSQL bigint compare-and-swap identities without a lossy
-// JavaScript number round trip.
-const revision = decimalRevisionSchema;
-const ids = z.array(uuid).min(1).max(96).refine((values) => new Set(values).size === values.length, "IDs must be unique");
-const policyIds = z.array(uuid).min(1).max(32).refine((values) => new Set(values).size === values.length, "IDs must be unique");
-const codeText = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
-const jsonObject = z.record(z.string(), z.unknown());
-const mutationBase = {
-  reason: mutationReason,
-  idempotencyKey,
-};
-
-export const adminMutationRequestSchema = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("disable_ai"), ...mutationBase, expectedControlRevision: revision }),
-  z.strictObject({ operation: z.literal("pointer_set"), ...mutationBase, policyVersionId: uuid, validationReportIds: ids, expectedControlRevision: revision, expectedPolicyVersionId: uuid.nullable(), expectedConfigGeneration: revision }),
-  z.strictObject({ operation: z.literal("pointer_clear"), ...mutationBase, validationReportIds: ids, expectedControlRevision: revision, expectedPolicyVersionId: uuid, expectedConfigGeneration: revision }),
-  z.strictObject({ operation: z.literal("reopen"), ...mutationBase, readbackReportId: uuid, expectedClosingCycleId: uuid, expectedControlRevision: revision, expectedPolicyVersionId: uuid.nullable(), expectedConfigGeneration: revision }),
-  z.strictObject({ operation: z.literal("membership_set"), ...mutationBase, targetUserId: uuid, enabled: z.boolean(), expectedRevision: revision }),
-  z.strictObject({ operation: z.literal("provider_defaults_update"), ...mutationBase, providerId: uuid, displayName: z.string().trim().min(1).max(200), defaultAdapterId: codeText, defaultEndpointUrl: z.string().url().max(512), defaultCredentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), defaultModelId: z.string().min(1).max(200), archived: z.boolean(), expectedRevision: revision }),
-  z.strictObject({ operation: z.literal("provider_profile_create"), ...mutationBase, providerId: uuid, profileKey: codeText, displayName: z.string().trim().min(1).max(200), modelVendor: z.string().trim().min(1).max(200) }),
-  z.strictObject({ operation: z.literal("profile_version_create"), ...mutationBase, profileId: uuid, expectedLatestVersion: revision, adapterId: codeText, wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]), endpointUrl: z.string().url().max(512), credentialEnvName: z.string().regex(/^AI_PROVIDER_KEY_[A-Z0-9_]{1,160}$/), modelId: z.string().min(1).max(200), capabilityContractId: codeText, cachePolicyId: codeText, legalManifestId: codeText, displayDisclosureKey: codeText, config: jsonObject }),
-  z.strictObject({ operation: z.literal("price_version_create"), ...mutationBase, profileVersionId: uuid, pricingLane: codeText, expectedLatestVersion: revision, currency: z.string().regex(/^[A-Z]{3}$/), calculatorKind: z.enum(["linear_token_v1", "openai_gpt56_v1"]), validFrom: timestamp, validTo: timestamp.nullable(), providerEffectiveFrom: timestamp.nullable(), providerEffectiveTo: timestamp.nullable(), sourceUrl: z.string().url().refine((value) => value.startsWith("https://")), sourceCheckedAt: timestamp, sourceSnapshotSha256: z.string().regex(/^[0-9a-f]{64}$/), parameters: jsonObject, components: jsonObject }),
-  z.strictObject({ operation: z.literal("global_daily_limit_set"), ...mutationBase, globalDailyLimit: z.number().int().nonnegative(), expectedGlobalDailyLimit: z.number().int().nonnegative(), expectedControlRevision: revision }),
-  z.strictObject({ operation: z.literal("price_seal"), ...mutationBase, priceVersionId: uuid, runtimeContractId: codeText }),
-  z.strictObject({ operation: z.literal("profile_version_transition"), ...mutationBase, profileVersionId: uuid, toStatus: z.enum(["validated", "canary", "active"]), validationReportId: uuid }),
-  z.strictObject({ operation: z.literal("routing_policy_draft_create"), ...mutationBase, policyKey: codeText, expectedLatestVersion: revision, rules: jsonObject, defaultProfileVersionId: uuid, legalBundleVersion: codeText, runtimeContractId: codeText }),
-  z.strictObject({ operation: z.literal("routing_policy_create"), ...mutationBase, policyKey: codeText, expectedLatestVersion: revision, rules: jsonObject, defaultProfileVersionId: uuid, legalBundleVersion: codeText, runtimeContractId: codeText, validationReportIds: policyIds }),
-  z.strictObject({ operation: z.literal("routing_policy_transition"), ...mutationBase, policyVersionId: uuid, toStatus: z.enum(["validated", "canary", "active", "retired"]), validationReportIds: policyIds }),
-  z.strictObject({ operation: z.literal("price_close"), ...mutationBase, priceVersionId: uuid, validTo: timestamp, successorPriceVersionId: uuid.nullable(), validationReportId: uuid }),
-  z.strictObject({ operation: z.literal("profile_version_retire"), ...mutationBase, profileVersionId: uuid, validationReportId: uuid }),
-  z.strictObject({ operation: z.literal("provider_profile_retire"), ...mutationBase, profileId: uuid, validationReportId: uuid }),
-]);
-export type AdminMutationRequest = z.infer<typeof adminMutationRequestSchema>;
-
-export const adminUserSchema = z.strictObject({
-  id: uuid,
-  email: z.string().nullable(),
-  createdAt: timestamp,
-  isAdmin: z.boolean(),
-  revision: decimalRevisionSchema.nullable(),
-  banned: z.boolean(),
-});
-const adminAdapterOptionSchema = z.strictObject({
-  adapterId: codeId,
-  displayName: z.string().min(1).max(200),
-  wireApiKind: z.enum(["chat_completions_v1", "responses_v1"]),
-});
-export const adminProviderSchema = z.strictObject({
-  id: uuid,
-  providerKey: codeId,
-  displayName: z.string().min(1).max(200),
-  recipientKey: codeId,
-  gatewayKind: codeId,
-  defaultAdapterId: codeId.nullable(),
-  defaultEndpointUrl: z.string().max(2048).nullable(),
-  defaultCredentialEnvName: z.string().max(200).nullable(),
-  defaultModelId: z.string().max(200).nullable(),
-  adapterOptions: z.array(adminAdapterOptionSchema).max(32),
-  revision: decimalRevisionSchema,
-  archived: z.boolean(),
-  createdAt: timestamp,
-});
-export const adminProfileSchema = z.strictObject({
-  id: uuid,
-  profileId: uuid,
-  providerId: uuid.nullable(),
-  profileKey: codeId,
-  profileDisplayName: z.string().min(1).max(200),
-  modelVendor: z.string().min(1).max(200),
-  version: z.number().int().positive(),
-  latestVersion: z.number().int().positive(),
-  status: z.string().max(40),
-  executionSchemaVersion: z.enum([
-    "profile_execution_config_v1",
-    "profile_execution_config_v2",
-  ]),
-  gatewayKind: codeId,
-  adapterKind: codeId,
-  wireApiKind: codeId,
-  modelId: z.string().min(1).max(200),
-  capabilityContractId: codeId,
-  cachePolicyId: codeId,
-  legalManifestId: codeId,
-  displayDisclosureKey: codeId.nullable(),
-  endpointAlias: codeId.nullable(),
-  credentialAlias: codeId.nullable(),
-  endpointUrl: z.string().max(2048).nullable(),
-  credentialEnvName: z.string().max(200).nullable(),
-  suggestedAdapterId: codeId,
-  suggestedEndpointUrl: z.string().max(2048).nullable(),
-  suggestedCredentialEnvName: z.string().max(200).nullable(),
-  suggestedModelId: z.string().max(200),
-  adapterOptions: z.array(adminAdapterOptionSchema).max(32),
-  config: z.record(z.string(), z.unknown()),
-  configSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  createdAt: timestamp,
-});
-export const adminPriceSchema = z.strictObject({
-  id: uuid,
-  profileVersionId: uuid,
-  pricingLane: codeId,
-  version: z.number().int().positive(),
-  latestVersion: z.number().int().positive(),
-  currency: z.string().max(10),
-  calculatorKind: codeId,
-  validFrom: timestamp,
-  validTo: timestamp.nullable(),
-  providerEffectiveFrom: timestamp.nullable(),
-  providerEffectiveTo: timestamp.nullable(),
-  sourceUrl: z.string().url(),
-  sourceCheckedAt: timestamp,
-  sourceSnapshotSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  parameters: z.record(z.string(), z.unknown()),
-  components: z.record(z.string(), z.string().regex(/^(0|[1-9][0-9]*)$/)),
-  sealedAt: timestamp.nullable(),
-  createdAt: timestamp,
-});
-export const adminPolicySchema = z.strictObject({
-  id: uuid,
-  policyKey: codeId,
-  version: z.number().int().positive(),
-  latestVersion: z.number().int().positive(),
-  status: z.string().max(40),
-  timezone: z.string().max(100),
-  rules: z.record(z.string(), z.unknown()),
-  defaultProfileVersionId: uuid,
-  legalBundleVersion: codeId,
-  runtimeContractId: codeId.nullable(),
-  configSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  createdAt: timestamp,
-});
-const adminAuditChangeSchema = z.strictObject({
-  fromStatus: z.string().min(1).max(40).optional(),
-  toStatus: z.string().min(1).max(40).optional(),
-  fromValidTo: timestamp.nullable().optional(),
-  toValidTo: timestamp.nullable().optional(),
-  successorPriceVersionId: uuid.nullable().optional(),
-  fromRetiredAt: timestamp.nullable().optional(),
-  toRetiredAt: timestamp.nullable().optional(),
-});
-export const adminAuditSchema = z.strictObject({
-  id: uuid,
-  occurredAt: timestamp,
-  eventSchemaVersion: z.enum([
-    "admin_audit_event_v1",
-    "lifecycle_audit_event_v1",
-    "config_lifecycle_event_v2",
-  ]),
-  eventType: z.string().min(1).max(100),
-  source: z.enum(["admin", "lifecycle", "config_lifecycle"]),
-  sourceId: uuid,
-  operationId: uuid.nullable(),
-  correlationAuditId: uuid.nullable().optional(),
-  operation: z.string().min(1).max(100),
-  actor: z.string().max(200),
-  targetId: uuid.nullable(),
-  reason: z.string().max(2000),
-  runtimeContractId: codeId.nullable().optional(),
-  validationReportIds: z.array(uuid).max(64).optional(),
-  codeCapabilityId: codeId.nullable().optional(),
-  codeCapabilitySha256: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/)
-    .nullable()
-    .optional(),
-  change: adminAuditChangeSchema.optional(),
-});
-const page = <const S extends AdminRecordSection, T extends z.ZodType>(
-  section: S,
-  row: T,
-) =>
-  z.strictObject({
-    schemaVersion: z.literal("admin_page_v1"),
-    section: z.literal(section),
-    items: z.array(row).max(100),
-    nextCursor: uuid.nullable(),
-  });
-export const adminPageSchema = z.union([
-  page("users", adminUserSchema),
-  page("providers", adminProviderSchema),
-  page("profiles", adminProfileSchema),
-  page("prices", adminPriceSchema),
-  page("policies", adminPolicySchema),
-  page("audit", adminAuditSchema),
-]);
-export type AdminPage = z.infer<typeof adminPageSchema>;
-export type AdminRecord = AdminPage["items"][number];
-const analyticsCount = z.number().int().nonnegative();
-const analyticsDecimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
-export const adminAnalyticsSchema = z.strictObject({
-  schemaVersion: z.literal("admin_ai_analytics_v1"),
-  range: z.strictObject({
-    from: timestamp,
-    to: timestamp,
-    timezone: z.literal("UTC"),
-    retentionDays: z.literal(90),
-    retentionBoundary: timestamp,
-    rangeMayBeTruncated: z.boolean(),
-    requestTimeField: z.literal("reserved_at"),
-    attemptTimeField: z.literal("started_at"),
-  }),
-  requests: z.strictObject({
-    total: analyticsCount,
-    finalized: analyticsCount,
-    succeeded: analyticsCount,
-    failedUpstream: analyticsCount,
-    invalidOutput: analyticsCount,
-    canceled: analyticsCount,
-    released: analyticsCount,
-    abandoned: analyticsCount,
-    retried: analyticsCount,
-    latencyP50Ms: analyticsCount.nullable(),
-    latencyP95Ms: analyticsCount.nullable(),
-  }),
-  attempts: z.strictObject({
-    total: analyticsCount,
-    transmitted: analyticsCount,
-    succeeded: analyticsCount,
-    failedUpstream: analyticsCount,
-    invalidOutput: analyticsCount,
-    timedOut: analyticsCount,
-    canceled: analyticsCount,
-    unknown: analyticsCount,
-    unsettled: analyticsCount,
-  }),
-  usage: z.strictObject({
-    completeRows: analyticsCount,
-    incompleteRows: analyticsCount,
-    inputCacheReadTokens: analyticsDecimal,
-    inputCacheWriteTokens: analyticsDecimal,
-    inputStandardTokens: analyticsDecimal,
-    outputTokens: analyticsDecimal,
-    reasoningTokens: analyticsDecimal,
-  }),
-  costsByCurrency: z.array(z.strictObject({
-    currency: z.string().regex(/^[A-Z]{3}$/),
-    requestRows: analyticsCount,
-    knownEstimatedNanos: analyticsDecimal,
-    estimatedNanos: analyticsDecimal,
-    providerReportedNanos: analyticsDecimal,
-    matchedRows: analyticsCount,
-    mismatchRows: analyticsCount,
-    incompleteRows: analyticsCount,
-  })).max(16),
-  costGroupsTruncated: z.boolean(),
-  routes: z.array(z.strictObject({
-    gatewayKind: codeId,
-    modelId: z.string().min(1).max(200),
-    attempts: analyticsCount,
-    succeeded: analyticsCount,
-    transmitted: analyticsCount,
-  })).max(128),
-  routeGroupsTruncated: z.boolean(),
-});
+export const adminAnalyticsSchema = z.record(z.string(), z.unknown());
 export type AdminAnalytics = z.infer<typeof adminAnalyticsSchema>;
-export const ADMIN_ERROR_CODES = [
-  "UNAUTHORIZED",
-  "FORBIDDEN",
-  "ENVIRONMENT_MISMATCH",
-  "INVALID_REQUEST",
-  "NOT_FOUND",
-  "CONFLICT",
-  "STEP_UP_REQUIRED",
-  "NOT_READY",
-  "UNAVAILABLE",
-] as const;
+export const ADMIN_ERROR_CODES = ["UNAUTHORIZED", "FORBIDDEN", "INVALID_REQUEST", "NOT_FOUND", "CONFLICT", "STEP_UP_REQUIRED", "NOT_READY", "UNAVAILABLE", "CLIENT_UPDATE_REQUIRED", "INTERNAL_ERROR", "RATE_LIMITED", "QUOTA_EXCEEDED"] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
 export const adminErrorSchema = z.strictObject({
-  error: z.strictObject({ code: z.enum(ADMIN_ERROR_CODES) }),
+  error: z.strictObject({
+    code: z.enum(ADMIN_ERROR_CODES),
+    reason: z.string().optional()
+  })
 });
 export const ADMIN_ERROR_STATUS: Record<AdminErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
-  ENVIRONMENT_MISMATCH: 403,
   INVALID_REQUEST: 400,
   NOT_FOUND: 404,
   CONFLICT: 409,
   STEP_UP_REQUIRED: 403,
   NOT_READY: 409,
   UNAVAILABLE: 503,
+  CLIENT_UPDATE_REQUIRED: 409,
+  INTERNAL_ERROR: 500,
+  RATE_LIMITED: 429,
+  QUOTA_EXCEEDED: 429
 };

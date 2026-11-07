@@ -6,7 +6,6 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AdminMessages } from "./messages";
-
 type Factor = {
   id: string;
   friendly_name?: string | null;
@@ -19,10 +18,9 @@ type Enrollment = {
   uri: string;
   qrCode: string;
 };
-
 export function AdminSecuritySettings({
   client,
-  t,
+  t
 }: {
   client: SupabaseClient;
   t: AdminMessages;
@@ -31,25 +29,25 @@ export function AdminSecuritySettings({
   const [aal, setAal] = useState<string | null>(null);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [code, setCode] = useState("");
+  const [selectedFactor, setSelectedFactor] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const mounted = useRef(true);
-
   const refresh = useCallback(async (clearMessage = true) => {
     setBusy(true);
     if (clearMessage) setMessage(null);
     try {
-      const [{ data, error }, assurance] = await Promise.all([
-        client.auth.mfa.listFactors(),
-        client.auth.mfa.getAuthenticatorAssuranceLevel(),
-      ]);
+      const [{
+        data,
+        error
+      }, assurance] = await Promise.all([client.auth.mfa.listFactors(), client.auth.mfa.getAuthenticatorAssuranceLevel()]);
       if (!mounted.current) return;
       if (error) throw error;
-      setFactors((data?.all ?? []).map((factor) => ({
+      setFactors((data?.all ?? []).map(factor => ({
         id: factor.id,
         friendly_name: factor.friendly_name,
         factor_type: factor.factor_type,
-        status: factor.status,
+        status: factor.status
       })));
       setAal(assurance.data?.currentLevel ?? null);
     } catch {
@@ -59,7 +57,6 @@ export function AdminSecuritySettings({
       if (mounted.current) setBusy(false);
     }
   }, [client, t.securityUnavailable]);
-
   useEffect(() => {
     mounted.current = true;
     queueMicrotask(() => {
@@ -69,14 +66,16 @@ export function AdminSecuritySettings({
       mounted.current = false;
     };
   }, [refresh]);
-
   async function enroll() {
     setBusy(true);
     setMessage(null);
     try {
-      const { data, error } = await client.auth.mfa.enroll({
+      const {
+        data,
+        error
+      } = await client.auth.mfa.enroll({
         factorType: "totp",
-        friendlyName: "Admin TOTP",
+        friendlyName: "Admin TOTP"
       });
       if (error || !data?.id || !data.totp?.secret || !data.totp.uri || !data.totp.qr_code) {
         throw error ?? new Error("invalid enrollment response");
@@ -85,7 +84,7 @@ export function AdminSecuritySettings({
         id: data.id,
         secret: data.totp.secret,
         uri: data.totp.uri,
-        qrCode: data.totp.qr_code,
+        qrCode: data.totp.qr_code
       });
       setMessage(t.enrollmentReady);
     } catch {
@@ -94,21 +93,23 @@ export function AdminSecuritySettings({
       setBusy(false);
     }
   }
-
   async function verify() {
-    if (!enrollment || !/^\d{6}$/.test(code)) {
+    const factorId = enrollment?.id || selectedFactor || factors.find(factor => factor.factor_type === "totp" && factor.status === "verified")?.id;
+    if (!factorId || !/^\d{6}$/.test(code)) {
       setMessage(t.invalidTotp);
       return;
     }
     setBusy(true);
     setMessage(null);
     try {
-      const challenge = await client.auth.mfa.challenge({ factorId: enrollment.id });
+      const challenge = await client.auth.mfa.challenge({
+        factorId
+      });
       if (challenge.error || !challenge.data?.id) throw challenge.error ?? new Error("challenge failed");
       const result = await client.auth.mfa.verify({
-        factorId: enrollment.id,
+        factorId,
         challengeId: challenge.data.id,
-        code,
+        code
       });
       if (result.error) throw result.error;
       setEnrollment(null);
@@ -122,12 +123,15 @@ export function AdminSecuritySettings({
       setBusy(false);
     }
   }
-
   async function unenroll(factorId: string) {
     setBusy(true);
     setMessage(null);
     try {
-      const { error } = await client.auth.mfa.unenroll({ factorId });
+      const {
+        error
+      } = await client.auth.mfa.unenroll({
+        factorId
+      });
       if (error) throw error;
       setEnrollment(null);
       setCode("");
@@ -140,9 +144,7 @@ export function AdminSecuritySettings({
       setBusy(false);
     }
   }
-
-  return (
-    <section className="space-y-4 rounded-lg border border-border bg-surface p-4">
+  return <section className="space-y-4 rounded-lg border border-border bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="font-semibold">{t.securityTitle}</h2>
@@ -153,54 +155,36 @@ export function AdminSecuritySettings({
         </Button>
       </div>
       <p className="text-sm">{t.assurance}: {aal ?? "—"}</p>
-      {factors.length > 0 ? (
-        <ul className="space-y-2 text-sm">
-          {factors.map((factor) => (
-            <li key={factor.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border p-3">
+      {factors.length > 0 ? <ul className="space-y-2 text-sm">
+          {factors.map(factor => <li key={factor.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border p-3">
               <span>{factor.friendly_name || t.totp} · {factor.status}</span>
               <Button variant="ghost" size="sm" onClick={() => void unenroll(factor.id)} disabled={busy}>
                 {t.unenroll}
               </Button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-foreground-muted">{t.noFactors}</p>
-      )}
-      {!enrollment && (
-        <Button variant="secondary" onClick={() => void enroll()} disabled={busy}>
+            </li>)}
+        </ul> : <p className="text-sm text-foreground-muted">{t.noFactors}</p>}
+      {!enrollment && <Button variant="secondary" onClick={() => void enroll()} disabled={busy}>
           {t.enrollTotp}
-        </Button>
-      )}
-      {enrollment && (
-        <div className="space-y-3 rounded border border-border p-3">
+        </Button>}
+      {enrollment && <div className="space-y-3 rounded border border-border p-3">
           <p className="text-sm">{t.scanQr}</p>
-          <Image
-            src={enrollment.qrCode}
-            alt={t.qrCode}
-            width={160}
-            height={160}
-            unoptimized
-            className="size-40 rounded bg-white p-2"
-          />
+          <Image src={enrollment.qrCode} alt={t.qrCode} width={160} height={160} unoptimized className="size-40 rounded bg-white p-2" />
           <p className="break-all text-xs text-foreground-muted">{t.secret}: {enrollment.secret}</p>
           <p className="break-all text-xs text-foreground-muted">{t.manualUri}: {enrollment.uri}</p>
           <div className="flex gap-2">
-            <Input
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              aria-label={t.totpCode}
-              maxLength={6}
-              value={code}
-              onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-            />
+            <Input inputMode="numeric" autoComplete="one-time-code" aria-label={t.totpCode} maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
             <Button onClick={() => void verify()} disabled={busy || code.length !== 6}>
               {t.verifyTotp}
             </Button>
           </div>
-        </div>
-      )}
+        </div>}
+      {!enrollment && factors.some(factor => factor.factor_type === "totp" && factor.status === "verified") && <div className="flex flex-wrap gap-2">
+          <select aria-label={t.totp} value={selectedFactor || factors.find(factor => factor.factor_type === "totp" && factor.status === "verified")?.id} onChange={event => setSelectedFactor(event.target.value)} className="rounded border border-border p-2">
+            {factors.filter(factor => factor.factor_type === "totp" && factor.status === "verified").map(factor => <option key={factor.id} value={factor.id}>{factor.friendly_name || t.totp}</option>)}
+          </select>
+          <Input inputMode="numeric" autoComplete="one-time-code" aria-label={t.totpCode} maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
+          <Button onClick={() => void verify()} disabled={busy || code.length !== 6}>{t.verifyTotp}</Button>
+        </div>}
       {message && <p className="text-sm text-foreground-muted" role="status">{message}</p>}
-    </section>
-  );
+    </section>;
 }

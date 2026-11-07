@@ -362,7 +362,6 @@
     "e2eeWarning": "润色文本将以明文离开你的设备，经我们的服务器转发至第三方 AI 服务处理。端到端加密只保护云端存储。",
     "availability": {
       "heading": "本次 AI 服务候选接收方",
-      "selected": "{provider} · {model}。该候选由服务端路由决定，不是可选项。",
       "annex": "查看该服务商附录",
       "reviewedDisclosure": "已审核的服务商披露",
       "loading": "正在确认本次处理服务…",
@@ -441,7 +440,10 @@
     "errors": {
       "quota_exhausted": "今日配额已用完。",
       "rate_limited": "请求过于频繁，请稍后再试。",
-      "duplicate": "已有相同请求在处理，请稍候。",
+      "duplicate": "相同请求正在处理或已经处理完成，本次不会重复发送内容。",
+      "held": "请求状态尚未确认，额度暂时保留。请稍后查看额度，本次不会自动重发。",
+      "forbidden": "当前账户暂未获准使用 AI 润色。",
+      "client_update": "应用版本或数据库实例已更新，请刷新页面后重新确认。",
       "route_changed": "AI 服务路由已更新，请返回确认后再提交。",
       "too_large": "内容超出大小限制，请缩小范围后重试。",
       "timeout": "AI 服务响应超时，请重试。",

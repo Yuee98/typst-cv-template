@@ -8,80 +8,102 @@
  * - required → accepting → accepted | error (confirm writes the acceptance
  *   record BEFORE the polish request is fired)
  * - any state → required (serverRejected) when the server answers 403
- *   AI_TERMS_REQUIRED despite the local view — the checkbox reappears in red
+ *   FORBIDDEN / CONSENT_REQUIRED despite the local view — the checkbox reappears in red
  *
  * The checkbox's local "checked" boolean is plain UI state and deliberately
  * NOT part of this machine; the dialog combines it with `status` to enable
  * the confirm button: accepted, or required+checked.
  */
 
-export type AiTermsStatus =
-  /** Not queried yet (dialog just opened, or signed out). */
-  | "unknown"
-  /** Authenticated availability/legal-state read in flight. */
-  | "checking"
-  /** Not accepted — the checkbox gates the confirm button. */
-  | "required"
-  /** Acceptance write in flight (confirm is blocked meanwhile). */
-  | "accepting"
-  /** Accepted — no checkbox, confirm allowed. */
-  | "accepted"
-  /** Availability/legal-state read or acceptance write failed; retry offered. */
-  | "error";
-
+export type AiTermsStatus = /** Not queried yet (dialog just opened, or signed out). */
+"unknown"
+/** Authenticated availability/legal-state read in flight. */ | "checking"
+/** Not accepted — the checkbox gates the confirm button. */ | "required"
+/** Acceptance write in flight (confirm is blocked meanwhile). */ | "accepting"
+/** Accepted — no checkbox, confirm allowed. */ | "accepted"
+/** Availability/legal-state read or acceptance write failed; retry offered. */ | "error";
 export interface AiTermsGateState {
   status: AiTermsStatus;
   /**
-   * True after the server answered 403 AI_TERMS_REQUIRED: the checkbox is
+   * True after the server answered 403 FORBIDDEN / CONSENT_REQUIRED: the checkbox is
    * re-shown in its error styling even if the local state had said accepted.
    */
   serverRejected: boolean;
 }
-
-export type AiTermsGateAction =
-  | { type: "QUERY_START" }
-  | { type: "QUERY_RESOLVE"; accepted: boolean }
-  | { type: "ACCEPT_START" }
-  | { type: "ACCEPT_RESOLVE" }
-  | { type: "FAIL" }
-  | { type: "SERVER_REJECTED" }
-  | { type: "RESET" };
-
+export type AiTermsGateAction = {
+  type: "QUERY_START";
+} | {
+  type: "QUERY_RESOLVE";
+  accepted: boolean;
+} | {
+  type: "ACCEPT_START";
+} | {
+  type: "ACCEPT_RESOLVE";
+} | {
+  type: "FAIL";
+} | {
+  type: "SERVER_REJECTED";
+} | {
+  type: "RESET";
+};
 export function createInitialAiTermsGateState(): AiTermsGateState {
-  return { status: "unknown", serverRejected: false };
+  return {
+    status: "unknown",
+    serverRejected: false
+  };
 }
-
-export function aiTermsGateReducer(
-  state: AiTermsGateState,
-  action: AiTermsGateAction,
-): AiTermsGateState {
+export function aiTermsGateReducer(state: AiTermsGateState, action: AiTermsGateAction): AiTermsGateState {
   switch (action.type) {
-    case "QUERY_START": {
-      if (state.status !== "unknown" && state.status !== "error" && state.status !== "required") {
-        return state;
+    case "QUERY_START":
+      {
+        if (state.status !== "unknown" && state.status !== "error" && state.status !== "required") {
+          return state;
+        }
+        return {
+          status: "checking",
+          serverRejected: false
+        };
       }
-      return { status: "checking", serverRejected: false };
-    }
-    case "QUERY_RESOLVE": {
-      if (state.status !== "checking") return state;
-      return { status: action.accepted ? "accepted" : "required", serverRejected: false };
-    }
-    case "ACCEPT_START": {
-      if (state.status !== "required") return state;
-      return { status: "accepting", serverRejected: false };
-    }
-    case "ACCEPT_RESOLVE": {
-      if (state.status !== "accepting") return state;
-      return { status: "accepted", serverRejected: false };
-    }
-    case "FAIL": {
-      if (state.status !== "checking" && state.status !== "accepting") return state;
-      return { status: "error", serverRejected: false };
-    }
-    case "SERVER_REJECTED": {
-      if (state.serverRejected && state.status === "required") return state;
-      return { status: "required", serverRejected: true };
-    }
+    case "QUERY_RESOLVE":
+      {
+        if (state.status !== "checking") return state;
+        return {
+          status: action.accepted ? "accepted" : "required",
+          serverRejected: false
+        };
+      }
+    case "ACCEPT_START":
+      {
+        if (state.status !== "required") return state;
+        return {
+          status: "accepting",
+          serverRejected: false
+        };
+      }
+    case "ACCEPT_RESOLVE":
+      {
+        if (state.status !== "accepting") return state;
+        return {
+          status: "accepted",
+          serverRejected: false
+        };
+      }
+    case "FAIL":
+      {
+        if (state.status !== "checking" && state.status !== "accepting") return state;
+        return {
+          status: "error",
+          serverRejected: false
+        };
+      }
+    case "SERVER_REJECTED":
+      {
+        if (state.serverRejected && state.status === "required") return state;
+        return {
+          status: "required",
+          serverRejected: true
+        };
+      }
     case "RESET":
       return createInitialAiTermsGateState();
   }

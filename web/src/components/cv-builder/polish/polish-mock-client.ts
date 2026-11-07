@@ -1,11 +1,5 @@
-import { AI_LEGAL_BUNDLE_VERSION } from "@/content/legal/constants";
-import {
-  polishExpectedRouteFromAvailability,
-  polishAvailabilityResponseSchema,
-  polishPostRequestSchema,
-  type PolishExpectedRoute,
-  type PolishAvailabilityResponse,
-} from "@/lib/polish/contract";
+import { fixtureAvailability } from "@/lib/polish/fixtures";
+import { polishExpectedRouteFromAvailability, polishAvailabilityResponseSchema, polishPostRequestSchema, type PolishExpectedRoute } from "@/lib/polish/contract";
 import { POLISH_TRANSPORT_ERROR_CODES } from "./polish-errors";
 import { PolishApiError } from "./polish-api-error";
 import type { PolishApiClient } from "./polish-client";
@@ -18,9 +12,8 @@ import type { PolishApiClient } from "./polish-client";
 export const MOCK_CLIENT_CODEWORDS = {
   failUpstream: "FAIL_UPSTREAM",
   failJson: "FAIL_JSON",
-  slow: "SLOW",
+  slow: "SLOW"
 } as const;
-
 export interface CreateMockPolishClientOptions {
   /** Simulated latency per call (SLOW overrides it with `slowDelayMs`). */
   delayMs?: number;
@@ -33,57 +26,18 @@ export interface CreateMockPolishClientOptions {
   /** Exact-bundle acceptance bit exposed by the fake availability authority. */
   termsAccepted?: boolean;
 }
-
-export const MOCK_POLISH_AVAILABILITY_RESPONSE: PolishAvailabilityResponse =
-  polishAvailabilityResponseSchema.parse({
-    requestId: "mock-availability",
-    availability: {
-      enabled: true,
-      configGeneration: "9223372036854775807",
-      routingPolicyVersionId: "00000000-0000-4000-8000-0000000000f1",
-      profileVersionId: "11111111-1111-4111-8111-111111111111",
-      legalBundleVersion: AI_LEGAL_BUNDLE_VERSION,
-      runtimeContractId: "runtime.deepseek-v2.v1",
-      displayDisclosure: {
-        key: "deepseek-official-v1",
-        providerName: "DeepSeek",
-        modelName: "DeepSeek V4 Flash",
-      },
-      termsAccepted: true,
-    },
-  });
-
-const MOCK_POLISH_DISABLED_RESPONSE: PolishAvailabilityResponse =
-  polishAvailabilityResponseSchema.parse({
-    requestId: "mock-availability-disabled",
-    availability: {
-      enabled: false,
-      configGeneration: null,
-      routingPolicyVersionId: null,
-      profileVersionId: null,
-      legalBundleVersion: null,
-      runtimeContractId: null,
-      displayDisclosure: null,
-      termsAccepted: false,
-    },
-  });
-
-const MOCK_POLISH_EXPECTED_ROUTE: PolishExpectedRoute = (() => {
-  const route = polishExpectedRouteFromAvailability(
-    MOCK_POLISH_AVAILABILITY_RESPONSE.availability,
-  );
-  if (!route) throw new Error("mock enabled availability did not produce an expected route");
-  return route;
-})();
-
+export const MOCK_POLISH_AVAILABILITY_RESPONSE = fixtureAvailability();
+const MOCK_POLISH_DISABLED_RESPONSE = {
+  ...fixtureAvailability(),
+  availability: {
+    ...fixtureAvailability().availability,
+    enabled: false,
+    options: [],
+    defaultOptionId: null
+  }
+};
 function sameExpectedRoute(left: PolishExpectedRoute, right: PolishExpectedRoute): boolean {
-  return (
-    left.schemaVersion === right.schemaVersion &&
-    left.configGeneration === right.configGeneration &&
-    left.profileVersionId === right.profileVersionId &&
-    left.legalBundleVersion === right.legalBundleVersion &&
-    left.runtimeContractId === right.runtimeContractId
-  );
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 /** Deterministic pseudo-polish: whitespace collapse, else a visible marker. */
@@ -91,18 +45,16 @@ export function mockPolishText(text: string): string {
   const collapsed = text.trim().replace(/\s+/g, " ");
   return collapsed !== text ? collapsed : `[mock] ${text}`;
 }
-
 function nextUtcMidnight(): string {
   const now = new Date();
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
-  ).toISOString();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
 }
-
 function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new PolishApiError({ code: POLISH_TRANSPORT_ERROR_CODES.requestAborted }));
+      reject(new PolishApiError({
+        code: POLISH_TRANSPORT_ERROR_CODES.requestAborted
+      }));
       return;
     }
     const timer = setTimeout(() => {
@@ -111,9 +63,13 @@ function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<vo
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
-      reject(new PolishApiError({ code: POLISH_TRANSPORT_ERROR_CODES.requestAborted }));
+      reject(new PolishApiError({
+        code: POLISH_TRANSPORT_ERROR_CODES.requestAborted
+      }));
     };
-    signal?.addEventListener("abort", onAbort, { once: true });
+    signal?.addEventListener("abort", onAbort, {
+      once: true
+    });
   });
 }
 
@@ -123,79 +79,85 @@ function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<vo
  * polishQuotaResponseSchema exactly; quota and dedup state live for the
  * lifetime of the returned client instance.
  */
-export function createMockPolishClient(
-  options: CreateMockPolishClientOptions = {},
-): PolishApiClient {
+export function createMockPolishClient(options: CreateMockPolishClientOptions = {}): PolishApiClient {
   const delayMs = options.delayMs ?? 600;
   const slowDelayMs = options.slowDelayMs ?? 60_000;
   const quotaLimit = options.quotaLimit ?? 20;
   let used = 0;
   let requestCounter = 0;
   const seenClientRequestIds = new Set<string>();
-
   function quota() {
     return {
       limit: quotaLimit,
       remaining: Math.max(0, quotaLimit - used),
-      resetAt: nextUtcMidnight(),
+      resetAt: nextUtcMidnight()
     };
   }
-
   return {
     async polish(polishRequest, polishOptions) {
       const parsed = polishPostRequestSchema.safeParse(polishRequest);
       if (!parsed.success) {
-        throw new PolishApiError({ code: "INVALID_REQUEST", status: 400 });
+        throw new PolishApiError({
+          code: "INVALID_REQUEST",
+          status: 400
+        });
       }
       if (options.availabilityEnabled === false) {
-        throw new PolishApiError({ code: "AI_DISABLED", status: 503 });
+        throw new PolishApiError({
+          code: "UNAVAILABLE",
+          status: 503
+        });
       }
-      if (!sameExpectedRoute(parsed.data.expectedRoute, MOCK_POLISH_EXPECTED_ROUTE)) {
-        throw new PolishApiError({ code: "AI_ROUTE_CHANGED", status: 409 });
+      if (!sameExpectedRoute(parsed.data.expectedRoute, polishExpectedRouteFromAvailability(MOCK_POLISH_AVAILABILITY_RESPONSE.availability, parsed.data.expectedRoute.selectedOptionId)!)) {
+        throw new PolishApiError({
+          code: "CONFLICT",
+          status: 409
+        });
       }
       if (seenClientRequestIds.has(polishRequest.clientRequestId)) {
         throw new PolishApiError({
-          code: "DUPLICATE_REQUEST",
+          code: "CONFLICT",
           message: "mock: clientRequestId already consumed",
-          status: 409,
+          status: 409
         });
       }
-
       const instruction = polishRequest.styleInstruction ?? "";
       const slow = instruction.includes(MOCK_CLIENT_CODEWORDS.slow);
       await abortableDelay(slow ? slowDelayMs : delayMs, polishOptions?.signal);
-
       if (instruction.includes(MOCK_CLIENT_CODEWORDS.failUpstream)) {
-        throw new PolishApiError({ code: "UPSTREAM_ERROR", status: 502 });
+        throw new PolishApiError({
+          code: "UNAVAILABLE",
+          status: 502
+        });
       }
       if (instruction.includes(MOCK_CLIENT_CODEWORDS.failJson)) {
         // The real pipeline would burn a retry and surface this from the
         // orchestrator; the mock maps the codeword straight to it.
-        throw new PolishApiError({ code: "INVALID_MODEL_OUTPUT", status: 502 });
+        throw new PolishApiError({
+          code: "UNAVAILABLE",
+          status: 502
+        });
       }
-
       const remaining = quotaLimit - used;
       if (remaining <= 0) {
         throw new PolishApiError({
           code: "QUOTA_EXCEEDED",
           status: 429,
-          resetAt: nextUtcMidnight(),
+          resetAt: nextUtcMidnight()
         });
       }
-
       seenClientRequestIds.add(polishRequest.clientRequestId);
       used += 1;
       requestCounter += 1;
       return {
         requestId: `mock-req-${requestCounter}`,
-        items: polishRequest.items.map((item) => ({
+        items: polishRequest.items.map(item => ({
           id: item.id,
-          polished: mockPolishText(item.text),
+          polished: mockPolishText(item.text)
         })),
-        quota: quota(),
+        quota: quota()
       };
     },
-
     async getAvailability(availabilityOptions) {
       await abortableDelay(Math.min(delayMs, 200), availabilityOptions?.signal);
       if (options.availabilityEnabled === false) return MOCK_POLISH_DISABLED_RESPONSE;
@@ -203,14 +165,16 @@ export function createMockPolishClient(
         ...MOCK_POLISH_AVAILABILITY_RESPONSE,
         availability: {
           ...MOCK_POLISH_AVAILABILITY_RESPONSE.availability,
-          termsAccepted: options.termsAccepted ?? true,
-        },
+          options: fixtureAvailability([1, 2], options.termsAccepted ?? true).availability.options
+        }
       });
     },
-
     async getQuota(quotaOptions) {
       await abortableDelay(Math.min(delayMs, 200), quotaOptions?.signal);
-      return { requestId: "mock-quota", quota: quota() };
-    },
+      return {
+        requestId: "mock-quota",
+        quota: quota()
+      };
+    }
   };
 }

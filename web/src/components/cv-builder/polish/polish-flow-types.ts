@@ -1,9 +1,4 @@
-import type {
-  PolishAvailability,
-  PolishExpectedRoute,
-  PolishLanguage,
-} from "@/lib/polish/contract";
-
+import type { PolishAvailability, PolishExpectedRoute, PolishLanguage } from "@/lib/polish/contract";
 import type { SnapshotPathValues } from "./stale-guard";
 
 /**
@@ -44,10 +39,10 @@ export interface ActiveAvailabilityRead {
   /** Closing, switching identity or refreshing aborts this exact read. */
   controller: AbortController;
 }
-
-export type PolishAvailabilityCandidate = Extract<PolishAvailability, { enabled: true }>;
+export type PolishAvailabilityCandidate = PolishAvailability & {
+  selectedOptionId: string | null;
+};
 export type PolishAvailabilityStatus = "idle" | "loading" | "ready" | "disabled" | "error";
-
 export interface PublishedAvailabilityCandidate {
   generation: number;
   candidate: PolishAvailabilityCandidate;
@@ -65,17 +60,9 @@ export interface SnapshotBaseline {
 
 /** Sentinel used while a cancellation's settlement read has not started. */
 export const SETTLEMENT_UNRESOLVED = Number.MAX_SAFE_INTEGER;
-
-export function isOperationOwned(
-  activeOperation: ActivePolishOperation | null,
-  operation: ActivePolishOperation,
-): boolean {
+export function isOperationOwned(activeOperation: ActivePolishOperation | null, operation: ActivePolishOperation): boolean {
   return activeOperation === operation;
 }
-
-export function belongsToOwner(
-  currentUserId: string | null,
-  operation: Pick<ActivePolishOperation, "userId">,
-): boolean {
+export function belongsToOwner(currentUserId: string | null, operation: Pick<ActivePolishOperation, "userId">): boolean {
   return currentUserId === operation.userId;
 }
