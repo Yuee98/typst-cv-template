@@ -4,7 +4,13 @@ create extension if not exists pgtap with schema extensions;
 set local search_path=public,extensions;
 select no_plan();
 insert into auth.users(id,email) values('00000000-0000-4000-8000-000000000091','ai-boundary@fixture.invalid');
-do $$begin if not exists(select 1 from admin.environment) then perform admin.initialize('LOCAL','00000000-0000-4000-8000-000000000091');end if;end$$;
+-- The request user must stay deletable; active administrators have a separate Auth FK.
+do $$begin
+ if not exists(select 1 from admin.environment) then
+  insert into auth.users(id,email) values('00000000-0000-4000-8000-000000000092','ai-boundary-admin@fixture.invalid');
+  perform admin.initialize('LOCAL','00000000-0000-4000-8000-000000000092');
+ end if;
+end$$;
 create temporary table ai_fixture(key text primary key,value jsonb);
 insert into ai_fixture values('base',(select jsonb_build_object('contract_code',contract_code,'database_instance_id',database_instance_id,'owner_auth_user_id','00000000-0000-4000-8000-000000000091') from admin.environment where id=1));
 create function pg_temp.service(p jsonb default '{}') returns jsonb language sql volatile as $$select (select value from pg_temp.ai_fixture where key='base')||p$$;

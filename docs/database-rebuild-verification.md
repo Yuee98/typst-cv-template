@@ -14,7 +14,7 @@
 - 新增手动重建、只读 plan/verify、持久 checkpoint/resume、环境与 SHA 校验、promotion 维护门槛。hosted/rehearsal 只允许清理明确列出的应用对象，未知对象、依赖或历史失败时回滚并停止。
 - 保留 GitHub 定时 keepalive Action 和新基线中的同名 RPC；Action 已按当前唯一返回值 JSON `true` 校验，不再误判正常响应为失败。
 
-当前接口说明见[数据库契约](database-contract.md)，操作与复现命令见 [web 开发说明](../web/README.md)。P0–P6 与 P7 的本地部分已完成；P7 的实际 GitHub CI、P8–P10 线上阶段尚未执行。
+当前接口说明见[数据库契约](database-contract.md)，操作与复现命令见 [web 开发说明](../web/README.md)。P0–P6 与 P7 的本地部分已完成；本地证据捕获时尚未运行 PR CI，后续结果以当前 PR 的精确 head/checks 为准。P8–P10 的线上阶段未执行。
 
 ## 实际执行的检查
 
