@@ -72,7 +72,7 @@ Supabase Git 集成只运行尚未应用的 migrations。远端历史有版本�
 | 项目 | 要求 |
 | --- | --- |
 | `source_sha` | 完整 SHA；test 使用 main 实际合入后的 SHA；prod 必须使用 test 已验收的同一 SHA |
-| 基线指纹 | `baseline_digest` 固定最初四条冻结基线；`migration_manifest_digest` 覆盖本次 SHA 的完整有序清单，当前含第五条 owner 审计/FK、第六条延迟约束权限修复及第七条 DeepSeek Responses 切换、第八条 Gemini Interactions 接入；分别记录每文件 SHA-256 |
+| 基线指纹 | `baseline_digest` 固定最初四条冻结基线；`migration_manifest_digest` 覆盖本次 SHA 的完整有序清单，当前含第五条 owner 审计/FK、第六条延迟约束权限修复及第七条 DeepSeek Responses 切换、第八条 Gemini Interactions 接入、第九条 Admin 组合读取及第十条 reconciliation 筛选修正；分别记录每文件 SHA-256 |
 | 清理方法与指纹 | `method=application_allowlist`、`cleanup_sql_digest`、`retired_inventory_digest` 与演练证明、checkout 文件及持久 intent 一致；不得复用原生方法或其他清理清单的成功证明 |
 | 项目映射 | test/prod 名称、ref、URL 主机、数据库连接对应关系；两者不得相同 |
 | 目标数据库 CA | 从目标 Supabase 项目的 Database Settings 下载 Server root certificate，核对目标后分别配置对应 GitHub Environment secret `REBUILD_CA_CERT`；必须为 PEM X509 CA，不复用开发者默认 CA |
@@ -142,7 +142,7 @@ node scripts/db-rebuild.ts --mode=resume --target=test \
 
 1. 验证已完成冻结和维护阶段，核对目标连接、SHA 和 manifest 未变化。
 2. 确认本项目旧任务 `ai-polish-retention-cleanup`、`ai-polish-stale-reconciliation` 已停用；白名单清理事务只 unschedule 这两个精确名称，不批量删除其他任务。核对指向旧业务函数的 Auth hooks、trigger、publication；遇到白名单之外的依赖即停止，先形成并演练受审计方案。
-3. 工具核对 `application_allowlist`、cleanup SQL/inventory digest 和演练证明后，事务性清理清单中的旧应用对象/历史，再逐文件应用最初四条基线及第五至第八条追加迁移。没有成功完成时保持 Data API 关闭；不继续 bootstrap 或 promotion。
+3. 工具核对 `application_allowlist`、cleanup SQL/inventory digest 和演练证明后，事务性清理清单中的旧应用对象/历史，再逐文件应用最初四条基线及第五至当前全部追加迁移（当前共十条）。没有成功完成时保持 Data API 关闭；不继续 bootstrap 或 promotion。
 4. 读取迁移历史和 catalog，要求新基线全部已应用且不存在旧版本。`migration repair` 仅更改历史记录，不清业务对象；不得用它代替 reset，也不得把未执行的新 migration 标记为 applied。
 5. 核对新 31 表、public 接口、函数 owner/search_path/ACL、RLS、外部 ID 约束、默认权限和扩展。特别核对 policy options、规则成员关系和默认项的复合 FK，不能残留只绑定一个 profile 的旧路由结构。核对无旧公开签名、legacy 表、悬空 cron 或意外新增角色权限。
 6. 核实无环境记录时 `app_context.ready=false` 且业务写入被拒绝。owner 先核验 `app_api_owner` 安全属性、双向 membership 与 Auth/Storage 有效表/列权限，再以 `FOR KEY SHARE` 锁定未删除且未封禁的首管理员 Auth 目标；单事务创建 environment/新 instance、首管理员、已 seal 的法律 current 及关闭态 runtime，写 actor 为 `SYSTEM/NULL` 的初始化审计，目标管理员不作为 actor。提交后才 ready；相同结果重放不增加假审计。管理员 active generated FK `ON DELETE RESTRICT` 阻止在撤权前删除 Auth 用户，撤权后保留历史 UUID，派生键不进入 Admin DTO。
@@ -242,6 +242,6 @@ Supabase required checks、PR preview branch 和自动 production deployment 的
 
 完整命令、结果和本地证据边界见[本地验收记录](database-rebuild-verification.md)。本轮交付的是工作树中的实现和本地验证，不是可直接用于线上授权的候选提交证明。
 
-当前代码已提供新 schema/RPC、Admin 与客户端、初始化脚本及仅手动的重建入口，并完成本地 Auth/Data API、角色权限及 Admin TOTP 浏览器验证。本轮没有执行本手册的 test/prod 操作，也没有触发 promotion 或线上部署。G3 已取得本地独立演练证明 `tmp/remote-rehearsal-proof.json`：旧 60 条到四条基线的白名单清理、迁移后中断与重复 resume、同 instance 追加第五至第八条迁移、12 类平台指纹相同、缺 checkpoint（包括同时缺 history）时拒绝 rebuild，以及构造 `reset_started` checkpoint 后凭匹配方法/清理 digest/实时 catalog 的证据 resume。后者明确为 `TEST_CONSTRUCTED_STATE_ONLY_NO_REPEAT_RESET`；`constructed_checkpoint_recovery_passed=true`，而 `checkpoint_loss_recovery_passed=false`，没有声称实测 kill 在清理窗口。恢复保留 instance、audit 哨兵及平台指纹，不重复清理。不得把原生 reset 的失败观察或普通 local reset 当作平台保留证明；线上执行前仍须核验实际 merge SHA 对应的最终材料。
+当前代码已提供新 schema/RPC、Admin 与客户端、初始化脚本及仅手动的重建入口，并完成本地 Auth/Data API、角色权限及 Admin TOTP 浏览器验证。本轮没有执行本手册的 test/prod 操作，也没有触发 promotion 或线上部署。G3 已取得本地独立演练证明 `tmp/remote-rehearsal-proof.json`：旧 60 条到四条基线的白名单清理、迁移后中断与重复 resume、同 instance 追加第五至第八条迁移、12 类平台指纹相同、缺 checkpoint（包括同时缺 history）时拒绝 rebuild，以及构造 `reset_started` checkpoint 后凭匹配方法/清理 digest/实时 catalog 的证据 resume。后者明确为 `TEST_CONSTRUCTED_STATE_ONLY_NO_REPEAT_RESET`；`constructed_checkpoint_recovery_passed=true`，而 `checkpoint_loss_recovery_passed=false`，没有声称实测 kill 在清理窗口。恢复保留 instance、audit 哨兵及平台指纹，不重复清理。不得把原生 reset 的失败观察或普通 local reset 当作平台保留证明；该历史证明覆盖当时八条；当前十条链的 PR CI 需重跑完整 G3 并读取其 manifest/平台证明，不能沿用旧八条 digest。线上执行前仍须核验实际 merge SHA 对应的最终材料。
 
 切换验收时还须检查当前条款页面确实来自目标环境的 legal_current，Provider 切换只接受所选披露，Users 的管理员资格列表展示正确成员 revision，以及旧页面/切换账号后迟到的 CV 或条款操作被实例/账户 guard 拒绝。Admin 未配置、未登录和错误态的返回编辑器链接均为普通完整导航并设置 no-referrer，避免管理路径进入公共遥测。

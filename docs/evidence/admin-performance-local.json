@@ -1,0 +1,333 @@
+{
+  "capturedAt": "2026-11-07T18:26:20.307Z",
+  "scope": "Local implementation acceptance, not hosted or release proof",
+  "runtimeSourceCommit": "e8b131ee84c8dc3c25c18bca94c31c01af09df7a",
+  "localChecks": {
+    "webTests": 1121,
+    "webFiles": 82,
+    "toolTests": 25,
+    "adminTargetTests": 47,
+    "sqlAssertions": 185,
+    "sqlFiles": 9,
+    "realDbTests": 12,
+    "realDbFiles": 4,
+    "adminBrowserTests": 8,
+    "typecheck": true,
+    "lint": true,
+    "buildModes": "server -> static -> server"
+  },
+  "database": {
+    "migrationManifest": {
+      "files": [
+        {
+          "name": "20261107075418_app_foundation.sql",
+          "digest": "9a79affb172fb2bc16b95ffc80ea30a30ebcf19d4ad3d1c1442ca3d7671b3534"
+        },
+        {
+          "name": "20261107075439_app_model.sql",
+          "digest": "e9ae1b9791c43dff19158509ea1b7bf99fdbe79053ec0a7c6f2e92c31aff5965"
+        },
+        {
+          "name": "20261107075441_app_transactions.sql",
+          "digest": "1dbe0719fb4758d20279522840ed8e6f9af2f1d1fdadf7ed279a2468cecee7c8"
+        },
+        {
+          "name": "20261107075442_app_catalog.sql",
+          "digest": "1855bb3f57b1fe7f288d350612d7781144722fc3b83c2465104a49611dd60bb7"
+        },
+        {
+          "name": "20261107085902_app_owner_audit.sql",
+          "digest": "91044b26ed6e912dca4f006ecc4eeeef4de149280e6082fb837b1960e205570d"
+        },
+        {
+          "name": "20261107120044_secure_deferred_policy_graph_validation.sql",
+          "digest": "611749bd110d408918a2fb85011c69ea1b15c5e6d1abdf5f5e04d358b90b1fc8"
+        },
+        {
+          "name": "20261107123028_deepseek_responses_only.sql",
+          "digest": "5b783255a3c3f6f2f1d50d7a4bf5872aeebd9f8cc1beeb38e8416eacd948b7ce"
+        },
+        {
+          "name": "20261107132913_gemini_interactions_provider.sql",
+          "digest": "841fd90d4d563c3c957e1bf4367315800e5552919c06a66737078054741aa636"
+        },
+        {
+          "name": "20261107174350_admin_read_envelope.sql",
+          "digest": "babab0f86e3e0bed80ee371a009456936c620dcbabe09d20d398ae67be57035f"
+        },
+        {
+          "name": "20261107180640_reconcile_actionable_candidates.sql",
+          "digest": "acdf20e0c7efd1ff71c8b3daf555ac51e8477f86b644033482807282a23e826c"
+        }
+      ],
+      "baseline_digest": "45d98c91189daa67fe932666781dbae3e5302c7914bdc911981a086ab7454ab5",
+      "migration_manifest_digest": "36c06a9ff1d718d8ca94bce0c237dd7ad9b02bee8199baeae1a6f5b4eac229c0"
+    },
+    "adminContextJsonTextUtf8Bytes": 492,
+    "legalCurrentJsonTextUtf8Bytes": 92771,
+    "adminContextContainsLegal": false,
+    "measurement": "octet_length(jsonb::text) inside authenticated rollback SQL fixture; not compressed HTTP transfer size"
+  },
+  "baselineExperiment": {
+    "sourceSha": "fed8ccbb315f9a1ee4520d3354cdc1e64e8975c7",
+    "nextVersion": "16.2.9",
+    "bundler": "webpack",
+    "experimentOnly": true,
+    "backendPerHttpDelayMs": 400,
+    "browser": [
+      {
+        "step": "cold_initial_overview",
+        "ms": 897,
+        "documentRequests": 1,
+        "newJsBytes": 261859,
+        "apiRequests": 1,
+        "serverHttpHops": 2
+      },
+      {
+        "step": "hard_link_to_providers",
+        "ms": 1691,
+        "documentRequests": 1,
+        "newJsBytes": 0,
+        "apiRequests": 2,
+        "serverHttpHops": 4
+      },
+      {
+        "step": "hard_link_to_prices",
+        "ms": 1695,
+        "documentRequests": 1,
+        "newJsBytes": 0,
+        "apiRequests": 2,
+        "serverHttpHops": 4
+      },
+      {
+        "step": "csr_router_to_policies",
+        "ms": 1642,
+        "documentRequests": 0,
+        "newJsBytes": 0,
+        "apiRequests": 2,
+        "serverHttpHops": 4
+      },
+      {
+        "step": "csr_router_back_to_prices",
+        "ms": 1647,
+        "documentRequests": 0,
+        "newJsBytes": 0,
+        "apiRequests": 2,
+        "serverHttpHops": 4
+      },
+      {
+        "step": "in_place_refresh_prices",
+        "ms": 1652,
+        "documentRequests": 0,
+        "newJsBytes": 0,
+        "apiRequests": 2,
+        "serverHttpHops": 4
+      }
+    ],
+    "cachePrototype": [
+      {
+        "name": "cold_prices",
+        "ms": 1626,
+        "apiRequests": 2
+      },
+      {
+        "name": "new_section_reuses_context",
+        "ms": 811,
+        "apiRequests": 1
+      },
+      {
+        "name": "back_prices_fresh_cache",
+        "ms": 0,
+        "apiRequests": 0
+      },
+      {
+        "name": "other_user_does_not_reuse_A",
+        "ms": 1628,
+        "apiRequests": 2
+      },
+      {
+        "name": "after_explicit_record_invalidation",
+        "ms": 813,
+        "apiRequests": 1
+      }
+    ],
+    "processesStopped": true,
+    "trackedFilesChanged": false
+  },
+  "optimizedExperiment": {
+    "artifact": "Current workspace web/.next actual production server build from the real local Auth/TOTP E2E launcher; no isolated copy or alternate bundler",
+    "baseSourceSha": "c5dc45fd54c3cc8db0b81d7701bb27256cfc0d5a",
+    "workingTreeChangesIncluded": true,
+    "nextVersion": "16.2.9",
+    "bundler": "turbopack",
+    "buildId": "nvJ-DOrszhae4bm8ekE5H",
+    "network": "Synthetic local backend; Node fetch redirects and browser Supabase interception. Browser HTTP cache disabled by interception; in-memory product QueryClient cache remains active.",
+    "realDatabaseContacted": false,
+    "paidProviderContacted": false,
+    "sourceHashes": [
+      {
+        "path": "src/features/admin/admin-app.tsx",
+        "sha256": "c2d748fe57348db7a0198389e80f30b004bdb1392e4500b9aa25fb45131bf92c",
+        "matchesVerifiedSourceCommit": true
+      },
+      {
+        "path": "src/features/admin/admin-read.ts",
+        "sha256": "b267c30f56d901006935d5a3fd2bf8cd6cd9baaf9e5a96932a5e8ba54c04bbf1",
+        "matchesVerifiedSourceCommit": true
+      },
+      {
+        "path": "src/features/admin/admin-session.ts",
+        "sha256": "1be7a55f5ceec4523b385e4f1dd3a795cbaa83c3f819aaf4fd39501ffc234e5b",
+        "matchesVerifiedSourceCommit": true
+      },
+      {
+        "path": "src/server/admin/handler.ts",
+        "sha256": "19b6eadfb2df8186d42f8abda9711c770ae221eaefe2237b16394bf6b0e63bbb",
+        "matchesVerifiedSourceCommit": true
+      }
+    ],
+    "scenarios": [
+      {
+        "backendDelayMs": 400,
+        "browserLatencyMs": 0,
+        "steps": [
+          {
+            "name": "cold_providers",
+            "elapsedMs": 993,
+            "documentChanged": true,
+            "documentRequests": 1,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "link_to_prices",
+            "elapsedMs": 852,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "fresh_back_to_providers",
+            "elapsedMs": 70,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 0,
+            "serverSupabaseRequests": 0
+          },
+          {
+            "name": "explicit_refresh_providers",
+            "elapsedMs": 852,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "first_controls",
+            "elapsedMs": 873,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "cached_prices",
+            "elapsedMs": 62,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 0,
+            "serverSupabaseRequests": 0
+          },
+          {
+            "name": "controls_always_fresh",
+            "elapsedMs": 877,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          }
+        ],
+        "errors": []
+      },
+      {
+        "backendDelayMs": 400,
+        "browserLatencyMs": 400,
+        "steps": [
+          {
+            "name": "cold_providers",
+            "elapsedMs": 2520,
+            "documentChanged": true,
+            "documentRequests": 1,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "link_to_prices",
+            "elapsedMs": 1290,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "fresh_back_to_providers",
+            "elapsedMs": 830,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 0,
+            "serverSupabaseRequests": 0
+          },
+          {
+            "name": "explicit_refresh_providers",
+            "elapsedMs": 862,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "first_controls",
+            "elapsedMs": 1273,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          },
+          {
+            "name": "cached_prices",
+            "elapsedMs": 833,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 0,
+            "serverSupabaseRequests": 0
+          },
+          {
+            "name": "controls_always_fresh",
+            "elapsedMs": 1281,
+            "documentChanged": false,
+            "documentRequests": 0,
+            "apiRequests": 1,
+            "serverSupabaseRequests": 2
+          }
+        ],
+        "errors": []
+      }
+    ],
+    "buildInvocationHead": "c5dc45fd54c3cc8db0b81d7701bb27256cfc0d5a",
+    "buildSourceState": "Frontend changes were uncommitted at build invocation; frozen source bytes were committed later without edits.",
+    "measurementCapturedHead": "c5dc45fd54c3cc8db0b81d7701bb27256cfc0d5a",
+    "verifiedSourceCommit": "e8b131ee84c8dc3c25c18bca94c31c01af09df7a",
+    "browserLatencyMechanism": "Chromium CDP Network.emulateNetworkConditions latency=400ms minimum per request; not a guaranteed additive 400ms over the server delay. Browser interception disables HTTP resource caching.",
+    "processesStopped": true
+  },
+  "limits": [
+    "Controlled synthetic backend, not authenticated hosted test/prod timings",
+    "Baseline isolated Webpack and final shipping Turbopack differ; elapsed deltas do not isolate one optimization",
+    "Browser HTTP cache is disabled by interception; product QueryClient memory cache is active",
+    "Cached navigation can still wait for Next.js RSC responses",
+    "Historical paid/G3 snapshots remain tied to their original revisions; current-head CI proof must be read separately"
+  ],
+  "hostedChanges": false,
+  "paidCalls": false
+}

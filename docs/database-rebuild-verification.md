@@ -1,8 +1,10 @@
 # 数据库重构本地验收记录
 
-日期：2026-11-07。分支：`codex/database-rebuild`。本记录保留 PR 创建前的本地实施和提交准备期验证；未修改 test/prod 数据库或触发线上发布。后续 feature 分支推送、PR CI 和 Relay 评审修复已由用户单独授权，其当前结果以 PR 的精确 head、checks 和评审记录为准。已按授权完成初次两次真实调用、DeepSeek Responses 切换后的两次复验、Gemini 一次验收，以及 MiMo 协议收紧后的一次复验；共六次生成，均仅使用合成文本和独立本地数据库。
+历史记录日期：2026-11-07；Admin 性能补充日期：2026-11-08。分支：`codex/database-rebuild`。本记录保留 PR 创建前的本地实施和提交准备期验证；未修改 test/prod 数据库或触发线上发布。后续 feature 分支推送、PR CI 和 Relay 评审修复已由用户单独授权，其当前结果以 PR 的精确 head、checks 和评审记录为准。已按授权完成初次两次真实调用、DeepSeek Responses 切换后的两次复验、Gemini 一次验收，以及 MiMo 协议收紧后的一次复验；共六次生成，均仅使用合成文本和独立本地数据库。
 
 这些测量在本地未提交实施期及分批提交准备期捕获，原评估基线为 `ccbeb1a4fc2baba9dbc2c15a4ba183a1be3558aa`；它不是新实现的候选或发布 SHA。代码随后分批提交，不改变历史测量的来源身份。[证据快照](evidence/database-rebuild-local.json)仅用于审查，不能将旧测量改填新 SHA 冒充候选验证；未来发布必须在候选提交或实际 merge SHA 上重新生成证明。
+
+除末尾的 Admin 性能补充外，下方保留的是当时八条迁移的历史本地记录和原始计数，不作为当前十条链或最终 PR head 的证明。
 
 ## 已交付的实现
 
@@ -116,3 +118,27 @@ PR 推送仅更新 `codex/database-rebuild`，不推进 main/release。仓库根
 CI 配置已接入当前单元测试、双构建、两套 fake 浏览器流程、真实本地 DB/Admin 测试，以及独立 G3 的 `prepare → start-db → platform → legacy → run → checkpoint-guards → verify`。本文件的本地结果不证明远端 CI 已通过；PR 阶段应读取当前精确 head 的 checks 和 runner 产物。
 
 未来执行仍需[发布手册](database-rebuild-runbook.md)中的明确授权及目标核验：先按候选/merge SHA 重跑 CI 与演练，取得 test/prod 实际环境映射、暂停访问与 Git 自动集成，再进行 test 验收、同 SHA 的 prod 重建和应用发布。G10/G11、真实托管集成、以 test/prod 为目标的 Provider smoke、线上恢复自动部署和后续增量发布均未执行；本地真实 Provider smoke 不能替代它们。不能仅推送本次新迁移链到仍有旧历史的环境。
+
+## Admin 性能与 PR 反馈补充验收（2026-11-08）
+
+当前代码另追加第九条 Admin read envelope 和第十条 reconciliation 候选筛选迁移。前八条字节未改，第九条应用后也保持原 SHA；当前共十条迁移、31 张私有业务表、3 个 public invoker view、51 个 public RPC。baseline digest 仍为最初四条，完整 manifest digest 为 `36c06a9ff1d718d8ca94bce0c237dd7ad9b02bee8199baeae1a6f5b4eac229c0`。旧八条 G3 快照和付费记录保持历史身份；最终 PR CI 须对十条链重新取得证明。
+
+本轮全量验证：82 文件、1,121 项 web 单元测试及 25 项工具测试，TypeScript/完整 ESLint，9 文件、185 项 SQL 断言，4 文件、12 项真实本地 DB 测试全部通过。最终生产构建的 8 项 Admin 浏览器验收全过，含真实 Auth/TOTP 成功提示、AAL2、高风险管理员授权及 revision readback；server → static → server 隔离检查通过，静态扫描 138 文件。普通 Provider transport 和计费配置未改，本轮没有再次付费调用。
+
+使用真实 QueryClient 的定向回归先复现再修复跨页晚提交、同用户 token 更新、bootstrap 读取旧快照、已经 invalidated 的在途读取吞失效、cached page remount 渲染循环，以及 TOTP 状态/真实配置输入被卸载的问题。账号和实例变化仍丢弃不属于当前页面的数据；重新验证期间保留的表单被隐藏并整体禁用，不能借旧 context 发起新操作。最终 47 项 Admin 定向测试通过。
+
+在真实 authenticated SQL fixture 中，`admin_context()::text` 为 492 UTF-8 bytes，已不含 legal；独立 `legal_current()::text` 为 92,771 bytes。该计量是 SQL JSON 文本大小，不冒充压缩后的网络流量。新组合 GET 只有一次 bearer getUser 和一次 admin_read，即两次 Supabase HTTP；旧列表路径是两次 GET、四次串行 Supabase HTTP。
+
+| 受控场景 | Supabase 每跳 400ms | 另设浏览器最小延迟 400ms | Admin GET / Supabase HTTP | 新文档 |
+| --- | ---: | ---: | --- | --- |
+| 冷 Providers | 993ms | 2520ms | 1 / 2 | 初始文档 |
+| Link 进入 Prices | 852ms | 1290ms | 1 / 2 | 无 |
+| 返回新鲜 Providers 缓存 | 70ms | 830ms | 0 / 0 | 无 |
+| 返回新鲜 Prices 缓存 | 62ms | 833ms | 0 / 0 | 无 |
+| 再次进入 Controls | 877ms | 1281ms | 1 / 2 | 无 |
+
+以上 14 步生产浏览器实验全部通过，复用刚完成真实 Auth/TOTP 验收的同一 Turbopack 构建 `nvJ-DOrszhae4bm8ekE5H`。构建时 HEAD 为 `c5dc45f`，前端冻结改动尚未提交；记录的四份源文件摘要随后与 `e8b131e` 逐一一致。完整来源和计量见[性能证据](evidence/admin-performance-local.json)。先前 Webpack 调查在每跳 400ms 下观察到列表切换约 1.64–1.70 秒；两个实验的构建、路由和 HTTP cache 条件不同，不将时间差当作单变量 benchmark 或线上提速比例。拦截禁用了浏览器 HTTP cache，但真实产品的 QueryClient 内存缓存保持启用；缓存命中仍可能等待 Next RSC 路由响应。
+
+GitHub 新增的 reconciliation 饥饿反馈以真实 SQL 构造 100 个 stale STARTED 和 100 个 HELD/UNKNOWN 请求排在三个可推进请求前面：旧函数 17 项中失败 10 项，修正后全过；未知传输事实和 200 次 reserved 保持原样，后续零 attempt 释放、已知结果结算和迟到已知结果重入均正常，重复 cron 不重复记账。第十条仅筛选无进展候选并拒绝 NULL 批大小，保留 owner/cron-only、空 search_path、既有控制锁序及原结算函数。
+
+浏览器 fixtures 和实验进程均已清理。本轮没有 test/prod SQL、重置、配置变更、发布或 main/release 更新。该本地验收和摘要匹配不替代最终 PR 精确 head 的 CI、反馈截止点及未来 merge SHA 的发布门槛。

@@ -143,7 +143,7 @@ P7 提交全仓兼容残留清单，范围覆盖 `web/src`、`web/scripts`、`we
 | --- | --- | --- |
 | G1 空库重建 | 所有新 migrations 逐文件在单事务执行、必要目录数据、默认关闭状态；重复本地 reset；扩展与 owner 初始化；初始化前后 ready 行为 | 两种 migration digest；31 表与 API catalog；零历史对象；未初始化写入拒绝、合法原子初始化后 ready |
 | G2 Supabase 规范 | 外部 ID 格式/唯一/碰撞 5 次边界；普通客户端不可改 ID；search_path/volatility；默认 ACL；RLS、view invoker 和列权限 | 以 anon、本人、他人、Admin、service_role、owner 分别执行允许和拒绝路径 |
-| G3 远端模式重建演练 | disposable Supabase 库先装旧链及合成用户/session/MFA、Storage 元数据、cron/ACL/平台哨兵；hosted/rehearsal 唯一方法为 `application_allowlist`，覆盖清理、各 phase 中断、重复 resume、追加第五至第八迁移和 checkpoint 丢失拒绝 | 实际删除集合及前后 catalog/history/12 类平台指纹；method、cleanup SQL digest、retired inventory digest、baseline/full manifest digest 匹配的证明；原生删除 Auth/session/MFA 是历史观察，用户现已允许删除这些数据；原生清理还触及 SSO 配置、平台策略与扩展，当前工具仍限已验证的应用白名单路径；仅 local reset 不足以替代 |
+| G3 远端模式重建演练 | disposable Supabase 库先装旧链及合成用户/session/MFA、Storage 元数据、cron/ACL/平台哨兵；hosted/rehearsal 唯一方法为 `application_allowlist`，覆盖清理、各 phase 中断、重复 resume、追加第五至当前全部迁移和 checkpoint 丢失拒绝 | 实际删除集合及前后 catalog/history/12 类平台指纹；method、cleanup SQL digest、retired inventory digest、baseline/full manifest digest 匹配的证明；原生删除 Auth/session/MFA 是历史观察，用户现已允许删除这些数据；原生清理还触及 SSO 配置、平台策略与扩展，当前工具仍限已验证的应用白名单路径；仅 local reset 不足以替代 |
 | G4 管理发布 | 首管理员初始化、last-admin、session 删除/封禁/撤权、TOTP；active generated Auth FK 阻止未撤权管理员删除、保留撤权历史；owner 初始化/法律 current 的 SYSTEM 审计与幂等；owner 属性/成员/Auth&Storage ACL 拒绝；草稿/校验/发布/指针/readback/reopen；幂等相同与不同 payload；空集合、跨策略引用、默认项不在集合、未使用选项 | DB 测试 + 真实 Auth 浏览器 E2E；直接 RPC 也不能绕过；校验 digest 覆盖所有时段/选项/成员/默认项 |
 | G5 选择与冻结 | A/B→A/C 和等锁跨界；显式选择、过期列表；reserve 后修改 defaults/pointer/价格发布；两次 attempts；所选/未选 key 缺失；能力目录与代码不一致 | 锁后时刻确定资格；冻结同一选项/版本、不重新选路；未选项故障不阻断健康项；不支持的配置零传输 |
 | G6 额度和金额 | 并发 reserve/start/finalize；gate/start 争用；UTC 跨日和上海时段；切换 Provider 的共用额度/限流；金额溢出；cache/reasoning 守恒；不同币种 | 单次扣次/退款/计量；换 Provider 不重置限额；未知≠0；锁序无环；不发生 partial settlement |
@@ -195,7 +195,7 @@ catalog 验证检查对象职责、函数签名/owner/ACL、RLS、约束和 view
 | `source_sha` | 必须是完整 commit SHA；执行中 checkout 后验证 HEAD；不能在 reset 时解析一个移动中的 `main` |
 | `mode` | 默认 `plan`；可选 `rebuild/resume/verify`；rebuild 仅首次清空；resume 明确剩余 phase 且不 reset；verify 只读 |
 | `expected_project_ref` | 与环境配置、连接目标、Supabase URL 三方一致；test/prod ref 不得相同 |
-| `baseline_digest`、`migration_manifest_digest` | 前者固定最初四条基线；后者覆盖当前 SHA 的全部迁移，当前为四条基础、第五条 owner 审计/FK 增量、第六条延迟约束权限修复及第七条 DeepSeek Responses 切换、第八条 Gemini Interactions 接入；prod 要求 test 同 SHA/两种 digest 的验收记录 |
+| `baseline_digest`、`migration_manifest_digest` | 前者固定最初四条基线；后者覆盖当前 SHA 的全部迁移，当前为四条基础、第五条 owner 审计/FK 增量、第六条延迟约束权限修复及第七条 DeepSeek Responses 切换、第八条 Gemini Interactions 接入、第九条 Admin 组合读取和第十条 reconciliation 筛选修正；prod 要求 test 同 SHA/两种 digest 的验收记录 |
 | `method`、`cleanup_sql_digest`、`retired_inventory_digest` | hosted/rehearsal 只接受 `application_allowlist`；清理 SQL、旧对象清单与演练证明和持久 intent 必须匹配，不允许更换方法或临时扩大删除范围 |
 | `rehearsal_evidence` | 手动 workflow 输入 JSON，写入 runner 临时文件后传给工具；证明的 `source_sha` 必须等于当前完整 SHA，同时要求 `old_chain_passed` 和方法/两个清理 digest/两个 migration digest/CLI/平台保留与恢复结果匹配；不要求把自引用 SHA 的证明提交进该 SHA |
 | destructive 确认 | 手动运行 rebuild 时明确输入目标项目标识和“清空业务数据”确认值；不复用普通 promotion 作为清库授权 |
@@ -219,14 +219,21 @@ workflow 必须先在默认分支存在，GitHub 才能正常提供手动入口�
 
 ## 本轮本地交付与发布前门槛
 
-当前工作树已替换旧迁移链和调用者，完整新链为最初四条冻结基线、第五条 owner 审计/管理员 active Auth FK/角色检查增量，以及第六条延迟策略图约束权限修复、第七条 DeepSeek Responses 能力和披露更新，以及第八条 Gemini Interactions 接入和三家法律目录；Admin、Provider 选择、精确同意、当前 CV/草稿格式及本地测试入口均使用新契约。Admin 支持配置身份与版本、当前管理员资格的独立查看；版本生命周期使用父 revision，成员变更使用成员 revision。时段集合与默认项通过原子 JSON 配置创建，价格接续通过单个管理事务提交完整接续参数，验证/检查报告显示有效期并绑定全部候选。
+当前工作树已替换旧迁移链和调用者，完整新链为最初四条冻结基线、第五条 owner 审计/管理员 active Auth FK/角色检查增量，以及第六条延迟策略图约束权限修复、第七条 DeepSeek Responses 能力和披露更新，以及第八条 Gemini Interactions 接入和三家法律目录、第九条 Admin 组合读取及精简 context、第十条 reconciliation 有限批次修正；Admin、Provider 选择、精确同意、当前 CV/草稿格式及本地测试入口均使用新契约。Admin 支持配置身份与版本、当前管理员资格的独立查看；版本生命周期使用父 revision，成员变更使用成员 revision。时段集合与默认项通过原子 JSON 配置创建，价格接续通过单个管理事务提交完整接续参数，验证/检查报告显示有效期并绑定全部候选。
 
 已执行的本地验证包括空业务库重建、真实角色 SQL 与 Auth/Data API 验证、真实 Admin 登录/TOTP/profile 身份创建/成员变更浏览器流程，以及无托管凭据的编辑器流程；版本草稿/发布链由 SQL 测试验证，具体命令见 [web 开发说明](../web/README.md)。这不等于全部发布验收完成。G3 本地独立演练已通过：旧 60 条到四条基线的 `application_allowlist` 清理、迁移后中断与重复 resume、同 instance 追加第五至第八条迁移、12 类平台指纹前后相同、缺 checkpoint（含同时缺 history）时拒绝 rebuild，以及构造 `reset_started` 状态后以匹配方法/digest/catalog 的证明恢复且不重复清理。原生 reset 删除 Auth/session/MFA 是历史演练记录，用户现已允许丢弃这些数据；方法选择仍须保护配置，不据此直接启用原生 reset。本地证据不证明后续 PR 阶段的 CI 结果；G10/G11、任何 test/prod SQL/重置、使用 test/prod 数据库的付费 smoke 和线上发布均未执行。不能以本地 `db reset --local` 成功替代这些门槛。
 
-G3 运行证明保存在本地 `tmp/remote-rehearsal-proof.json`，可审查快照见[本地证据](evidence/database-rebuild-local.json)。其中 `constructed_checkpoint_recovery_passed=true` 表示人工构造 checkpoint 的故障注入；`checkpoint_loss_recovery_passed=false` 保留原义，不声称实测 kill 在 `reset_started` 窗口。最终链为八条、baseline 仍为原四条；合入后仍须按实际 merge SHA 重新核验发布材料。
+G3 运行证明保存在本地 `tmp/remote-rehearsal-proof.json`，可审查快照见[本地证据](evidence/database-rebuild-local.json)。其中 `constructed_checkpoint_recovery_passed=true` 表示人工构造 checkpoint 的故障注入；`checkpoint_loss_recovery_passed=false` 保留原义，不声称实测 kill 在 `reset_started` 窗口。该历史快照覆盖当时八条、baseline 仍为原四条；当前链为十条，旧快照不作为新增迁移证明，PR CI 必须对当前完整 manifest 重跑独立 G3。合入后仍须按实际 merge SHA 重新核验发布材料。
 
 用户提供本地 Provider keys 后，显式 opt-in smoke 已对 DeepSeek/MiMo 各完成一次真实生成调用，以独立本地库验证新配置发布、所选模型、输出校验和结算/幂等。此步骤发现并通过第六迁移修复 authenticated COMMIT 的延迟图约束权限；常规 DB 测试已增加真实角色提交与回滚回归。真实模型测试不进入普通 CI，也不替代使用 test/prod 数据库的 G10/G11。结果见[本地验收记录](database-rebuild-verification.md)。
 
 按后续要求，DeepSeek 已完整切到官方 Responses，MiMo 保持 Responses。当前代码、能力目录、profile 创建和 Provider defaults 均拒绝旧 Chat 配置；第七条迁移仅替换没有 profile/default 引用的旧能力，否则原子拒绝，不能修改冻结版本使其悄悄换协议。新 bundle/disclosure 重新封存并要求新同意，旧封存字节保留；AI 关闭、指针清空，需重新配置、校验和 reopen。已对两家重新执行各一次 Responses 付费验收，验证真实响应对象、严格 wire 字段、输出和结算/幂等；这份新证据不复用此前 DeepSeek Chat 调用。
 
 Gemini 接入沿用同一选择、发布、冻结、同意和结算流程，使用官方 `gemini-3.8-flash` 与稳定 `/v1/interactions`，不添加 OpenAI 协议代理或自动回退。第八条迁移追加能力、Provider 和新三家法律目录，更新 Admin 精确校验，保持旧冻结配置及封存字节不变；新目录生效时关闭 AI、清空策略指针并推进 generation/close cycle。Google 请求使用 JSON Schema、low thinking、`store:false`、无用户标识及历史续接；usage 的 visible output 与 thought 合并为计费 output，reasoning 仅记录子集。独立合成文本验收使用 `CV_LIVE_PROVIDERS=GEMINI`，不重复调用已有两家；结果与 Google 免费/付费数据处理的核验边界见[本地验收](database-rebuild-verification.md)和[发布手册](database-rebuild-runbook.md)。
+
+## Admin 性能补充验收
+
+- Admin 内部软导航保持同一 document；冷列表只发一次组合 GET，返回 30 秒内的已读列表不发 Admin GET。overview/control 进入即新读；当前挂载资源响应本页及其他页面晚到写入的失效。
+- 以真实 QueryClient 覆盖账户/令牌/实例变化、取消、401/403 清理、一次实例恢复、旧响应晚到、跨页失效及同账号 token 更新后的晚到提交；真实本地 Auth/TOTP 浏览器覆盖交互持续性。
+- 新 envelope 通过真实 authenticated SQL 验证同一 live gate、严格输入和 ACL；法律正文由独立 legal API 读取。以生产构建和受控 Supabase 延迟记录前后数据；该模型不冒充线上测量。
+- PR 反馈的 reconciliation 饥饿需真实 SQL 先复现，再证明未知事实保持 HELD、后续可推进请求得到处理、迟到已知结果可重新结算且重复 cron 幂等。前九条迁移保持已应用字节，仅追加修正。

@@ -10,7 +10,7 @@
 
 ## 目标和设计依据
 
-源码评估基线曾包含 60 个迁移、24,955 行迁移 SQL、51 张 `public` 表，以及 196 个不同函数名的 256 次函数定义。这些计数描述重构前的 Git 基线，不代表当前工作树或远端实时 catalog；当前实现由四条基础迁移建立 31 张业务表，第五条追加 owner 审计、管理员 Auth FK 和角色检查，第六条修复真实 authenticated 事务提交时的延迟约束权限，第七条将 DeepSeek 能力和新法律目录切到 Responses，第八条接入 Gemini 官方 Interactions 和三家新法律目录。旧版本执行、部署登记、权限切换、兼容报告和测试共同增加了维护成本。
+源码评估基线曾包含 60 个迁移、24,955 行迁移 SQL、51 张 `public` 表，以及 196 个不同函数名的 256 次函数定义。这些计数描述重构前的 Git 基线，不代表当前工作树或远端实时 catalog；当前实现由四条基础迁移建立 31 张业务表，第五条追加 owner 审计、管理员 Auth FK 和角色检查，第六条修复真实 authenticated 事务提交时的延迟约束权限，第七条将 DeepSeek 能力和新法律目录切到 Responses，第八条接入 Gemini 官方 Interactions 和三家新法律目录，第九条合并 Admin 读取并精简 context，第十条修复 reconciliation 有限批次被未知请求阻塞的问题。旧版本执行、部署登记、权限切换、兼容报告和测试共同增加了维护成本。
 
 以用户的 [Supabase 规范](/Users/yue/.agents/instructions/supabase-design-standard/README.md)为设计依据。该链接仅适用于本机；权威入口为 `/Users/yue/.agents/skills/supabase-design-standard/SKILL.md`，共享规范和外部 ID SQL 位于 `/Users/yue/.agents/instructions/supabase-design-standard/`。下文完整列出本项目采用的规则，仓库使用者无需访问个人目录即可实施。
 
@@ -315,7 +315,7 @@ complete 的同 payload 重放返回原事实；不同 payload 冲突。finalize
 | CV 读 | `cv_document_summaries`、`cv_document_contents` view | authenticated SELECT；security_invoker；只读本人 |
 | CV 写 | `cv_document_create/update/rename/delete/convert` | authenticated；RPC 推导 user、验证 revision、mode 和形状 |
 | 条款 | `legal_current()`、`legal_accept_document()`、`legal_accept_disclosure()`、`legal_my_acceptances` view | current 可安全公开；接受及个人记录仅 authenticated；无任意内容写入 |
-| Admin 读 | `admin_context()`、`admin_records()`、`admin_record()`、`admin_analytics()` | authenticated + 有效 Admin；明确投影，分页上限 100，无 CV 正文和原始日志 |
+| Admin 读 | 浏览器 BFF 使用 `admin_read(p_input)` 一次返回 `{context,data}`；复用 `admin_context()`、`admin_records()`、`admin_record()`、`admin_analytics()` 的权限和投影 | authenticated + 有效 Admin；同一 bearer 校验及事务内 gate，实例/环境/契约检查，分页上限 100，无 CV 正文、原始日志或无消费方的法律正文 |
 | Admin 写 | `admin_provider_update`、`admin_profile_create`、`admin_profile_version_create/publish/retire`、`admin_price_version_create/publish/close/replace/retire`、`admin_policy_create`、`admin_policy_version_create/publish/retire`、`admin_profile_retire`、`admin_policy_retire` | authenticated + Admin；policy version 原子提交整个集合；price replace 原子关闭旧价并发布接续价；统一操作内核、并发前置条件、audit、必要报告/TOTP |
 | 运行控制 | `admin_ai_disable/set_policy/reopen/update_limits/set_audience/set_allowed_user` | authenticated + Admin；disable 不需 step-up，其余按高风险处理 |
 | 管理员 | `admin_member_grant/revoke` | authenticated + Admin + step-up；最后管理员保护 |
@@ -326,7 +326,7 @@ owner bootstrap、legal current 发布、对账和清理函数放在所属非暴
 
 有权限的 Admin 配置详情可以显示或编辑 endpoint 和 credential ref 名称，供配置使用；实际 key 始终不返回。审计、计量、安全日志和普通用户投影不包含这些配置细节。后台的 Users 投影仅返回管理用途所需的账户状态和身份字段，不能借通用 records 接口读 Auth 私有字段或 CV 正文。
 
-CV、Admin、AI 数据响应使用 `private, no-store`；`app_context`、current 指针和 availability 同样不缓存，只有按不可变 ID/digest 取出的公共条款内容可缓存。错误码统一为 UNAUTHORIZED、FORBIDDEN、CONFLICT、NOT_FOUND、INVALID_REQUEST、STEP_UP_REQUIRED、NOT_READY、UNAVAILABLE、RATE_LIMITED、QUOTA_EXCEEDED、INTERNAL_ERROR、CLIENT_UPDATE_REQUIRED；CONFIG_CHANGED/OPTION_UNAVAILABLE 是 CONFLICT 的 reason，不另建不一致的顶层错误码。版本或实例失配要求刷新，未初始化返回 NOT_READY，旧 CV 文件返回 INVALID_REQUEST 和格式原因；不得误判为需要注册或额度不足。
+CV、Admin、AI HTTP 数据响应使用 `private, no-store`；`app_context`、current 指针和 availability 同样不缓存，只有按不可变 ID/digest 取出的公共条款内容可缓存。错误码统一为 UNAUTHORIZED、FORBIDDEN、CONFLICT、NOT_FOUND、INVALID_REQUEST、STEP_UP_REQUIRED、NOT_READY、UNAVAILABLE、RATE_LIMITED、QUOTA_EXCEEDED、INTERNAL_ERROR、CLIENT_UPDATE_REQUIRED；CONFIG_CHANGED/OPTION_UNAVAILABLE 是 CONFLICT 的 reason，不另建不一致的顶层错误码。版本或实例失配要求刷新，未初始化返回 NOT_READY，旧 CV 文件返回 INVALID_REQUEST 和格式原因；不得误判为需要注册或额度不足。
 
 ## 代码切换
 
@@ -349,7 +349,7 @@ CV、Admin、AI 数据响应使用 `private, no-store`；`app_context`、current
 
 ## 迁移和可重建性
 
-初始四条 migrations 依次交付基础权限与 ID、业务模型、事务与 API、目录基础数据与任务，文件由 CLI 创建并已冻结；第五条 `20261107085902_app_owner_audit.sql` 追加 owner 审计、管理员 active Auth FK 和 owner 角色检查。第六条 `20261107120044_secure_deferred_policy_graph_validation.sql` 修复延迟策略图校验的提交权限。第七条 `20261107123028_deepseek_responses_only.sql` 追加唯一 DeepSeek Responses 能力与新封存披露，拒绝改写已被引用的旧能力。第八条 `20261107132913_gemini_interactions_provider.sql` 新增 Gemini 能力、Provider 身份、严格配置校验、新 common AI terms 与三家新封存披露；旧封存内容保持不变。当前完整迁移链为八条，`baseline_digest` 仍仅覆盖最初四条，`migration_manifest_digest` 覆盖当前全部八条。首次切换删除全部 60 个旧文件，Git 保留历史。不能在旧业务对象之上直接运行新基线；先按发布手册的 `application_allowlist` 清理确认的应用对象和对应迁移历史，保留平台。
+初始四条 migrations 依次交付基础权限与 ID、业务模型、事务与 API、目录基础数据与任务，文件由 CLI 创建并已冻结；第五条 `20261107085902_app_owner_audit.sql` 追加 owner 审计、管理员 active Auth FK 和 owner 角色检查。第六条 `20261107120044_secure_deferred_policy_graph_validation.sql` 修复延迟策略图校验的提交权限。第七条 `20261107123028_deepseek_responses_only.sql` 追加唯一 DeepSeek Responses 能力与新封存披露，拒绝改写已被引用的旧能力。第八条 `20261107132913_gemini_interactions_provider.sql` 新增 Gemini 能力、Provider 身份、严格配置校验、新 common AI terms 与三家新封存披露；旧封存内容保持不变。第九条 `20261107174350_admin_read_envelope.sql` 追加 Admin 组合读取、删除 context 中未消费的 legal 正文，保持原权限检查与锁序。第十条 `20261107180640_reconcile_actionable_candidates.sql` 追加 reconciliation 候选筛选修正，已 HELD 且仍有 STARTED/UNKNOWN attempt 的无进展请求不占有限批次，迟到已知结果仍可结算；不退款未知事实。当前完整迁移链为十条，`baseline_digest` 仍仅覆盖最初四条，`migration_manifest_digest` 覆盖当前全部十条。首次切换删除全部 60 个旧文件，Git 保留历史。不能在旧业务对象之上直接运行新基线；先按发布手册的 `application_allowlist` 清理确认的应用对象和对应迁移历史，保留平台。
 
 每个文件必须能在分支集成的单一事务中执行；相互依赖的表先创建，再补齐复合/延迟 FK 和函数，随后按 Provider/能力 → 法律内容的顺序初始化不可变目录。任务组仅定义函数；cron 注册在环境初始化后执行且默认停用。role 创建/复用验证、扩展安装和 ACL 均须在固定 CLI/平台权限下演练，不能以本地超级用户通过代替托管迁移能力。
 
@@ -368,3 +368,11 @@ CV、Admin、AI 数据响应使用 `private, no-store`；`app_context`、current
 价格接续在 `admin_price_version_replace` 内接收新价格的完整参数，以一个数据库时刻关闭旧价并创建/发布接续价；不要求预先创建一个无法精确对齐该时刻的不可变 successor 草稿。验证页显示报告 ID、结果/原因和到期时刻，验证覆盖所有时段的全部候选；上游成功与否仍需另行授权的 smoke，不能由凭据存在的检查推断。
 
 当前条款页面、接受弹窗和所选 Provider 披露由数据库 current 内容渲染，普通条款及 AI 披露均记录精确目标和摘要。注册/OAuth 返回不再把静态版本标记自动写成当前同意。账户所属读写使用经过 `getUser(token)` 校验的固定 bearer 客户端；切换账户不会改变进行中操作的 JWT。客户端仍在写入时核验原 database instance，CV/条款同时提交与 JWT 一致的 expected_auth_user_id。缓存、草稿及加密口令引用按项目/实例/契约/用户隔离，表单采用正文时才设定编辑 revision，背景列表刷新不替换脏表单。
+
+## Admin 页面读取与短期内存缓存
+
+Admin 内部导航和详情使用 Next Link，复用 locale layout 中的 QueryClient；返回公共编辑器仍采用完整导航和 no-referrer。冷页面只请求一次 BFF：固定 bearer 的 getUser 校验后调用一次 admin_read，避免每个页面先读 context 再读列表的四次串行 Supabase HTTP。组合响应仍逐次验证活跃 Auth/session/member；写入、验证、readback 和 TOTP 规则不从缓存取得授权。
+
+列表、详情和 analytics 的 React Query 内存数据保持 30 秒新鲜，overview/control 每次进入重新读取；HTTP no-store 不禁止该明确有界的页面内存缓存。缓存键包含 Supabase project、用户、Auth token epoch、数据库实例和完整页面参数；bootstrap 仅在尚无实例时存在。账户或令牌变化取消并清理旧 epoch，401/403 清理当前所属缓存；实例失配清理当前作用域并最多重新 bootstrap 一次。旧请求和旧账户错误不能改写新账户状态。
+
+成功写入使受影响资源、overview/control 与 audit 失效；当前挂载的相关页面也必须响应其他页面迟到写入的失效。异步回调按账号和实例判断归属；同账号令牌正常更新不能丢失已提交写入的刷新通知，跨账号或跨实例回调不能触碰当前数据。高风险操作仍由服务端和数据库实时验证。MFA 面板保留当前账号的操作提示，令牌更新后重新读取权限状态。
