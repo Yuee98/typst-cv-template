@@ -18,6 +18,7 @@ Object.assign(env, {
   NEXT_TELEMETRY_DISABLED: "1",
   STATIC_EXPORT: "false",
   ADMIN_ENVIRONMENT: "local",
+  AI_POLISH_ENABLED: "false",
   NEXT_PUBLIC_AI_POLISH_ENABLED: "false",
   AI_USER_ID_HMAC_SECRET: "",
   PORT: "4173",

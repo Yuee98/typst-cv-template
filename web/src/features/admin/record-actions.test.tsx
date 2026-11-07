@@ -22,7 +22,6 @@ const context: AdminContext = {
     global_daily_limit: "2000",
     user_minute_limit: "3"
   },
-  legal: {}
 };
 afterEach(() => {
   cleanup();

@@ -20,7 +20,7 @@ try {
   exitCode = await new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      [playwrightCli, "test", "--config", "playwright.admin.config.ts"],
+      [playwrightCli, "test", "--config", "playwright.admin.config.ts", ...process.argv.slice(2)],
       { cwd: webRoot, env: process.env, stdio: "inherit" },
     );
     child.once("error", reject);
