@@ -13,7 +13,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Dual-mode build (tmp/ai-polish-roadmap.md「双模式构建」CI 节): the static
+# The static
 # export (GitHub Pages) and the server build (Vercel) are gated by two
 # independent jobs. Each job runs on its own checkout so that .next/, out/,
 # and the generated API route files can never cross-contaminate the other
@@ -21,6 +21,21 @@ concurrency:
 # is small, and this keeps each job a self-contained gate instead of paying a
 # third checkout+install cycle for a standalone web-test job.
 jobs:
+  database-tool-safety:
+    name: Database tooling safety (no database access)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node --test scripts/db-safety.test.ts
+      - run: |
+          for file in scripts/db-*.ts; do
+            node --check "$file"
+          done
+
   web-static-build:
     name: Web (static export)
     runs-on: ubuntu-latest
@@ -44,9 +59,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Runtime contract preflight
-        run: pnpm --filter web exec vitest run src/server/polish/service-runtime-contract-v1.test.ts
 
       - name: Lint
         run: pnpm lint
@@ -93,11 +105,12 @@ jobs:
 
     env:
       NEXT_TELEMETRY_DISABLED: "1"
-      # CI smoke configuration (unit 2.3): the fake LLM + fake backend let
+      # CI smoke configuration: the fake LLM + fake backend let
       # `next build`/`next start` serve the full polish lifecycle without
       # Supabase or a DeepSeek key. NODE_ENV=production inside next build/start
       # is exempted by the CI=true marker GitHub Actions sets automatically
-      # (see src/server/polish/provider.ts).
+      # (see src/server/polish/handler.ts).
+      ADMIN_ENVIRONMENT: "local"
       POLISH_FAKE_LLM: "true"
       POLISH_FAKE_BACKEND: "true"
       AI_POLISH_ENABLED: "true"
@@ -117,9 +130,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Runtime contract preflight
-        run: pnpm --filter web exec vitest run src/server/polish/service-runtime-contract-v1.test.ts
 
       - name: Lint
         run: pnpm lint
@@ -161,7 +171,7 @@ jobs:
           fi
           echo "Server ready (HTTP ${status})."
 
-          # Unit 2.3 lifecycle: token-less requests → 401 UNAUTHORIZED; with
+          # Current lifecycle: token-less requests → 401 UNAUTHORIZED; with
           # the fake backend (POLISH_FAKE_LLM + POLISH_FAKE_BACKEND, job env)
           # a Bearer token drives the full chain to a 200 success shape
           # (scripts/smoke-polish-api.mjs).
@@ -177,8 +187,6 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ""
           SUPABASE_SERVICE_ROLE_KEY: ""
           AI_USER_ID_HMAC_SECRET: ""
-          DEEPSEEK_API_KEY: ""
-          MIMO_API_KEY: ""
         run: |
           set -euo pipefail
 
@@ -218,6 +226,7 @@ jobs:
       # Keep the browser journey deterministic and credential-free. The
       # launcher also applies these values so local runs cannot inherit hosted
       # Supabase or DeepSeek credentials from a developer environment.
+      ADMIN_ENVIRONMENT: "local"
       POLISH_FAKE_LLM: "true"
       POLISH_FAKE_BACKEND: "true"
       AI_POLISH_ENABLED: "true"
@@ -225,8 +234,6 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ""
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ""
       SUPABASE_SERVICE_ROLE_KEY: ""
-      DEEPSEEK_API_KEY: ""
-      DEEPSEEK_BASE_URL: ""
       AI_USER_ID_HMAC_SECRET: ""
 
     steps:
@@ -250,6 +257,9 @@ jobs:
 
       - name: Run server-mode browser E2E
         run: pnpm --filter web test:e2e
+
+      - name: Provider selection and exact-consent browser E2E
+        run: pnpm --filter web test:e2e:provider-choice
 
       - name: Upload browser diagnostics
         if: always()

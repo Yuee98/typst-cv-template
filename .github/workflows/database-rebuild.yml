@@ -1,0 +1,108 @@
+name: Database rebuild (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Supabase environment
+        type: choice
+        options: [test, prod]
+        required: true
+      source_sha:
+        description: Complete reviewed commit SHA (40 hex characters)
+        type: string
+        required: true
+      mode:
+        description: Plan is read-only; rebuild requires explicit future authorization
+        type: choice
+        options: [plan, rebuild, resume, verify]
+        default: plan
+      expected_project_ref:
+        description: Exact target Supabase project ref
+        type: string
+        required: true
+      confirm_destruction:
+        description: DELETE_APPLICATION_DATA (rebuild/resume only)
+        type: string
+      admin_user:
+        description: Confirmed existing Auth admin UUID
+        type: string
+      reset_recovery_evidence:
+        description: Optional JSON proof for inspected interrupted-reset recovery
+        type: string
+      acceptance_evidence:
+        description: Optional JSON acceptance proof bound to the deployed SHA and instance
+        type: string
+      rehearsal_evidence:
+        description: Reviewed JSON rehearsal proof bound to this source SHA and manifests
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: database-${{ inputs.target }}
+  cancel-in-progress: false
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    environment: database-${{ inputs.target }}
+    timeout-minutes: 35
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+      REBUILD_DATABASE_URL: ${{ secrets.REBUILD_DATABASE_URL }}
+      REBUILD_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      REBUILD_OTHER_PROJECT_REF: ${{ vars.OTHER_SUPABASE_PROJECT_REF }}
+      REBUILD_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      REBUILD_EXECUTION_AUTHORIZED: ${{ vars.REBUILD_EXECUTION_AUTHORIZED }}
+      REBUILD_MAINTENANCE_VERIFIED: ${{ vars.REBUILD_MAINTENANCE_VERIFIED }}
+      GH_TOKEN: ${{ secrets.REBUILD_STATE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare explicit target database CA
+        env:
+          REBUILD_CA_CERT: ${{ secrets.REBUILD_CA_CERT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$REBUILD_CA_CERT" ]; then
+            echo 'Environment secret REBUILD_CA_CERT is required for every hosted mode.' >&2
+            exit 1
+          fi
+          umask 077
+          target_ca_file="$RUNNER_TEMP/rebuild-target-ca.crt"
+          printf '%s' "$REBUILD_CA_CERT" > "$target_ca_file"
+          chmod 600 "$target_ca_file"
+          printf 'REBUILD_CA_CERT_FILE=%s\n' "$target_ca_file" >> "$GITHUB_ENV"
+      - name: Execute explicit phase
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          MODE: ${{ inputs.mode }}
+          TARGET: ${{ inputs.target }}
+          PROJECT_REF: ${{ inputs.expected_project_ref }}
+          CONFIRM_DESTRUCTION: ${{ inputs.confirm_destruction }}
+          ADMIN_USER: ${{ inputs.admin_user }}
+          REHEARSAL_EVIDENCE: ${{ inputs.rehearsal_evidence }}
+          RESET_RECOVERY_EVIDENCE: ${{ inputs.reset_recovery_evidence }}
+          ACCEPTANCE_EVIDENCE: ${{ inputs.acceptance_evidence }}
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [ -n "$REHEARSAL_EVIDENCE" ]; then
+            printf '%s' "$REHEARSAL_EVIDENCE" > "$RUNNER_TEMP/rehearsal-evidence.json"
+            extra_args+=(--rehearsal-evidence="$RUNNER_TEMP/rehearsal-evidence.json")
+          fi
+          if [ -n "$RESET_RECOVERY_EVIDENCE" ]; then
+            printf '%s' "$RESET_RECOVERY_EVIDENCE" > "$RUNNER_TEMP/reset-recovery-evidence.json"
+            extra_args+=(--reset-recovery-evidence="$RUNNER_TEMP/reset-recovery-evidence.json")
+          fi
+          if [ -n "$ACCEPTANCE_EVIDENCE" ]; then
+            printf '%s' "$ACCEPTANCE_EVIDENCE" > "$RUNNER_TEMP/acceptance-evidence.json"
+            extra_args+=(--acceptance-evidence="$RUNNER_TEMP/acceptance-evidence.json")
+          fi
+          node scripts/db-rebuild.ts --mode="$MODE" --target="$TARGET" --source-sha="$SOURCE_SHA" --expected-project-ref="$PROJECT_REF" --confirm-project="$PROJECT_REF" --confirm-destruction="$CONFIRM_DESTRUCTION" --admin-user="$ADMIN_USER" "${extra_args[@]}"

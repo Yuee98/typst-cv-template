@@ -1,6 +1,5 @@
 /**
- * Pure safety predicates for the real-key integration smoke (CP4 round-1
- * P0-1 / P0-2.3). No IO, no process.env — unit-tested by
+ * Pure safety predicates for local integration endpoints. No IO, no process.env — unit-tested by
  * local-safety.test.mjs so the guards a release gate depends on are
  * themselves proven.
  */
@@ -32,28 +31,10 @@ export function checkLocalSupabaseUrl(rawUrl) {
   if (url.protocol !== "http:") {
     return { ok: false, reason: `protocol must be http:, got ${url.protocol}`, origin: url.origin };
   }
+  if (url.username || url.password) return { ok: false, reason: "credentials in URL are forbidden" };
   const hostname = normalizeHostname(url.hostname);
   if (!LOOPBACK_HOSTNAMES.has(hostname)) {
     return { ok: false, reason: `hostname must be loopback, got ${hostname}`, origin: url.origin };
   }
   return { ok: true, origin: url.origin };
-}
-
-/** Official DeepSeek API origin (mirrors DEFAULT_DEEPSEEK_BASE_URL in deepseek.ts). */
-export const OFFICIAL_DEEPSEEK_ORIGIN = "https://api.deepseek.com";
-
-/**
- * True only when a custom DEEPSEEK_BASE_URL still resolves to the official
- * origin (trailing slash / sub-path tolerated — same upstream). A proxy,
- * mock, or lookalike host is NOT the official integration and must be
- * rejected (or loudly disclaimed via --allow-custom-upstream).
- */
-export function isOfficialDeepSeekBaseUrl(rawBaseUrl) {
-  let url;
-  try {
-    url = new URL(rawBaseUrl);
-  } catch {
-    return false;
-  }
-  return url.origin === OFFICIAL_DEEPSEEK_ORIGIN;
 }

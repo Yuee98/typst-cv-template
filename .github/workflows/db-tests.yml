@@ -1,152 +1,85 @@
 name: DB integration tests
-
-# Real-DB suite for the AI polish quota ledger, terms RLS and retention jobs
-# (tmp/ai-polish-plan.md unit 1.4). Runs against a throwaway local Supabase
-# inside the runner — never against a hosted project.
-#
-# The Supabase Docker stack is too expensive for every web-only PR, so this
-# workflow runs automatically only when migrations or their production/test
-# adapters change. workflow_dispatch remains available for release checkpoints.
-# Local equivalent:
-#   pnpm supabase:start
-#   pnpm --filter web test:db:cfg001-fresh
-#   node web/scripts/run-cfg002-fresh-reset.mjs
-#   node web/scripts/run-cfg003-fresh-reset.mjs
-#   pnpm --filter web test:db
 on:
   pull_request:
     paths:
-      - ".github/workflows/db-tests.yml"
-      - "package.json"
+      - "supabase/**"
+      - "scripts/**"
+      - "web/src/**"
+      - "web/test/**"
+      - "web/scripts/**"
+      - "web/*config*"
+      - "**/package.json"
       - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "supabase/config.toml"
-      - "supabase/migrations/**"
-      - "supabase/seed.sql"
-      - "web/package.json"
-      - "web/scripts/run-cfg001-fresh-reset.mjs"
-      - "web/scripts/run-cfg002-fresh-reset.mjs"
-      - "web/scripts/run-cfg003-fresh-reset.mjs"
-      - "web/scripts/run-db-tests.mjs"
-      - "web/scripts/run-db-tests.test.mjs"
-      - "web/scripts/test-admin-bootstrap-upgrade.mjs"
-      - "web/scripts/test-admin-drafts-upgrade.mjs"
-      - "web/scripts/run-admin-e2e-server.mjs"
-      - "web/scripts/run-admin-e2e.mjs"
-      - "web/e2e/**"
-      - "web/playwright.admin.config.ts"
-      - "web/vitest.config.mts"
-      - "web/src/lib/cv/cloud-storage.ts"
-      - "web/src/lib/legal/legal-display-v2.ts"
-      - "web/src/lib/legal/terms-acceptance.ts"
-      - "web/src/lib/admin/**"
-      - "web/src/server/admin/**"
-      - "web/src/server/polish/auth.ts"
-      - "web/src/server/polish/deepseek-v2-seed-v1.ts"
-      - "web/src/server/polish/deepseek-v2-seed-v1.test.ts"
-      - "web/src/server/polish/deepseek.ts"
-      - "web/src/server/polish/mimo.ts"
-      - "web/src/server/polish/execution-snapshot-v2.ts"
-      - "web/src/server/polish/handler-runtime-authority.ts"
-      - "web/src/server/polish/handler.ts"
-      - "web/src/server/polish/legal-display-reader-v2.ts"
-      - "web/src/server/polish/prepared-provider-execution-v2.ts"
-      - "web/src/server/polish/profile-execution-v2.ts"
-      - "web/src/server/polish/provider-binding-v2.ts"
-      - "web/src/server/polish/runtime-code-capability-v2.ts"
-      - "web/src/server/polish/runtime-config-receipt-v2.ts"
-      - "web/src/server/polish/g4-routing-policy-seed-v1.ts"
-      - "web/src/server/polish/g4-routing-policy-seed-v1.test.ts"
-      - "web/src/server/polish/routing-rules-v1.test.ts"
-      - "web/test/fixtures/routing-rules-v1.json"
-      - "web/src/server/polish/lifecycle*.ts"
-      - "web/src/server/polish/quota.ts"
-      - "web/test/fixtures/admin-contract-v3.json"
-      - "web/test/fixtures/profile-execution-v2.json"
-      - "web/test/db/**"
-      - "web/vitest.db.config.mts"
+      - ".github/workflows/db-tests.yml"
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   db-tests:
-    name: Web (real-DB tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
-
+    timeout-minutes: 45
     env:
-      NEXT_TELEMETRY_DISABLED: "1"
+      SUPABASE_TELEMETRY_DISABLED: "1"
       DB_TESTS_REQUIRED: "1"
-
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
+      - uses: actions/checkout@v7
         with:
-          version: 2.109.0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           package-manager-cache: false
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # This is deliberately credential-free and must run before Docker-backed
-      # tests. It proves the required/optional behavior, loopback-only target
-      # guard, isolated-selector clearing, and child-process failure handling
-      # that make the real-DB gate safe to invoke.
-      - name: Verify DB test runner contract (credential-free)
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Verify destructive-tool guards
+        run: node --test scripts/*.test.ts
+      - name: Verify loopback test guard
         run: pnpm --filter web exec vitest run scripts/run-db-tests.test.mjs
-
-      # The suite only needs postgres + PostgREST + GoTrue (+kong); excluding
-      # the heavyweight extras keeps the manual run fast.
-      - name: Start local Supabase
-        run: pnpm exec supabase start -x studio,storage-api,imgproxy,edge-runtime,vector,pooler
-
-      # This runner owns its disposable local stack. Exercise real predecessor
-      # upgrades in rollback-only transactions before the normal fresh-chain gates.
-      - name: Reset to Admin bootstrap predecessor
-        run: pnpm exec supabase db reset --local --version 20260909070000 --yes
-
-      - name: Run Admin bootstrap predecessor upgrade gate
-        run: node web/scripts/test-admin-bootstrap-upgrade.mjs
-
-      - name: Reset to Admin drafts predecessor
-        run: pnpm exec supabase db reset --local --version 20260909110000 --yes
-
-      - name: Run Admin drafts predecessor upgrade gate
-        run: node web/scripts/test-admin-drafts-upgrade.mjs
-
-      # Hard-fail proof of the exact post-migration seed cardinality and dark
-      # feature state. The runner verifies loopback and resets before running
-      # only the order-sensitive CFG-001 suite.
-      - name: Run CFG-001 fresh-reset gate
-        run: pnpm --filter web test:db:cfg001-fresh
-
-      - name: Run CFG-002 fresh-reset gate
-        run: node web/scripts/run-cfg002-fresh-reset.mjs
-
-      - name: Run CFG-003 fresh-reset gate
-        run: node web/scripts/run-cfg003-fresh-reset.mjs
-
-      - name: Install Chromium for Admin Auth E2E
-        run: pnpm --filter web test:e2e:install
-
-      - name: Run local Supabase Admin Auth UI E2E
-        run: pnpm --filter web test:e2e:admin
-
-      # Required mode makes status, local-API, and child-process failures hard
-      # CI errors. The runner accepts only HTTP loopback endpoints and clears
-      # the isolated selector before the ordinary full DB suite.
-      - name: Run real-DB suite
+      - name: Start disposable local Supabase
+        run: pnpm exec supabase start -x studio,realtime,logflare,vector,postgres-meta,imgproxy,supavisor,edge-runtime
+      - name: Rebuild current baseline
+        run: pnpm exec supabase db reset --local --no-seed --yes
+      - name: Database constraints and role permissions
+        run: pnpm exec supabase test db --local
+      - name: API and concurrency integration
         run: pnpm --filter web test:db
+      - name: Two-connection AI ledger concurrency
+        env:
+          CV_DB_CONCURRENCY_CONTAINER: supabase_db_typst-cv-template
+        run: node scripts/db-ai-concurrency.ts --run-disposable
+      - name: Prepare independent historical application fixture
+        run: node scripts/db-remote-rehearsal.ts --mode=prepare
+      - name: Start independent rehearsal database
+        run: node scripts/db-remote-rehearsal.ts --mode=start-db
+      - name: Copy platform schema and migration metadata only
+        run: node scripts/db-remote-rehearsal.ts --mode=platform
+      - name: Apply historical migration fixture
+        run: node scripts/db-remote-rehearsal.ts --mode=legacy
+      - name: Rehearse application allowlist rebuild and resume
+        run: node scripts/db-remote-rehearsal.ts --mode=run
+      - name: Reject missing checkpoints and recover inspected state
+        run: node scripts/db-remote-rehearsal.ts --mode=checkpoint-guards
+      - name: Verify platform preservation proof
+        run: node scripts/db-remote-rehearsal.ts --mode=verify
+      - name: Install pinned Chromium
+        run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Real local Auth and TOTP browser tests
+        run: pnpm --filter web test:e2e:admin
+      - name: Upload local rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-rehearsal-evidence
+          path: |
+            tmp/remote-rehearsal-proof.json
+            tmp/g3-instance.json
+            tmp/g3-platform-origin.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop independent rehearsal database
+        if: always()
+        run: docker rm -f supabase_db_cv-remote-rehearsal 2>/dev/null || true
+      - name: Stop disposable runtime
+        if: always()
+        run: pnpm exec supabase stop --no-backup

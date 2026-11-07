@@ -127,7 +127,7 @@ jobs:
               exit 1
             fi
 
-            if ! jq -e 'type == "string" and length > 0' "${response_file}" >/dev/null; then
+            if ! jq -se 'length == 1 and .[0] == true' "${response_file}" >/dev/null; then
               echo "::error::Supabase ${TARGET} keepalive request ${request_number} returned an unexpected response."
               cat "${response_file}"
               exit 1
@@ -136,6 +136,8 @@ jobs:
             echo "Supabase ${TARGET} database request ${request_number}/3 succeeded."
           done
 
-          echo "### Supabase keepalive (${TARGET})" >> "${GITHUB_STEP_SUMMARY}"
-          echo >> "${GITHUB_STEP_SUMMARY}"
-          echo "Three read-only database requests completed successfully." >> "${GITHUB_STEP_SUMMARY}"
+          {
+            echo "### Supabase keepalive (${TARGET})"
+            echo
+            echo "Three read-only database requests completed successfully."
+          } >> "${GITHUB_STEP_SUMMARY}"

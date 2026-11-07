@@ -5,6 +5,7 @@
 // It always uses a fixed loopback port and neutralizes hosted-service secrets.
 
 import { spawn } from "node:child_process";
+import { isolateProviderEnvironment } from "./lib/isolated-env.mjs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,8 +14,10 @@ const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const port = "4173";
 
 const env = {
-  ...process.env,
+  ...isolateProviderEnvironment(process.env, join(webRoot, ".env.local")),
   CI: "true",
+  ADMIN_ENVIRONMENT: "local",
+  VERCEL_ENV: "",
   NEXT_TELEMETRY_DISABLED: "1",
   // Mount the production public telemetry components so the browser test can
   // inspect their queued pageview payload after leaving an Admin URL.
@@ -24,7 +27,7 @@ const env = {
   AI_POLISH_ENABLED: "true",
   NEXT_PUBLIC_AI_POLISH_ENABLED: "false",
   // Empty values override any matching .env.local entry that Next may find;
-  // the E2E run must never contact a hosted Supabase or DeepSeek service.
+  // the E2E run must never contact hosted Supabase or an upstream Provider.
   NEXT_PUBLIC_SUPABASE_URL: "",
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "",
   SUPABASE_SERVICE_ROLE_KEY: "",
