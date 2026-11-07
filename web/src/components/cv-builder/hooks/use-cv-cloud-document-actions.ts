@@ -3,7 +3,7 @@ import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { useLayoutEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { useTranslations } from "next-intl";
 import type { EncryptionSubmitPayload } from "@/components/cv-builder/hooks/use-encryption-modal";
-import { loadEncryptedCloudCvDocument, type CloudCvDocument, type EncryptedCloudCvDocument } from "@/lib/cv/cloud-storage";
+import { assertExistingCloudWriteCurrent, loadEncryptedCloudCvDocument, rebindExistingCloudWriteToLoadedDocument, type CloudCvDocument, type CloudCvWriteToken, type EncryptedCloudCvDocument } from "@/lib/cv/cloud-storage";
 import { errorMessage } from "@/lib/cv/cv-utils";
 import { decryptCvData, encryptCvData, encryptedPayloadSchema } from "@/lib/cv/encryption";
 import type { EncryptedPayload } from "@/lib/cv/encryption";
@@ -23,6 +23,7 @@ export function useCvCloudDocumentActions({
   closeEncryptionModal,
   createCloudDocument,
   createEncryptedCloudDocument,
+  captureExistingWrite,
   documents,
   duplicateDocument,
   encryptExistingCloudDocument,
@@ -57,6 +58,7 @@ export function useCvCloudDocumentActions({
     sourceDocumentId?: string;
     expectedUserId: string;
   }) => Promise<EncryptedCloudCvDocument>;
+  captureExistingWrite: (id: string) => CloudCvWriteToken;
   documents: CvDocumentSummary[];
   duplicateDocument: (id: string, options?: {
     passphraseOverride?: string;
@@ -65,12 +67,13 @@ export function useCvCloudDocumentActions({
   encryptExistingCloudDocument: (input: {
     client: SupabaseClient;
     expectedUserId: string;
+    writeToken: CloudCvWriteToken;
     encryptedPayload: EncryptedPayload;
     id: string;
     schemaVersion: number;
   }) => Promise<EncryptedCloudCvDocument>;
   fetchCloudDocument: (client: SupabaseClient, id: string, locale: Locale) => Promise<CloudCvDocument>;
-  loadDataIntoForm: (id: string, data: CvData) => void;
+  loadDataIntoForm: (id: string, data: CvData, options?: { cloudRevision?: string }) => void;
   onError: (message: string) => void;
   openEnableEncryptionModal: (documentId: string) => void;
   saveCurrentDocument: (options?: {
@@ -146,7 +149,7 @@ export function useCvCloudDocumentActions({
       // old local id so this prepend stays a single entry regardless of whether the mirror
       // effect has already run (avoids the duplicate-key bug seen on local->cloud moves).
       setOrderedDocuments(currentDocuments => [cloudDocument, ...currentDocuments.filter(document => document.id !== id && document.id !== cloudDocument.id)]);
-      loadDataIntoForm(cloudDocument.id, cloudDocument.data);
+      loadDataIntoForm(cloudDocument.id, cloudDocument.data, { cloudRevision: cloudDocument.revision });
       setCloudStatus("ready");
     } catch (moveError) {
       if (ownsActor()) onError(errorMessage(moveError));
@@ -178,7 +181,10 @@ export function useCvCloudDocumentActions({
         return;
       }
       if (!ownsActor()) return;
-      const sourceData = current.storageKind === "local" ? loadCvDocument(id)?.data : (await fetchCloudDocument(supabase, id, locale)).data;
+      let writeToken = current.storageKind === "cloud" ? captureExistingWrite(id) : null;
+      const sourceDocument = current.storageKind === "local" ? loadCvDocument(id) : await fetchCloudDocument(supabase, id, locale);
+      if (writeToken && sourceDocument) writeToken = rebindExistingCloudWriteToLoadedDocument(writeToken, sourceDocument as CloudCvDocument);
+      const sourceData = sourceDocument?.data;
       if (!ownsActor()) return;
       if (!sourceData) {
         throw new Error(tCloudActions("loadBeforeEncryptFailed"));
@@ -199,8 +205,10 @@ export function useCvCloudDocumentActions({
       if (pending && (pending.source !== source || pending.password !== password)) {
         throw new Error("Confirm the pending encrypted create before changing its content or password.");
       }
+      if (writeToken) assertExistingCloudWriteCurrent(writeToken);
       const encryptedPayload = pending?.payload ?? (await encryptCvData(sourceData, password, locale));
       if (!ownsActor()) return;
+      if (writeToken) assertExistingCloudWriteCurrent(writeToken);
       if (current.storageKind === "local") {
         window.sessionStorage.setItem(operationStorageKey, JSON.stringify(encryptedPayload));
         pendingEncryptedCreates.current.set(id, {
@@ -230,18 +238,19 @@ export function useCvCloudDocumentActions({
         // onSuccess mirrors the new doc into documents via the documentsData effect, so the
         // manual prepend must not double it up regardless of execution order.
         setOrderedDocuments(currentDocuments => [encryptedDocument, ...currentDocuments.filter(document => document.id !== id && document.id !== encryptedDocument.id)]);
-        loadDataIntoForm(encryptedDocument.id, sourceData);
+        loadDataIntoForm(encryptedDocument.id, sourceData, { cloudRevision: encryptedDocument.revision });
       } else {
         const encryptedDocument = await encryptExistingCloudDocument({
           client: supabase,
           expectedUserId: session.user.id,
+          writeToken: writeToken!,
           id,
           encryptedPayload,
           schemaVersion: sourceData.schemaVersion
         });
         if (!ownsActor()) return;
         upsertDocumentSummary(encryptedDocument);
-        loadDataIntoForm(id, sourceData);
+        loadDataIntoForm(id, sourceData, { cloudRevision: encryptedDocument.revision });
       }
       setCloudStatus("ready");
     } catch (encryptionError) {
@@ -262,7 +271,7 @@ export function useCvCloudDocumentActions({
     const decryptedData = await decryptCvData(document.encryptedPayload, password, locale);
     if (!ownsActor()) return;
     upsertDocumentSummary(document);
-    loadDataIntoForm(document.id, decryptedData);
+    loadDataIntoForm(document.id, decryptedData, { cloudRevision: document.revision });
   }
   async function openEnableEncryption(id: string) {
     const ownsActor = actorGuard();

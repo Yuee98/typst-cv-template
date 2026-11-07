@@ -67,6 +67,7 @@ function renderCloudActions({
       closeEncryptionModal,
       createCloudDocument,
       createEncryptedCloudDocument,
+      captureExistingWrite: () => ({} as cloudStorage.CloudCvWriteToken),
       documents,
       duplicateDocument,
       encryptExistingCloudDocument,
@@ -189,6 +190,7 @@ describe("useCvCloudDocumentActions save gates", () => {
     };
     const cloud = {
       ...summary("cloud-1", "cloud"),
+      revision: "1",
       data: sampleCvDataEn
     };
     const h = renderCloudActions({
@@ -208,7 +210,7 @@ describe("useCvCloudDocumentActions save gates", () => {
       sourceDocumentId: local.id
     });
     expect(h.setOrderedDocuments).toHaveBeenCalled();
-    expect(h.loadDataIntoForm).toHaveBeenCalledWith(cloud.id, cloud.data);
+    expect(h.loadDataIntoForm).toHaveBeenCalledWith(cloud.id, cloud.data, { cloudRevision: "1" });
     expect(h.setCloudStatus).toHaveBeenCalledWith("ready");
   });
   it("blocks an active local-to-cloud move when the required silent save fails", async () => {

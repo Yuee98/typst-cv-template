@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   type CloudCvDocument,
+  type CloudCvWriteToken,
   loadEncryptedCloudCvDocument,
 } from "@/lib/cv/cloud-storage";
 import { defaultLocale, type Locale } from "@/i18n/routing";
@@ -62,8 +63,13 @@ export function isTermsNotAcceptedError(error: unknown): error is TermsNotAccept
 
 export type LoadedCvDocument = {
   data: CvData;
-  summary: CvDocumentSummary;
-};
+} & ({
+  summary: CvDocumentSummary & { storageKind: "local" };
+  cloudRevision?: never;
+} | {
+  summary: CvDocumentSummary & { storageKind: "cloud" | "encrypted" };
+  cloudRevision: string;
+});
 
 type LoadOptions = {
   passphraseOverride?: string;
@@ -84,15 +90,16 @@ type EncryptedUpdate = {
 };
 
 export type CvCloudStorageOperations = {
-  deleteCloudDocument(client: SupabaseClient, id: string): Promise<void>;
+  deleteCloudDocument(client: SupabaseClient, id: string, writeToken: CloudCvWriteToken): Promise<void>;
   loadCloudDocument(client: SupabaseClient, id: string, locale: Locale): Promise<CloudCvDocument>;
-  renameCloudDocument(client: SupabaseClient, id: string, title: string): Promise<CvDocumentSummary>;
-  updateCloudDocumentData(client: SupabaseClient, id: string, data: CvData, locale: Locale): Promise<CvDocumentSummary>;
+  renameCloudDocument(client: SupabaseClient, id: string, title: string, writeToken: CloudCvWriteToken): Promise<CvDocumentSummary>;
+  updateCloudDocumentData(client: SupabaseClient, id: string, data: CvData, locale: Locale, writeToken: CloudCvWriteToken): Promise<CvDocumentSummary>;
   updateEncryptedCloudDocumentData(
     client: SupabaseClient,
     id: string,
     update: EncryptedUpdate,
     locale: Locale,
+    writeToken: CloudCvWriteToken,
   ): Promise<CvDocumentSummary>;
 };
 
@@ -107,11 +114,13 @@ export type CvCloudAccessAction =
 export function createCvStorageAdapters({
   locale = defaultLocale,
   cloudStorage,
+  captureExistingWrite,
   getEncryptionPassphrase,
   requireCloudAccess,
 }: {
   locale?: Locale;
   cloudStorage: CvCloudStorageOperations;
+  captureExistingWrite: (id: string) => CloudCvWriteToken;
   getEncryptionPassphrase: (id: string) => Promise<string | null>;
   requireCloudAccess: (action: CvCloudAccessAction) => Promise<SupabaseClient>;
 }): CvStorageAdapters {
@@ -137,7 +146,7 @@ export function createCvStorageAdapters({
 
         return {
           data: document.data,
-          summary: summarizeLocalDocument(document),
+          summary: { ...summarizeLocalDocument(document), storageKind: "local" as const },
         };
       },
       async rename(summary, title) {
@@ -160,8 +169,9 @@ export function createCvStorageAdapters({
     },
     cloud: {
       async delete(summary) {
+        const writeToken = captureExistingWrite(summary.id);
         const client = await requireCloudAccess("signInBeforeDeleteCloud");
-        await cloudStorage.deleteCloudDocument(client, summary.id);
+        await cloudStorage.deleteCloudDocument(client, summary.id, writeToken);
       },
       async load(summary) {
         const client = await requireCloudAccess("signInBeforeOpenCloud");
@@ -169,21 +179,25 @@ export function createCvStorageAdapters({
         return {
           data: document.data,
           summary: document,
+          cloudRevision: document.revision,
         };
       },
       async rename(summary, title) {
+        const writeToken = captureExistingWrite(summary.id);
         const client = await requireCloudAccess("signInBeforeRenameCloud");
-        return cloudStorage.renameCloudDocument(client, summary.id, title);
+        return cloudStorage.renameCloudDocument(client, summary.id, title, writeToken);
       },
       async save(summary, data) {
+        const writeToken = captureExistingWrite(summary.id);
         const client = await requireCloudAccess("signInBeforeSaveCloud");
-        return cloudStorage.updateCloudDocumentData(client, summary.id, data, locale);
+        return cloudStorage.updateCloudDocumentData(client, summary.id, data, locale, writeToken);
       },
     },
     encrypted: {
       async delete(summary) {
+        const writeToken = captureExistingWrite(summary.id);
         const client = await requireCloudAccess("signInBeforeDeleteCloud");
-        await cloudStorage.deleteCloudDocument(client, summary.id);
+        await cloudStorage.deleteCloudDocument(client, summary.id, writeToken);
       },
       async load(summary, options) {
         const client = await requireCloudAccess("signInBeforeOpenEncrypted");
@@ -192,20 +206,23 @@ export function createCvStorageAdapters({
         return {
           data: await decryptCvData(document.encryptedPayload, passphrase, locale),
           summary: document,
+          cloudRevision: document.revision,
         };
       },
       async rename(summary, title) {
+        const writeToken = captureExistingWrite(summary.id);
         const client = await requireCloudAccess("signInBeforeRenameCloud");
-        return cloudStorage.renameCloudDocument(client, summary.id, title);
+        return cloudStorage.renameCloudDocument(client, summary.id, title, writeToken);
       },
       async save(summary, data) {
+        const writeToken = captureExistingWrite(summary.id);
         const client = await requireCloudAccess("signInBeforeSaveEncrypted");
         const passphrase = await requirePassphrase(summary.id);
         const encryptedPayload = await encryptCvData(data, passphrase, locale);
         return cloudStorage.updateEncryptedCloudDocumentData(client, summary.id, {
           encryptedPayload,
           schemaVersion: data.schemaVersion,
-        }, locale);
+        }, locale, writeToken);
       },
     },
   };

@@ -20,10 +20,12 @@ const rowSchema = z.object({
 type Row = z.infer<typeof rowSchema>;
 export type CloudCvDocument = CvDocumentSummary & {
   storageKind: "cloud";
+  revision: string;
   data: CvData;
 };
 export type EncryptedCloudCvDocument = CvDocumentSummary & {
   storageKind: "encrypted";
+  revision: string;
   encryptedPayload: EncryptedPayload;
 };
 type Evidence = {
@@ -31,6 +33,18 @@ type Evidence = {
   revision: string;
   instance: string;
 };
+const writeTokenBrand = Symbol("CloudCvWriteToken");
+export type CloudCvWriteToken = Readonly<{ [writeTokenBrand]: true }>;
+type ExistingWrite = {
+  client: SupabaseClient;
+  id: string;
+  owner: string;
+  previous: Evidence;
+  observation: Evidence | undefined;
+  edit: Evidence | undefined;
+};
+const existingWrites = new WeakMap<CloudCvWriteToken, ExistingWrite>();
+const loadedEvidence = new WeakMap<CloudCvDocument, { client: SupabaseClient; observation: Evidence }>();
 const evidence = new WeakMap<SupabaseClient, Map<string, Evidence>>();
 const editingEvidence = new WeakMap<SupabaseClient, Map<string, Evidence>>();
 const pendingCreates = new WeakMap<SupabaseClient, Map<string, string>>();
@@ -54,11 +68,48 @@ function remember(client: SupabaseClient, row: Row, instance: string, owner: str
     rows = new Map();
     evidence.set(client, rows);
   }
-  rows.set(row.external_id, {
+  const observation = {
     owner,
     revision: row.revision,
     instance
-  });
+  };
+  rows.set(row.external_id, observation);
+  return observation;
+}
+function writeToken(snapshot: ExistingWrite): CloudCvWriteToken {
+  const token = Object.freeze({ [writeTokenBrand]: true as const });
+  existingWrites.set(token, snapshot);
+  return token;
+}
+function existingWrite(token: CloudCvWriteToken): ExistingWrite {
+  const snapshot = existingWrites.get(token);
+  if (!snapshot) throw new Error("CONFLICT: Existing document write evidence is required.");
+  return snapshot;
+}
+function ownsExistingWrite(snapshot: ExistingWrite) {
+  return editingEvidence.get(snapshot.client)?.get(snapshot.id) === snapshot.edit;
+}
+function sameObservation(current: Evidence | undefined, previous: Evidence | undefined) {
+  return current === previous || Boolean(current && previous && current.owner === previous.owner && current.instance === previous.instance && current.revision === previous.revision);
+}
+export function captureExistingCloudWrite(client: SupabaseClient, id: string, expectedUserId: string): CloudCvWriteToken {
+  requireWriteUserId(expectedUserId);
+  const observation = evidence.get(client)?.get(id), edit = editingEvidence.get(client)?.get(id);
+  const previous = edit ?? observation;
+  if (!previous || previous.owner !== expectedUserId) throw new Error("CONFLICT: Open the current document before changing it.");
+  return writeToken({ client, id, owner: expectedUserId, previous, observation, edit });
+}
+export function assertExistingCloudWriteCurrent(token: CloudCvWriteToken) {
+  if (!ownsExistingWrite(existingWrite(token))) throw new Error("CONFLICT: Document editing session changed.");
+}
+/** Bind newly read plaintext to its own observation without rebasing an already active draft. */
+export function rebindExistingCloudWriteToLoadedDocument(token: CloudCvWriteToken, document: CloudCvDocument): CloudCvWriteToken {
+  const start = existingWrite(token), loaded = loadedEvidence.get(document);
+  if (!loaded || loaded.client !== start.client || document.id !== start.id || loaded.observation.owner !== start.owner || loaded.observation.instance !== start.previous.instance ||
+      editingEvidence.get(start.client)?.get(start.id) !== start.edit) {
+    throw new Error("CONFLICT: Loaded document no longer matches the initiating edit.");
+  }
+  return start.edit ? token : writeToken({ ...start, previous: loaded.observation, observation: loaded.observation });
 }
 export function cloudDocumentOwner(client: SupabaseClient, id: string) {
   return evidence.get(client)?.get(id)?.owner ?? null;
@@ -67,7 +118,8 @@ export function editingCloudRevision(client: SupabaseClient, id: string) {
   return editingEvidence.get(client)?.get(id)?.revision ?? null;
 }
 /** Called only when the form actually adopts a loaded document, never by a background refetch. */
-export function activateCloudDocument(client: SupabaseClient, id: string, expectedRevision?: string) {
+export function activateCloudDocument(client: SupabaseClient, id: string, expectedRevision: string) {
+  if (typeof expectedRevision !== "string" || !/^[1-9][0-9]*$/.test(expectedRevision)) throw new Error("CONFLICT: Cloud document body revision is required.");
   const current = evidence.get(client)?.get(id);
   if (!current) return;
   let editing = editingEvidence.get(client);
@@ -76,10 +128,10 @@ export function activateCloudDocument(client: SupabaseClient, id: string, expect
     editingEvidence.set(client, editing);
   }
   editing.clear();
-  editing.set(id, expectedRevision ? {
+  editing.set(id, {
     ...current,
     revision: expectedRevision
-  } : current);
+  });
 }
 function summary(row: Row): CvDocumentSummary {
   return {
@@ -95,6 +147,7 @@ function plain(row: Row, locale: Locale): CloudCvDocument {
   return {
     ...summary(row),
     storageKind: "cloud",
+    revision: row.revision,
     data: cvSchema.parse(row.data)
   };
 }
@@ -103,6 +156,7 @@ function encrypted(row: Row, locale: Locale): EncryptedCloudCvDocument {
   return {
     ...summary(row),
     storageKind: "encrypted",
+    revision: row.revision,
     encryptedPayload: encryptedPayloadSchema.parse(row.encrypted_payload)
   };
 }
@@ -119,8 +173,8 @@ async function load(client: SupabaseClient, id: string, expectedUserId?: string)
   if (error) throw error;
   if (!data) throw new Error("Cloud CV was not found.");
   const row = rowSchema.parse(data);
-  remember(client, row, context.database_instance_id, userId);
-  return row;
+  const observation = remember(client, row, context.database_instance_id, userId);
+  return { row, observation };
 }
 export async function listCloudCvDocuments(client: SupabaseClient, expectedUserId?: string): Promise<CvDocumentSummary[]> {
   const {
@@ -142,24 +196,32 @@ export async function listCloudCvDocuments(client: SupabaseClient, expectedUserI
   });
 }
 export async function loadCloudCvDocument(client: SupabaseClient, id: string, _locale: Locale = defaultLocale, expectedUserId?: string) {
-  return plain(await load(client, id, expectedUserId), _locale);
+  const loaded = await load(client, id, expectedUserId), document = plain(loaded.row, _locale);
+  loadedEvidence.set(document, { client, observation: loaded.observation });
+  return document;
 }
 export async function loadEncryptedCloudCvDocument(client: SupabaseClient, id: string, _locale: Locale = defaultLocale, expectedUserId?: string) {
-  return encrypted(await load(client, id, expectedUserId), _locale);
+  return encrypted((await load(client, id, expectedUserId)).row, _locale);
 }
 type CvMutation = "cv_document_create" | "cv_document_update" | "cv_document_convert" | "cv_document_rename" | "cv_document_delete";
 function requireWriteUserId(expectedUserId: string): string {
   if (typeof expectedUserId !== "string" || !expectedUserId) throw new Error("CONFLICT: Expected account is required");
   return expectedUserId;
 }
-async function write(client: SupabaseClient, name: CvMutation, input: Record<string, unknown>, id: string | undefined, expectedUserId: string) {
+async function write(client: SupabaseClient, name: CvMutation, input: Record<string, unknown>, id: string | undefined, expectedUserId: string, token: CloudCvWriteToken | undefined) {
+  requireWriteUserId(expectedUserId);
+  const snapshot = id ? existingWrite(token!) : undefined;
+  if (snapshot && (snapshot.client !== client || snapshot.id !== id || snapshot.owner !== expectedUserId)) throw new Error("CONFLICT: Document write evidence does not match the operation.");
+  if (snapshot && !ownsExistingWrite(snapshot)) throw new Error("CONFLICT: Document editing session changed.");
+  const initiatingObservation = snapshot?.observation, initiatingEdit = snapshot?.edit, previous = snapshot?.previous;
+  const ownsEdit = () => !id || editingEvidence.get(client)?.get(id) === initiatingEdit;
   const {
     scoped,
     userId
   } = await scopedClient(client, requireWriteUserId(expectedUserId));
   const context = await clientWriteContext(client, userId);
-  const previous = id ? editingEvidence.get(client)?.get(id) ?? evidence.get(client)?.get(id) : undefined;
-  if (id && (!previous || previous.instance !== context.database_instance_id)) throw new Error("CONFLICT: Open the current document before changing it.");
+  if (id && (!previous || previous.owner !== userId || previous.instance !== context.database_instance_id)) throw new Error("CONFLICT: Open the current document before changing it.");
+  if (snapshot && !ownsExistingWrite(snapshot)) throw new Error("CONFLICT: Document editing session changed.");
   const payload = {
     ...input,
     ...context,
@@ -177,13 +239,22 @@ async function write(client: SupabaseClient, name: CvMutation, input: Record<str
   // A lost response leaves the baseline unchanged. The next write conflicts until the user reads back.
   if (error) throw error;
   if (name === "cv_document_delete") {
-    evidence.get(client)?.delete(id!);
-    editingEvidence.get(client)?.delete(id!);
+    if (ownsEdit()) {
+      if (sameObservation(evidence.get(client)?.get(id!), initiatingObservation)) evidence.get(client)?.delete(id!);
+      editingEvidence.get(client)?.delete(id!);
+    }
     return null;
   }
   const row = rowSchema.parse(data);
-  remember(client, row, context.database_instance_id, userId);
-  if (id && editingEvidence.get(client)?.has(id)) activateCloudDocument(client, row.external_id);
+  if (id && !ownsEdit()) throw new Error("CONFLICT: Document editing session changed after the write. Read back before saving again.");
+  if (!id) {
+    // A replayed/late create must not replace facts already read for its new ID.
+    if (!evidence.get(client)?.has(row.external_id)) remember(client, row, context.database_instance_id, userId);
+  } else if (ownsEdit()) {
+    if (sameObservation(evidence.get(client)?.get(id), initiatingObservation)) remember(client, row, context.database_instance_id, userId);
+    // Advance only the initiating form, using this write's revision rather than a background read's.
+    if (initiatingEdit) editingEvidence.get(client)!.set(id, { owner: userId, revision: row.revision, instance: context.database_instance_id });
+  }
   return row;
 }
 async function create(client: SupabaseClient, input: Record<string, unknown>, sourceDocumentId: string | undefined, expectedUserId: string) {
@@ -226,7 +297,7 @@ async function create(client: SupabaseClient, input: Record<string, unknown>, so
   const row = await write(client, "cv_document_create", {
     ...input,
     client_create_key: key
-  }, undefined, userId);
+  }, undefined, userId, undefined);
   pending.delete(sourceDocumentId ?? payload);
   if (storageKey) window.sessionStorage.removeItem(storageKey);
   return row!;
@@ -270,50 +341,54 @@ export async function createEncryptedCloudCvDocument(client: SupabaseClient, {
     document_schema_version: 7
   }, sourceDocumentId, expectedUserId), _locale);
 }
-export async function updateCloudCvDocumentData(client: SupabaseClient, id: string, data: CvData, expectedUserId: string, _locale: Locale = defaultLocale) {
+export async function updateCloudCvDocumentData(client: SupabaseClient, id: string, data: CvData, expectedUserId: string, token: CloudCvWriteToken, _locale: Locale = defaultLocale) {
   return plain((await write(client, "cv_document_update", {
     data: cvSchema.parse(data),
     storage_mode: "PLAIN",
     document_schema_version: 7
-  }, id, expectedUserId))!, _locale);
+  }, id, expectedUserId, token))!, _locale);
 }
 export async function updateEncryptedCloudCvDocumentData(client: SupabaseClient, id: string, {
   encryptedPayload,
   schemaVersion,
-  expectedUserId
+  expectedUserId,
+  writeToken
 }: {
   encryptedPayload: EncryptedPayload;
   schemaVersion: number;
   expectedUserId: string;
+  writeToken: CloudCvWriteToken;
 }, _locale: Locale = defaultLocale) {
   z.literal(7).parse(schemaVersion);
   return encrypted((await write(client, "cv_document_update", {
     encrypted_payload: encryptedPayloadSchema.parse(encryptedPayload),
     storage_mode: "ENCRYPTED",
     document_schema_version: 7
-  }, id, expectedUserId))!, _locale);
+  }, id, expectedUserId, writeToken))!, _locale);
 }
 export async function encryptExistingCloudCvDocument(client: SupabaseClient, id: string, {
   encryptedPayload,
   schemaVersion,
-  expectedUserId
+  expectedUserId,
+  writeToken
 }: {
   encryptedPayload: EncryptedPayload;
   schemaVersion: number;
   expectedUserId: string;
+  writeToken: CloudCvWriteToken;
 }, _locale: Locale = defaultLocale) {
   z.literal(7).parse(schemaVersion);
   return encrypted((await write(client, "cv_document_convert", {
     encrypted_payload: encryptedPayloadSchema.parse(encryptedPayload),
     storage_mode: "ENCRYPTED",
     document_schema_version: 7
-  }, id, expectedUserId))!, _locale);
+  }, id, expectedUserId, writeToken))!, _locale);
 }
-export async function renameCloudCvDocument(client: SupabaseClient, id: string, title: string, expectedUserId: string) {
+export async function renameCloudCvDocument(client: SupabaseClient, id: string, title: string, expectedUserId: string, token: CloudCvWriteToken) {
   return summary((await write(client, "cv_document_rename", {
     title
-  }, id, expectedUserId))!);
+  }, id, expectedUserId, token))!);
 }
-export async function deleteCloudCvDocument(client: SupabaseClient, id: string, expectedUserId: string) {
-  await write(client, "cv_document_delete", {}, id, expectedUserId);
+export async function deleteCloudCvDocument(client: SupabaseClient, id: string, expectedUserId: string, token: CloudCvWriteToken) {
+  await write(client, "cv_document_delete", {}, id, expectedUserId, token);
 }

@@ -2,7 +2,7 @@ import { registerClient } from "@/lib/supabase/user-client";
 import { execFileSync } from "node:child_process";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createCloudCvDocument, listCloudCvDocuments, loadCloudCvDocument, updateCloudCvDocumentData } from "@/lib/cv/cloud-storage";
+import { captureExistingCloudWrite, createCloudCvDocument, listCloudCvDocuments, loadCloudCvDocument, updateCloudCvDocumentData } from "@/lib/cv/cloud-storage";
 import { sampleCvDataEn } from "@/lib/cv/sample-data";
 const url = process.env.SUPABASE_TEST_URL!;
 if (!url || !["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname) || new URL(url).protocol !== "http:") throw new Error("DB tests require explicit HTTP loopback");
@@ -153,7 +153,7 @@ describe("current database through real Auth and Data API", () => {
         name: "Changed"
       }
     };
-    expect((await updateCloudCvDocumentData(a, doc.id, changed, aUserId)).data.header.name).toBe("Changed");
+    expect((await updateCloudCvDocumentData(a, doc.id, changed, aUserId, captureExistingCloudWrite(a, doc.id, aUserId))).data.header.name).toBe("Changed");
   });
   it("has one winner for concurrent writes at the same revision", async () => {
     const doc = await createCloudCvDocument(a, {

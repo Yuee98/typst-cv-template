@@ -42,6 +42,7 @@ export function cloudSummary(id: string): Omit<CloudCvDocument, "data"> {
     id,
     title: `${id} title`,
     storageKind: "cloud",
+    revision: "1",
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-02T00:00:00.000Z"
   };

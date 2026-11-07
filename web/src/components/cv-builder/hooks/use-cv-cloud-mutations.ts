@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createCloudCvDocument, createEncryptedCloudCvDocument, deleteCloudCvDocument, encryptExistingCloudCvDocument, renameCloudCvDocument, updateCloudCvDocumentData, updateEncryptedCloudCvDocumentData, type CloudCvDocument, type EncryptedCloudCvDocument } from "@/lib/cv/cloud-storage";
+import { createCloudCvDocument, createEncryptedCloudCvDocument, deleteCloudCvDocument, encryptExistingCloudCvDocument, renameCloudCvDocument, updateCloudCvDocumentData, updateEncryptedCloudCvDocumentData, type CloudCvDocument, type CloudCvWriteToken, type EncryptedCloudCvDocument } from "@/lib/cv/cloud-storage";
 import type { EncryptedPayload } from "@/lib/cv/encryption";
 import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
@@ -12,6 +12,7 @@ type CloudMutationContext = {
   client: SupabaseClient;
   expectedUserId: string;
 };
+type ExistingCloudMutationContext = CloudMutationContext & { writeToken: CloudCvWriteToken };
 function upsertSummary(documents: CvDocumentSummary[], summary: CvDocumentSummary) {
   return documents.some(document => document.id === summary.id) ? documents.map(document => document.id === summary.id ? summary : document) : [summary, ...documents];
 }
@@ -115,15 +116,17 @@ export function useCvCloudMutations({
       encryptedPayload,
       id,
       schemaVersion,
-      expectedUserId
-    }: CloudMutationContext & {
+      expectedUserId,
+      writeToken
+    }: ExistingCloudMutationContext & {
       encryptedPayload: EncryptedPayload;
       id: string;
       schemaVersion: number;
     }) => encryptExistingCloudCvDocument(client, id, {
       encryptedPayload,
       schemaVersion,
-      expectedUserId
+      expectedUserId,
+      writeToken
     }, locale),
     onSuccess: (document: EncryptedCloudCvDocument, variables, actor) => {
       if (!ownsMutation(variables, actor)) return;
@@ -137,11 +140,12 @@ export function useCvCloudMutations({
       client,
       data,
       id,
-      expectedUserId
-    }: CloudMutationContext & {
+      expectedUserId,
+      writeToken
+    }: ExistingCloudMutationContext & {
       data: CvData;
       id: string;
-    }) => updateCloudCvDocumentData(client, id, data, expectedUserId, locale),
+    }) => updateCloudCvDocumentData(client, id, data, expectedUserId, writeToken, locale),
     onSuccess: (document, variables, actor) => {
       if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(document);
@@ -155,15 +159,17 @@ export function useCvCloudMutations({
       encryptedPayload,
       id,
       schemaVersion,
-      expectedUserId
-    }: CloudMutationContext & {
+      expectedUserId,
+      writeToken
+    }: ExistingCloudMutationContext & {
       encryptedPayload: EncryptedPayload;
       id: string;
       schemaVersion: number;
     }) => updateEncryptedCloudCvDocumentData(client, id, {
       encryptedPayload,
       schemaVersion,
-      expectedUserId
+      expectedUserId,
+      writeToken
     }, locale),
     onSuccess: (document, variables, actor) => {
       if (!ownsMutation(variables, actor)) return;
@@ -176,11 +182,12 @@ export function useCvCloudMutations({
       client,
       id,
       title,
-      expectedUserId
-    }: CloudMutationContext & {
+      expectedUserId,
+      writeToken
+    }: ExistingCloudMutationContext & {
       id: string;
       title: string;
-    }) => renameCloudCvDocument(client, id, title, expectedUserId),
+    }) => renameCloudCvDocument(client, id, title, expectedUserId, writeToken),
     onSuccess: (summary, variables, actor) => {
       if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(summary);
@@ -191,11 +198,12 @@ export function useCvCloudMutations({
     mutationFn: async ({
       client,
       id,
-      expectedUserId
-    }: CloudMutationContext & {
+      expectedUserId,
+      writeToken
+    }: ExistingCloudMutationContext & {
       id: string;
     }) => {
-      await deleteCloudCvDocument(client, id, expectedUserId);
+      await deleteCloudCvDocument(client, id, expectedUserId, writeToken);
       return id;
     },
     onSuccess: (id, variables, actor) => {

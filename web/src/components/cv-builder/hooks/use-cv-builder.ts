@@ -1,5 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { activateCloudDocument, editingCloudRevision, cloudDocumentOwner } from "@/lib/cv/cloud-storage";
+import { activateCloudDocument, captureExistingCloudWrite, editingCloudRevision, cloudDocumentOwner } from "@/lib/cv/cloud-storage";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale, useTranslations } from "next-intl";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -124,33 +124,42 @@ export function useCvBuilder() {
     if (!userId) throw new Error("Sign in before changing a cloud CV.");
     return userId;
   }
+  function captureExistingWrite(id: string) {
+    if (!supabase) throw new Error("Sign in before changing a cloud CV.");
+    return captureExistingCloudWrite(supabase, id, cloudWriteActor());
+  }
   const storageAdapters = createCvStorageAdapters({
     locale,
+    captureExistingWrite,
     cloudStorage: {
-      deleteCloudDocument: async (client, id) => {
+      deleteCloudDocument: async (client, id, writeToken) => {
         await cloudMutations.deleteCloudDocument.mutateAsync({
           client,
           id,
+          writeToken,
           expectedUserId: cloudWriteActor()
         });
       },
       loadCloudDocument: (client, id) => fetchCloudDocument(client, id, locale),
-      renameCloudDocument: (client, id, title) => cloudMutations.renameCloudDocument.mutateAsync({
+      renameCloudDocument: (client, id, title, writeToken) => cloudMutations.renameCloudDocument.mutateAsync({
         client,
         id,
         title,
+        writeToken,
         expectedUserId: cloudWriteActor()
       }),
-      updateCloudDocumentData: (client, id, data) => cloudMutations.updateCloudDocumentData.mutateAsync({
+      updateCloudDocumentData: (client, id, data, _locale, writeToken) => cloudMutations.updateCloudDocumentData.mutateAsync({
         client,
         data,
         id,
+        writeToken,
         expectedUserId: cloudWriteActor()
       }),
-      updateEncryptedCloudDocumentData: (client, id, update) => cloudMutations.updateEncryptedCloudDocumentData.mutateAsync({
+      updateEncryptedCloudDocumentData: (client, id, update, _locale, writeToken) => cloudMutations.updateEncryptedCloudDocumentData.mutateAsync({
         client,
         id,
         ...update,
+        writeToken,
         expectedUserId: cloudWriteActor()
       })
     },
@@ -234,6 +243,7 @@ export function useCvBuilder() {
     upsertDocumentSummary
   });
   const cloudDocumentActions = useCvCloudDocumentActions({
+    captureExistingWrite,
     locale,
     tCloudActions,
     activeDocumentId,
@@ -306,9 +316,14 @@ export function useCvBuilder() {
   }
   function loadDataIntoForm(id: string, data: CvData, options?: {
     baselineData?: CvData;
+    cloudRevision?: string;
   }) {
-    if (id.startsWith("cv_") && (!clientRef.current || cloudDocumentOwner(clientRef.current, id) !== actorRef.current)) return;
-    if (supabase) activateCloudDocument(supabase, id, pendingDraftRevisions.current.get(id));
+    if (id.startsWith("cv_")) {
+      if (!clientRef.current || cloudDocumentOwner(clientRef.current, id) !== actorRef.current) return;
+      const revision = pendingDraftRevisions.current.get(id) ?? options?.cloudRevision;
+      if (!revision) throw new Error("CONFLICT: Cloud document body revision is required.");
+      activateCloudDocument(clientRef.current, id, revision);
+    }
     pendingDraftRevisions.current.delete(id);
     // The baseline must track what is persisted, which is not always what goes
     // into the form: when a local draft is recovered, the form gets the draft
@@ -349,6 +364,10 @@ export function useCvBuilder() {
     }
     baselineRef.current = result.baseline;
     setIsDirty(result.dirty);
+    if (activeDocument?.storageKind === "cloud" && current.success) {
+      if (result.dirty) saveDraft(id, current.data);
+      else clearDraft(id);
+    }
   }
   function saveDraft(cvId: string, data: CvData) {
     const revision = supabase ? editingCloudRevision(supabase, cvId) : null;

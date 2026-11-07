@@ -28,7 +28,7 @@ export function useCvPersistence({
   clearDraft: (cvId: string) => void;
   form: UseFormReturn<CvData>;
   handleStorageDeferredError: (error: unknown, mode: "unlock" | "duplicate") => boolean;
-  loadDataIntoForm: (id: string, data: CvData) => void;
+  loadDataIntoForm: (id: string, data: CvData, options?: { baselineData?: CvData; cloudRevision?: string }) => void;
   onPersisted: (id: string, data: CvData) => void;
   onError: (message: string) => void;
   storageAdapters: CvStorageAdapters;
@@ -83,9 +83,6 @@ export function useCvPersistence({
     // The save succeeded: the form data just written becomes the persisted
     // baseline. On failure above, the baseline is left untouched.
     onPersisted(activeDocumentId, parsed.data);
-    if (activeDocument.storageKind === "cloud") {
-      clearDraft(activeDocumentId);
-    }
     return true;
   }
 
@@ -104,7 +101,11 @@ export function useCvPersistence({
       if (activeDocument.storageKind === "cloud" || activeDocument.storageKind === "encrypted") {
         const document = await storageAdapters[activeDocument.storageKind].load(activeDocument);
         if (!ownsActor()) return;
-        loadDataIntoForm(document.summary.id, document.data);
+        if (document.cloudRevision !== undefined) {
+          loadDataIntoForm(document.summary.id, document.data, { cloudRevision: document.cloudRevision });
+        } else {
+          loadDataIntoForm(document.summary.id, document.data);
+        }
       }
     } catch (discardError) {
       if (!ownsActor()) return;

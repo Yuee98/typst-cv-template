@@ -62,7 +62,8 @@ describe("useCvCloudSync data and error handling", () => {
       id: "cloud-1"
     }));
     expect(restored.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", draft, {
-      baselineData: serverData
+      baselineData: serverData,
+      cloudRevision: "1"
     });
     expect(restored.clearDraft).not.toHaveBeenCalled();
   });
@@ -81,7 +82,8 @@ describe("useCvCloudSync data and error handling", () => {
     });
     expect(h.clearDraft).toHaveBeenCalledWith("cloud-1");
     expect(h.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", serverData, {
-      baselineData: serverData
+      baselineData: serverData,
+      cloudRevision: "1"
     });
   });
   it("reports active-query and explicit refresh failures", async () => {
@@ -115,7 +117,8 @@ describe("useCvCloudSync data and error handling", () => {
       sessionInitialized: false
     });
     expect(h.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", serverData, {
-      baselineData: serverData
+      baselineData: serverData,
+      cloudRevision: "1"
     });
   });
   it("preserves an already adopted form when a background refetch changes its body", () => {

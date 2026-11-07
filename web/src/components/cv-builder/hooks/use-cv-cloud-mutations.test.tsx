@@ -17,7 +17,8 @@ import type { useTranslations } from "next-intl";
 vi.mock("@/lib/cv/cloud-storage", () => ({
   createCloudCvDocument: vi.fn(), createEncryptedCloudCvDocument: vi.fn(), deleteCloudCvDocument: vi.fn(),
   encryptExistingCloudCvDocument: vi.fn(), renameCloudCvDocument: vi.fn(), updateCloudCvDocumentData: vi.fn(),
-  updateEncryptedCloudCvDocumentData: vi.fn(), listCloudCvDocuments: vi.fn(), loadCloudCvDocument: vi.fn(), loadEncryptedCloudCvDocument: vi.fn()
+  updateEncryptedCloudCvDocumentData: vi.fn(), listCloudCvDocuments: vi.fn(), loadCloudCvDocument: vi.fn(), loadEncryptedCloudCvDocument: vi.fn(),
+  rebindExistingCloudWriteToLoadedDocument: vi.fn(token => token), assertExistingCloudWriteCurrent: vi.fn()
 }));
 vi.mock("@/lib/cv/encryption", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/cv/encryption")>(),
@@ -26,10 +27,11 @@ vi.mock("@/lib/cv/encryption", async importOriginal => ({
 vi.mock("@/lib/cv/encryption-storage", () => ({ storeEncryptionPassword: vi.fn(async () => undefined), storeTrustDevice: vi.fn() }));
 
 const client = {} as SupabaseClient;
+const writeToken = {} as storage.CloudCvWriteToken;
 const envelope: EncryptedPayload = { version: 1, algorithm: "AES-GCM", kdf: "PBKDF2-SHA-256", iterations: 600000, salt: "fixture", iv: "fixture", ciphertext: "fixture" };
 function session(userId: string) { return { user: { id: userId } } as Session; }
-function document(id: string, storageKind: "cloud" | "encrypted" = "cloud") {
-  return { id, title: id, storageKind, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } as CvDocumentSummary;
+function document(id: string, storageKind: "cloud" | "encrypted" = "cloud"): CvDocumentSummary & { revision: string } {
+  return { id, title: id, storageKind, revision: "1", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -43,11 +45,11 @@ function startMutation(mutations: ReturnType<typeof useCvCloudMutations>, operat
   switch (operation) {
     case "createCloudDocument": return mutations.createCloudDocument.mutateAsync({ ...context, title: "A", data: sampleCvDataEn });
     case "createEncryptedCloudDocument": return mutations.createEncryptedCloudDocument.mutateAsync({ ...context, title: "A", encryptedPayload: envelope, schemaVersion: 7 });
-    case "encryptExistingCloudDocument": return mutations.encryptExistingCloudDocument.mutateAsync({ ...context, id, encryptedPayload: envelope, schemaVersion: 7 });
-    case "updateCloudDocumentData": return mutations.updateCloudDocumentData.mutateAsync({ ...context, id, data: sampleCvDataEn });
-    case "updateEncryptedCloudDocumentData": return mutations.updateEncryptedCloudDocumentData.mutateAsync({ ...context, id, encryptedPayload: envelope, schemaVersion: 7 });
-    case "renameCloudDocument": return mutations.renameCloudDocument.mutateAsync({ ...context, id, title: "Renamed A" });
-    case "deleteCloudDocument": return mutations.deleteCloudDocument.mutateAsync({ ...context, id });
+    case "encryptExistingCloudDocument": return mutations.encryptExistingCloudDocument.mutateAsync({ ...context, writeToken, id, encryptedPayload: envelope, schemaVersion: 7 });
+    case "updateCloudDocumentData": return mutations.updateCloudDocumentData.mutateAsync({ ...context, writeToken, id, data: sampleCvDataEn });
+    case "updateEncryptedCloudDocumentData": return mutations.updateEncryptedCloudDocumentData.mutateAsync({ ...context, writeToken, id, encryptedPayload: envelope, schemaVersion: 7 });
+    case "renameCloudDocument": return mutations.renameCloudDocument.mutateAsync({ ...context, writeToken, id, title: "Renamed A" });
+    case "deleteCloudDocument": return mutations.deleteCloudDocument.mutateAsync({ ...context, writeToken, id });
   }
 }
 function queryClient() {
@@ -111,10 +113,10 @@ describe("cloud mutation account isolation with real QueryClient", () => {
       case "createCloudDocument": expect(storage.createCloudCvDocument).toHaveBeenCalledWith(client, expect.objectContaining({ expectedUserId: "user-a" }), "en"); break;
       case "createEncryptedCloudDocument": expect(storage.createEncryptedCloudCvDocument).toHaveBeenCalledWith(client, expect.objectContaining({ expectedUserId: "user-a" }), "en"); break;
       case "encryptExistingCloudDocument": expect(storage.encryptExistingCloudCvDocument).toHaveBeenCalledWith(client, a.id, expect.objectContaining({ expectedUserId: "user-a" }), "en"); break;
-      case "updateCloudDocumentData": expect(storage.updateCloudCvDocumentData).toHaveBeenCalledWith(client, a.id, sampleCvDataEn, "user-a", "en"); break;
+      case "updateCloudDocumentData": expect(storage.updateCloudCvDocumentData).toHaveBeenCalledWith(client, a.id, sampleCvDataEn, "user-a", writeToken, "en"); break;
       case "updateEncryptedCloudDocumentData": expect(storage.updateEncryptedCloudCvDocumentData).toHaveBeenCalledWith(client, a.id, expect.objectContaining({ expectedUserId: "user-a" }), "en"); break;
-      case "renameCloudDocument": expect(storage.renameCloudCvDocument).toHaveBeenCalledWith(client, a.id, "Renamed A", "user-a"); break;
-      case "deleteCloudDocument": expect(storage.deleteCloudCvDocument).toHaveBeenCalledWith(client, a.id, "user-a"); break;
+      case "renameCloudDocument": expect(storage.renameCloudCvDocument).toHaveBeenCalledWith(client, a.id, "Renamed A", "user-a", writeToken); break;
+      case "deleteCloudDocument": expect(storage.deleteCloudCvDocument).toHaveBeenCalledWith(client, a.id, "user-a", writeToken); break;
     }
     hook.rerender({ owner: completionOwner });
     await act(async () => { finished.resolve(); await pending; });
@@ -154,6 +156,7 @@ describe("cloud mutation account isolation with real QueryClient", () => {
         locale: "en", tCloudActions: ((key: string) => key) as ReturnType<typeof useTranslations<"CvCloudActions">>,
         activeDocumentId: owner === "user-a" ? a.id : null, closeEncryptionModal,
         createCloudDocument: mutations.createCloudDocument.mutateAsync, createEncryptedCloudDocument: mutations.createEncryptedCloudDocument.mutateAsync,
+        captureExistingWrite: () => writeToken,
         encryptExistingCloudDocument: mutations.encryptExistingCloudDocument.mutateAsync,
         documents: list.data ?? [], duplicateDocument: vi.fn(), fetchCloudDocument: async () => ({ ...a, storageKind: "cloud", data: sampleCvDataEn }),
         loadDataIntoForm, onError, openEnableEncryptionModal: vi.fn(), saveCurrentDocument: async () => true,

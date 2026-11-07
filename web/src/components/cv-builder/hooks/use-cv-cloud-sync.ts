@@ -42,6 +42,7 @@ export function useCvCloudSync({
   getLoadedDocumentId: () => string | null;
   loadDataIntoForm: (id: string, data: CvData, options?: {
     baselineData?: CvData;
+    cloudRevision?: string;
   }) => void;
   loadDraft: (cvId: string) => CvData | null;
   onError: (message: string) => void;
@@ -168,7 +169,8 @@ export function useCvCloudSync({
     // The baseline always stays at the server data, even when a draft is
     // restored into the form — a draft must never become the baseline.
     loadDataIntoForm(activeCloudDocument.id, draft ?? activeCloudDocument.data, {
-      baselineData: activeCloudDocument.data
+      baselineData: activeCloudDocument.data,
+      cloudRevision: activeCloudDocument.revision
     });
     // loadDataIntoForm, loadDraft, etc. are stable within a session
     // eslint-disable-next-line react-hooks/exhaustive-deps
