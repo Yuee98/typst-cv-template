@@ -119,6 +119,11 @@ export function useCvBuilder() {
     userId: session?.user.id,
     locale
   });
+  function cloudWriteActor() {
+    const userId = session?.user.id;
+    if (!userId) throw new Error("Sign in before changing a cloud CV.");
+    return userId;
+  }
   const storageAdapters = createCvStorageAdapters({
     locale,
     cloudStorage: {
@@ -126,7 +131,7 @@ export function useCvBuilder() {
         await cloudMutations.deleteCloudDocument.mutateAsync({
           client,
           id,
-          expectedUserId: session?.user.id
+          expectedUserId: cloudWriteActor()
         });
       },
       loadCloudDocument: (client, id) => fetchCloudDocument(client, id, locale),
@@ -134,25 +139,26 @@ export function useCvBuilder() {
         client,
         id,
         title,
-        expectedUserId: session?.user.id
+        expectedUserId: cloudWriteActor()
       }),
       updateCloudDocumentData: (client, id, data) => cloudMutations.updateCloudDocumentData.mutateAsync({
         client,
         data,
         id,
-        expectedUserId: session?.user.id
+        expectedUserId: cloudWriteActor()
       }),
       updateEncryptedCloudDocumentData: (client, id, update) => cloudMutations.updateEncryptedCloudDocumentData.mutateAsync({
         client,
         id,
         ...update,
-        expectedUserId: session?.user.id
+        expectedUserId: cloudWriteActor()
       })
     },
     getEncryptionPassphrase: getKnownEncryptionPassphrase,
     requireCloudAccess
   });
   const persistence = useCvPersistence({
+    userId: session?.user.id ?? null,
     tPersistence,
     activeDocument,
     activeDocumentId,
@@ -188,6 +194,7 @@ export function useCvBuilder() {
     onPreviewError: preview.setError
   });
   const documentActions = useCvDocumentActions({
+    userId: session?.user.id ?? null,
     activeDocument,
     activeDocumentId,
     clearDraft,

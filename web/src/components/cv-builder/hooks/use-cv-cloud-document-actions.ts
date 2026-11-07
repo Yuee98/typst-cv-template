@@ -47,7 +47,7 @@ export function useCvCloudDocumentActions({
     data: CvData;
     title: string;
     sourceDocumentId?: string;
-    expectedUserId?: string;
+    expectedUserId: string;
   }) => Promise<CloudCvDocument>;
   createEncryptedCloudDocument: (input: {
     client: SupabaseClient;
@@ -55,7 +55,7 @@ export function useCvCloudDocumentActions({
     schemaVersion: number;
     title: string;
     sourceDocumentId?: string;
-    expectedUserId?: string;
+    expectedUserId: string;
   }) => Promise<EncryptedCloudCvDocument>;
   documents: CvDocumentSummary[];
   duplicateDocument: (id: string, options?: {
@@ -64,6 +64,7 @@ export function useCvCloudDocumentActions({
   }) => Promise<void>;
   encryptExistingCloudDocument: (input: {
     client: SupabaseClient;
+    expectedUserId: string;
     encryptedPayload: EncryptedPayload;
     id: string;
     schemaVersion: number;
@@ -84,17 +85,20 @@ export function useCvCloudDocumentActions({
 }) {
   const actor = useRef({
     userId: session?.user.id,
-    activeDocumentId
+    activeDocumentId,
+    owner: {}
   });
   useLayoutEffect(() => {
+    const userId = session?.user.id;
     actor.current = {
-      userId: session?.user.id,
-      activeDocumentId
+      userId,
+      activeDocumentId,
+      owner: actor.current.userId === userId ? actor.current.owner : {}
     };
   }, [session?.user.id, activeDocumentId]);
   function actorGuard(includeDocument = true) {
     const start = actor.current;
-    return () => actor.current.userId === start.userId && (!includeDocument || actor.current.activeDocumentId === start.activeDocumentId);
+    return () => actor.current.owner === start.owner && actor.current.userId === session?.user.id && (!includeDocument || actor.current.activeDocumentId === start.activeDocumentId);
   }
   const pendingEncryptedCreates = useRef(new Map<string, {
     source: string;
@@ -112,6 +116,7 @@ export function useCvCloudDocumentActions({
     if (!(await termsGate.ensure())) {
       return;
     }
+    if (!ownsActor()) return;
     if (current.storageKind !== "local") {
       return;
     }
@@ -229,6 +234,7 @@ export function useCvCloudDocumentActions({
       } else {
         const encryptedDocument = await encryptExistingCloudDocument({
           client: supabase,
+          expectedUserId: session.user.id,
           id,
           encryptedPayload,
           schemaVersion: sourceData.schemaVersion
@@ -250,7 +256,8 @@ export function useCvCloudDocumentActions({
     if (!(await termsGate.ensure())) {
       return;
     }
-    const document = await loadEncryptedCloudCvDocument(supabase, id, locale);
+    if (!ownsActor()) return;
+    const document = await loadEncryptedCloudCvDocument(supabase, id, locale, session.user.id);
     if (!ownsActor()) return;
     const decryptedData = await decryptCvData(document.encryptedPayload, password, locale);
     if (!ownsActor()) return;
@@ -258,6 +265,7 @@ export function useCvCloudDocumentActions({
     loadDataIntoForm(document.id, decryptedData);
   }
   async function openEnableEncryption(id: string) {
+    const ownsActor = actorGuard();
     const current = documents.find(document => document.id === id);
     if (!current || current.storageKind === "encrypted") {
       return;
@@ -269,6 +277,7 @@ export function useCvCloudDocumentActions({
     if (!(await termsGate.ensure())) {
       return;
     }
+    if (!ownsActor()) return;
     openEnableEncryptionModal(id);
   }
   async function handleEncryptionSubmit(payload: EncryptionSubmitPayload) {
@@ -283,6 +292,7 @@ export function useCvCloudDocumentActions({
       const userId = session?.user.id;
       if (userId) {
         await storeEncryptionPassword(userId, documentId, password, trustDevice);
+        if (!ownsActor()) return;
         storeTrustDevice(userId, trustDevice);
       }
       if (mode === "enable") {
@@ -297,6 +307,7 @@ export function useCvCloudDocumentActions({
       if (!ownsActor()) return;
       closeEncryptionModal();
     } catch (modalError) {
+      if (!ownsActor()) return;
       return {
         error: errorMessage(modalError)
       };

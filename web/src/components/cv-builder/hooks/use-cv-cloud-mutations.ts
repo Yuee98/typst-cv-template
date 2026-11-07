@@ -10,7 +10,7 @@ import { cvCloudDocumentListQueryKey } from "@/components/cv-builder/hooks/use-c
 import { cvCloudDocumentQueryKey } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
 type CloudMutationContext = {
   client: SupabaseClient;
-  expectedUserId?: string;
+  expectedUserId: string;
 };
 function upsertSummary(documents: CvDocumentSummary[], summary: CvDocumentSummary) {
   return documents.some(document => document.id === summary.id) ? documents.map(document => document.id === summary.id ? summary : document) : [summary, ...documents];
@@ -23,10 +23,18 @@ export function useCvCloudMutations({
   locale?: Locale;
 }) {
   const queryClient = useQueryClient();
-  const ownerRef = useRef(userId);
+  const ownerRef = useRef({ userId });
   useLayoutEffect(() => {
-    ownerRef.current = userId;
+    if (ownerRef.current.userId !== userId) ownerRef.current = { userId };
   }, [userId]);
+  function captureActor(variables: CloudMutationContext) {
+    const actor = ownerRef.current;
+    if (!variables.expectedUserId || variables.expectedUserId !== actor.userId) throw new Error("CONFLICT: ACCOUNT_CHANGED");
+    return actor;
+  }
+  function ownsMutation(variables: CloudMutationContext, actor: ReturnType<typeof captureActor> | undefined) {
+    return variables.expectedUserId === ownerRef.current.userId && actor === ownerRef.current;
+  }
   function setCloudDocuments(updater: (current: CvDocumentSummary[]) => CvDocumentSummary[]) {
     if (!userId) {
       return;
@@ -51,6 +59,7 @@ export function useCvCloudMutations({
     });
   }
   const createCloudDocument = useMutation({
+    onMutate: captureActor,
     mutationFn: ({
       client,
       data,
@@ -67,13 +76,14 @@ export function useCvCloudMutations({
       sourceDocumentId,
       expectedUserId
     }, locale),
-    onSuccess: (document, variables) => {
-      if (variables.expectedUserId && variables.expectedUserId !== ownerRef.current) return;
+    onSuccess: (document, variables, actor) => {
+      if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(document);
       setPlainCloudDocument(document);
     }
   });
   const createEncryptedCloudDocument = useMutation({
+    onMutate: captureActor,
     mutationFn: ({
       client,
       encryptedPayload,
@@ -93,91 +103,103 @@ export function useCvCloudMutations({
       sourceDocumentId,
       expectedUserId
     }, locale),
-    onSuccess: (document, variables) => {
-      if (variables.expectedUserId && variables.expectedUserId !== ownerRef.current) return;
+    onSuccess: (document, variables, actor) => {
+      if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(document);
     }
   });
   const encryptExistingCloudDocument = useMutation({
+    onMutate: captureActor,
     mutationFn: ({
       client,
       encryptedPayload,
       id,
-      schemaVersion
+      schemaVersion,
+      expectedUserId
     }: CloudMutationContext & {
       encryptedPayload: EncryptedPayload;
       id: string;
       schemaVersion: number;
     }) => encryptExistingCloudCvDocument(client, id, {
       encryptedPayload,
-      schemaVersion
+      schemaVersion,
+      expectedUserId
     }, locale),
-    onSuccess: (document: EncryptedCloudCvDocument, variables) => {
-      if (variables.expectedUserId && variables.expectedUserId !== ownerRef.current) return;
+    onSuccess: (document: EncryptedCloudCvDocument, variables, actor) => {
+      if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(document);
       removePlainCloudDocument(document.id);
     }
   });
   const updateCloudDocumentData = useMutation({
+    onMutate: captureActor,
     mutationFn: ({
       client,
       data,
-      id
+      id,
+      expectedUserId
     }: CloudMutationContext & {
       data: CvData;
       id: string;
-    }) => updateCloudCvDocumentData(client, id, data, locale),
-    onSuccess: (document, variables) => {
-      if (variables.expectedUserId && variables.expectedUserId !== ownerRef.current) return;
+    }) => updateCloudCvDocumentData(client, id, data, expectedUserId, locale),
+    onSuccess: (document, variables, actor) => {
+      if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(document);
       setPlainCloudDocument(document);
     }
   });
   const updateEncryptedCloudDocumentData = useMutation({
+    onMutate: captureActor,
     mutationFn: ({
       client,
       encryptedPayload,
       id,
-      schemaVersion
+      schemaVersion,
+      expectedUserId
     }: CloudMutationContext & {
       encryptedPayload: EncryptedPayload;
       id: string;
       schemaVersion: number;
     }) => updateEncryptedCloudCvDocumentData(client, id, {
       encryptedPayload,
-      schemaVersion
+      schemaVersion,
+      expectedUserId
     }, locale),
-    onSuccess: (document, variables) => {
-      if (variables.expectedUserId && variables.expectedUserId !== ownerRef.current) return;
+    onSuccess: (document, variables, actor) => {
+      if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(document);
     }
   });
   const renameCloudDocument = useMutation({
+    onMutate: captureActor,
     mutationFn: ({
       client,
       id,
-      title
+      title,
+      expectedUserId
     }: CloudMutationContext & {
       id: string;
       title: string;
-    }) => renameCloudCvDocument(client, id, title),
-    onSuccess: (summary, variables) => {
-      if (variables.expectedUserId && variables.expectedUserId !== ownerRef.current) return;
+    }) => renameCloudCvDocument(client, id, title, expectedUserId),
+    onSuccess: (summary, variables, actor) => {
+      if (!ownsMutation(variables, actor)) return;
       upsertCloudSummary(summary);
     }
   });
   const deleteCloudDocument = useMutation({
+    onMutate: captureActor,
     mutationFn: async ({
       client,
-      id
+      id,
+      expectedUserId
     }: CloudMutationContext & {
       id: string;
     }) => {
-      await deleteCloudCvDocument(client, id);
+      await deleteCloudCvDocument(client, id, expectedUserId);
       return id;
     },
-    onSuccess: (id, variables) => {
-      if (variables.expectedUserId && variables.expectedUserId !== ownerRef.current) return;
+    onSuccess: (id, variables, actor) => {
+      if (!ownsMutation(variables, actor)) return;
       setCloudDocuments(current => current.filter(document => document.id !== id));
       removePlainCloudDocument(id);
     }

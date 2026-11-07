@@ -148,11 +148,15 @@ export async function loadEncryptedCloudCvDocument(client: SupabaseClient, id: s
   return encrypted(await load(client, id, expectedUserId), _locale);
 }
 type CvMutation = "cv_document_create" | "cv_document_update" | "cv_document_convert" | "cv_document_rename" | "cv_document_delete";
-async function write(client: SupabaseClient, name: CvMutation, input: Record<string, unknown>, id?: string, expectedUserId?: string) {
+function requireWriteUserId(expectedUserId: string): string {
+  if (typeof expectedUserId !== "string" || !expectedUserId) throw new Error("CONFLICT: Expected account is required");
+  return expectedUserId;
+}
+async function write(client: SupabaseClient, name: CvMutation, input: Record<string, unknown>, id: string | undefined, expectedUserId: string) {
   const {
     scoped,
     userId
-  } = await scopedClient(client, expectedUserId);
+  } = await scopedClient(client, requireWriteUserId(expectedUserId));
   const context = await clientWriteContext(client, userId);
   const previous = id ? editingEvidence.get(client)?.get(id) ?? evidence.get(client)?.get(id) : undefined;
   if (id && (!previous || previous.instance !== context.database_instance_id)) throw new Error("CONFLICT: Open the current document before changing it.");
@@ -182,10 +186,10 @@ async function write(client: SupabaseClient, name: CvMutation, input: Record<str
   if (id && editingEvidence.get(client)?.has(id)) activateCloudDocument(client, row.external_id);
   return row;
 }
-async function create(client: SupabaseClient, input: Record<string, unknown>, sourceDocumentId?: string, expectedUserId?: string) {
+async function create(client: SupabaseClient, input: Record<string, unknown>, sourceDocumentId: string | undefined, expectedUserId: string) {
   const {
     userId
-  } = await scopedClient(client, expectedUserId);
+  } = await scopedClient(client, requireWriteUserId(expectedUserId));
   await requireAppContext(client);
   let pending = pendingCreates.get(client);
   if (!pending) {
@@ -236,7 +240,7 @@ export async function createCloudCvDocument(client: SupabaseClient, {
   title: string;
   data: CvData;
   sourceDocumentId?: string;
-  expectedUserId?: string;
+  expectedUserId: string;
 }, _locale: Locale = defaultLocale) {
   return plain(await create(client, {
     title,
@@ -256,7 +260,7 @@ export async function createEncryptedCloudCvDocument(client: SupabaseClient, {
   encryptedPayload: EncryptedPayload;
   schemaVersion: number;
   sourceDocumentId?: string;
-  expectedUserId?: string;
+  expectedUserId: string;
 }, _locale: Locale = defaultLocale) {
   z.literal(7).parse(schemaVersion);
   return encrypted(await create(client, {
@@ -266,46 +270,50 @@ export async function createEncryptedCloudCvDocument(client: SupabaseClient, {
     document_schema_version: 7
   }, sourceDocumentId, expectedUserId), _locale);
 }
-export async function updateCloudCvDocumentData(client: SupabaseClient, id: string, data: CvData, _locale: Locale = defaultLocale) {
+export async function updateCloudCvDocumentData(client: SupabaseClient, id: string, data: CvData, expectedUserId: string, _locale: Locale = defaultLocale) {
   return plain((await write(client, "cv_document_update", {
     data: cvSchema.parse(data),
     storage_mode: "PLAIN",
     document_schema_version: 7
-  }, id))!, _locale);
+  }, id, expectedUserId))!, _locale);
 }
 export async function updateEncryptedCloudCvDocumentData(client: SupabaseClient, id: string, {
   encryptedPayload,
-  schemaVersion
+  schemaVersion,
+  expectedUserId
 }: {
   encryptedPayload: EncryptedPayload;
   schemaVersion: number;
+  expectedUserId: string;
 }, _locale: Locale = defaultLocale) {
   z.literal(7).parse(schemaVersion);
   return encrypted((await write(client, "cv_document_update", {
     encrypted_payload: encryptedPayloadSchema.parse(encryptedPayload),
     storage_mode: "ENCRYPTED",
     document_schema_version: 7
-  }, id))!, _locale);
+  }, id, expectedUserId))!, _locale);
 }
 export async function encryptExistingCloudCvDocument(client: SupabaseClient, id: string, {
   encryptedPayload,
-  schemaVersion
+  schemaVersion,
+  expectedUserId
 }: {
   encryptedPayload: EncryptedPayload;
   schemaVersion: number;
+  expectedUserId: string;
 }, _locale: Locale = defaultLocale) {
   z.literal(7).parse(schemaVersion);
   return encrypted((await write(client, "cv_document_convert", {
     encrypted_payload: encryptedPayloadSchema.parse(encryptedPayload),
     storage_mode: "ENCRYPTED",
     document_schema_version: 7
-  }, id))!, _locale);
+  }, id, expectedUserId))!, _locale);
 }
-export async function renameCloudCvDocument(client: SupabaseClient, id: string, title: string) {
+export async function renameCloudCvDocument(client: SupabaseClient, id: string, title: string, expectedUserId: string) {
   return summary((await write(client, "cv_document_rename", {
     title
-  }, id))!);
+  }, id, expectedUserId))!);
 }
-export async function deleteCloudCvDocument(client: SupabaseClient, id: string) {
-  await write(client, "cv_document_delete", {}, id);
+export async function deleteCloudCvDocument(client: SupabaseClient, id: string, expectedUserId: string) {
+  await write(client, "cv_document_delete", {}, id, expectedUserId);
 }

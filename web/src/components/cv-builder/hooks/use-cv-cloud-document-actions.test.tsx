@@ -8,6 +8,8 @@ import { useCvCloudDocumentActions } from "@/components/cv-builder/hooks/use-cv-
 import { cloneCvData } from "@/lib/cv/cv-utils";
 import { sampleCvDataEn } from "@/lib/cv/sample-data";
 import { createLocalCvDocument, type CvDocumentSummary } from "@/lib/cv/storage";
+import { storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
+import * as cloudStorage from "@/lib/cv/cloud-storage";
 import messages from "../../../../messages/en.json";
 vi.mock("@/lib/cv/encryption-storage", () => ({
   storeEncryptionPassword: vi.fn().mockResolvedValue(undefined),
@@ -17,6 +19,7 @@ afterEach(() => {
   cleanup();
 });
 beforeEach(() => {
+  vi.clearAllMocks();
   window.localStorage.clear();
 });
 function summary(id: string, storageKind: CvDocumentSummary["storageKind"] = "local"): CvDocumentSummary {
@@ -268,6 +271,64 @@ describe("useCvCloudDocumentActions save gates", () => {
   });
 });
 describe("handleEncryptionSubmit path-specific modal behavior", () => {
+  it.each([false, true])("does not resume A's obsolete conversion after password storage finishes (return to A: %s)", async returnToA => {
+    let finishStorage!: () => void;
+    vi.mocked(storeEncryptionPassword).mockReturnValueOnce(new Promise<void>(resolve => { finishStorage = resolve; }));
+    const h = renderCloudActions({ session: fakeSession, supabase: fakeSupabase });
+    let pending!: Promise<unknown>;
+    act(() => { pending = h.result.current.handleEncryptionSubmit({ mode: "enable", documentId: "active", password: "fixture-password", trustDevice: true }); });
+    act(() => h.changeSession({ user: { id: "user-2" } } as Session));
+    if (returnToA) act(() => h.changeSession(fakeSession));
+    await act(async () => { finishStorage(); await pending; });
+    expect(storeTrustDevice).not.toHaveBeenCalled();
+    expect(h.termsGate.ensure).not.toHaveBeenCalled();
+    expect(h.createEncryptedCloudDocument).not.toHaveBeenCalled();
+    expect(h.encryptExistingCloudDocument).not.toHaveBeenCalled();
+    expect(h.closeEncryptionModal).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+  });
+  it("does not open A's encryption modal after terms finish under B", async () => {
+    const h = renderCloudActions({ session: fakeSession, supabase: fakeSupabase });
+    let finishTerms!: (value: boolean) => void;
+    h.termsGate.ensure.mockReturnValueOnce(new Promise<boolean>(resolve => { finishTerms = resolve; }));
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.openEnableEncryption("active"); });
+    act(() => h.changeSession({ user: { id: "user-2" } } as Session));
+    await act(async () => { finishTerms(true); await pending; });
+    expect(h.openEnableEncryptionModal).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+  });
+  it("does not continue A's unlock after terms finish under B", async () => {
+    const h = renderCloudActions({ session: fakeSession, supabase: fakeSupabase });
+    let finishTerms!: (value: boolean) => void;
+    h.termsGate.ensure.mockReturnValueOnce(new Promise<boolean>(resolve => { finishTerms = resolve; }));
+    let pending!: Promise<unknown>;
+    await act(async () => { pending = h.result.current.handleEncryptionSubmit({ mode: "unlock", documentId: "active", password: "fixture-password", trustDevice: false }); });
+    act(() => h.changeSession({ user: { id: "user-2" } } as Session));
+    let result: unknown;
+    await act(async () => { finishTerms(true); result = await pending; });
+    expect(result).toBeUndefined();
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.upsertDocumentSummary).not.toHaveBeenCalled();
+    expect(h.closeEncryptionModal).not.toHaveBeenCalled();
+  });
+  it("does not return A's late unlock error to B's modal", async () => {
+    let rejectLoad!: (error: Error) => void;
+    const load = vi.spyOn(cloudStorage, "loadEncryptedCloudCvDocument").mockReturnValueOnce(new Promise((_resolve, reject) => { rejectLoad = reject; }));
+    try {
+      const h = renderCloudActions({ session: fakeSession, supabase: fakeSupabase });
+      let pending!: Promise<unknown>;
+      await act(async () => { pending = h.result.current.handleEncryptionSubmit({ mode: "unlock", documentId: "active", password: "fixture-password", trustDevice: false }); });
+      expect(load).toHaveBeenCalledWith(fakeSupabase, "active", "zh", "user-1");
+      act(() => h.changeSession({ user: { id: "user-2" } } as Session));
+      let result: unknown;
+      await act(async () => { rejectLoad(new Error("A's private failure")); result = await pending; });
+      expect(result).toBeUndefined();
+      expect(h.onError).not.toHaveBeenCalled();
+      expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+      expect(h.closeEncryptionModal).not.toHaveBeenCalled();
+    } finally { load.mockRestore(); }
+  });
   it("returns a duplicate error and keeps the modal open on a failed operation", async () => {
     const h = renderCloudActions();
     h.duplicateDocument.mockRejectedValueOnce(new Error("duplicate failed"));

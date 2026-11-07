@@ -2,12 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   type CloudCvDocument,
-  deleteCloudCvDocument,
-  loadCloudCvDocument,
   loadEncryptedCloudCvDocument,
-  renameCloudCvDocument,
-  updateCloudCvDocumentData,
-  updateEncryptedCloudCvDocumentData,
 } from "@/lib/cv/cloud-storage";
 import { defaultLocale, type Locale } from "@/i18n/routing";
 import { summarizeLocalDocument } from "@/lib/cv/cv-utils";
@@ -109,22 +104,14 @@ export type CvCloudAccessAction =
   | "signInBeforeOpenEncrypted"
   | "signInBeforeSaveEncrypted";
 
-const defaultCloudStorage: CvCloudStorageOperations = {
-  deleteCloudDocument: deleteCloudCvDocument,
-  loadCloudDocument: loadCloudCvDocument,
-  renameCloudDocument: renameCloudCvDocument,
-  updateCloudDocumentData: updateCloudCvDocumentData,
-  updateEncryptedCloudDocumentData: updateEncryptedCloudCvDocumentData,
-};
-
 export function createCvStorageAdapters({
   locale = defaultLocale,
-  cloudStorage = defaultCloudStorage,
+  cloudStorage,
   getEncryptionPassphrase,
   requireCloudAccess,
 }: {
   locale?: Locale;
-  cloudStorage?: CvCloudStorageOperations;
+  cloudStorage: CvCloudStorageOperations;
   getEncryptionPassphrase: (id: string) => Promise<string | null>;
   requireCloudAccess: (action: CvCloudAccessAction) => Promise<SupabaseClient>;
 }): CvStorageAdapters {

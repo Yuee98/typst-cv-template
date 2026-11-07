@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { useTranslations } from "next-intl";
 
@@ -8,6 +8,7 @@ import type { CvDocumentSummary } from "@/lib/cv/storage";
 import type { CvStorageAdapters } from "@/lib/cv/storage-adapters";
 
 export function useCvPersistence({
+  userId,
   tPersistence,
   activeDocument,
   activeDocumentId,
@@ -20,6 +21,7 @@ export function useCvPersistence({
   storageAdapters,
   upsertDocumentSummary,
 }: {
+  userId: string | null;
   tPersistence: ReturnType<typeof useTranslations<"CvPersistence">>;
   activeDocument: CvDocumentSummary | null;
   activeDocumentId: string | null;
@@ -32,9 +34,19 @@ export function useCvPersistence({
   storageAdapters: CvStorageAdapters;
   upsertDocumentSummary: (summary: CvDocumentSummary) => void;
 }) {
-  const [saving, setSaving] = useState(false);
+  const [actor, setActor] = useState({ userId });
+  if (actor.userId !== userId) setActor({ userId });
+  const ownerRef = useRef(actor);
+  useLayoutEffect(() => { ownerRef.current = actor; }, [actor]);
+  const [saveState, setSaveState] = useState({ actor, pending: false });
+  const saving = saveState.actor === actor && saveState.pending;
+  function actorGuard() {
+    return () => ownerRef.current === actor;
+  }
 
   async function saveCurrentDocument({ silent = false }: { silent?: boolean } = {}) {
+    const ownsActor = actorGuard();
+    if (!ownsActor()) return false;
     if (!activeDocumentId || !activeDocument) {
       return false;
     }
@@ -51,11 +63,13 @@ export function useCvPersistence({
 
     void silent;
 
-    setSaving(true);
+    setSaveState({ actor, pending: true });
     try {
       const updated = await storageAdapters[activeDocument.storageKind].save(activeDocument, parsed.data);
+      if (!ownsActor()) return false;
       upsertDocumentSummary(updated);
     } catch (saveError) {
+      if (!ownsActor()) return false;
       if (handleStorageDeferredError(saveError, "unlock")) {
         return false;
       }
@@ -63,7 +77,7 @@ export function useCvPersistence({
       onError(errorMessage(saveError));
       return false;
     } finally {
-      setSaving(false);
+      if (ownsActor()) setSaveState({ actor, pending: false });
     }
 
     // The save succeeded: the form data just written becomes the persisted
@@ -76,6 +90,8 @@ export function useCvPersistence({
   }
 
   async function discardChanges() {
+    const ownsActor = actorGuard();
+    if (!ownsActor()) return;
     if (!activeDocumentId || !activeDocument) {
       return;
     }
@@ -87,9 +103,11 @@ export function useCvPersistence({
 
       if (activeDocument.storageKind === "cloud" || activeDocument.storageKind === "encrypted") {
         const document = await storageAdapters[activeDocument.storageKind].load(activeDocument);
+        if (!ownsActor()) return;
         loadDataIntoForm(document.summary.id, document.data);
       }
     } catch (discardError) {
+      if (!ownsActor()) return;
       if (handleStorageDeferredError(discardError, "unlock")) {
         return;
       }

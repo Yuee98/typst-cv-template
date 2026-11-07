@@ -72,13 +72,14 @@ function renderActions({
   const upsertDocumentSummary = vi.fn();
 
   const result = renderHook(
-    () => {
+    ({ userId, currentActive, currentDocuments }: { userId: string | null; currentActive: CvDocumentSummary; currentDocuments: CvDocumentSummary[] }) => {
       const form = useForm<CvData>({ defaultValues: cloneCvData(sampleCvDataEn) });
       const actions = useCvDocumentActions({
-        activeDocument,
-        activeDocumentId: activeDocument.id,
+        userId,
+        activeDocument: currentActive,
+        activeDocumentId: currentActive.id,
         clearDraft: vi.fn(),
-        documents,
+        documents: currentDocuments,
         form,
         handleStorageDeferredError,
         loadDataIntoForm,
@@ -95,6 +96,7 @@ function renderActions({
       return { actions, form };
     },
     {
+      initialProps: { userId: null as string | null, currentActive: activeDocument, currentDocuments: documents },
       wrapper: ({ children }) => (
         <NextIntlClientProvider locale="en" messages={messages}>
           {children}
@@ -111,6 +113,9 @@ function renderActions({
     replaceLocalDocumentSummary,
     resetActiveDocument,
     result: result.result,
+    rerenderAccount(userId: string | null, currentActive = activeDocument, currentDocuments = documents) {
+      result.rerender({ userId, currentActive, currentDocuments });
+    },
     saveCurrentDocument,
     setActiveDocumentId,
     setOrderedDocuments,
@@ -192,6 +197,68 @@ describe("useCvDocumentActions transition save gates", () => {
     expect(h.setOrderedDocuments).toHaveBeenCalled();
     expect(h.setActiveDocumentId).toHaveBeenCalledWith(null);
     expect(h.resetActiveDocument).toHaveBeenCalled();
+  });
+});
+
+describe("useCvDocumentActions account-owned completions", () => {
+  it.each([false, true])("does not let A's late delete replace a later account visit's list or active form (return to A: %s)", async returnToA => {
+    const a = summary("a", "cloud"), b = summary("b", "cloud");
+    const h = renderActions({ activeDocument: a, documents: [a] });
+    h.rerenderAccount("user-a");
+    let finish!: () => void;
+    h.adapters.cloud.delete.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.actions.deleteDocument(a.id); });
+    h.rerenderAccount("user-b", b, [b]);
+    if (returnToA) h.rerenderAccount("user-a", b, [b]);
+    const dataB = cloneCvData(sampleCvDataEn); dataB.header.name = "B's active form";
+    act(() => h.result.current.form.reset(dataB));
+    await act(async () => { finish(); await pending; });
+    expect(h.setOrderedDocuments).not.toHaveBeenCalled();
+    expect(h.setActiveDocumentId).not.toHaveBeenCalled();
+    expect(h.resetActiveDocument).not.toHaveBeenCalled();
+    expect(h.result.current.form.getValues()).toEqual(dataB);
+  });
+  it("does not show A's late rename error or unlock modal to B", async () => {
+    const a = summary("a", "cloud"), b = summary("b", "cloud");
+    const h = renderActions({ activeDocument: a, documents: [a] });
+    h.rerenderAccount("user-a");
+    let fail!: (error: Error) => void;
+    h.adapters.cloud.rename.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.actions.renameDocument(a.id, "Renamed A"); });
+    h.rerenderAccount("user-b", b, [b]);
+    await act(async () => { fail(new Error("A-only error")); await pending; });
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(h.handleStorageDeferredError).not.toHaveBeenCalled();
+    expect(h.upsertDocumentSummary).not.toHaveBeenCalled();
+  });
+  it.each(["selectDocument", "duplicateDocument"] as const)("does not adopt A's late %s result under B", async operation => {
+    const a = summary("a", "cloud"), target = summary("a-target", "cloud"), b = summary("b", "cloud");
+    const h = renderActions({ activeDocument: a, documents: [a, target] });
+    h.rerenderAccount("user-a");
+    let finish!: (value: { data: CvData; summary: CvDocumentSummary }) => void;
+    h.adapters.cloud.load.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.actions[operation](target.id); });
+    h.rerenderAccount("user-b", b, [b]);
+    await act(async () => { finish({ data: sampleCvDataEn, summary: target }); await pending; });
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.upsertDocumentSummary).not.toHaveBeenCalled();
+    expect(h.replaceLocalDocumentSummary).not.toHaveBeenCalled();
+  });
+  it("does not create a local document for A when its required save returns under B", async () => {
+    const a = summary("a", "cloud"), b = summary("b", "cloud");
+    const h = renderActions({ activeDocument: a, documents: [a] });
+    h.rerenderAccount("user-a");
+    let finish!: (value: boolean) => void;
+    h.saveCurrentDocument.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.actions.createDocumentFromData(sampleCvDataEn, "A's local copy"); });
+    h.rerenderAccount("user-b", b, [b]);
+    await act(async () => { finish(true); await pending; });
+    expect(h.replaceLocalDocumentSummary).not.toHaveBeenCalled();
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
   });
 });
 

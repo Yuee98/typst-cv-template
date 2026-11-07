@@ -49,13 +49,14 @@ function renderPersistence(storageKind: CvDocumentSummary["storageKind"] = "loca
   const upsertDocumentSummary = vi.fn();
 
   const result = renderHook(
-    () => {
+    ({ userId, active }: { userId: string | null; active: CvDocumentSummary }) => {
       const form = useForm<CvData>({ defaultValues: cloneCvData(sampleCvDataEn) });
       const tPersistence = useTranslations("CvPersistence");
       const persistence = useCvPersistence({
+        userId,
         tPersistence,
-        activeDocument: summary,
-        activeDocumentId: summary.id,
+        activeDocument: active,
+        activeDocumentId: active.id,
         clearDraft,
         form,
         handleStorageDeferredError,
@@ -68,6 +69,7 @@ function renderPersistence(storageKind: CvDocumentSummary["storageKind"] = "loca
       return { form, persistence };
     },
     {
+      initialProps: { userId: null as string | null, active: summary },
       wrapper: ({ children }) => (
         <NextIntlClientProvider locale="en" messages={messages}>
           {children}
@@ -84,6 +86,7 @@ function renderPersistence(storageKind: CvDocumentSummary["storageKind"] = "loca
     onPersisted,
     onError,
     result: result.result,
+    rerenderAccount(userId: string | null, active = summary) { result.rerender({ userId, active }); },
     summary,
     upsertDocumentSummary,
   };
@@ -184,6 +187,68 @@ describe("useCvPersistence save lifecycle", () => {
 
     expect(h.adapter.save).not.toHaveBeenCalled();
     expect(h.onError).toHaveBeenCalled();
+  });
+});
+
+describe("useCvPersistence account-owned completion and saving state", () => {
+  it.each(["finished-under-b", "still-pending"] as const)("does not revive A's obsolete saving state on return to A (%s)", async phase => {
+    const h = renderPersistence("cloud");
+    h.rerenderAccount("user-a");
+    let finishOld!: (value: CvDocumentSummary) => void, finishNew!: (value: CvDocumentSummary) => void;
+    h.adapter.save.mockReturnValueOnce(new Promise<CvDocumentSummary>(resolve => { finishOld = resolve; }));
+    h.adapter.save.mockReturnValueOnce(new Promise<CvDocumentSummary>(resolve => { finishNew = resolve; }));
+    let old!: Promise<boolean>, current!: Promise<boolean>;
+    act(() => { old = h.result.current.persistence.saveCurrentDocument(); });
+    h.rerenderAccount("user-b", { ...h.summary, id: "b-cloud" });
+    if (phase === "finished-under-b") await act(async () => { finishOld(h.summary); expect(await old).toBe(false); });
+    h.rerenderAccount("user-a");
+    expect(h.result.current.persistence.saving).toBe(false);
+    act(() => { current = h.result.current.persistence.saveCurrentDocument(); });
+    expect(h.adapter.save).toHaveBeenCalledTimes(2);
+    if (phase === "still-pending") await act(async () => { finishOld(h.summary); expect(await old).toBe(false); });
+    expect(h.result.current.persistence.saving).toBe(true);
+    expect(h.onPersisted).not.toHaveBeenCalled();
+    await act(async () => { finishNew(h.summary); expect(await current).toBe(true); });
+    expect(h.result.current.persistence.saving).toBe(false);
+    expect(h.onPersisted).toHaveBeenCalledOnce();
+  });
+  it.each(["success", "failure"] as const)("A's late save %s cannot change B's callbacks or pending saving indicator", async outcome => {
+    const h = renderPersistence("cloud");
+    h.rerenderAccount("user-a");
+    let finishA!: (value: CvDocumentSummary) => void, failA!: (error: Error) => void, finishB!: (value: CvDocumentSummary) => void;
+    h.adapter.save.mockReturnValueOnce(new Promise<CvDocumentSummary>((resolve, reject) => { finishA = resolve; failA = reject; }));
+    h.adapter.save.mockReturnValueOnce(new Promise<CvDocumentSummary>(resolve => { finishB = resolve; }));
+    let a!: Promise<boolean>, b!: Promise<boolean>;
+    act(() => { a = h.result.current.persistence.saveCurrentDocument(); });
+    const summaryB = { ...h.summary, id: "b-cloud" };
+    h.rerenderAccount("user-b", summaryB);
+    expect(h.result.current.persistence.saving).toBe(false);
+    act(() => { b = h.result.current.persistence.saveCurrentDocument(); });
+    expect(h.adapter.save).toHaveBeenCalledTimes(2);
+    expect(h.result.current.persistence.saving).toBe(true);
+    await act(async () => { if (outcome === "success") finishA(h.summary); else failA(new Error("A-only save failure")); expect(await a).toBe(false); });
+    expect(h.result.current.persistence.saving).toBe(true);
+    expect(h.upsertDocumentSummary).not.toHaveBeenCalled();
+    expect(h.onPersisted).not.toHaveBeenCalled();
+    expect(h.clearDraft).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(h.handleStorageDeferredError).not.toHaveBeenCalled();
+    await act(async () => { finishB(summaryB); expect(await b).toBe(true); });
+    expect(h.onPersisted).toHaveBeenCalledWith(summaryB.id, sampleCvDataEn);
+    expect(h.clearDraft).toHaveBeenCalledWith(summaryB.id);
+    expect(h.result.current.persistence.saving).toBe(false);
+  });
+  it("does not adopt A's late discard read under B", async () => {
+    const h = renderPersistence("cloud");
+    h.rerenderAccount("user-a");
+    let finish!: (value: { data: CvData; summary: CvDocumentSummary }) => void;
+    h.adapter.load.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.persistence.discardChanges(); });
+    h.rerenderAccount("user-b", { ...h.summary, id: "b-cloud" });
+    await act(async () => { finish({ data: sampleCvDataEn, summary: h.summary }); await pending; });
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
   });
 });
 

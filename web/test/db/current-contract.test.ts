@@ -16,6 +16,7 @@ const admin = createClient(url, process.env.SUPABASE_TEST_SECRET_KEY!, {
 const createdUsers: string[] = [];
 let a: SupabaseClient;
 let b: SupabaseClient;
+let aUserId: string;
 let guard: {
   contract_code: string;
   database_instance_id: string;
@@ -66,6 +67,7 @@ async function acceptTerms(client: SupabaseClient) {
 }
 beforeAll(async () => {
   a = await user();
+  aUserId = (await a.auth.getUser()).data.user!.id;
   b = await user();
   const {
     data,
@@ -109,13 +111,16 @@ afterAll(async () => {
 describe("current database through real Auth and Data API", () => {
   it("requires the current terms before storing cloud content", async () => {
     const client = await user();
+    const expectedUserId = (await client.auth.getUser()).data.user!.id;
     await expect(createCloudCvDocument(client, {
       title: "No consent",
+      expectedUserId,
       data: sampleCvDataEn
     })).rejects.toBeTruthy();
     await acceptTerms(client);
     await expect(createCloudCvDocument(client, {
       title: "Consent",
+      expectedUserId,
       data: sampleCvDataEn
     })).resolves.toMatchObject({
       title: "Consent"
@@ -134,6 +139,7 @@ describe("current database through real Auth and Data API", () => {
   it("round trips current CVs and isolates two users", async () => {
     const doc = await createCloudCvDocument(a, {
       title: "Current CV",
+      expectedUserId: aUserId,
       data: sampleCvDataEn
     });
     expect(doc.id).toMatch(/^cv_[0-9A-HJKMNP-TV-Z]{12}$/);
@@ -147,11 +153,12 @@ describe("current database through real Auth and Data API", () => {
         name: "Changed"
       }
     };
-    expect((await updateCloudCvDocumentData(a, doc.id, changed)).data.header.name).toBe("Changed");
+    expect((await updateCloudCvDocumentData(a, doc.id, changed, aUserId)).data.header.name).toBe("Changed");
   });
   it("has one winner for concurrent writes at the same revision", async () => {
     const doc = await createCloudCvDocument(a, {
       title: "Concurrent",
+      expectedUserId: aUserId,
       data: sampleCvDataEn
     });
     const identity = await a.auth.getUser();
