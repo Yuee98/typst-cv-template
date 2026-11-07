@@ -115,6 +115,7 @@ export type Database = {
       admin_profile_version_publish: { Args: { p_input: Json }; Returns: Json }
       admin_profile_version_retire: { Args: { p_input: Json }; Returns: Json }
       admin_provider_update: { Args: { p_input: Json }; Returns: Json }
+      admin_read: { Args: { p_input: Json }; Returns: Json }
       admin_record: {
         Args: { p_external_id: string; p_kind: string }
         Returns: Json

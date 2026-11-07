@@ -203,10 +203,14 @@ export const adminContextSchema = z.strictObject({
   contract_code: z.literal("cv_app_db_1"),
   member_id: externalIdSchema,
   aal: z.enum(["aal1", "aal2"]),
-  control: adminControlStateSchema,
-  legal: json
+  control: adminControlStateSchema
 });
 export type AdminContext = z.infer<typeof adminContextSchema>;
+export const adminReadResponseSchema = z.strictObject({
+  context: adminContextSchema,
+  data: json.nullable()
+});
+export type AdminReadResponse = z.infer<typeof adminReadResponseSchema>;
 export const adminRecordSchema = z.record(z.string(), z.unknown());
 export const adminPageSchema = z.strictObject({
   records: z.array(adminRecordSchema).max(100),

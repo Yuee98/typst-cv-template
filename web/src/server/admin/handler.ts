@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import { ADMIN_ERROR_CODES, ADMIN_ERROR_STATUS, adminContextSchema, adminControlStateSchema, adminAnalyticsSchema, adminPageSchema, adminRecordSchema, adminRecordSectionSchema, adminValidationReportSchema, adminValidationRequestSchema, adminRuntimeReadbackRequestSchema, adminRuntimeReadbackSchema, adminMutationRequestSchema, adminCommittedOperationSchema, externalIdSchema, type AdminErrorCode } from "@/lib/admin/contract";
+import { ADMIN_ERROR_CODES, ADMIN_ERROR_STATUS, adminContextSchema, adminReadResponseSchema, adminSectionSchema, adminAnalyticsSchema, adminPageSchema, adminRecordSchema, adminValidationReportSchema, adminValidationRequestSchema, adminRuntimeReadbackRequestSchema, adminRuntimeReadbackSchema, adminMutationRequestSchema, adminCommittedOperationSchema, externalIdSchema, type AdminErrorCode } from "@/lib/admin/contract";
 import { resolveAdminEnvironment, type AdminEnvironment } from "./environment";
 import { createAdminRequestClient } from "./request-client";
 import { produceAdminValidationReport } from "./validation-service";
@@ -8,7 +8,7 @@ import { produceAdminRuntimeReadback } from "./readback-service";
 type Client = ReturnType<typeof createAdminRequestClient>;
 interface Dependencies {
   environment(): AdminEnvironment;
-  client(environment: AdminEnvironment, token: string): Pick<Client, "auth" | "rpc">;
+  client(environment: AdminEnvironment, token: string, signal?: AbortSignal): Pick<Client, "auth" | "rpc">;
   produceValidation?: typeof produceAdminValidationReport;
   produceReadback?: typeof produceAdminRuntimeReadback;
 }
@@ -55,12 +55,12 @@ async function authenticated(request: Request, deps: Dependencies) {
   const bearer = /^Bearer ([^\s]+)$/i.exec(request.headers.get("authorization") ?? "");
   if (!bearer || bearer[1].length > 16384) return null;
   const environment = deps.environment();
-  const client = deps.client(environment, bearer[1]);
+  const client = deps.client(environment, bearer[1], request.signal);
   const {
     data,
     error
   } = await client.auth.getUser(bearer[1]);
-  return error || !data.user ? null : {
+  return error || !data.user || request.signal.aborted ? null : {
     client,
     environment
   };
@@ -102,60 +102,59 @@ export async function handleAdminGet(request: Request, deps: Dependencies = defa
     const auth = await authenticated(request, deps);
     if (!auth) return fail("UNAUTHORIZED");
     const query = new URL(request.url).searchParams;
-    const section = query.get("section") ?? "overview";
-    if (["overview", "controls"].includes(section)) {
-      if ([...query.keys()].some(key => key !== "section")) return fail("INVALID_REQUEST");
-      const {
-        data,
-        error
-      } = await auth.client.rpc("admin_context");
-      if (error) return fail(rpcError(error));
-      const context = adminContextSchema.parse(data);
-      if (context.environment.toLowerCase() !== auth.environment.name) return fail("CLIENT_UPDATE_REQUIRED");
-      return Response.json(section === "controls" ? adminControlStateSchema.parse(context.control) : context, {
-        headers
-      });
-    }
+    if (new Set(query.keys()).size !== [...query.keys()].length) return fail("INVALID_REQUEST");
+    const sectionResult = adminSectionSchema.safeParse(query.get("section") ?? "overview");
+    if (!sectionResult.success) return fail("INVALID_REQUEST");
+    const section = sectionResult.data;
+    const instance = query.get("database_instance_id");
+    if (instance !== null && !z.uuid().safeParse(instance).success) return fail("INVALID_REQUEST");
+    const allowed = new Set(["section", "database_instance_id"]);
+    const input: Record<string, string | number> = {
+      section,
+      contract_code: "cv_app_db_1",
+      expected_environment: auth.environment.name.toUpperCase(),
+      ...(instance === null ? {} : { database_instance_id: instance })
+    };
+    const id = query.get("id");
     if (section === "analytics") {
-      if ([...query.keys()].some(key => !["section", "days"].includes(key))) return fail("INVALID_REQUEST");
+      allowed.add("days");
       const days = query.get("days") ?? "7";
       if (!/^(?:[1-9]|[12][0-9]|3[01])$/.test(days)) return fail("INVALID_REQUEST");
-      const {
-        data,
-        error
-      } = await auth.client.rpc("admin_analytics", {
-        p_days: Number(days)
-      });
-      if (error) return fail(rpcError(error));
-      return Response.json(adminAnalyticsSchema.parse(data), {
-        headers
-      });
+      input.days = Number(days);
+    } else if (section !== "overview" && section !== "controls") {
+      allowed.add("id");
+      allowed.add("kind");
+      if (id !== null && !externalIdSchema.safeParse(id).success) return fail("INVALID_REQUEST");
+      const kind = query.get("kind");
+      if (kind !== null && !(
+        ["profiles", "policies"].includes(section) && ["identities", "versions"].includes(kind) ||
+        section === "users" && ["accounts", "members"].includes(kind)
+      )) return fail("INVALID_REQUEST");
+      input.kind = section === "profiles" ? id?.startsWith("prf_") || kind === "identities" ? "profiles" : "profile_versions"
+        : section === "policies" ? id?.startsWith("pol_") || kind === "identities" ? "policies" : "policy_versions"
+        : section === "users" && (kind === "members" || id?.startsWith("adm_")) ? "members" : kinds[section];
+      if (id !== null) input.external_id = id;
+      else {
+        allowed.add("limit");
+        allowed.add("after");
+        const limit = query.get("limit") ?? "25";
+        const after = query.get("after");
+        if (!/^[1-9][0-9]{0,2}$/.test(limit) || Number(limit) > 100 || after !== null && (!after || after.length > 200)) return fail("INVALID_REQUEST");
+        input.limit = Number(limit);
+        if (after !== null) input.after = after;
+      }
     }
-    const parsed = adminRecordSectionSchema.safeParse(section);
-    if (!parsed.success) return fail("INVALID_REQUEST");
-    const id = query.get("id");
-    const kind = query.get("kind");
-    if (kind !== null && !(["profiles", "policies"].includes(section) && ["identities", "versions"].includes(kind) || section === "users" && ["accounts", "members"].includes(kind))) return fail("INVALID_REQUEST");
-    const recordKind = section === "profiles" ? id?.startsWith("prf_") || kind === "identities" ? "profiles" : "profile_versions" : section === "policies" ? id?.startsWith("pol_") || kind === "identities" ? "policies" : "policy_versions" : section === "users" && (kind === "members" || id?.startsWith("adm_")) ? "members" : kinds[parsed.data];
-    const after = query.get("after");
-    const limit = query.get("limit") ?? "25";
-    if (!/^[1-9][0-9]{0,2}$/.test(limit) || Number(limit) > 100 || after !== null && after.length > 200 || [...query.keys()].some(key => !["section", "id", "after", "limit", "kind"].includes(key))) return fail("INVALID_REQUEST");
-    if (id && !externalIdSchema.safeParse(id).success) return fail("INVALID_REQUEST");
-    const {
-      data,
-      error
-    } = id ? await auth.client.rpc("admin_record", {
-      p_kind: recordKind,
-      p_external_id: id
-    }) : await auth.client.rpc("admin_records", {
-      p_kind: recordKind,
-      p_limit: Number(limit),
-      p_after: after ?? undefined
-    });
+    if ([...query.keys()].some(key => !allowed.has(key))) return fail("INVALID_REQUEST");
+    // One verified bearer and one database transaction produce the context and page.
+    const { data, error } = await auth.client.rpc("admin_read", { p_input: input });
     if (error) return fail(rpcError(error));
-    return Response.json(id ? adminRecordSchema.parse(data) : adminPageSchema.parse(data), {
-      headers
-    });
+    const envelope = adminReadResponseSchema.parse(data);
+    if (envelope.context.environment.toLowerCase() !== auth.environment.name ||
+        instance !== null && envelope.context.database_instance_id !== instance) return fail("CLIENT_UPDATE_REQUIRED");
+    const payload = section === "overview" || section === "controls" ? z.null().parse(envelope.data)
+      : section === "analytics" ? adminAnalyticsSchema.parse(envelope.data)
+      : id !== null ? adminRecordSchema.parse(envelope.data) : adminPageSchema.parse(envelope.data);
+    return Response.json({ context: envelope.context, data: payload }, { headers });
   } catch {
     return fail("UNAVAILABLE");
   }
