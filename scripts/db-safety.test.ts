@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { hostedPostgresEnvironment, requireRehearsalEvidence, requireFreshApplicationState, requireRecoveryEvidence, validateDatabaseServer, requireAcceptedTest, migrationWithHistory, validateRehearsalIdentity, checkPromotion, cleanPostgresEnvironment, parseRebuildState, requireMaintenanceAuthorization, validateProjectIdentity, requireAppendOnlyManifest } from "./db-safety.ts";
 const manifest = {
   baseline_digest: "1".repeat(64),
@@ -134,6 +135,79 @@ test("resume keeps schema DDL and migration history in a single file transaction
   assert(applied.indexOf("insert into supabase_migrations") < applied.lastIndexOf("commit;"));
   assert.throws(() => migrationWithHistory("create table example(id int);", "20261107120000", "20261107120000_example.sql"));
   assert.throws(() => migrationWithHistory("begin;\ncreate table example(id int);\ncommit;\nbegin;\ncommit;", "20261107120000", "20261107120000_example.sql"));
+});
+const migrationVersion = "20261107120000";
+const migrationName = `${migrationVersion}_example.sql`;
+const historyInsert = `\ninsert into supabase_migrations.schema_migrations(version,name) values('${migrationVersion}','example');\ncommit;`;
+test("migration trivia scanning preserves whitespace and nested/adjacent comment headers", () => {
+  for (const header of ["", " \t\r\n", "-- reviewed\r\n", "-- reviewed\r", "/**//**/\n", "/* outer /* nested */ tail */\n-- next\n", "/* begin; commit; */ -- rollback;\n"]) {
+    const body = "\nselect 1;\r\n";
+    assert.equal(migrationWithHistory(`${header}BeGiN \t;${body}COMMIT \n;\r\n`, migrationVersion, migrationName), `${header}begin;${body}${historyInsert}`);
+  }
+});
+test("all actual migrations retain byte-identical headers/bodies and history injection output", () => {
+  const directory = new URL("../supabase/migrations/", import.meta.url);
+  const files = readdirSync(directory).filter(name => name.endsWith(".sql")).sort();
+  assert(files.length >= 8);
+  for (const name of files) {
+    const source = readFileSync(new URL(name, directory), "utf8");
+    // The frozen files have canonical BEGIN/COMMIT lines. Build the previous
+    // output directly, without retaining the vulnerable regex in a test helper.
+    const begin = /^begin;$/im.exec(source);
+    const commit = source.lastIndexOf("commit;");
+    assert(begin && commit > begin.index, name);
+    const version = name.split("_")[0];
+    const label = name.slice(version.length + 1, -4);
+    const expected = `${source.slice(0, begin.index)}begin;${source.slice(begin.index + begin[0].length, commit)}\ninsert into supabase_migrations.schema_migrations(version,name) values('${version}','${label}');\ncommit;`;
+    assert.equal(migrationWithHistory(source, version, name), expected, name);
+  }
+});
+test("quoted strings, identifiers and case-sensitive dollar bodies do not create transaction boundaries", () => {
+  const body = String.raw`
+select 'it''s ; BEGIN; COMMIT; ROLLBACK;', '\';
+select E'escaped \'; COMMIT; BEGIN; still inside the string';
+create table "quoted"";COMMIT;BEGIN;" (id integer);
+do $tag$ BEGIN; COMMIT; /* opaque */ $TAG$ ROLLBACK; $tag$;
+do $$ BEGIN; END; ABORT; $$;
+prepare "transaction" as select 1;
+select 1::integer, $1;
+`;
+  assert.equal(migrationWithHistory(`begin;${body}commit;`, migrationVersion, migrationName), `begin;${body}${historyInsert}`);
+});
+test("only escape strings treat a backslash as escaping a quote", () => {
+  // A generic backslash-string scanner would swallow the first quote and could
+  // hide the real early COMMIT. PostgreSQL standard strings do not do that.
+  assert.throws(() => migrationWithHistory(String.raw`begin;select '\';commit;begin;select '';commit;`, migrationVersion, migrationName));
+});
+test("transaction commands cannot hide inline or behind comments", () => {
+  for (const body of [
+    "select 1;commit;begin;select 2;", "begin;select 1;", "BEGIN TRANSACTION;", "rollback;", "rollback to savepoint x;", "end;", "abort;", "END WORK;", "START TRANSACTION;", "start/* one /* nested */ */transaction;", "START-- next token\nTRANSACTION;", "PREPARE TRANSACTION 'prepared';", "prepare/* reviewed */transaction 'prepared';", "prepare-- next token\r\ntransaction 'prepared';", "select 1;COMMIT/**/;select 2;"
+  ]) assert.throws(() => migrationWithHistory(`begin;${body}commit;`, migrationVersion, migrationName), /exactly one explicit outer transaction/, body);
+  assert.throws(() => migrationWithHistory("begin;select 1;commit;-- trailing comment", migrationVersion, migrationName));
+});
+test("malformed or unterminated lexical states fail closed", () => {
+  for (const source of [
+    "/* open begin;select 1;commit;", "/* outer /* nested */ begin;select 1;commit;", "-- no newline begin;select 1;commit;", "*/begin;select 1;commit;", "begin;select 1;/* open commit;", "begin;select 1;/* outer /* nested */ commit;", "begin;select 'open;commit;", 'begin;select "open;commit;', "begin;select E'open\\';commit;", "begin;do $$open;commit;", "begin;do $tag$wrong close $TAG$;commit;", "begin;do $bad-tag$body$bad-tag$;commit;", "begin;select 1;*/commit;", "begin;\\gexec\ncommit;", "begin;select :'psql_variable';commit;", "begin;select \0;commit;", "begin;select 1;", "select 1;commit;", "beginning;select 1;commit;"
+  ]) assert.throws(() => migrationWithHistory(source, migrationVersion, migrationName), /exactly one explicit outer transaction/, source);
+});
+test("adversarial comment partitions and large trivia finish within a child-process deadline", { timeout: 10_000 }, () => {
+  const module = new URL("./db-safety.ts", import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    import { migrationWithHistory } from ${JSON.stringify(module)};
+    const apply = source => migrationWithHistory(source, '${migrationVersion}', '${migrationName}');
+    // CQL-01: each *//* lets the old regex reconsider previous comment partitions.
+    assert.throws(() => apply('/*' + '*//*'.repeat(200000)));
+    assert.doesNotThrow(() => apply('/*' + '*//*'.repeat(200000) + '*/begin;select 1;commit;'));
+    assert.throws(() => apply('/*'.repeat(100000) + '*/'.repeat(99999)));
+    assert.doesNotThrow(() => apply('-- reviewed\\n'.repeat(100000) + 'begin;' + '\\n'.repeat(200000) + 'select 1;commit;'));
+    assert.throws(() => apply('begin;' + '\\n'.repeat(200000) + 'select 1;commit;begin;commit;'));
+    console.log('bounded migration scanner passed');
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
+  assert.equal(child.error, undefined, "migration scanner exceeded its child-process deadline");
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout.trim(), "bounded migration scanner passed");
 });
 test("hosted connections cannot override libpq routing, TLS or database", () => {
   const identity = {
