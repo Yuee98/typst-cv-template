@@ -220,7 +220,9 @@ if (mode === "plan") {
   let ready = false;
   for (let i = 0; i < 120; i++) {
     try {
-      run("docker", ["exec", container, "pg_isready", "-U", "postgres"]);
+      // The image's temporary init server accepts Unix sockets before platform
+      // migrations finish. Only the final server listens on TCP loopback.
+      run("docker", ["exec", container, "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres", "-d", "postgres"]);
       ready = true;
       break;
     } catch {
@@ -257,6 +259,8 @@ if (mode === "plan") {
   console.log("Dedicated rehearsal stack started.");
 } else if (mode === "platform") {
   verifyTarget();
+  // Also fail closed when this phase is invoked independently during cold init.
+  run("docker", ["exec", container, "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres", "-d", "postgres"]);
   if (targetSql("select to_regclass('supabase_migrations.schema_migrations') is not null;") === "t") throw new Error("Cannot replace platform schemas after application migration history exists");
   if (targetSql("select count(*) from auth.users;") !== "0") throw new Error("Rehearsal platform has existing users; retain it for inspection");
   const source = "supabase_db_typst-cv-template";
