@@ -168,11 +168,10 @@
   },
   "TermsAcceptanceModal": {
     "title": "Terms and Privacy Notice",
-    "description": "Accept the current terms before using cloud storage.",
+    "description": "Before using cloud storage, read the Terms of Use and Privacy Policy. Links open in a new tab.",
     "cancel": "Cancel",
     "saving": "Saving",
     "accept": "Accept",
-    "version": "Version {version}",
     "terms": {
       "agreeTo": "I agree to the",
       "termsOfUse": "Terms of Use",
@@ -398,7 +397,7 @@
     },
     "terms": {
       "agreePrefix": "I have read and agree to the",
-      "aiTerms": "AI Service Terms",
+      "aiTerms": "AI Service Terms and {provider} Data Processing Details",
       "required": "Please accept the AI terms first.",
       "checking": "Checking terms status…",
       "accepting": "Recording…",

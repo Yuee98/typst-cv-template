@@ -4,6 +4,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Link } from "@/i18n/navigation";
+import { aiDisclosureHref } from "@/lib/legal/document-links";
 import { MAX_STYLE_INSTRUCTION_CHARS, POLISH_CONTEXT_LEVELS, POLISH_STYLE_PRESETS, type PolishContextLevel } from "@/lib/polish/contract";
 import { cn } from "@/lib/utils";
 import type { PolishDisclosure } from "./scope-builder";
@@ -85,7 +86,6 @@ function AvailabilityDisclosure({
   if (status === "error" || !candidate) return <div role="status"><span>{t("availability.error")}</span><Button type="button" variant="ghost" size="sm" onClick={flow.availabilityRetry}>{t("availability.retry")}</Button></div>;
   const zh = locale.toLowerCase().startsWith("zh");
   const selected = candidate.options.find(option => option.optionId === candidate.selectedOptionId);
-  const localized = selected?.legalDisplay[zh ? "zh" : "en"];
   return <div className="space-y-3 rounded-md border border-accent-border bg-accent-soft px-3 py-2 text-sm">
     <label className="block font-medium" htmlFor="polish-provider-choice">{zh ? "选择 AI Provider 和模型" : "Choose AI provider and model"}</label>
     <select id="polish-provider-choice" className="w-full rounded border border-border bg-surface px-2 py-2" value={candidate.selectedOptionId ?? ""} onChange={event => flow.selectOption(event.target.value)}>
@@ -93,10 +93,6 @@ function AvailabilityDisclosure({
       {candidate.options.map(option => <option key={option.optionId} value={option.optionId} disabled={option.status === "UNAVAILABLE"}>{option.providerName} · {option.modelName}{option.status === "UNAVAILABLE" ? zh ? "（暂不可用）" : " (unavailable)" : ""}</option>)}
     </select>
     {!selected && <p role="status">{zh ? "原选项已失效，请重新选择并确认。" : "Your previous option is unavailable. Select an option and confirm again."}</p>}
-    {localized && <div className="space-y-2 rounded-md border border-accent-border bg-surface px-3 py-2">
-      <div className="font-medium">{localized.providerLabel} · {localized.modelLabel}</div>
-      {localized.blocks.map((block, index) => block.kind === "paragraph" ? <p className="whitespace-pre-wrap break-words" key={index}>{block.text}</p> : <ul className="list-disc pl-5" key={index}>{block.items.map((item, i) => <li key={i}>{item}</li>)}</ul>)}
-    </div>}
   </div>;
 }
 function DisclosureSummary({
@@ -260,6 +256,7 @@ function TermsRow({
   flow: PolishFlow;
 }) {
   const t = useTranslations("PolishDialog");
+  const locale = useLocale();
   const {
     terms
   } = flow;
@@ -280,14 +277,17 @@ function TermsRow({
         </Button>
       </div>;
   }
+  const selected = flow.availabilityCandidate?.options.find(option => option.optionId === flow.availabilityCandidate?.selectedOptionId);
+  if (!selected) return null;
+  const provider = selected.legalDisplay[locale.toLowerCase().startsWith("zh") ? "zh" : "en"].providerLabel;
   // required | accepting — the progressive consent checkbox (roadmap).
   return <div className={cn("rounded-md border px-3 py-2", terms.serverRejected ? "border-danger-border bg-danger-soft" : "border-border bg-surface-hover")}>
       <label className="flex items-start gap-2 text-sm leading-5 text-foreground-muted">
         <input type="checkbox" className="mt-1 size-4 rounded border-border-strong" checked={terms.checked} disabled={terms.status === "accepting"} onChange={event => terms.setChecked(event.target.checked)} />
         <span>
           {t("terms.agreePrefix")}{" "}
-          <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/ai-terms" target="_blank" rel="noreferrer">
-            {t("terms.aiTerms")}
+          <Link className="font-medium text-accent-soft-foreground hover:text-accent" href={aiDisclosureHref(selected.legalDisplay)} target="_blank" rel="noopener noreferrer">
+            {t("terms.aiTerms", { provider })}
           </Link>
           .
         </span>

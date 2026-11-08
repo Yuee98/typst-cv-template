@@ -283,11 +283,26 @@ test("current database terms and provider disclosures render in both languages",
       name: locale === "en" ? "AI Service Terms" : "AI 服务条款",
       exact: true
     })).toBeVisible();
-    await expect(page.getByRole("heading", {
-      name: /DeepSeek/
-    })).toBeVisible();
-    await expect(page.getByRole("heading", {
-      name: /MiMo/
-    })).toBeVisible();
+    const providerLinks = page.locator('a[href*="disclosure="]');
+    await expect(providerLinks).toHaveCount(3);
+    const targets: { provider: RegExp; href: string }[] = [];
+    for (const provider of [/DeepSeek/, /MiMo/, /Google|Gemini/]) {
+      const link = providerLinks.filter({ hasText: provider });
+      await expect(link).toHaveCount(1);
+      const href = await link.getAttribute("href");
+      expect(href).not.toBeNull();
+      const url = new URL(href!, page.url());
+      expect(url.pathname).toBe(`/${locale}/ai-terms`);
+      expect([...url.searchParams.keys()].sort()).toEqual(["bundle", "digest", "disclosure", "manifest"]);
+      targets.push({ provider, href: url.href });
+    }
+    for (const { provider, href } of targets) {
+      await page.goto(href);
+      await expect(page.getByRole("heading", { name: provider })).toBeVisible();
+      // An exact disclosure is the document, rather than the generic selector
+      // or all other providers' complete disclosures appended to the page.
+      await expect(page.locator('a[href*="disclosure="]')).toHaveCount(0);
+      await expect(page.locator("article p").first()).toBeVisible();
+    }
   }
 });

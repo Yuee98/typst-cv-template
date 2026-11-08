@@ -367,7 +367,7 @@ CV、Admin、AI HTTP 数据响应使用 `private, no-store`；`app_context`、cu
 
 价格接续在 `admin_price_version_replace` 内接收新价格的完整参数，以一个数据库时刻关闭旧价并创建/发布接续价；不要求预先创建一个无法精确对齐该时刻的不可变 successor 草稿。验证页显示报告 ID、结果/原因和到期时刻，验证覆盖所有时段的全部候选；上游成功与否仍需另行授权的 smoke，不能由凭据存在的检查推断。
 
-当前条款页面、接受弹窗和所选 Provider 披露由数据库 current 内容渲染，普通条款及 AI 披露均记录精确目标和摘要。注册/OAuth 返回不再把静态版本标记自动写成当前同意。账户所属读写使用经过 `getUser(token)` 校验的固定 bearer 客户端；切换账户不会改变进行中操作的 JWT。客户端仍在写入时核验原 database instance，CV/条款同时提交与 JWT 一致的 expected_auth_user_id。缓存、草稿及加密口令引用按项目/实例/契约/用户隔离，表单采用正文时才设定编辑 revision，背景列表刷新不替换脏表单。
+条款全文在独立阅读页按数据库 current 的精确目标渲染；接受弹窗只保留短提醒、未预选 checkbox 和该目标的版本链接。通用 AI 页面展示公共条款及各 Provider 阅读入口，精确披露页按原 blocks 顺序展示所选全文，避免重复拼接公共条款。链接校验文档/披露 ID 和摘要，AI 链接另校验 bundle/manifest；失配时提示返回重新打开，不代换另一版本。普通条款及 AI 披露仍记录原有精确目标和摘要。注册/OAuth 返回不再把静态版本标记自动写成当前同意。账户所属读写使用经过 `getUser(token)` 校验的固定 bearer 客户端；切换账户不会改变进行中操作的 JWT。客户端仍在写入时核验原 database instance，CV/条款同时提交与 JWT 一致的 expected_auth_user_id。缓存、草稿及加密口令引用按项目/实例/契约/用户隔离，表单采用正文时才设定编辑 revision，背景列表刷新不替换脏表单。
 
 ## Admin 页面读取与短期内存缓存
 

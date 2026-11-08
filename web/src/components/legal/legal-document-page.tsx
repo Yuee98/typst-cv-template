@@ -1,9 +1,10 @@
 import { useTranslations } from "next-intl";
+import type { ReactNode } from "react";
 
 import { Link } from "@/i18n/navigation";
 import type { LegalDocument } from "@/content/legal";
 
-export function LegalDocumentPage({ document }: { document: LegalDocument }) {
+export function LegalDocumentPage({ document, children }: { document: LegalDocument; children?: ReactNode }) {
   const t = useTranslations("LegalDocumentPage");
 
   return (
@@ -81,6 +82,7 @@ export function LegalDocumentPage({ document }: { document: LegalDocument }) {
               </div>
             </section>
           ))}
+          {children}
         </div>
       </article>
     </main>
