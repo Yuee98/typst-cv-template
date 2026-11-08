@@ -1,5 +1,7 @@
 # 数据库重构实施计划
 
+状态：本地实施与验收完成，结果见 [验证记录](database-rebuild-verification.md)。test/prod 切换仍未执行。
+
 本轮执行用户确认的第二轮简化方案。授权范围为代码、全新 migrations、文档和本地测试；不操作 test/prod、不发布、不 push。上一轮 UI/Admin 工作已提交至 38cc1e4，开始本轮时无待提交代码，仅有本机 .DS_Store。
 
 ## 已定模型

@@ -1,0 +1,269 @@
+{
+  "record_kind": "LOCAL_CV_APP_DB_2_VERIFICATION",
+  "date": "2026-11-08",
+  "source_sha": "3967ca536b0127d729f7b536c1a064c85fd9c9d1",
+  "release_eligible": false,
+  "scope": {
+    "local_only": true,
+    "hosted_database_access": false,
+    "hosted_changes": false,
+    "push": false,
+    "release": false,
+    "paid_provider_calls": 0
+  },
+  "migration_manifest": {
+    "contract": "cv_app_db_2",
+    "baseline_digest": "94d98f5573f8d1e063675fe2794610a7f888fb7b6ac8b56d15611ba26b555c63",
+    "migration_manifest_digest": "94d98f5573f8d1e063675fe2794610a7f888fb7b6ac8b56d15611ba26b555c63",
+    "files": [
+      {
+        "name": "20261108123038_app_foundation.sql",
+        "digest": "762ade2297ce2db8715164366be7646eb0072691f4568e7d3712c43f878d7b44"
+      },
+      {
+        "name": "20261108123041_admin_tables.sql",
+        "digest": "33433e2dbbadbef8cd47e36fdfe042574ad19813d6f2e7d91ce0a353da7f8efa"
+      },
+      {
+        "name": "20261108123043_ai_tables.sql",
+        "digest": "307478fca82914caa2c7ba818da1c2a048c9d8f956c7395b5d2f493ab47e2911"
+      },
+      {
+        "name": "20261108123046_legal_tables.sql",
+        "digest": "06f946b8df914baedb8624a822dedd69552f73e648431724a12ee52c80870465"
+      },
+      {
+        "name": "20261108123048_cv_tables.sql",
+        "digest": "6ba1e4ac809a118e97f8960251d45f9ca2cb139c8961a001674873b76535e041"
+      },
+      {
+        "name": "20261108123051_audit_tables.sql",
+        "digest": "2fa2752c0352bdab9620a18b5983799337800043bbca3fc19ba1d58cda74f046"
+      },
+      {
+        "name": "20261108123054_cross_schema_constraints.sql",
+        "digest": "b973c9bd81011bb255c213ca2aeb70b9753105d1f788e48c7d84172e6b3e614f"
+      },
+      {
+        "name": "20261108123057_common_functions.sql",
+        "digest": "a3db44b9c0dee7b7528b7428d738330d2c0aa7c0a5d4c58aed258301df827cdb"
+      },
+      {
+        "name": "20261108123100_legal_functions.sql",
+        "digest": "de81b8bbb8e27e6a2541ea2e5d27605d055001d74700e1ef5d553fa078e2f8e6"
+      },
+      {
+        "name": "20261108123102_cv_functions.sql",
+        "digest": "732aca2603f511ae35b272e9b3b04131f1f45d6e86312c32615a10a2a4c6efde"
+      },
+      {
+        "name": "20261108123105_ai_functions.sql",
+        "digest": "578fef83148969da6d27cc2aebdfe9841f9dc1f727f567ed3ed2b3794d0971ba"
+      },
+      {
+        "name": "20261108123109_admin_functions.sql",
+        "digest": "aacd1120ef1439cc1e5a55f4f74ce7d3cb1e1e6bb8b99e5cc52b457c9d35ff3c"
+      },
+      {
+        "name": "20261108123111_public_api.sql",
+        "digest": "984751d866a208c5d586930f64aa5582b3b770a06e15322e255f592b27e33145"
+      },
+      {
+        "name": "20261108123114_catalog_seed.sql",
+        "digest": "6565b7a6a41f1ae555fdd2d9a0e340f49e657756ff4eaa3ae3ded4913d366925"
+      },
+      {
+        "name": "20261108123117_jobs.sql",
+        "digest": "02377dd4603cb9b50dd3a0f401a7c665073823c9bf29496417fead6b1d332640"
+      }
+    ]
+  },
+  "checks": {
+    "web_unit": {
+      "files": 88,
+      "tests": 1206,
+      "passed": true,
+      "log": "tmp/round2-final-unit.log"
+    },
+    "tool_unit": {
+      "tests": 35,
+      "passed": true,
+      "log": "tmp/round2-final-unit.log"
+    },
+    "typecheck": {
+      "passed": true,
+      "log": "tmp/round2-final-typecheck.log"
+    },
+    "eslint": {
+      "passed": true,
+      "log": "tmp/round2-final-lint.log"
+    },
+    "sql": {
+      "files": 4,
+      "tests": 82,
+      "passed": true,
+      "log": "/tmp/cv-db2-final-sql.log"
+    },
+    "real_api": {
+      "files": 4,
+      "tests": 16,
+      "passed": true,
+      "log": "/tmp/cv-db2-final-api.log"
+    },
+    "database": {
+      "tables": 30,
+      "unstructured_ai_legal_audit_columns": 0,
+      "public_tables": 0,
+      "public_execute": 0,
+      "lint": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "advisors": [],
+      "generated_public_types_diff": 0
+    },
+    "concurrency": {
+      "disposable": true,
+      "reservation_idempotency": true,
+      "single_transmission": true,
+      "terminal_idempotency": true,
+      "single_settlement": true,
+      "atomic_user_limit": true,
+      "locked_day_boundary": true,
+      "separate_admission_day": true,
+      "expired_rule_has_no_occupancy": true,
+      "log": "tmp/round2-concurrency.log"
+    },
+    "admin_browser": {
+      "tests": 9,
+      "passed": true,
+      "log": "/tmp/cv2-admin-e2e-pass.log",
+      "later_page_capture_tests": 2,
+      "later_page_capture_log": "/tmp/cv2-admin-visual-pages.log",
+      "later_cache_retry_gc_regressions": 43,
+      "later_regression_log": "/tmp/cv2-admin-races-final-green.log",
+      "coverage_note": "Real Auth/TOTP and business journey ran before the final cache patches; those patches passed real-hook RED/GREEN regressions, the complete final unit suite, typecheck/lint and final production builds."
+    },
+    "provider_choice_browser": {
+      "journeys": 1,
+      "passed": true,
+      "real_provider_calls": 0,
+      "log": "tmp/db2-provider-choice-logs/browser-final-run.log"
+    },
+    "visual": {
+      "manually_viewed": true,
+      "viewports": [
+        390,
+        1536
+      ],
+      "themes": [
+        "dark",
+        "light"
+      ],
+      "paths": [
+        "tmp/cv2-admin-visual/configurations-390-dark.png",
+        "tmp/cv2-admin-visual/controls-390-dark.png",
+        "tmp/cv2-admin-visual/configurations-1536-light.png",
+        "tmp/cv2-admin-visual/controls-1536-light.png"
+      ]
+    },
+    "builds": {
+      "source_sha": "3967ca536b0127d729f7b536c1a064c85fd9c9d1",
+      "modes": [
+        "server",
+        "static",
+        "server"
+      ],
+      "passed": true,
+      "static_files_scanned": 139,
+      "static_ai_admin_absent": true,
+      "font_mock": false,
+      "log": "tmp/round2-build-modes-final.log"
+    }
+  },
+  "legal_seed": {
+    "main": {
+      "matched": 5,
+      "instance": "fc63e7dd-f00f-4d2f-9132-3a8d7ba0f6d0",
+      "ai_enabled": false,
+      "mismatches": 0,
+      "current_acceptances": 0
+    },
+    "fresh": {
+      "matched": 5,
+      "instance": null,
+      "ai_enabled": false,
+      "mismatches": 0,
+      "current_acceptances": 0
+    },
+    "artifact_sha256": "8b6f76c9b740adf3d0b732c76a6870864a9b0a5a509be8389758d903d5e1d070"
+  },
+  "rehearsal": {
+    "source_sha": "3967ca536b0127d729f7b536c1a064c85fd9c9d1",
+    "container_id": "b94f4422a30724350c0e8c24afe7be1406aba32a02ec16c90562b03865256568",
+    "method": "application_allowlist",
+    "baseline_digest": "94d98f5573f8d1e063675fe2794610a7f888fb7b6ac8b56d15611ba26b555c63",
+    "migration_manifest_digest": "94d98f5573f8d1e063675fe2794610a7f888fb7b6ac8b56d15611ba26b555c63",
+    "old_history": 60,
+    "new_history": 15,
+    "database_instance_id": "663add7f-acb5-4fde-94e2-4eefae3b842d",
+    "phase": "DB-ready",
+    "maintenance": true,
+    "platform_fingerprints": 12,
+    "platform_preservation_passed": true,
+    "remote_mode_resume_passed": true,
+    "missing_checkpoint_rebuild_refused": true,
+    "missing_history_and_checkpoint_rebuild_refused": true,
+    "constructed_checkpoint_recovery_passed": true,
+    "checkpoint_fault_method": "TEST_CONSTRUCTED_STATE_ONLY_NO_REPEAT_RESET",
+    "initial_checkpoint_loss_recovery_passed": false,
+    "proof_file": "tmp/remote-rehearsal-proof.json",
+    "proof_sha256": "8e305d07f7da29bc6d7a18c19c08897bacd099b8758d6df904d2cc40be9bfe84",
+    "logs": [
+      "/tmp/cv-g3-v2-run.log",
+      "/tmp/cv-g3-v2-checkpoint-guards.log",
+      "/tmp/cv-g3-v2-verify.log"
+    ],
+    "platform_fingerprint_names": [
+      "mfa",
+      "role",
+      "user",
+      "bucket",
+      "object",
+      "session",
+      "identity",
+      "platform_acl",
+      "refresh_token",
+      "unrelated_cron",
+      "role_membership",
+      "platform_versions"
+    ],
+    "checkpoint_coverage": {
+      "real_stop_after_migrations_resume": true,
+      "real_lost_checkpoint_recovery": false,
+      "missing_checkpoint_refuses_rebuild": true,
+      "missing_checkpoint_and_history_refuses_rebuild": true,
+      "constructed_reset_started_recovery": true,
+      "constructed_state_is_not_an_actual_second_reset": true
+    },
+    "platform_fingerprint_fields": [
+      "mfa",
+      "role",
+      "user",
+      "bucket",
+      "object",
+      "session",
+      "identity",
+      "platform_acl",
+      "refresh_token",
+      "unrelated_cron",
+      "role_membership",
+      "platform_versions"
+    ]
+  },
+  "limitations": [
+    "No hosted reset, Auth/SSO inspection, deployment or paid upstream call was performed this round.",
+    "Checkpoint recovery after a constructed reset_started fault is reported separately from the actual interruption after a durable migrations checkpoint.",
+    "A later documentation-only commit does not rebind these measurements; a future hosted operation requires evidence for its actual candidate SHA."
+  ]
+}
