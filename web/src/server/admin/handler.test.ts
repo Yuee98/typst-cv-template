@@ -319,3 +319,22 @@ describe("safe configuration validation reasons", () => {
     expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST" } });
   });
 });
+describe("safe runtime validation reasons", () => {
+  const controls = { ...base, operation: "admin_ai_update", expected_revision: "1", enabled: true, audience: "ALLOWLIST", user_daily_limit: "20", global_daily_limit: "2000", user_minute_limit: "3" };
+  it.each(["LEGAL_UNAVAILABLE", "FALLBACK_REQUIRED", "INVALID_ROUTING_GRAPH"])("preserves the actionable SQL reason %s", async details => {
+    rpc.mockImplementation(async (name: string) => name === "admin_context" ? { data: context, error: null } : { data: null, error: { code: "P0001", message: "INVALID_REQUEST", details } });
+    const result = await handleAdminPost(post(controls), deps as never);
+    expect(result.status).toBe(400);
+    expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST", reason: details } });
+  });
+  it("does not expose arbitrary database details", async () => {
+    rpc.mockImplementation(async (name: string) => name === "admin_context" ? { data: context, error: null } : { data: null, error: { code: "P0001", message: "INVALID_REQUEST", details: "private database context and credential material" } });
+    const result = await handleAdminPost(post(controls), deps as never);
+    expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST" } });
+  });
+  it("does not reinterpret the same reason for unrelated operations", async () => {
+    rpc.mockImplementation(async (name: string) => name === "admin_context" ? { data: context, error: null } : { data: null, error: { code: "P0001", message: "INVALID_REQUEST", details: "INVALID_ROUTING_GRAPH" } });
+    const result = await handleAdminPost(post({ ...base, operation: "admin_ai_disable", expected_revision: "1" }), deps as never);
+    expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST" } });
+  });
+});

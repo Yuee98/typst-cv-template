@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import { ADMIN_ERROR_CODES, ADMIN_ERROR_STATUS, adminContextSchema, adminReadResponseSchema, adminSectionSchema, adminAnalyticsSchema, adminPageSchema, adminRecordSchema, adminMutationRequestSchema, adminCommittedOperationSchema, entityIdSchema, adminConfigurationSchema, adminRuleSchema, adminAdapterSchema, adminDocumentSchema, type AdminErrorCode, type AdminSection, type AdminConfiguration, type AdminConfigurationErrorReason } from "@/lib/admin/contract";
+import { ADMIN_ERROR_CODES, ADMIN_ERROR_STATUS, adminContextSchema, adminReadResponseSchema, adminSectionSchema, adminAnalyticsSchema, adminPageSchema, adminRecordSchema, adminMutationRequestSchema, adminCommittedOperationSchema, entityIdSchema, adminConfigurationSchema, adminRuleSchema, adminAdapterSchema, adminDocumentSchema, adminRuntimeErrorReasonSchema, type AdminErrorCode, type AdminSection, type AdminConfiguration, type AdminConfigurationErrorReason, type AdminRuntimeErrorReason } from "@/lib/admin/contract";
 import { resolveAdminEnvironment, type AdminEnvironment } from "./environment";
 import { createAdminRequestClient } from "./request-client";
 import { ADAPTERS, MissingProviderCredentialError, validateExecutionConfiguration } from "@/server/ai/provider";
@@ -46,7 +46,7 @@ const headers = {
   "Cache-Control": "private, no-store",
   Vary: "Authorization"
 };
-function fail(code: AdminErrorCode, reason?: AdminConfigurationErrorReason) {
+function fail(code: AdminErrorCode, reason?: AdminConfigurationErrorReason | AdminRuntimeErrorReason) {
   return Response.json({
     error: {
       code,
@@ -236,7 +236,11 @@ export async function handleAdminPost(request: Request, deps: Dependencies = def
     } = await auth.client.rpc(operation, {
       p_input: z.json().parse(p_input)
     });
-    if (error) return fail(rpcError(error));
+    if (error) {
+      const code = rpcError(error);
+      const reason = adminRuntimeErrorReasonSchema.safeParse(operation === "admin_ai_update" && code === "INVALID_REQUEST" ? error.details : undefined);
+      return fail(code, reason.success ? reason.data : undefined);
+    }
     const receipt = adminCommittedOperationSchema.parse(data);
     if (receipt.operation !== operation.slice("admin_".length)) return fail("UNAVAILABLE");
     return Response.json(receipt, {

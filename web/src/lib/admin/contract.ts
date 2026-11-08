@@ -169,6 +169,8 @@ export const ADMIN_ERROR_CODES = ["UNAUTHORIZED", "FORBIDDEN", "INVALID_REQUEST"
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
 export const adminConfigurationErrorReasonSchema = z.enum(["CREDENTIAL_UNAVAILABLE", "ENDPOINT_INVALID", "ENDPOINT_UNREACHABLE"]);
 export type AdminConfigurationErrorReason = z.infer<typeof adminConfigurationErrorReasonSchema>;
+export const adminRuntimeErrorReasonSchema = z.enum(["LEGAL_UNAVAILABLE", "FALLBACK_REQUIRED", "INVALID_ROUTING_GRAPH"]);
+export type AdminRuntimeErrorReason = z.infer<typeof adminRuntimeErrorReasonSchema>;
 export const adminErrorSchema = z.strictObject({
   error: z.strictObject({
     code: z.enum(ADMIN_ERROR_CODES),

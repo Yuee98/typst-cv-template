@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { adminCommittedOperationSchema, adminConfigurationErrorReasonSchema, adminErrorSchema, adminMutationRequestSchema, type AdminMutationRequest } from "@/lib/admin/contract";
+import { adminCommittedOperationSchema, adminConfigurationErrorReasonSchema, adminRuntimeErrorReasonSchema, adminErrorSchema, adminMutationRequestSchema, type AdminMutationRequest } from "@/lib/admin/contract";
 import { currentAdminSession, type AdminSession } from "./admin-session";
 export function useAdminMutation(client: SupabaseClient, actor: AdminSession, onCommitted: () => void) {
   const mounted = useRef(true);
@@ -43,7 +43,8 @@ export function useAdminMutation(client: SupabaseClient, actor: AdminSession, on
       if (!response.ok) {
         const failure = adminErrorSchema.parse(raw).error;
         const code = failure.code;
-        const safeReason = adminConfigurationErrorReasonSchema.safeParse(input.operation === "admin_configuration_save" && code === "INVALID_REQUEST" ? failure.reason : undefined);
+        const reasonSchema = input.operation === "admin_ai_update" ? adminRuntimeErrorReasonSchema : adminConfigurationErrorReasonSchema;
+        const safeReason = reasonSchema.safeParse(code === "INVALID_REQUEST" && ["admin_configuration_save", "admin_ai_update"].includes(input.operation) ? failure.reason : undefined);
         // A retry's preflight/validation rejection cannot prove that the
         // earlier write failed. Only a receipt or a new DB contract/instance
         // releases an operation whose outcome was already unknown.

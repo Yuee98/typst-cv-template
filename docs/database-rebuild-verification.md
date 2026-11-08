@@ -79,3 +79,13 @@
 新的独立 G3 将旧 60 条链重建为改写后的 15 条链，12 项平台指纹相等。真实迁移后中断恢复、重复恢复、缺检查点拒绝、缺检查点与历史拒绝，以及明确构造的检查点恢复都通过；没有冒称真实丢失检查点的故障。新 proof 为 `tmp/remote-rehearsal-proof.json`，SHA-256 `dadc0358777582208bc77e11691cd851011e42c584ac601b518061adc5ffdcc1`，新安全摘要 `tmp/g3-no-totp-final-summary.json`，绑定上述 `9dd1bb8` 和新 digest。
 
 本地预览账号已使用原邮箱/密码恢复；实际内网 HTTPS/Chromium 验证普通登录可保存原样且保持关闭的运行设置（HTTP 200），绑定入口与因素请求均为零。窄屏页面已人工查看。未调用 Provider、未操作 test/prod、未 push 或发布；本地库实例变化后需退出旧会话并重新登录。后续纯文档提交不重绑上述源码证据，未来 hosted 切换仍需针对实际候选 SHA 重新验收。
+
+## 后续交互修复：运行设置的依赖错误（2026-11-09）
+
+本地日志中 7 次失败均为 `INVALID_ROUTING_GRAPH`：启用的时间规则引用了一条未启用的配置。额度 20/2000/3 合法，关闭状态也不要求完整路由；BFF 丢弃 SQL detail、界面在取消勾选后仍保留旧错误，导致只看到 `INVALID_REQUEST`。
+
+现仅转发三种安全运行校验原因并显示中英指引：条款不可用、缺少启用的兜底、规则引用未启用配置或无效披露。修改字段清除已确定的旧错误，未知结果仍冻结原 payload/key；并发冲突保留草稿，刷新后必须显式载入最新设置。没有放宽 SQL 条件，也没有改动 migrations。
+
+1,239 项 Web 测试、类型检查、lint 通过。相关 SQL 文件 22/22 通过，新增 11 个事务回滚断言验证：不完整配置可关闭保存、启用失败的 flag/revision/receipt/audit 原子不变、缺省规则引用 disabled 配置时的具体失败原因。浏览器验证了中文说明与取消勾选后清错；因用户在排查期间已启用配置与总开关，浏览器错误响应采用明确模拟，真实 HTTPS POST 仅用保证过期的 revision 校验到 409，不提交写入。测试未关闭或重新启用用户的 AI，也没有重置数据库、调用 Provider 或操作线上。
+
+证据：`tmp/admin-runtime-final-unit.log`、`tmp/admin-runtime-final-lint.log`、`tmp/admin-runtime-validation-red.log`、`tmp/admin-runtime-validation-bff-green.log`、`tmp/admin-runtime-feedback-browser.log`、`/tmp/cv-runtime-draft-regression.log`。此前绑定 `9dd1bb8` 的基线和 G3 证明仍按原 SHA 保留，不自动证明后续应用改动。

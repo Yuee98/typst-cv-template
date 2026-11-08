@@ -51,6 +51,60 @@ insert into cancel_cases values('audience',pg_temp.reserve());
 select lives_ok($$select pg_temp.admin_call('ai_update',(select common.api_json(to_jsonb(c)-'id')||jsonb_build_object('expected_revision',revision::text,'audience','ALLOWLIST') from ai.runtime_control c))$$,'audience narrowing safely cancels current nonmembers');
 select ok((select time_canceled is not null from ai.requests where external_id=(select request_id from cancel_cases where label='audience')),'audience narrowing persists cancellation');
 select throws_like($$delete from auth.users where id='00000000-0000-4000-8000-000000000092'$$,'%violates%','active administrator cannot bypass revoke through Auth deletion');
+-- Runtime settings may be saved as an incomplete disabled draft. Every
+-- arrangement below is isolated by this file's BEGIN/ROLLBACK, including any
+-- human rules temporarily hidden from this fixture's transaction.
+select common.audit_context(null,null,'Rollback-only runtime draft validation regression','SYSTEM');
+delete from ai.routing_rules;
+create function pg_temp.save_runtime_settings(p_enabled boolean) returns jsonb
+language sql as $$
+  select pg_temp.admin_call('ai_update',jsonb_build_object(
+    'expected_revision',(select revision::text from ai.runtime_control where id=1),
+    'enabled',p_enabled,'audience','ALLOWLIST',
+    'user_daily_limit','20','global_daily_limit','2000','user_minute_limit','3'))
+$$;
+create function pg_temp.runtime_failure_detail(p_enabled boolean) returns text
+language plpgsql as $$
+declare v_detail text;
+begin
+  perform pg_temp.save_runtime_settings(p_enabled);
+  return null;
+exception when raise_exception then
+  if sqlerrm<>'INVALID_REQUEST' then raise;end if;
+  get stacked diagnostics v_detail=pg_exception_detail;
+  return v_detail;
+end $$;
+select is((select count(*) from ai.routing_rules),0::bigint,'draft regression starts with no routing rules');
+select lives_ok($$select pg_temp.save_runtime_settings(false)$$,'disabled ALLOWLIST settings save without any routing graph');
+select is((select common.api_json(to_jsonb(c)-'id'-'revision') from ai.runtime_control c where id=1),
+  '{"enabled":false,"audience":"ALLOWLIST","user_daily_limit":"20","global_daily_limit":"2000","user_minute_limit":"3"}'::jsonb,
+  'disabled draft persists the exact UI settings');
+create temp table runtime_draft_before_enable as
+select to_jsonb(c) as control,
+  (select count(*) from admin.operations) as operation_count,
+  (select count(*) from audit.runtime_control) as control_history_count
+from ai.runtime_control c where id=1;
+select is(pg_temp.runtime_failure_detail(true),'FALLBACK_REQUIRED','enabling without fallback reports the exact safe runtime reason');
+select is((select to_jsonb(c) from ai.runtime_control c where id=1),
+  (select control from runtime_draft_before_enable),'failed fallback validation preserves disabled flag and revision atomically');
+select is((select count(*) from admin.operations),(select operation_count from runtime_draft_before_enable),
+  'failed fallback validation leaves no operation receipt');
+select is((select count(*) from audit.runtime_control),(select control_history_count from runtime_draft_before_enable),
+  'failed fallback validation leaves no partial control history');
+-- The fallback is structurally complete but refers to one disabled synthetic
+-- configuration: disabled saves still work; enabled saves must reject it.
+select common.audit_context(null,null,'Rollback-only disabled configuration arrangement','SYSTEM');
+update ai.configurations set enabled=false,revision=revision+1 where name='Synthetic runtime fixture 1';
+insert into ai.routing_rules(enabled) values(true);
+insert into ai.routing_rule_configurations(rule_id,config_id,is_default)
+select (select max(id) from ai.routing_rules),id,true from ai.configurations where name='Synthetic runtime fixture 1';
+select is(pg_temp.runtime_failure_detail(true),'INVALID_ROUTING_GRAPH','enabling a fallback with a disabled configuration reports the graph reason');
+select is((select to_jsonb(c) from ai.runtime_control c where id=1),
+  (select control from runtime_draft_before_enable),'failed graph validation also preserves disabled flag and revision');
+select lives_ok($$select pg_temp.save_runtime_settings(false)$$,'disabled settings remain saveable with an incomplete fallback configuration');
+select ok((select not enabled and revision=(select (control->>'revision')::bigint+1 from runtime_draft_before_enable)
+  from ai.runtime_control where id=1),'a successful disabled save advances the revision exactly once');
+
 update auth.sessions set not_after=clock_timestamp()-interval '1 second' where id='00000000-0000-4000-8000-000000000093';
 select throws_ok($$select public.admin_context()$$,'P0001','UNAUTHORIZED','expired live Auth session still blocks ordinary-session Admin access');
 select * from finish();rollback;
