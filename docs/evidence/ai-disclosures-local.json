@@ -1,0 +1,117 @@
+{
+  "date": "2026-11-09",
+  "contract_code": "cv_app_db_2",
+  "source_sha": "4a3c02dafb7923f0578ae39b880e7d7fdfef8803",
+  "validation_worktree_parent_sha": "5015c9a48e2a2986c45e54be4c419d4e50628ac4",
+  "baseline_files": 15,
+  "baseline_digest": "058ba12c140f8a281e78b6b063642f4d83b3f73613e0cb73b9cf835c014682e0",
+  "migration_manifest_digest": "058ba12c140f8a281e78b6b063642f4d83b3f73613e0cb73b9cf835c014682e0",
+  "database_instance_id": "9aefa2c5-6f3d-413f-a608-725da0b84547",
+  "sql": {
+    "files": 6,
+    "assertions": 129,
+    "passed": true
+  },
+  "real_auth_api": {
+    "files": 5,
+    "tests": 19,
+    "passed": true
+  },
+  "web_unit": {
+    "files": 89,
+    "tests": 1271,
+    "passed": true
+  },
+  "tool_unit": {
+    "tests": 36,
+    "passed": true
+  },
+  "admin_browser": {
+    "tests": 10,
+    "passed": true,
+    "real_auth": true,
+    "screenshots_reviewed": [
+      "disclosures-390-dark.png",
+      "disclosure-390-dark.png",
+      "disclosure-1536-light.png",
+      "preview-disclosures-390-zh.png"
+    ]
+  },
+  "provider_choice_browser": {
+    "tests": 1,
+    "passed": true,
+    "execution": "PAIRED_FAKE_NO_PROVIDER_KEYS"
+  },
+  "concurrency": {
+    "disposable": true,
+    "single_reservation": true,
+    "single_transmission": true,
+    "single_settlement": true,
+    "quota_race": true,
+    "utc_boundaries": true,
+    "shanghai_rule_boundary": true
+  },
+  "build_modes": {
+    "transition": "server -> static -> server",
+    "passed": true,
+    "static_files_scanned": 139
+  },
+  "typecheck": "PASS",
+  "lint": "PASS",
+  "db_lint": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "advisors": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "public_types_changed": false,
+  "typegen_telemetry_suffix_removed": true,
+  "seed_parity": {
+    "history": 15,
+    "matched": 5,
+    "instance": "9aefa2c5-6f3d-413f-a608-725da0b84547",
+    "mismatches": 0,
+    "technical_legal_columns": 0
+  },
+  "preview": {
+    "restored": true,
+    "configurations": 1,
+    "rules": 1,
+    "ai_enabled": true,
+    "acceptances_restored": false
+  },
+  "paid_calls": 0,
+  "hosted_changes": false,
+  "pushed": false,
+  "released": false,
+  "new_g3_proof_created": false,
+  "logs": {
+    "sql": "/tmp/display-legal-sql.log",
+    "api": "/tmp/display-legal-api.log",
+    "lint": "tmp/disclosure-refactor/lint-final.log",
+    "advisors": "/tmp/display-legal-advisors.log",
+    "typescript": "/tmp/display-legal-typescript.log",
+    "eslint": "/tmp/display-legal-eslint.log",
+    "web_unit": "tmp/disclosure-refactor/web-tests-final.log",
+    "tool_unit": "tmp/disclosure-refactor/tools-tests-final.log",
+    "admin_browser": "tmp/disclosure-refactor/admin-e2e.log",
+    "provider_choice": "tmp/disclosure-refactor/provider-choice-e2e.log",
+    "concurrency": "tmp/disclosure-refactor/concurrency.log",
+    "build_modes": "tmp/disclosure-refactor/build-modes-final.log",
+    "typecheck": "tmp/disclosure-refactor/typecheck-final.log",
+    "reset": "tmp/disclosure-refactor/db-reset-final.log",
+    "preview_browser": "tmp/disclosure-refactor/preview-browser.json"
+  },
+  "preview_browser": {
+    "https": true,
+    "environment": "LOCAL",
+    "bff_status": 200,
+    "documents": 3,
+    "ai_enabled": true,
+    "provider_calls": 0,
+    "committed_writes": 0,
+    "signed_in_with_restored_account": true
+  }
+}

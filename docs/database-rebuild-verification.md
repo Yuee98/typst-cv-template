@@ -1,6 +1,6 @@
 # 第二轮重构验证记录
 
-状态：原始第二轮基线验收与后续修改分别记录。下方原始记录及其 [机器记录](evidence/database-rebuild-v2-local.json) 绑定 `3967ca5`，不会自动证明后来改写的迁移或应用代码。当前移除 TOTP 的重建验收见末节。
+状态：原始第二轮基线验收与后续修改分别记录。下方原始记录及其 [机器记录](evidence/database-rebuild-v2-local.json) 绑定 `3967ca5`，不会自动证明后来改写的迁移或应用代码。无 TOTP、运行设置修复及展示名/独立数据处理说明分别记录于后续章节。
 
 ## 实施范围
 
@@ -89,3 +89,23 @@
 1,239 项 Web 测试、类型检查、lint 通过。相关 SQL 文件 22/22 通过，新增 11 个事务回滚断言验证：不完整配置可关闭保存、启用失败的 flag/revision/receipt/audit 原子不变、缺省规则引用 disabled 配置时的具体失败原因。浏览器验证了中文说明与取消勾选后清错；因用户在排查期间已启用配置与总开关，浏览器错误响应采用明确模拟，真实 HTTPS POST 仅用保证过期的 revision 校验到 409，不提交写入。测试未关闭或重新启用用户的 AI，也没有重置数据库、调用 Provider 或操作线上。
 
 证据：`tmp/admin-runtime-final-unit.log`、`tmp/admin-runtime-final-lint.log`、`tmp/admin-runtime-validation-red.log`、`tmp/admin-runtime-validation-bff-green.log`、`tmp/admin-runtime-feedback-browser.log`、`/tmp/cv-runtime-draft-regression.log`。此前绑定 `9dd1bb8` 的基线和 G3 证明仍按原 SHA 保留，不自动证明后续应用改动。
+
+## 展示名称与独立数据处理说明（2026-11-09）
+
+用户批准直接修改原 15 条基线并重建本地测试库，不新增兼容迁移。配置保留内部 name，新增必填 display_name；公开选择器仅显示展示名，不再向浏览器投影内部名或模型。配置 typed audit、预留快照及历史统计保留当时的展示名。
+
+legal.documents、对应 typed audit、摘要及 DTO 删除 adapter_id、model_id、endpoint_url。配置显式引用 AI_PROVIDER 文档，多份不同技术配置可共享说明。Admin 新增数据处理说明列表和 View/Edit Dialog，支持新建、双语受限 Markdown、预览、生效日及启停。普通条款和公共 AI 条款不进入该编辑器；文档 kind 不可更改。管理员负责核实实际接收方和数据处理的适用性，系统不再声称能用技术字段自动验证隐私政策。
+
+配置名称、展示名、价格或技术字段修改不改变同意摘要；说明内容或接收方变更要求新请求重新同意。精确历史文档链接、接受记录与既有请求冻结证据保持不变。旧技术字段在新写入契约中被拒绝，不作为兼容输入。
+
+本次代码提交为 `7d7c1d9`（数据库及 fixture）和 `4a3c02dafb7923f0578ae39b880e7d7fdfef8803`（应用及浏览器测试）。仍是原 15 条迁移；最终基线与完整清单摘要均为 `058ba12c140f8a281e78b6b063642f4d83b3f73613e0cb73b9cf835c014682e0`。最终文件已完整重建本地库，实例为 `9aefa2c5-6f3d-413f-a608-725da0b84547`；5 份 canonical seed 正文/元数据全部匹配。机器记录见 [展示名与独立说明验收](evidence/ai-disclosures-local.json)。
+
+验收通过：129 项 SQL / 6 文件、19 项真实 Auth/API / 5 文件、1,271 项 Web / 89 文件、36 项工具测试、完整类型检查和 lint；db lint/advisors 均无问题。独立临时库并发预留、单次发送/结算、额度争用、UTC 跨日及上海时间规则边界全部通过。新增断言覆盖跨 adapter/endpoint/model 共享说明、名称变化不失效同意、正文变化要求重新同意、历史正文与冻结名称不变，以及双语 65,536 个中文字符保存。
+
+10 项真实 Admin 浏览器测试全部通过，含普通登录后新建/编辑/停用说明、typed history、手选关联到配置、权限和缓存隔离；390px 深色及 1536px 浅色的新列表和 Dialog 已人工查看。用户选择器的独立浏览器流程也通过，使用明确的假 Provider，不加载真实密钥。最终代码 server → static → server 构建通过，静态 Admin 边界扫描 139 文件。
+
+独立审查发现并修复了公共法律 reader 的孤立 100 份上限；真实条款门槛回归验证 101 份有效文档仍可检查普通条款同意。CLI typegen 曾在有效代码后混入遥测关闭错误 JSON，已验证有效类型部分与既有 public 类型逐字相同，移除非代码尾部后重新通过类型检查及完整 Admin 浏览器验收。新 E2E 的正文定位、缓存回访等待及延迟约束清理也已收敛，最终 10/10 及清理流程通过。
+
+日志位于 `tmp/disclosure-refactor/` 与 `/tmp/display-legal-*.log`，具体路径见机器记录。本地预览账号沿用原邮箱/密码，恢复原有一份配置、时间规则、额度及启用状态；展示名初始使用原配置名称，可在 Admin 修改。旧本地接受记录未恢复，需重新登录及同意当前说明。
+
+旧 `9dd1bb8` 的 G3 proof 和摘要不重绑；未来 hosted 切换仍必须为实际候选提交和新迁移摘要生成证明。本轮未操作 test/prod、未 push、未发布，付费 Provider 调用为 0。

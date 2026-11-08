@@ -13,7 +13,7 @@ CV 文档继续只支持当前 v7 和当前加密 envelope；Auth/OAuth/SSO 项�
 | 表 | 字段与职责 |
 | --- | --- |
 | ai.adapters | 代码维护的只读 id/name。1=DeepSeek Responses，2=MiMo Responses，3=Gemini Interactions；固定 ID 不复用，不再有 provider code/capability 目录。 |
-| ai.configurations | id、name、adapter_id、endpoint_url、model_id、credential_ref、legal_document_id、enabled、revision。name 是用户可见别名，不要求唯一。 |
+| ai.configurations | id、name、display_name、adapter_id、endpoint_url、model_id、credential_ref、legal_document_id、enabled、revision。name 是内部配置名，display_name 是用户可见名称，两者均必填、不要求唯一；用户选择器不拼接内部名或 model。 |
 | ai.prices | config_id 主键、currency、普通输入/缓存读取/缓存写入/输出四项整数 nanos_per_million 费率。与 configuration 同读同写、共用 revision，无独立开关/版本/价格时间线。 |
 | ai.routing_rules | id、weekday、start_minute、end_minute、enabled、revision。时间三列全 NULL 为兜底；普通规则三列全非 NULL，ISO weekday 1–7，分钟区间为 [start,end)。 |
 | ai.routing_rule_configurations | rule_id/config_id 联合主键、is_default。与规则作为一个保存单元；不得有重复成员，启用规则恰好一个默认成员。 |
@@ -22,11 +22,11 @@ CV 文档继续只支持当前 v7 和当前加密 envelope；Auth/OAuth/SSO 项�
 
 同星期启用区间不得重叠；恰有一个启用兜底。时区统一 Asia/Shanghai，不增加任意时区/priority。跨午夜规则拆为两段。默认项后来被停用不阻止紧急停用，也不静默替换供应商；剩余可选项由用户明确重选，空集合明确不可用。
 
-配置改 adapter/endpoint/model 时，必须重新明确提交价格及匹配披露。同一保存事务完成配置、价格、audit、revision 和关联检查。价格变化、别名变化不制造新发布实体。
+配置保存时明确提交价格和所选数据处理说明。同一保存事务完成配置、价格、audit、revision 和关联检查。价格变化、内部名或展示名变化不制造新发布实体，也不改变同意摘要。
 
 ## 接入实现与可编辑 endpoint
 
-协议实现与实际接收方分开。adapter 代码负责鉴权头、请求与终态字段、标准化 usage 和固定请求行为。配置保存实际 endpoint、key 引用、model 及匹配的法律目标；当前不建立单独供应商管理平台。
+协议实现与实际接收方分开。adapter 代码负责鉴权头、请求与终态字段、标准化 usage 和固定请求行为。配置保存实际 endpoint、key 引用、model 及由管理员明确选择的法律目标；当前不建立单独供应商管理平台。
 
 相同 wire 格式不能证明相同缓存/训练/留存政策，也不能保证相同 usage 语义。与现有 adapter 合同不同的接入必须新增明确实现，不通过数据库任意 parser/header JSON 或自动 fallback 凑兼容。
 
@@ -38,9 +38,11 @@ credential_ref 只允许 AI 专用环境变量命名空间，实际 key 不进�
 
 ## 条款与同意
 
-legal.documents 是当前文档：TERMS、AI_COMMON、AI_PROVIDER。普通条款和公共 AI 条款各一个当前目标；接入披露显式记录 recipient_name、adapter_id、规范化 endpoint_url、model_id 和双语标题/正文/生效日。相同 adapter/model 可有不同供应商、区域或账户条件的多份披露，不能再按协议/model 自动套官方条款。
+legal.documents 是当前文档：TERMS、AI_COMMON、AI_PROVIDER。普通条款和公共 AI 条款各一个当前目标；数据处理说明（AI_PROVIDER）保存 recipient_name、双语标题/正文、生效日及 enabled，与 adapter、endpoint、model 完全解耦，不保存或校验这些技术字段。配置通过 legal_document_id 显式引用说明，多份不同技术配置可以共享一份说明。配置必须引用 AI_PROVIDER；启用配置时说明也必须启用。
 
-双语正文使用 TEXT 和统一受限 Markdown；不保存 JSONB，也不另建翻译/章节/段落 CMS。禁原始 HTML、外部图片和危险链接协议。摘要由 DB 根据正文及授权 scope 生成，包含实际接收方、adapter、endpoint、model、生效日期和双语正文，排除 enabled、审计时间及通用 revision。
+双语正文使用 TEXT 和统一受限 Markdown；不保存 JSONB，也不另建翻译/章节/段落 CMS。禁原始 HTML、外部图片和危险链接协议。摘要由 DB 根据文档类型、实际接收方、生效日期和双语标题/正文生成，排除 enabled、审计时间、通用 revision 和配置的技术字段。
+
+管理员负责核实所选说明覆盖实际接收方、训练/留存政策和账户条件；数据库不声称能从 URL 或接收方名称自动验证隐私事实。修改 adapter/endpoint/model 本身不强制重新同意；实际数据处理发生变化时，管理员必须同步修改说明或切换到正确说明。说明内容变化后新请求须重新同意，旧链接和请求证据仍指向旧正文。
 
 legal.acceptances 当前行按 user/document 唯一，保存 document_audit_id 和接受时间；不另设 revision，也不重复 accepted_digest/accepted_document_revision。AI 确认一次原子接受 common/provider 两项目标。阅读参数固定文档外部 ID、audit ID 和摘要；接受参数固定文档内部 ID 与 audit ID，数据库按该历史文档摘要核对当前有效目标。任何一项失配都不替换最新正文。
 
@@ -52,7 +54,7 @@ legal.acceptances 当前行按 user/document 唯一，保存 document_audit_id �
 
 ai.requests 保留 req_ 外部标识、按 owner 隔离的 client_request_key/request_fingerprint 幂等校验、control_revision、state/outcome/charged、reserve_day/provider_admission_day 及预留/进度/取消/完成时间。请求级用量和完整/已知估算费用由最多两条 attempt 聚合读取，不再保存一套重复结果。无配置版本 FK、重复币种、usage/known_usage JSON 或 12 个重复汇总列。
 
-ai.request_snapshots 仅以 request_id 为主键，预留事务只 INSERT。冻结实际 config/adapter/endpoint/model/keyref/contract、配置 audit 引用、四项费率和币种，以及 common/provider acceptance audit 引用。时间规则在准入时校验，规则变更由独立 audit 保留；快照不再复制整份规则。真实 key、简历正文、输出和原始用户标识不复制进快照。
+ai.request_snapshots 仅以 request_id 为主键，预留事务只 INSERT。冻结实际 config、内部名、展示名、adapter/endpoint/model/keyref/contract、配置 audit 引用、四项费率和币种，以及 common/provider acceptance audit 引用。时间规则在准入时校验，规则变更由独立 audit 保留；快照不再复制整份规则。真实 key、简历正文、输出和原始用户标识不复制进快照。
 
 ai.attempts 以 request_id/attempt_no 为主键，最多两次；保存状态、发送/可能计费/是否可重试、终态事实摘要、开始/结束时间、六项结构化 token 用量及估算结果。不再有独立 ID/external_id、Provider 真实账单空槽。
 
@@ -74,7 +76,7 @@ user_quota_daily 只保留用户/UTC预留日/reserved_count/charged_count；glo
 
 ## Admin 界面
 
-六个业务入口：AI配置、时间规则、运行设置、用量与请求、账户与权限、操作记录。使用统一摘要列表，每行右侧 View/Edit；只读对象仅 View。价格属于配置弹窗，候选/default 属于规则弹窗，adapter 仅作为只读选择项。
+七个业务入口：AI配置、数据处理说明、时间规则、运行设置、用量与请求、账户与权限、操作记录。使用统一摘要列表，每行右侧 View/Edit；只读对象仅 View。价格属于配置弹窗，候选/default 属于规则弹窗，adapter 仅作为只读选择项。数据处理说明页支持新建、编辑、启用/停用、双语受限 Markdown 预览；该页只管理 AI_PROVIDER，不把普通条款和公共 AI 条款混入配置选择器。AI 配置分别编辑内部名和展示名，并独立选择说明，不按技术字段筛选。
 
 后台读写统一以有效账号、实时 Auth 会话和当前管理员资格授权。不要求 TOTP、AAL2 或近期二次验证，也不提供绑定/验证页面。匿名、普通用户、已撤权管理员和失效会话不能读写；实例、并发修订、幂等操作、最后管理员保护和审计继续保留。
 
@@ -86,6 +88,6 @@ user_quota_daily 只保留用户/UTC预留日/reserved_count/charged_count；glo
 
 本轮明确替换上一轮十条 migrations。新文件由固定版本 CLI 创建，按 foundation、各 schema tables、跨 schema constraints、各 schema functions、public API、catalog/jobs 分阶段。每个文件支持事务及历史原子记录，权限默认收紧，public 接口最后开放。
 
-supabase/baseline.json 显式列出本次 15 条基线全部文件；不再以最初四条或任何固定文件数推断基线。本轮尚未线上部署，按用户授权直接修改原基线移除 TOTP helper、布尔参数与所有调用者，不追加兼容迁移，并重新构建本地测试库。正式发布后基线冻结，后续修复 append-only。真实 key、管理员 UUID、运行配置不写死进迁移；固定 adapter/审核后的条款随迁移，本地测试数据单独准备。
+supabase/baseline.json 显式列出本次 15 条基线全部文件；不再以最初四条或任何固定文件数推断基线。本轮尚未线上部署，按用户授权直接修改原基线移除 TOTP，并加入展示名、解耦数据处理说明，不追加兼容迁移，重新构建本地测试库。正式发布后基线冻结，后续修复 append-only。真实 key、管理员 UUID、运行配置不写死进迁移；固定 adapter/审核后的条款随迁移，本地测试数据单独准备。
 
 先完成本地重建、SQL/API角色约束、竞态、Admin浏览器及两种构建验收。同步更新初始化/重建工具、清理清单、类型和fixture。test/prod 依然监听既有 main/release，GitHub keepalive 与 SSO/OAuth 配置保留，本轮不触发这些环境的重置或发布。

@@ -12,7 +12,7 @@
 
 使用仓库固定 Supabase CLI 2.109.0。每次执行前使用 --help 核对选项；不使用本机保存的 hosted link 作为操作目标。普通开发仅使用显式 --local 与本机 Docker。
 
-新基线文件由 CLI migration new 创建，按 schema/stage 顺序存放 migrations。supabase/baseline.json 明确冻结基线列表，全部文件 hash 组成 baseline_digest；完整当前迁移链形成 migration_manifest_digest。本轮移除 TOTP 按用户授权直接重写原 15 条迁移并重建本地测试库；正式发布后基线不再改写，修复以追加文件演进。
+新基线文件由 CLI migration new 创建，按 schema/stage 顺序存放 migrations。supabase/baseline.json 明确冻结基线列表，全部文件 hash 组成 baseline_digest；完整当前迁移链形成 migration_manifest_digest。本轮移除 TOTP、增加展示名及解耦数据处理说明，均按用户授权直接重写原 15 条迁移并重建本地测试库；正式发布后基线不再改写，修复以追加文件演进。此前基线摘要和 G3 证明保留为历史证据，不能用于新候选的线上切换。
 
 本地空库重建后运行 SQL 角色/约束测试、真实 Auth/Data API 集成、隔离库两连接竞态和 Admin 浏览器测试，再做 typecheck/lint/服务端与静态构建。合成 Auth/session 数据只能出现在明确 disposable fixture；浏览器验证真实普通登录即可执行管理员读写，并验证无权限或失效会话仍被拒绝。应用不设计 TOTP 绑定或 AAL2 门槛。
 
@@ -43,7 +43,7 @@ hosted 初始化仅由重建工具的受控阶段完成。独立 db-initialize.t
 3. 按顺序应用新基线并核对迁移历史、角色边界和 current contract。不得将未执行文件通过 migration repair 标为已应用。
 4. 用现有有效 Auth 用户初始化 PREVIEW 和首管理员，生成新的 database_instance_id。若用户已清理，先通过真实 Auth 建立管理员。
 5. 部署与同 SHA 配套的应用，核验客户端发现实例改变后拒绝旧 ID/缓存，不自动重传旧云端草稿或同意记录。
-6. 在 Admin 保存真实接入配置及价格、候选时间规则、开放范围/额度；检查 endpoint 与披露 scope、密钥引用、有效会话和管理员资格。
+6. 在 Admin 核实/维护实际接收方的数据处理说明，保存真实接入配置（内部名及用户展示名）和价格，并明确选择覆盖该接入的说明；再设置候选时间规则、开放范围/额度。检查 endpoint、密钥引用、有效会话和管理员资格。技术字段与说明不做自动匹配，适用性由管理员核实。
 7. 验收当前条款/准确阅读链接、显式选项与同意、CV v7、取消/额度/费用、多币种和手机/宽屏 Admin。任何付费 Provider smoke 必须属于已授权范围。
 8. 必要时启用 AI 与任务，记录验收证据。只有在历史和 main 的文件完全一致后，才恢复既有 Git watch、应用自动部署与 keepalive。
 
