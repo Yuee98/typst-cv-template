@@ -36,21 +36,34 @@ export function sql(statement: string, local = process.argv.includes("--local"))
 export function jsonQuery(statement: string, local?: boolean) {
   return JSON.parse(sql(statement, local));
 }
+export function buildMigrationManifest(entries: { name: string; digest: string }[], baselineNames: string[]) {
+  const validName = /^\d{14}_[a-z0-9_]+\.sql$/;
+  if (!entries.length || entries.some(entry => !validName.test(entry.name) || !/^[a-f0-9]{64}$/.test(entry.digest))) throw new Error("Invalid migration manifest entries");
+  if (!Array.isArray(baselineNames) || !baselineNames.length || baselineNames.some(name => typeof name !== "string" || !validName.test(name))) throw new Error("Explicit baseline migration names are required");
+  if (new Set(entries.map(entry => entry.name)).size !== entries.length || new Set(baselineNames).size !== baselineNames.length) throw new Error("Duplicate migration names");
+  if (new Set(entries.map(entry => entry.name.slice(0, 14))).size !== entries.length) throw new Error("Migration timestamps must be unique");
+  if (entries.some((entry, index) => index > 0 && entries[index - 1].name >= entry.name)) throw new Error("Migration names must be ordered");
+  if (baselineNames.some((name, index) => entries[index]?.name !== name)) throw new Error("Baseline must be the complete unchanged prefix of the migration chain");
+  const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  return {
+    files: entries,
+    baseline_digest: hash(entries.slice(0, baselineNames.length)),
+    migration_manifest_digest: hash(entries)
+  };
+}
 export function migrationManifest() {
   const dir = resolve(root, "supabase/migrations");
-  const files = readdirSync(dir).filter(name => /^\d+_[a-z_]+\.sql$/.test(name)).sort();
+  const files = readdirSync(dir).filter(name => name.endsWith(".sql")).sort();
+  if (files.some(name => !/^\d{14}_[a-z0-9_]+\.sql$/.test(name))) throw new Error("Unexpected SQL file in the migration chain");
   if (!files.length) throw new Error("No baseline migrations");
   const entries = files.map(name => ({
     name,
     digest: createHash("sha256").update(readFileSync(resolve(dir, name))).digest("hex")
   }));
-  const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-  // Four initial files define the immutable rebuild baseline. Later fixes append.
-  return {
-    files: entries,
-    baseline_digest: hash(entries.slice(0, 4)),
-    migration_manifest_digest: hash(entries)
-  };
+  // The reviewed baseline is explicit; schema-based splitting never relies on a file count.
+  const baselineNames: unknown = JSON.parse(readFileSync(resolve(root, "supabase/baseline.json"), "utf8"));
+  if (!Array.isArray(baselineNames)) throw new Error("Baseline must be a list of migration names");
+  return buildMigrationManifest(entries, baselineNames);
 }
 export function input(name: string, fallback?: string) {
   const arg = process.argv.find(value => value.startsWith(`--${name}=`));

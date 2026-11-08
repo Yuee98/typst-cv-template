@@ -167,10 +167,10 @@ function finishRehearsal(databaseUrl: string, proof: Record<string, unknown>) {
   run(process.execPath, [...args, "--mode=resume", ...recovery], undefined, env);
   const initialized = JSON.parse(readFileSync(stateFile, "utf8"));
   if (initialized.phase !== "DB-ready" || !initialized.instance) throw new Error("Resume did not atomically initialize the environment");
-  if (targetSql("select count(*) from audit.events where action='RESUME_SENTINEL';") === "0") targetSql("insert into audit.events(actor_kind,entity_kind,action,reason,summary) values('SYSTEM','REHEARSAL','RESUME_SENTINEL','Disposable resume preservation check','{}');");
+  targetSql("create schema if not exists rehearsal_probe;create table if not exists rehearsal_probe.resume_sentinel(id integer primary key check(id=1));insert into rehearsal_probe.resume_sentinel values(1) on conflict do nothing;");
   run(process.execPath, [...args, "--mode=resume"], undefined, env);
   const repeated = JSON.parse(readFileSync(stateFile, "utf8"));
-  if (repeated.instance !== initialized.instance || targetSql("select count(*) from audit.events where action='RESUME_SENTINEL';") !== "1") throw new Error("Resume repeated destruction or changed initialized instance");
+  if (repeated.instance !== initialized.instance || targetSql("select count(*) from rehearsal_probe.resume_sentinel;") !== "1") throw new Error("Resume repeated destruction or changed initialized instance");
   run(process.execPath, [...args, "--mode=verify"], undefined, env);
   proof.remote_mode_resume_passed = true;
   proof.checkpoint_loss_recovery_passed = recovery.length > 0 || proof.checkpoint_loss_recovery_passed === true;
@@ -268,6 +268,15 @@ if (mode === "plan") {
   if (inspected.Name !== `/${source}` || !(inspected.NetworkSettings.Ports["5432/tcp"] ?? []).some((binding: {
     HostPort: string;
   }) => binding.HostPort === "54322")) throw new Error("Unexpected local platform source");
+  // The platform clone must not import application hooks whose functions live
+  // outside Auth/Storage. Current anonymization uses RI FK actions, not hooks.
+  // Keep the original platform DDL/ACL intact; a future hook needs explicit review.
+  const applicationHooks: unknown = JSON.parse(run("docker", ["exec", "-i", source, "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], `/* APPLICATION_PLATFORM_HOOKS */
+    select coalesce(jsonb_agg(jsonb_build_object('schema',n.nspname,'table',c.relname,'trigger',t.tgname,'function_schema',fn.nspname,'function_name',p.proname,'definition',pg_get_triggerdef(t.oid)) order by n.nspname,c.relname,t.tgname),'[]'::jsonb)
+    from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace
+    join pg_proc p on p.oid=t.tgfoid join pg_namespace fn on fn.oid=p.pronamespace
+    where not t.tgisinternal and n.nspname in('auth','storage') and fn.nspname in('common','cv','ai','legal','admin','audit');`));
+  if (!Array.isArray(applicationHooks) || applicationHooks.length !== 0) throw new Error("Application-owned platform hooks require explicit review before platform copy");
   const ddl = run("docker", ["exec", source, "pg_dump", "-U", "postgres", "-d", "postgres", "--schema-only", "--schema=auth", "--schema=storage"]);
   const metadata = run("docker", ["exec", source, "pg_dump", "-U", "postgres", "-d", "postgres", "--data-only", "--table=auth.schema_migrations", "--table=storage.migrations"]);
   targetSql("drop schema auth,storage cascade;");
@@ -277,6 +286,7 @@ if (mode === "plan") {
     source_container: source,
     target_container: container,
     metadata_only: true,
+    application_owned_platform_hooks: applicationHooks,
     ddl_sha256: createHash("sha256").update(ddl).digest("hex"),
     migration_metadata_sha256: createHash("sha256").update(metadata).digest("hex"),
     platform: JSON.parse(targetSql("select jsonb_build_object('postgres_version',version(),'auth_tables',(select count(*) from information_schema.tables where table_schema='auth'),'storage_tables',(select count(*) from information_schema.tables where table_schema='storage'),'auth_migrations',(select count(*) from auth.schema_migrations),'storage_migrations',(select count(*) from storage.migrations));"))
@@ -439,7 +449,7 @@ if (mode === "plan") {
     REBUILD_DATABASE_URL: databaseUrl
   });
   const after = JSON.parse(readFileSync(stateFile, "utf8"));
-  if (after.instance !== instance || targetSql("select count(*) from audit.events where action='RESUME_SENTINEL';") !== "1" || JSON.stringify(before) !== JSON.stringify(fingerprint(hashes()))) throw new Error("Incremental resume changed instance, sentinel or platform data");
+  if (after.instance !== instance || targetSql("select count(*) from rehearsal_probe.resume_sentinel;") !== "1" || JSON.stringify(before) !== JSON.stringify(fingerprint(hashes()))) throw new Error("Incremental resume changed instance, sentinel or platform data");
   proof.initial_migration_manifest_digest ??= proof.migration_manifest_digest;
   proof.initial_history ??= proof.new_history;
   Object.assign(proof, manifest, {
@@ -513,7 +523,7 @@ if (mode === "plan") {
     throw error;
   }
   const after = JSON.parse(readFileSync(stateFile, "utf8"));
-  if (after.instance !== state.instance || targetSql("select count(*) from audit.events where action='RESUME_SENTINEL';") !== "1" || JSON.stringify(before) !== JSON.stringify(fingerprint(hashes()))) throw new Error("Checkpoint guard modified data or instance");
+  if (after.instance !== state.instance || targetSql("select count(*) from rehearsal_probe.resume_sentinel;") !== "1" || JSON.stringify(before) !== JSON.stringify(fingerprint(hashes()))) throw new Error("Checkpoint guard modified data or instance");
   proof.missing_checkpoint_rebuild_refused = true;
   proof.missing_history_and_checkpoint_rebuild_refused = true;
   proof.constructed_checkpoint_recovery_passed = true;

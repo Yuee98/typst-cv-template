@@ -135,7 +135,7 @@ if (mode === "plan") {
       reset_method: "local_native" as const
     })
   };
-  // Appended fixes are supported; the initial four baseline files never change.
+  // Appended fixes are supported; the explicitly recorded baseline files remain frozen after rollout.
   if (!local && old && (old.reset_method !== "application_allowlist" || old.cleanup_sql_digest !== cleanup?.cleanup_sql_digest || old.retired_inventory_digest !== cleanup?.retired_inventory_digest)) throw new Error("Operation cleanup method or allowlist differs from its durable intent");
   Object.assign(state, {
     server_identity: serverIdentity
@@ -174,8 +174,9 @@ if (mode === "plan") {
   const admin = input("admin-user");
   if (!/^[0-9a-f-]{36}$/i.test(admin)) throw new Error("Invalid existing Auth admin UUID");
   const name = localState ? "LOCAL" : target === "test" ? "PREVIEW" : "PRODUCTION";
-  const initialized = jsonQuery(`select admin.initialize('${name}','${admin}'::uuid);`, local);
-  sql("select admin.register_jobs();", local);
+  sql(`select admin.initialize('${name}','${admin}'::uuid);`, local);
+  const initialized = jsonQuery("select public.app_context();", local);
+  sql("select ai.register_jobs();", local);
   state.instance = initialized.database_instance_id;
   state.phase = "DB-ready";
   saveState(state);

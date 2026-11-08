@@ -10,3 +10,4 @@ web/.env*
 !web/.env.example
 .vercel
 .mimocode
+.DS_Store

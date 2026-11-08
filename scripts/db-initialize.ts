@@ -6,6 +6,7 @@ if (!["LOCAL", "PREVIEW", "PRODUCTION"].includes(name) || local && name !== "LOC
 const user = input("admin-user");
 if (!/^[0-9a-f-]{36}$/i.test(user)) throw new Error("Admin user must be a confirmed existing Auth UUID");
 // initialize is owner-only and commits environment/current/admin atomically.
-const result = jsonQuery(`select admin.initialize(${quote(name)},${quote(user)}::uuid);`, local);
-sql("select admin.register_jobs();", local);
+sql(`select admin.initialize(${quote(name)},${quote(user)}::uuid);`, local);
+const result = jsonQuery("select public.app_context();", local);
+sql("select ai.register_jobs();", local);
 console.log(JSON.stringify(result));

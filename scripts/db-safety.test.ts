@@ -375,7 +375,7 @@ test("hosted connection uses only the selected CA and forces full TLS verificati
     REBUILD_DATABASE_URL: `${certificateEnv.REBUILD_DATABASE_URL}?sslmode=disable`
   }, caPem));
 });
-test("resume cannot rewrite or remove an appended migration after the original four-file baseline", () => {
+test("resume cannot rewrite or remove migrations after the reviewed baseline", () => {
   const previous = Array.from({
     length: 5
   }, (_, index) => ({

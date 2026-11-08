@@ -3,7 +3,8 @@ import { cvSchema } from "../web/src/lib/cv/schema.ts";
 import { jsonQuery, migrationManifest } from "./db-common.ts";
 export function checkContract(local?: boolean) {
   const result = jsonQuery(`select jsonb_build_object(
-    'tables',(select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('cv','ai','legal','admin','audit') and c.relkind='r'),
+    'tables',(select coalesce(jsonb_agg(n.nspname||'.'||c.relname order by n.nspname,c.relname),'[]') from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('cv','ai','legal','admin','audit') and c.relkind='r'),
+    'unstructured_columns',(select coalesce(jsonb_agg(table_schema||'.'||table_name||'.'||column_name),'[]') from information_schema.columns where table_schema in ('ai','legal','audit') and data_type in ('json','jsonb')),
     'unprotected',(select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('cv','ai','legal','admin','audit') and c.relkind='r' and not c.relrowsecurity),
     'public_tables',(select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'),
     'unsafe_functions',(select count(*) from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace where n.nspname in ('common','cv','ai','legal','admin','audit','public') and p.prokind='f' and p.proconfig is distinct from array['search_path=""'] and not exists(select 1 from pg_catalog.pg_depend d where d.classid='pg_proc'::regclass and d.objid=p.oid and d.deptype='e')),
@@ -18,7 +19,10 @@ export function checkContract(local?: boolean) {
     'context',public.app_context(),
     'history',(select coalesce(jsonb_agg(version order by version),'[]') from supabase_migrations.schema_migrations)
   );`, local);
-  if (result.tables !== 31 || result.unprotected || result.public_tables || result.unsafe_functions || result.bad_owner || result.api_owner_members || result.owner_outgoing_roles || result.owner_platform_column_access || result.public_execute || result.api_table_writes || result.privileged_owner !== false) throw new Error("Database catalog violates current contract");
+  const required = ["cv.documents", "ai.adapters", "ai.configurations", "ai.prices", "ai.routing_rules", "ai.routing_rule_configurations", "ai.runtime_control", "ai.allowed_users", "ai.requests", "ai.request_snapshots", "ai.attempts", "ai.user_quota_daily", "ai.global_quota_daily", "ai.rate_minutes", "ai.configuration_usage_daily", "legal.documents", "legal.acceptances", "admin.environment", "admin.members", "admin.operations", ...["configurations", "prices", "rules", "rule_members", "runtime_control", "allowed_users", "documents", "acceptances", "members", "environment"].map(name => `audit.${name}`)];
+  const retired = ["ai.capabilities", "ai.providers", "ai.profiles", "ai.profile_versions", "ai.price_versions", "ai.price_components", "ai.policies", "ai.policy_versions", "ai.policy_options", "legal.bundles", "legal.disclosures", "legal.document_versions", "legal.current_state", "admin.validations", "admin.readbacks", "audit.events"];
+  if (!Array.isArray(result.tables) || required.some(name => !result.tables.includes(name)) || retired.some(name => result.tables.includes(name)) || result.unstructured_columns.length || result.unprotected || result.public_tables || result.unsafe_functions || result.bad_owner || result.api_owner_members || result.owner_outgoing_roles || result.owner_platform_column_access || result.public_execute || result.api_table_writes || result.privileged_owner !== false) throw new Error("Database catalog violates current contract");
+  if (result.context.contract_code !== "cv_app_db_2") throw new Error("Unexpected database contract");
   if (!isDeepStrictEqual(result.cv_schema, cvSchema.toJSONSchema())) throw new Error("Database and client CV schemas differ");
   delete result.cv_schema;
   const manifest = migrationManifest();
