@@ -20,7 +20,7 @@ const reservation = z.strictObject({
 const databaseId = z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => BigInt(value) <= BigInt("9223372036854775807"));
 export const snapshotSchema = z.strictObject({
   request_id: id("req"), state,
-  config_id: databaseId, config_name: z.string(), config_revision: databaseId,
+  config_id: databaseId, config_name: z.string(), config_display_name: z.string().min(1), config_revision: databaseId,
   ...executionConfigurationSchema.shape,
   price: priceSchema,
   common_acceptance_audit_id: databaseId,

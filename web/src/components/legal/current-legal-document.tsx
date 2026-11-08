@@ -77,6 +77,7 @@ function LegalReader({
     <RestrictedLegalMarkdown body={locale === "zh" ? primary.zh_body : primary.en_body} />
     {kind === "ai_terms" && (target.type === "provider" ? <section className="space-y-4 border-t border-border pt-8">
       <h2 className="text-xl font-semibold">{locale === "zh" ? providers[0].zh_title : providers[0].en_title}</h2>
+      <p className="text-sm text-foreground-muted">{locale === "zh" ? "实际数据接收方：" : "Data recipient: "}{providers[0].recipient_name}</p>
       <p className="text-sm text-foreground-muted">{providers[0].effective_date}</p>
       <RestrictedLegalMarkdown body={locale === "zh" ? providers[0].zh_body : providers[0].en_body} />
     </section> : <section className="space-y-3"><h2 className="text-lg font-semibold">{locale === "zh" ? "各服务的数据处理说明" : "Service data-processing disclosures"}</h2><ul className="space-y-3">{providers.map(provider => <li key={provider.external_id}><Link className="font-medium text-accent-soft-foreground underline" href={aiDisclosureHref({

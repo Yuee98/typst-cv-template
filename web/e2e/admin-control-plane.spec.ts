@@ -82,6 +82,7 @@ test("soft navigation caches fresh lists and atomic configuration save refreshes
   await expect(dialog.getByLabel("Configuration name", { exact: true })).toBeEnabled();
   const name = `ADMIN_E2E_BROWSER_${Date.now()}`;
   await dialog.getByLabel("Configuration name", { exact: true }).fill(name);
+  await dialog.getByLabel("Display name", { exact: true }).fill("Public synthetic AI service");
   await dialog.getByLabel("Endpoint URL", { exact: true }).fill("https://api.deepseek.com/responses");
   await dialog.getByLabel("Model", { exact: true }).fill("deepseek-flash");
   await dialog.getByLabel("Credential reference", { exact: true }).fill("AI_PROVIDER_KEY_ADMIN_E2E");
@@ -181,6 +182,59 @@ test("ordinary administrator login can grant and revoke membership through detai
   await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   await openSection(page, "controls"); await openSection(page, "configurations"); await openSection(page, "controls");
 });
+test("independent disclosures can be edited, audited and selected for a configuration", async ({ page }) => {
+  await login(page, users.admin);
+  await openSection(page, "disclosures");
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const title = `ADMIN_E2E_DISCLOSURE_${Date.now()}`;
+  await dialog.getByLabel("Recipient", { exact: true }).fill("Synthetic independent recipient");
+  await dialog.getByLabel("Chinese title", { exact: true }).fill("本地合成接收方数据处理说明");
+  await dialog.getByLabel("English title", { exact: true }).fill(title);
+  await dialog.getByRole("textbox", { name: "Chinese content", exact: true }).fill("## 数据处理\n\n此处仅为本地合成文案，不发送任何数据。");
+  await dialog.getByRole("textbox", { name: "English content", exact: true }).fill("## Data handling\n\nSynthetic local content. No data is transmitted.");
+  await dialog.getByLabel("Enabled", { exact: true }).check();
+  const created = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await created).ok()).toBe(true);
+  await expect(dialog).toHaveCount(0);
+  let row = page.getByRole("heading", { name: title, exact: true }).locator("../..");
+  await row.getByRole("button", { name: "Edit", exact: true }).click();
+  await dialog.getByRole("textbox", { name: "English content", exact: true }).fill("## Data handling\n\nUpdated synthetic local handling statement.");
+  const updated = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await updated).ok()).toBe(true);
+  await expect(dialog).toHaveCount(0);
+  await row.getByRole("button", { name: "View", exact: true }).click();
+  await dialog.getByRole("button", { name: "History", exact: true }).click();
+  await expect(dialog.getByText("Updated synthetic local handling statement.", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await openSection(page, "configurations");
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await dialog.getByLabel("Configuration name", { exact: true }).fill(`ADMIN_E2E_BROWSER_INDEPENDENT_${Date.now()}`);
+  await dialog.getByLabel("Display name", { exact: true }).fill("User-facing service name");
+  await dialog.getByLabel("Endpoint URL", { exact: true }).fill("https://api.deepseek.com/responses");
+  await dialog.getByLabel("Model", { exact: true }).fill("deepseek-flash");
+  await dialog.getByLabel("Credential reference", { exact: true }).fill("AI_PROVIDER_KEY_ADMIN_E2E");
+  await dialog.getByLabel("Data-processing disclosure", { exact: true }).selectOption({ label: `${title} · Synthetic independent recipient` });
+  for (const name of ["Input", "Cache read", "Cache write", "Output"]) await dialog.getByLabel(name, { exact: true }).fill("0");
+  const bound = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await bound).ok()).toBe(true);
+  await expect(dialog).toHaveCount(0);
+  // Leave the synthetic disclosure disabled so the public-document scenario
+  // below continues to describe only the reviewed seed recipients.
+  await page.locator('nav a[href="/en/admin/disclosures"]').click();
+  await expect(page.locator('nav a[href="/en/admin/disclosures"]')).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("button", { name: "New", exact: true })).toBeEnabled();
+  row = page.getByRole("heading", { name: title, exact: true }).locator("../..");
+  await row.getByRole("button", { name: "Edit", exact: true }).click();
+  await dialog.getByLabel("Enabled", { exact: true }).uncheck();
+  const disabled = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await disabled).ok()).toBe(true);
+  await expect(dialog).toHaveCount(0);
+});
 test("current database terms and provider disclosures render in both languages", async ({
   page
 }) => {
@@ -219,7 +273,7 @@ test("current database terms and provider disclosures render in both languages",
   }
 });
 
-test("the same configuration dialog fits desktop and mobile viewports", async ({ page }) => {
+test("configuration and disclosure dialogs fit desktop and mobile viewports", async ({ page }) => {
   await login(page, users.admin);
   await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
   for (const viewport of [{ width: 1536, height: 1000 }, { width: 390, height: 844 }]) {
@@ -260,5 +314,27 @@ test("the same configuration dialog fits desktop and mobile viewports", async ({
       const { resolve } = await import("node:path");
       await page.screenshot({ path: resolve(process.env.ADMIN_VISUAL_PROOF_DIR, `controls-${viewport.width}-${dark ? "dark" : "light"}.png`), fullPage: true });
     }
+    await page.goto("/en/admin/disclosures");
+    await expect(page.getByRole("button", { name: "New", exact: true })).toBeEnabled();
+    await page.evaluate(dark => { document.documentElement.classList.toggle("dark", dark); document.documentElement.style.colorScheme = dark ? "dark" : "light"; }, dark);
+    if (process.env.ADMIN_VISUAL_PROOF_DIR) {
+      const { resolve } = await import("node:path");
+      await page.screenshot({ path: resolve(process.env.ADMIN_VISUAL_PROOF_DIR, `disclosures-${viewport.width}-${dark ? "dark" : "light"}.png`), fullPage: true });
+    }
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    const disclosureDialog = page.getByRole("dialog");
+    await expect(disclosureDialog.getByLabel("Recipient", { exact: true })).toBeEnabled();
+    const disclosureBox = await disclosureDialog.boundingBox();
+    expect(disclosureBox).not.toBeNull();
+    expect(disclosureBox!.x).toBeGreaterThanOrEqual(0);
+    expect(disclosureBox!.y).toBeGreaterThanOrEqual(0);
+    expect(disclosureBox!.x + disclosureBox!.width).toBeLessThanOrEqual(viewport.width + 1);
+    expect(disclosureBox!.y + disclosureBox!.height).toBeLessThanOrEqual(viewport.height + 1);
+    await expect(disclosureDialog.getByRole("button", { name: "Save", exact: true })).toBeInViewport();
+    if (process.env.ADMIN_VISUAL_PROOF_DIR) {
+      const { resolve } = await import("node:path");
+      await disclosureDialog.screenshot({ path: resolve(process.env.ADMIN_VISUAL_PROOF_DIR, `disclosure-${viewport.width}-${dark ? "dark" : "light"}.png`) });
+    }
+    await disclosureDialog.getByRole("button", { name: "Close", exact: true }).click();
   }
 });

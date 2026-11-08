@@ -5,7 +5,7 @@ import { clientWriteContext, requireAppContext } from "@/lib/supabase/app-contex
 import { legalDisplaySchema, legalDocumentSchema, legalIdSchema, type LegalDisplay, type LegalDocument } from "./legal-display";
 export { legalDocumentSchema } from "./legal-display";
 export const legalCurrentSchema = z.strictObject({
-  documents: z.array(legalDocumentSchema).max(100)
+  documents: z.array(legalDocumentSchema)
 });
 export type CurrentLegal = z.infer<typeof legalCurrentSchema>;
 export type CurrentTerms = LegalDocument;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import { AdminConfigurationValidationError, handleAdminGet, handleAdminPost, validateAdminConfiguration } from "./handler";
+import { legalDisplayFixture } from "@/lib/legal/test-fixtures";
 const instance = "00000000-0000-4000-8000-000000000001",
   key = "00000000-0000-4000-8000-000000000002";
 const context = {
@@ -33,6 +34,7 @@ const configuration = {
   id: "1",
   revision: "1",
   name: "Reviewed service",
+  display_name: "Public service name",
   adapter_id: 1,
   endpoint_url: "https://api.example.test/responses",
   model_id: "model-a",
@@ -336,5 +338,51 @@ describe("safe runtime validation reasons", () => {
     rpc.mockImplementation(async (name: string) => name === "admin_context" ? { data: context, error: null } : { data: null, error: { code: "P0001", message: "INVALID_REQUEST", details: "INVALID_ROUTING_GRAPH" } });
     const result = await handleAdminPost(post({ ...base, operation: "admin_ai_disable", expected_revision: "1" }), deps as never);
     expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST" } });
+  });
+});
+describe("independent provider disclosure management", () => {
+  const fields = {
+    kind: "AI_PROVIDER", recipient_name: "Independent recipient", zh_title: "数据处理说明", en_title: "Data processing",
+    zh_body: "## 数据处理\n\n所选文字提交给实际接收方。", en_body: "## Data processing\n\nSelected text is submitted to the recipient.", effective_date: "2026-11-09", enabled: true
+  };
+  function receipt() {
+    rpc.mockImplementation(async (name: string) => name === "admin_context" ? { data: context, error: null } : { data: { operation_id: "30", operation: "legal_document_save", entity_kind: "documents", entity_id: "3", revision: "1", time_committed: "2026-11-09T00:00:00Z" }, error: null });
+  }
+  it("reads provider documents through the new section without technical scope", async () => {
+    const document = legalDisplayFixture().provider;
+    rpc.mockResolvedValue({ data: { context, data: { records: [document], next_cursor: null } }, error: null });
+    const result = await handleAdminGet(request("section=disclosures"), deps as never);
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ context, data: { records: [document], next_cursor: null } });
+    expect(rpc.mock.calls[0][1].p_input).toMatchObject({ section: "disclosures", kind: "documents" });
+  });
+  it("never returns common terms as an editable provider document", async () => {
+    rpc.mockResolvedValue({ data: { context, data: legalDisplayFixture().common }, error: null });
+    const result = await handleAdminGet(request("section=disclosures&kind=documents&id=2"), deps as never);
+    expect(result.status).toBe(503);
+    expect(await result.json()).toEqual({ error: { code: "UNAVAILABLE" } });
+  });
+  it("saves a provider disclosure without provider network checks", async () => {
+    receipt();
+    const result = await handleAdminPost(post({ ...base, operation: "admin_legal_document_save", id: null, expected_revision: null, ...fields }), deps as never);
+    expect(result.status).toBe(200);
+    expect(rpc.mock.calls.at(-1)).toEqual(["admin_legal_document_save", { p_input: { ...base, id: null, expected_revision: null, ...fields } }]);
+    expect(validateConfiguration).not.toHaveBeenCalled();
+  });
+  it("accepts valid bilingual content larger than 64 KiB within its bounded JSON budget", async () => {
+    receipt();
+    const body = { ...base, operation: "admin_legal_document_save", id: null, expected_revision: null, ...fields, zh_body: "处理".repeat(20000), en_body: "Data handling. ".repeat(4000) };
+    expect(new TextEncoder().encode(JSON.stringify(body)).byteLength).toBeGreaterThan(65536);
+    expect((await handleAdminPost(post(body), deps as never)).status).toBe(200);
+  });
+  it("rejects a request exceeding 1 MiB before any RPC", async () => {
+    const body = { ...base, operation: "admin_legal_document_save", id: null, expected_revision: null, ...fields, padding: "x".repeat(1024 * 1024) };
+    expect((await handleAdminPost(post(body), deps as never)).status).toBe(400);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it.each([{ kind: "TERMS" }, { kind: "AI_COMMON" }, { zh_title: "   " }, { en_body: "<script>bad</script>" }, { en_body: "[bad](javascript:alert(1))" }, { adapter_id: 1 }])("rejects non-provider or unsafe document fields %j", async invalid => {
+    const result = await handleAdminPost(post({ ...base, operation: "admin_legal_document_save", id: null, expected_revision: null, ...fields, ...invalid }), deps as never);
+    expect(result.status).toBe(400);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

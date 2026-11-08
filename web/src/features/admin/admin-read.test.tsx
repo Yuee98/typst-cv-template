@@ -437,6 +437,18 @@ describe("Admin read lifetime and cache isolation", () => {
     }));
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+  it("invalidates disclosure details, configuration selectors and dependent sections without clearing unrelated users", async () => {
+    const h = harness({ section: "disclosures", kind: "documents" });
+    await done(h);
+    const key = (section: AdminReadParams["section"], kind: string, recordId?: string) => adminReadKey(project, h.result.current.actor, instance1, { section, kind, cursor: null, recordId });
+    const affected = [key("disclosures", "documents", "3"), key("configurations", "legal_documents"), key("configurations", "configurations", "4"), key("rules", "rules"), key("controls", "controls"), key("audit", "documents")] as const;
+    const untouched = [key("users", "accounts"), key("usage", "analytics")];
+    for (const queryKey of [...affected, ...untouched]) h.queryClient.setQueryData(queryKey, { context: context(), data: { records: [], next_cursor: null } });
+    act(() => h.result.current.read.refreshAfterMutation());
+    await done(h);
+    expect(affected.every(queryKey => h.queryClient.getQueryState(queryKey)?.isInvalidated)).toBe(true);
+    expect(untouched.every(queryKey => !h.queryClient.getQueryState(queryKey)?.isInvalidated)).toBe(true);
+  });
   it("refreshes B when an unmounted A's mutation completes after soft navigation", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response("profile A")).mockResolvedValueOnce(response("old prices B")).mockResolvedValueOnce(response("updated prices B"));
     const a = harness({

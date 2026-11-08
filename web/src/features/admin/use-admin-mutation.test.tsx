@@ -7,7 +7,7 @@ import { useAdminMutation } from "./use-admin-mutation";
 import { configurationFixture } from "./admin-test-fixtures";
 const instance = "00000000-0000-4000-8000-000000000001";
 const keys = ["00000000-0000-4000-8000-000000000010", "00000000-0000-4000-8000-000000000011", "00000000-0000-4000-8000-000000000012"];
-function payload(index: number) { const config = configurationFixture(); return { operation: "admin_configuration_save", contract_code: "cv_app_db_2", database_instance_id: instance, operation_key: keys[index], reason: "Save AI configuration", id: null, expected_revision: null, name: config.name, adapter_id: config.adapter_id, endpoint_url: config.endpoint_url, model_id: config.model_id, credential_ref: config.credential_ref, legal_document_id: config.legal_document_id, enabled: config.enabled, price: config.price }; }
+function payload(index: number) { const config = configurationFixture(); return { operation: "admin_configuration_save", contract_code: "cv_app_db_2", database_instance_id: instance, operation_key: keys[index], reason: "Save AI configuration", id: null, expected_revision: null, name: config.name, display_name: config.display_name, adapter_id: config.adapter_id, endpoint_url: config.endpoint_url, model_id: config.model_id, credential_ref: config.credential_ref, legal_document_id: config.legal_document_id, enabled: config.enabled, price: config.price }; }
 function runtimePayload(index: number, enabled = true) {
   return {
     operation: "admin_ai_update", contract_code: "cv_app_db_2", database_instance_id: instance,

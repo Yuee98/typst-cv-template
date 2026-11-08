@@ -341,11 +341,13 @@ describe("mutable configuration and frozen request boundaries", () => {
     };
     deps.db.call = async (name, input) => {
       const result = await original(name, input);
-      if (name === "ai_reserve") Object.assign(deps.fixture.configurations[0], { endpoint_url: "https://another-supplier.example/responses", model_id: "another-model", credential_ref: "AI_PROVIDER_KEY_ROTATED", revision: "2" });
+      if (name === "ai_reserve") Object.assign(deps.fixture.configurations[0], { name: "rotated-internal-name", display_name: "A new public name", endpoint_url: "https://another-supplier.example/responses", model_id: "another-model", credential_ref: "AI_PROVIDER_KEY_ROTATED", revision: "2" });
       return result;
     };
     await executePolish(deps, user, request, signal());
     expect(prepared).toEqual([expect.objectContaining({ endpoint_url: "https://api.deepseek.com/responses", model_id: "fixture-model-1", credential_ref: "AI_PROVIDER_KEY_FIXTURE_1" })]);
+    const snapshot = await original("ai_execution_snapshot", { contract_code: "cv_app_db_2", owner_auth_user_id: user, database_instance_id: fixtureInstance, request_id: "req_000000000001" });
+    expect(snapshot).toMatchObject({ config_name: "internal-connection-1", config_display_name: "DeepSeek" });
   });
   it("does not resurrect a reserved request after disable followed by enable", async () => {
     const { deps, request } = await setup();

@@ -22,6 +22,7 @@ export const configurationFixture = (): AdminConfiguration => ({
   id: "1",
   revision: "1",
   name: "Current configuration",
+  display_name: "Public service name",
   adapter_id: 1,
   endpoint_url: "https://api.example.test/responses",
   model_id: "model-a",

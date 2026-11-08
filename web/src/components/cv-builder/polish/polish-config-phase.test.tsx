@@ -71,9 +71,19 @@ function expectPinnedLinks(flow: PolishFlow) {
 }
 
 describe("PolishConfigPhase exact provider reading links", () => {
+  it("shows only public names in the selector and the actual recipient in consent", () => {
+    const flow = makeFlow();
+    flow.availabilityCandidate!.configurations[0].displayName = "Fast writing";
+    render(renderPhase(flow));
+    const option = screen.getByRole("option", { name: "Fast writing" }) as HTMLOptionElement;
+    expect(option.value).toBe(flow.availabilityCandidate!.selectedConfigId);
+    expect(screen.getByRole("checkbox", { name: /DeepSeek/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /DeepSeek/ })).toBeNull();
+  });
   it.each(["zh", "en"] as const)("keeps %s full disclosure off the dialog and preserves the important reminders", locale => {
     const flow = makeFlow();
     render(renderPhase(flow, locale));
+    expect(screen.getByRole("combobox", { name: locale === "zh" ? "选择 AI 服务" : "Choose AI service" })).toBeTruthy();
     expect(screen.queryByText(locale === "zh" ? "此项为本地测试披露。" : "Local test disclosure.")).toBeNull();
     expect(screen.getByText(locale === "zh" ? messagesZh.PolishDialog.privacyReminder : messagesEn.PolishDialog.privacyReminder)).toBeTruthy();
     expect(screen.getByText(locale === "zh" ? messagesZh.PolishDialog.e2eeWarning : messagesEn.PolishDialog.e2eeWarning)).toBeTruthy();

@@ -7,7 +7,7 @@ export function fixtureExecutionConfiguration(index = 1) {
   const adapterId = index as 1 | 2 | 3;
   return {
     adapter_id: adapterId, execution_contract: ADAPTERS[adapterId].executionContract,
-    endpoint_url: fixtureConfigurationFacts[index - 1].endpoint,
+    endpoint_url: ["https://api.deepseek.com/responses", "https://api.xiaomimimo.com/v1/responses", "https://generativelanguage.googleapis.com/v1/interactions"][index - 1],
     credential_ref: `AI_PROVIDER_KEY_FIXTURE_${index}`,
     model_id: `fixture-model-${index}`
   };
@@ -18,7 +18,7 @@ export const fixturePrice = {
 };
 export function fixtureConfiguration(index = 1) {
   return {
-    config_id: String(index), name: fixtureConfigurationFacts[index - 1].name, revision: "1",
+    config_id: String(index), name: `internal-connection-${index}`, display_name: String(fixtureConfigurationFacts[index - 1].displayName), revision: "1",
     ...fixtureExecutionConfiguration(index), eligible: true, reason: null, consent_required: false,
     legal_display: fixtureLegalDisplay(index)
   };

@@ -58,7 +58,7 @@ export function createFakeRuntime(now: () => Date = () => new Date()) {
         const request: RequestRecord = {
           id: fixtureId("req", ++count), user, key: String(input.client_request_key), fingerprint: String(input.request_fingerprint),
           snapshot: structuredClone({
-            config_id: configuration.config_id, config_name: configuration.name, config_revision: configuration.revision,
+            config_id: configuration.config_id, config_name: configuration.name, config_display_name: configuration.display_name, config_revision: configuration.revision,
             adapter_id: configuration.adapter_id, execution_contract: configuration.execution_contract, endpoint_url: configuration.endpoint_url, credential_ref: configuration.credential_ref, model_id: configuration.model_id,
             price: fixturePrice, common_acceptance_audit_id: "1", provider_acceptance_audit_id: String(Number(configuration.config_id) + 10),
             provider_document_id: configuration.legal_display.provider.document_id, provider_document_audit_id: configuration.legal_display.provider.document_audit_id

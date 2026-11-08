@@ -3,7 +3,7 @@ import { legalEn, legalZh } from "./index";
 import { legalSeedDocuments } from "./seed";
 import { parseLegalMarkdown } from "@/lib/legal/markdown";
 describe("reviewed bilingual legal seed", () => {
-  it("has current terms, one common document and three scoped provider documents", () => {
+  it("has current terms, one common document and three recipient disclosures", () => {
     expect(legalSeedDocuments.map(doc => doc.kind)).toEqual(["TERMS", "AI_COMMON", "AI_PROVIDER", "AI_PROVIDER", "AI_PROVIDER"]);
     for (const doc of legalSeedDocuments) {
       expect(parseLegalMarkdown(doc.zh_body).length).toBeGreaterThan(3);
@@ -16,8 +16,12 @@ describe("reviewed bilingual legal seed", () => {
     expect(common.en_body).not.toMatch(/legal bundle|Manifest ID/);
     expect(common.zh_body).not.toMatch(/legal bundle|Manifest ID/);
     const providers = legalSeedDocuments.filter(doc => doc.kind === "AI_PROVIDER");
-    expect(providers.map(doc => doc.model_id)).toEqual(["deepseek-flash", "mimo-v2.6-flash", "gemini-3.8-flash"]);
-    expect(providers.every(doc => doc.endpoint_url?.startsWith("https://"))).toBe(true);
+    expect(providers.every(doc => typeof doc.recipient_name === "string")).toBe(true);
+    for (const doc of legalSeedDocuments) {
+      for (const field of ["adapter_id", "model_id", "endpoint_url"]) expect(doc).not.toHaveProperty(field);
+      expect(doc.en_title).not.toMatch(/deepseek-flash|mimo-v2|gemini-3/);
+      expect(doc.en_body).not.toContain("Model:");
+    }
   });
   it("retains technical versus policy evidence dates without inventing a policy review", () => {
     expect(legalEn.deepseekEvidence.reviewedAt).toContain("2026-11-07");

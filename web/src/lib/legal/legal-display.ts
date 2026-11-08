@@ -24,11 +24,8 @@ export const legalDocumentSchema = z.strictObject({
   en_body: body,
   enabled: z.boolean(),
   revision: legalIdSchema,
-  recipient_name: z.string().min(1).max(500).nullable(),
-  adapter_id: z.number().int().min(1).max(32767).nullable(),
-  endpoint_url: z.string().url().max(2048).nullable(),
-  model_id: z.string().min(1).max(200).nullable()
-}).refine(doc => doc.kind === "AI_PROVIDER" ? doc.recipient_name !== null && doc.adapter_id !== null && doc.endpoint_url !== null && doc.model_id !== null : doc.recipient_name === null && doc.adapter_id === null && doc.endpoint_url === null && doc.model_id === null, "Invalid document scope");
+  recipient_name: z.string().min(1).max(500).nullable()
+}).refine(doc => doc.kind === "AI_PROVIDER" ? doc.recipient_name !== null : doc.recipient_name === null, "Invalid document recipient");
 export type LegalDocument = z.infer<typeof legalDocumentSchema>;
 export const legalDisplaySchema = z.strictObject({
   contract: z.literal("cv_app_db_2"),

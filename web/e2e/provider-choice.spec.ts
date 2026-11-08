@@ -193,10 +193,10 @@ test("selects a nondefault provider and accepts only its disclosure before sendi
     exact: true
   });
   const provider = dialog.getByRole("combobox", {
-    name: "Choose AI provider and model"
+    name: "Choose AI service"
   });
   await expect(provider).toHaveValue("1");
-  await expect(provider.locator("option:checked")).toHaveText(`${available.configurations[0].name} · ${available.configurations[0].modelId}`);
+  await expect(provider.locator("option:checked")).toHaveText(available.configurations[0].displayName);
   const submit = dialog.getByRole("button", {
     name: "Polish with AI",
     exact: true
@@ -224,12 +224,12 @@ test("selects a nondefault provider and accepts only its disclosure before sendi
     await disclosureLink.click();
     const document = await newPage;
     await expect(document.getByRole("heading", { name: display.provider.en_title, exact: true })).toBeVisible();
-    for (const text of [`Test model ${display.provider.model_id}.`, "Local fixture recipient disclosure."]) {
+    for (const text of [`${display.provider.recipient_name} processes the selected content.`, "Local fixture recipient disclosure."]) {
       await expect(document.getByText(text, { exact: true })).toHaveCount(1);
       await expect(dialog.getByText(text, { exact: true })).toHaveCount(0);
     }
     const other = disclosures[index === 0 ? 1 : 0];
-    await expect(document.getByText(`Test model ${other.provider.model_id}.`, { exact: true })).toHaveCount(0);
+    await expect(document.getByText(`${other.provider.recipient_name} processes the selected content.`, { exact: true })).toHaveCount(0);
     await document.close();
     expect(await consent.isChecked()).toBe(checked);
     expect(acceptedInputs).toEqual([]);
@@ -259,7 +259,7 @@ test("selects a nondefault provider and accepts only its disclosure before sendi
   // checking the default provider, changing the selection or viewing a disclosure.
   await provider.selectOption(selectedConfigId);
   await expect(provider).toHaveValue(selectedConfigId);
-  await expect(provider.locator("option:checked")).toHaveText(`${available.configurations[1].name} · ${available.configurations[1].modelId}`);
+  await expect(provider.locator("option:checked")).toHaveText(available.configurations[1].displayName);
   await expect(consent).not.toBeChecked();
   await expect(submit).toBeDisabled();
   expect(acceptedInputs).toEqual([]);

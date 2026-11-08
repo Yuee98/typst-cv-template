@@ -14,7 +14,7 @@ import { AdminAuthPanel } from "./admin-auth-panel";
 import { AdminEntityDialog } from "./admin-entity-dialog";
 import { UsageStatistics } from "./usage-statistics";
 import { adminDate, rulePeriod, auditKindLabel, statusLabel } from "./format";
-const defaultKind = (section: AdminSection) => section === "usage" ? "analytics" : section === "users" ? "accounts" : section === "audit" ? "configurations" : section;
+const defaultKind = (section: AdminSection) => section === "usage" ? "analytics" : section === "users" ? "accounts" : section === "audit" ? "configurations" : section === "disclosures" ? "documents" : section;
 type Selection = {
   section: AdminSection;
   kind: string;
@@ -122,7 +122,7 @@ export default function AdminApp({
         redirectTo: adminOAuthRedirectUrl(window.location.origin, locale)
       }
     })} /></AdminShell>;
-  const mayCreate = section === "configurations" || section === "rules" || section === "users" && currentSelection.kind !== "accounts";
+  const mayCreate = ["configurations", "disclosures", "rules"].includes(section) || section === "users" && currentSelection.kind !== "accounts";
   const choose = (kind: string) => setSelection({
     section,
     kind,
@@ -157,14 +157,14 @@ export default function AdminApp({
             configurations: AdminRecord[];
           }} locale={locale} enabled={ready} /> : <div className="overflow-hidden rounded-xl border border-border bg-surface divide-y divide-border">
             {records.length === 0 && <p className="p-5 text-sm text-foreground-muted">{l("No records.", "暂无记录。")}</p>}
-            {records.map((record, index) => <div key={String(record.audit_id ?? record.id ?? record.auth_user_id ?? index)} className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-4 py-4"><div className="min-w-0 flex-1"><h3 className="break-words text-sm font-medium">{section === "rules" ? rulePeriod(record, locale) : section === "audit" ? `${auditKindLabel(currentSelection.kind, locale)} · ${statusLabel(record.action, locale)}` : String(record.name ?? record.email ?? record.auth_user_id ?? record.external_id ?? record.id ?? l("Record", "记录"))}</h3><p className="mt-1 break-words text-sm text-foreground-muted">{section === "rules" ? `${Array.isArray(record.members) ? record.members.length : 0} ${l("configurations", "个配置")}` : section === "audit" ? adminDate(record.time_changed, locale) : String(record.model_id ?? record.time_created ?? record.time_revoked ?? record.state ?? record.operation ?? "")}{typeof record.enabled === "boolean" ? ` · ${record.enabled ? l("Enabled", "已启用") : l("Disabled", "未启用")}` : ""}</p></div><div className="flex shrink-0 gap-2"><Button variant="secondary" size="sm" onClick={() => setSelection({
+            {records.map((record, index) => <div key={String(record.audit_id ?? record.document_id ?? record.id ?? record.auth_user_id ?? index)} className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-4 py-4"><div className="min-w-0 flex-1"><h3 className="break-words text-sm font-medium">{section === "rules" ? rulePeriod(record, locale) : section === "disclosures" ? String(locale === "zh" ? record.zh_title : record.en_title) : section === "audit" ? `${auditKindLabel(currentSelection.kind, locale)} · ${statusLabel(record.action, locale)}` : String(record.name ?? record.email ?? record.auth_user_id ?? record.external_id ?? record.id ?? l("Record", "记录"))}</h3><p className="mt-1 break-words text-sm text-foreground-muted">{section === "disclosures" ? String(record.recipient_name ?? "") : section === "configurations" ? String(record.display_name ?? "") : section === "rules" ? `${Array.isArray(record.members) ? record.members.length : 0} ${l("configurations", "个配置")}` : section === "audit" ? adminDate(record.time_changed, locale) : String(record.model_id ?? record.time_created ?? record.time_revoked ?? record.state ?? record.operation ?? "")}{typeof record.enabled === "boolean" ? ` · ${record.enabled ? l("Enabled", "已启用") : l("Disabled", "未启用")}` : ""}</p></div><div className="flex shrink-0 gap-2"><Button variant="secondary" size="sm" onClick={() => setSelection({
                   ...currentSelection,
                   dialog: {
                     owner: dialogOwner,
                     record,
                     mode: "view"
                   }
-                })}>{l("View", "查看")}</Button>{["configurations", "rules"].includes(section) && <Button variant="secondary" size="sm" onClick={() => setSelection({
+                })}>{l("View", "查看")}</Button>{["configurations", "disclosures", "rules"].includes(section) && <Button variant="secondary" size="sm" onClick={() => setSelection({
                   ...currentSelection,
                   dialog: {
                     owner: dialogOwner,
@@ -180,7 +180,7 @@ export default function AdminApp({
           })}>{l("Next page", "下一页")}</Button>}
         </>}
       </fieldset>
-      {dialog && <AdminEntityDialog key={`${owner}:${context.database_instance_id}:${dialog.record?.id ?? dialog.record?.auth_user_id ?? "new"}`} client={client} actor={actor} project={project} context={context} section={section} kind={currentSelection.kind} record={dialog.record} mode={dialog.mode} locale={locale} enabled={ready} onClose={() => setSelection(current => ({
+      {dialog && <AdminEntityDialog key={`${owner}:${context.database_instance_id}:${dialog.record?.document_id ?? dialog.record?.id ?? dialog.record?.auth_user_id ?? "new"}`} client={client} actor={actor} project={project} context={context} section={section} kind={currentSelection.kind} record={dialog.record} mode={dialog.mode} locale={locale} enabled={ready} onClose={() => setSelection(current => ({
         ...current,
         dialog: null
       }))} onCommitted={read.refreshAfterMutation} />}

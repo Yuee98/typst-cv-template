@@ -62,6 +62,7 @@ function parseRead(raw: unknown, params: AdminReadParams): AdminRead {
 }
 const related: Record<AdminSection, AdminSection[]> = {
   configurations: ["configurations", "rules", "controls", "usage", "audit"],
+  disclosures: ["disclosures", "configurations", "rules", "controls", "audit"],
   rules: ["rules", "configurations", "controls", "audit"],
   controls: ["controls", "users", "audit"],
   usage: ["usage", "audit"],
@@ -254,7 +255,7 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
     const latestScope = queryClient.getQueryData<Scope>(scopeKey(project, latestActor));
     const section = (JSON.parse(signature) as AdminReadParams).section;
     if (latestScope && latestScope.instanceId !== scope.instanceId) return;
-    // Six bounded section counters per instance, scoped to this actor epoch.
+    // Bounded section counters per instance, scoped to this actor epoch.
     // Retain them until owner cleanup so parallel readers cannot consume them.
     const counter = queryClient.getQueryCache().build<CommitEpochs>(queryClient, {
       queryKey: commitEpochKey(project, latestActor, scope.instanceId),

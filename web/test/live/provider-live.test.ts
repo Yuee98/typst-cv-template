@@ -47,7 +47,7 @@ beforeAll(async () => {
     if (!available) throw new Error(`${provider.name} model metadata unavailable`);
   }
   fixture = await createProviderLiveDbFixture();
-  const configured = await fixture.configure(providers.map(provider => ({ adapterId: provider.adapterId, name: provider.name, endpointUrl: provider.endpoint, credentialRef: provider.credentialRef, modelId: provider.modelId, price })));
+  const configured = await fixture.configure(providers.map(provider => ({ adapterId: provider.adapterId, name: provider.name, displayName: `Local ${provider.name}`, recipientName: provider.name, endpointUrl: provider.endpoint, credentialRef: provider.credentialRef, modelId: provider.modelId, price })));
   configIds = configured.configIds;
   evidence.configuration = { database: fixture.database, instance: fixture.instanceId, config_ids: configIds, synthetic_pricing: true };
   saveEvidence();

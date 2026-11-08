@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { legalDocumentSchema, legalIdSchema } from "@/lib/legal/legal-display";
-export const ADMIN_SECTIONS = ["configurations", "rules", "controls", "usage", "users", "audit"] as const;
+export const ADMIN_SECTIONS = ["configurations", "disclosures", "rules", "controls", "usage", "users", "audit"] as const;
 export const adminSectionSchema = z.enum(ADMIN_SECTIONS);
 export type AdminSection = z.infer<typeof adminSectionSchema>;
 export const adminEnvironmentSchema = z.enum(["local", "preview", "production"]);
@@ -30,6 +30,7 @@ export const adminPriceSchema = z.strictObject({
 });
 export const configurationFields = {
   name: z.string().trim().min(1).max(200),
+  display_name: z.string().trim().min(1).max(200),
   adapter_id: adapterIdSchema,
   endpoint_url: z.string().url().max(2048).refine(value => {
     try { const u = new URL(value); return u.protocol === "https:" && !u.username && !u.password && !u.search && !u.hash; } catch { return false; }
@@ -91,11 +92,28 @@ export const adminContextSchema = z.strictObject({
   })
 });
 export type AdminContext = z.infer<typeof adminContextSchema>;
+export const adminDisclosureFields = {
+  kind: z.literal("AI_PROVIDER"),
+  recipient_name: z.string().trim().min(1).max(500),
+  zh_title: legalDocumentSchema.shape.zh_title.trim().min(1),
+  en_title: legalDocumentSchema.shape.en_title.trim().min(1),
+  zh_body: legalDocumentSchema.shape.zh_body,
+  en_body: legalDocumentSchema.shape.en_body,
+  effective_date: legalDocumentSchema.shape.effective_date,
+  enabled: z.boolean()
+};
+export const adminDisclosureDraftSchema = z.strictObject(adminDisclosureFields);
+export type AdminDisclosureDraft = z.infer<typeof adminDisclosureDraftSchema>;
 export const adminMutationRequestSchema = z.discriminatedUnion("operation", [z.strictObject({
   operation: z.literal("admin_configuration_save"),
   ...base,
   ...entity,
   ...configurationFields
+}).refine(v => v.id === null === (v.expected_revision === null)), z.strictObject({
+  operation: z.literal("admin_legal_document_save"),
+  ...base,
+  ...entity,
+  ...adminDisclosureFields
 }).refine(v => v.id === null === (v.expected_revision === null)), z.strictObject({
   operation: z.literal("admin_rule_save"),
   ...base,

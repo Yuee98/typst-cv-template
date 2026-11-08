@@ -1,11 +1,11 @@
 # AI disclosure evidence — DeepSeek, MiMo and Google Gemini
 
-> Provider policy evidence: **2026-08-23, Asia/Shanghai**. DeepSeek Responses API, identifier and cache technical facts rechecked **2026-11-07**. Google Gemini Interactions API and applicable data terms checked **2026-11-07**. The 2026-11-08 database restructuring and current MiMo model selection do not claim a new review of those policies.
-> Scope: the three official services below only. Compatible adapters and model names do not extend these disclosures to another recipient or endpoint.
+> Provider policy evidence: **2026-08-23, Asia/Shanghai**. DeepSeek Responses API, identifier and cache technical facts rechecked **2026-11-07**. Google Gemini Interactions API and applicable data terms checked **2026-11-07**. The database restructuring, public configuration names and recipient-based document editing do not claim a new review of those policies.
+> Scope: the three official services below only. A compatible request format or public configuration name does not extend these disclosures to another actual recipient.
 
 This records the official sources and conservative wording behind the bilingual legal seed and Privacy Policy. It is an engineering evidence record.
 
-## 1. Exact service scope and current documents
+## 1. Reviewed services and current documents
 
 | Actual service | Adapter | Endpoint | Model |
 |---|---|---|---|
@@ -13,11 +13,11 @@ This records the official sources and conservative wording behind the bilingual 
 | Official MiMo API, mainland-China access | 2 — MiMo Responses | `https://api.xiaomimimo.com/v1/responses` | `mimo-v2.6-flash` |
 | Google Gemini API through AI Studio | 3 — Gemini Interactions | `https://generativelanguage.googleapis.com/v1/interactions` | `gemini-3.8-flash` |
 
-The canonical seed is `seed.ts`: one TERMS document, one AI_COMMON document and one AI_PROVIDER document for each explicit scope. Each current row contains both languages in restricted Markdown. The database computes a digest over the document scope, effective date, titles and both bodies, and records the complete typed row in its audit table. Enabled state and ordinary row revision do not alter the content digest.
+The table records reviewed integration examples, not binding columns in a legal document. The canonical seed is `seed.ts`: one TERMS document, one AI_COMMON document and one AI_PROVIDER document for each actual recipient. Each current row contains both languages in restricted Markdown. The database computes a digest over the document kind, recipient, effective date, titles and both bodies, and records the complete typed row in its audit table. Enabled state and ordinary row revision do not alter the content digest. Adapter, endpoint and model are execution configuration, not legal document fields.
 
-Configurations explicitly reference the matching document. Names or credentials may differ while deliberately sharing the same reviewed scope, but another recipient, endpoint or model never inherits consent solely because its wire format is compatible. Runtime uses `ldoc_` external IDs and exact document-audit references. AI acceptance atomically records the common and selected-provider targets, separately from ordinary Terms of Use. Each request freezes two acceptance-audit references; their document-audit references reconstruct exactly what was accepted. There is no bundle, sealing or publishing lifecycle.
+Configurations explicitly reference the operator-selected recipient disclosure. The operator must ensure that it describes the actual recipient and material processing terms. Changes to a configuration’s public name, adapter, endpoint or model do not by themselves change legal content or require a new acceptance. A change of actual recipient or material processing terms requires reviewing and updating or rebinding the applicable document; wire compatibility alone cannot justify reuse. Runtime uses `ldoc_` external IDs and exact document-audit references. AI acceptance atomically records the common and selected-provider targets, separately from ordinary Terms of Use. Each request freezes two acceptance-audit references; their document-audit references reconstruct exactly what was accepted. There is no bundle, sealing or publishing lifecycle.
 
-Admin offers matched read-only legal previews. Any authorized document update must preserve a full bilingual audit snapshot and requires renewed acceptance when the applicable content/scope digest changes. Reading a historical document does not authorize a new request under changed current terms.
+Admin independently edits AI_PROVIDER documents, including recipient, both titles and Markdown bodies, effective date and enabled state. The editor preview and public legal reader share the restricted Markdown renderer. Every authorized document update preserves a full bilingual audit snapshot and requires renewed acceptance when the applicable content digest changes. Reading a historical document does not authorize a new request under changed current terms.
 
 ## 2. DeepSeek official sources
 
@@ -77,11 +77,11 @@ The key/model name and a successful synthetic request cannot attest to Paid-tier
 
 ## 5. Neutral service-operator rules
 
-- The database defines the current time period's candidate set and default. The user explicitly chooses the request option and sees its matching provider/model disclosure. Selection and exact acceptance are separate actions; changing an option updates the disclosure and accepted state. No unselected provider needs to be accepted.
+- The database defines the current time period's candidate set and default. The user explicitly chooses the request option and sees its public display name and the linked actual-recipient disclosure. Selection and exact acceptance are separate actions; changing an option updates the disclosure and accepted state. No unselected provider needs to be accepted.
 - The service operator chose a separate acceptance flow for this optional feature. The terms do not claim that every provider generically requires separate consent.
 - Selected CV content is plaintext to this service's server and the disclosed AI recipient even when cloud-save content is end-to-end encrypted at rest.
 - The service does not intentionally persist CV text, style instructions, or AI output in its request/attempt ledger or logs. It does store content-free configuration, routing-rule, price, exact legal-acceptance, usage, cost, timing, status, and quota metadata.
-- Current retention schedule: finalized request/attempt metadata and daily aggregates 90 days, per-minute rate counters 2 days, followed by bounded cleanup runs. Unsettled/HELD requests and their related daily facts are retained for reconciliation rather than automatically erased. Acceptance records are removed with account deletion; immutable configuration and administrative audit history have no automatic expiry.
+- Current retention schedule: finalized request/attempt metadata and daily aggregates 90 days, per-minute rate counters 2 days, followed by bounded cleanup runs. Unsettled/HELD requests and their related daily facts are retained for reconciliation rather than automatically erased. Acceptance records are removed with account deletion; configuration and administrative audit history have no automatic expiry.
 - Quota is reserved at acceptance. Cancellation after provider transmission remains chargeable; pre-transmission and settlement-classified refundable failures release quota. Retries remain under the same frozen route and never trigger undisclosed cross-provider fallback.
 - AI suggestions may be inaccurate, biased, incomplete, or unsuitable. They are never auto-applied and the user remains responsible for final CV content.
 - Before a new reserve, a changed configuration/control revision, invalid option or current legal target rejects the submission and refreshes the choice/disclosure; there is no silent provider substitution or automatic resend. A successful reserve freezes its selected option, legal evidence and price, including permitted retries across a time boundary. Later current-row changes do not rewrite that request; emergency disable still prevents a new attempt.
@@ -92,8 +92,8 @@ The Privacy Policy links the actual recipient to the selected-service data-proce
 
 ## 7. Release gates and unresolved facts
 
-1. AI begins disabled. Save matching configurations with prices and time rules, verify credential availability and reviewed legal scope, then explicitly enable access. Provider smoke requires separate authorization and does not verify billing tier or change these legal conclusions.
+1. AI begins disabled. Save configurations with prices and time rules, verify credential availability and the explicitly selected enabled recipient disclosure, then explicitly enable access. Provider smoke requires separate authorization and does not verify billing tier or change these legal conclusions.
 2. Re-check the relevant official sources when the recipient, endpoint, operator, region, caching, retention or training/service-improvement terms change.
-3. Do not enable a configuration whose adapter, endpoint, model or actual recipient differs from its explicit disclosure. Every active rule option must satisfy these constraints; credential presence is not proof of upstream success.
+3. Do not enable a configuration whose actual recipient or material processing terms are inaccurately described by its selected disclosure. The database enforces an explicit enabled AI_PROVIDER document link, not adapter/model/endpoint equality. Operator review remains necessary; credential presence is not proof of upstream success.
 4. The following remain deliberately unknown: DeepSeek's API-specific processing/storage location and transfer path, complete API-content retention/deletion period, and API training opt-out coverage; MiMo's mainland-China operating company, guaranteed per-request region, fixed API-content TTL, and cache TTL/scope/opt-out; Google's deployed project tier/sharing settings, actual request region and complete abuse-monitoring retention period.
 5. Obtain qualified legal review before relying on a consent derogation for a broad or high-risk cross-border rollout.

@@ -118,6 +118,7 @@ beforeEach(() => {
         next_cursor: null
       });
     }
+    if (section === "disclosures") return response(query.has("id") ? legalDisplayFixture().provider : { records: [legalDisplayFixture().provider], next_cursor: null });
     if (section === "configurations") return response(query.has("id") ? configuration : {
       records: [configuration],
       next_cursor: null
@@ -280,7 +281,7 @@ describe("Admin business-page identity and dialog lifetime", () => {
     fireEvent.click(await screen.findByRole("button", { name: "New" }));
     const input = await screen.findByLabelText("Configuration name"); await waitFor(() => expect(input.matches(":disabled")).toBe(false));
     for (const name of ["Input", "Cache read", "Cache write", "Output"]) { const rate = screen.getByLabelText(name) as HTMLInputElement; expect(rate.value).toBe(""); expect(rate.required).toBe(true); expect(rate.checkValidity()).toBe(false); }
-    fireEvent.change(input, { target: { value: "Explicit-price service" } }); fireEvent.change(screen.getByLabelText("Endpoint URL"), { target: { value: configuration.endpoint_url } }); fireEvent.change(screen.getByLabelText("Model"), { target: { value: configuration.model_id } }); fireEvent.change(screen.getByLabelText("Credential reference"), { target: { value: configuration.credential_ref } }); fireEvent.change(screen.getByLabelText("Data-processing disclosure"), { target: { value: "3" } });
+    fireEvent.change(input, { target: { value: "Explicit-price service" } }); fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Public service" } }); fireEvent.change(screen.getByLabelText("Endpoint URL"), { target: { value: configuration.endpoint_url } }); fireEvent.change(screen.getByLabelText("Model"), { target: { value: configuration.model_id } }); fireEvent.change(screen.getByLabelText("Credential reference"), { target: { value: configuration.credential_ref } }); fireEvent.change(screen.getByLabelText("Data-processing disclosure"), { target: { value: "3" } });
     fireEvent.submit(input.closest("form")!);
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     for (const name of ["Input", "Cache read", "Cache write", "Output"]) fireEvent.change(screen.getByLabelText(name), { target: { value: "0" } });
@@ -519,5 +520,109 @@ describe("Admin business-page identity and dialog lifetime", () => {
         redirectTo: `${window.location.origin}/en/admin`
       }
     });
+  });
+});
+
+describe("independent data-processing disclosures", () => {
+  function fillDisclosure() {
+    fireEvent.change(screen.getByLabelText("Recipient"), { target: { value: "Independent supplier" } });
+    fireEvent.change(screen.getByLabelText("Chinese title"), { target: { value: "供应商数据处理说明" } });
+    fireEvent.change(screen.getByLabelText("English title"), { target: { value: "Supplier data handling" } });
+    fireEvent.change(screen.getByLabelText("Chinese content"), { target: { value: "## 数据处理\n\n选择的文字提交给供应商。" } });
+    fireEvent.change(screen.getByLabelText("English content"), { target: { value: "## Data handling\n\nSelected text goes to the supplier." } });
+  }
+  it("creates a bilingual disclosure with safe previews and no technical scope fields", async () => {
+    view(<AdminApp locale="en" section="disclosures" />);
+    fireEvent.click(await screen.findByRole("button", { name: "New" }));
+    fillDisclosure();
+    expect(screen.queryByLabelText("Adapter")).toBeNull();
+    expect(screen.queryByLabelText("Model")).toBeNull();
+    expect(screen.queryByLabelText("Endpoint URL")).toBeNull();
+    const preview = screen.getByRole("region", { name: "English preview" });
+    expect(within(preview).getByRole("heading", { name: "Data handling" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("English content"), { target: { value: "[Unsafe](javascript:alert(1))" } });
+    expect(within(preview).queryByRole("link")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Complete both languages and use only supported Markdown with safe links.");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    fireEvent.change(screen.getByLabelText("English content"), { target: { value: "## Data handling\n\nSelected text goes to the supplier." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const sent = JSON.parse(String(vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "POST")![1]!.body));
+    expect(sent).toEqual({ operation: "admin_legal_document_save", contract_code: "cv_app_db_2", database_instance_id: context.database_instance_id, operation_key: expect.any(String), reason: "Save data-processing disclosure", id: null, expected_revision: null, kind: "AI_PROVIDER", recipient_name: "Independent supplier", zh_title: "供应商数据处理说明", en_title: "Supplier data handling", zh_body: "## 数据处理\n\n选择的文字提交给供应商。", en_body: "## Data handling\n\nSelected text goes to the supplier.", effective_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), enabled: false });
+  });
+  it("keeps a disclosure's unknown operation frozen through retries", async () => {
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (init?.method === "POST" && ++writes === 1) return Promise.reject(new TypeError("Response lost"));
+      if (init?.method === "POST" && writes === 2) return Promise.resolve(new Response(JSON.stringify({ error: { code: "INVALID_REQUEST" } }), { status: 400 }));
+      return original(input, init);
+    });
+    view(<AdminApp locale="en" section="disclosures" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const body = await screen.findByLabelText("English content");
+    fireEvent.change(body, { target: { value: "Changed disclosure." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Result unknown. Keep this dialog open and retry the same operation.");
+    expect(body.matches(":disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry same operation" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2));
+    expect(body.matches(":disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry same operation" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const sent = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST").map(([, init]) => JSON.parse(String(init!.body)));
+    expect(sent[1]).toEqual(sent[0]); expect(sent[2]).toEqual(sent[0]);
+  });
+  it("preserves a conflicting draft until the latest disclosure is explicitly adopted", async () => {
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    let latest = legalDisplayFixture().provider, conflict = true;
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const query = new URL(String(input), "http://local.test").searchParams;
+      if (init?.method === "POST" && conflict) { conflict = false; latest = { ...latest, revision: "2", en_body: "Latest disclosure." }; return Promise.resolve(new Response(JSON.stringify({ error: { code: "CONFLICT" } }), { status: 409 })); }
+      if (query.get("section") === "disclosures" && query.has("id")) return Promise.resolve(response(latest));
+      return original(input, init);
+    });
+    view(<AdminApp locale="en" section="disclosures" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const body = await screen.findByLabelText("English content") as HTMLTextAreaElement;
+    fireEvent.change(body, { target: { value: "Unsaved disclosure." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/This disclosure changed/);
+    expect(body.value).toBe("Unsaved disclosure.");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh record" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load latest" }).matches(":disabled")).toBe(false));
+    expect(body.value).toBe("Unsaved disclosure.");
+    fireEvent.click(screen.getByRole("button", { name: "Load latest" }));
+    expect(body.value).toBe("Latest disclosure.");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const last = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST").at(-1)!;
+    expect(JSON.parse(String(last[1]!.body))).toMatchObject({ expected_revision: "2", en_body: "Latest disclosure." });
+  });
+  it("separates internal and public names and retains a manually selected document across connection changes", async () => {
+    view(<AdminApp locale="en" section="configurations" />);
+    const internal = await edit();
+    fireEvent.change(internal, { target: { value: "Internal routing alias" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Friendly user name" } });
+    fireEvent.change(screen.getByLabelText("Endpoint URL"), { target: { value: "https://another-supplier.example/responses" } });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "another-model" } });
+    const selector = screen.getByLabelText("Data-processing disclosure") as HTMLSelectElement;
+    expect(selector.value).toBe("3");
+    expect(within(selector).getAllByRole("option")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const call = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(JSON.parse(String(call[1]!.body))).toMatchObject({ name: "Internal routing alias", display_name: "Friendly user name", endpoint_url: "https://another-supplier.example/responses", model_id: "another-model", legal_document_id: "3" });
+  });
+  it("clears the disclosure editor when the account changes", async () => {
+    view(<AdminApp locale="en" section="disclosures" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const body = await screen.findByLabelText("English content");
+    fireEvent.change(body, { target: { value: "Private unsaved draft." } });
+    await act(async () => { state.listener?.("SIGNED_IN", session("B", "B-token")); });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByText("Private unsaved draft.")).toBeNull();
   });
 });

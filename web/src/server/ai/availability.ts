@@ -10,7 +10,7 @@ const rawSchema = z.strictObject({
   control_revision: polishDatabaseIdSchema,
   default_config_id: polishDatabaseIdSchema.nullable(), quota: z.unknown(),
   configurations: z.array(z.strictObject({
-    config_id: polishDatabaseIdSchema, name: z.string().min(1), revision: polishDatabaseIdSchema,
+    config_id: polishDatabaseIdSchema, name: z.string().min(1), display_name: z.string().trim().min(1).max(200), revision: polishDatabaseIdSchema,
     ...executionConfigurationSchema.shape,
     eligible: z.boolean(), reason: z.string().nullable(), consent_required: z.boolean(),
     legal_display: legalDisplaySchema
@@ -31,14 +31,14 @@ export async function readAvailability(db: AiDatabase, userId: string, instance:
       try {
         if (checkProviders) validateExecutionConfiguration(Object.fromEntries(Object.keys(executionConfigurationSchema.shape).map(key => [key, configuration[key as keyof typeof configuration]])), env);
         const legal = configuration.legal_display.provider;
-        if (legal.adapter_id !== configuration.adapter_id || legal.endpoint_url !== configuration.endpoint_url || legal.model_id !== configuration.model_id || !legal.enabled || !configuration.legal_display.common.enabled) throw new Error("Legal scope does not match configuration");
+        if (!legal.enabled || !configuration.legal_display.common.enabled) throw new Error("Legal document is disabled");
       } catch {
         status = "UNAVAILABLE";
         reason = "EXECUTION_CONFIG_UNAVAILABLE";
       }
       return {
         configId: configuration.config_id, configRevision: configuration.revision,
-        name: configuration.name, modelId: configuration.model_id,
+        displayName: configuration.display_name,
         status, reason, legalDisplay: configuration.legal_display
       };
     })

@@ -24,10 +24,7 @@ export type LegalDocument = {
 export type AiProviderEvidence = Readonly<{
   reviewedAt: string;
   provider: string;
-  gatewayOperator: string;
-  modelVendor: string;
-  models: readonly string[];
-  upstream: string;
+  operator: string;
   submittedData: readonly string[];
   providerSubjectId: string;
   processingRegion: string;
@@ -41,7 +38,6 @@ export type AiProviderEvidence = Readonly<{
 export function defineAiProviderEvidence(manifest: AiProviderEvidence): AiProviderEvidence {
   return Object.freeze({
     ...manifest,
-    models: Object.freeze([...manifest.models]),
     submittedData: Object.freeze([...manifest.submittedData]),
     unknowns: Object.freeze([...manifest.unknowns]),
     sources: Object.freeze([...manifest.sources])

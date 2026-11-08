@@ -8,12 +8,12 @@ import { AuditDetails } from "./admin-detail-sections";
 import { useAdminRead } from "./admin-read";
 import { adminText } from "./format";
 
-type Props = { client: SupabaseClient; actor: AdminSession; project: string; instanceId: string; entityId: string; section: "configurations" | "rules" | "users"; locale: "zh" | "en" };
+type Props = { client: SupabaseClient; actor: AdminSession; project: string; instanceId: string; entityId: string; section: "configurations" | "disclosures" | "rules" | "users"; locale: "zh" | "en" };
 /** One business save has multiple typed histories; keep all of them together. */
 export function AdminBusinessHistory(props: Props) {
   const l = (en: string, zh: string) => adminText(props.locale, en, zh);
   const groups = props.section === "configurations" ? [["configurations", l("Configuration changes", "配置变更")], ["prices", l("Price changes", "价格变更")]]
-    : props.section === "rules" ? [["rules", l("Period changes", "时段变更")], ["rule_members", l("Options and defaults", "候选配置与默认项变更")]] : [["members", l("Membership changes", "管理员资格变更")]];
+    : props.section === "rules" ? [["rules", l("Period changes", "时段变更")], ["rule_members", l("Options and defaults", "候选配置与默认项变更")]] : props.section === "disclosures" ? [["documents", l("Disclosure changes", "数据处理说明变更")]] : [["members", l("Membership changes", "管理员资格变更")]];
   return <div className="space-y-6">{groups.map(([kind, title]) => <HistoryGroup key={kind} {...props} kind={kind} title={title} />)}</div>;
 }
 function HistoryGroup({ client, actor, project, instanceId, entityId, locale, kind, title }: Props & { kind: string; title: string }) {

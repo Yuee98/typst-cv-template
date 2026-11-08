@@ -86,10 +86,10 @@ function AvailabilityDisclosure({
   if (status === "error" || !candidate) return <div role="status"><span>{t("availability.error")}</span><Button type="button" variant="ghost" size="sm" onClick={flow.availabilityRetry}>{t("availability.retry")}</Button></div>;
   const selected = candidate.configurations.find(option => option.configId === candidate.selectedConfigId);
   return <div className="space-y-3 rounded-md border border-accent-border bg-accent-soft px-3 py-2 text-sm">
-    <label className="block font-medium" htmlFor="polish-provider-choice">{zh ? "选择 AI Provider 和模型" : "Choose AI provider and model"}</label>
+    <label className="block font-medium" htmlFor="polish-provider-choice">{zh ? "选择 AI 服务" : "Choose AI service"}</label>
     <select id="polish-provider-choice" className="w-full rounded border border-border bg-surface px-2 py-2" value={candidate.selectedConfigId ?? ""} onChange={event => flow.selectConfiguration(event.target.value)}>
       <option value="" disabled>{zh ? "请选择一个可用选项" : "Select an available option"}</option>
-      {candidate.configurations.map(option => <option key={option.configId} value={option.configId} disabled={option.status === "UNAVAILABLE"}>{option.name} · {option.modelId}{option.status === "UNAVAILABLE" ? zh ? "（暂不可用）" : " (unavailable)" : ""}</option>)}
+      {candidate.configurations.map(option => <option key={option.configId} value={option.configId} disabled={option.status === "UNAVAILABLE"}>{option.displayName}{option.status === "UNAVAILABLE" ? zh ? "（暂不可用）" : " (unavailable)" : ""}</option>)}
     </select>
     {!selected && <p role="status">{zh ? "原选项已失效，请重新选择并确认。" : "Your previous option is unavailable. Select an option and confirm again."}</p>}
   </div>;

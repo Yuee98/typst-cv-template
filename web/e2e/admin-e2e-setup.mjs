@@ -19,23 +19,28 @@ async function removeFixtureUsers(service) {
   ownerSql(`begin;
     create temporary table fixture_configuration_ids on commit drop as select entity_id id from admin.operations where actor_auth_user_id=any(${ids}) and entity_kind='configurations';
     create temporary table fixture_rule_ids on commit drop as select entity_id id from admin.operations where actor_auth_user_id=any(${ids}) and entity_kind='rules';
+    create temporary table fixture_document_ids on commit drop as select entity_id id from admin.operations where actor_auth_user_id=any(${ids}) and entity_kind='documents';
     delete from ai.routing_rule_configurations where rule_id in(select id from fixture_rule_ids);
     delete from ai.routing_rules where id in(select id from fixture_rule_ids);
     delete from ai.prices where config_id in(select id from fixture_configuration_ids);
     delete from ai.configurations where id in(select id from fixture_configuration_ids);
+    delete from legal.documents where id in(select id from fixture_document_ids);
     delete from admin.members where auth_user_id=any(${ids});
+    set constraints all immediate;
     alter table audit.configurations disable trigger immutable_history;
     alter table audit.prices disable trigger immutable_history;
     alter table audit.rules disable trigger immutable_history;
     alter table audit.rule_members disable trigger immutable_history;
     alter table audit.runtime_control disable trigger immutable_history;
     alter table audit.members disable trigger immutable_history;
+    alter table audit.documents disable trigger immutable_history;
     delete from audit.configurations where actor_auth_user_id=any(${ids}) or id in(select id from fixture_configuration_ids);
     delete from audit.prices where actor_auth_user_id=any(${ids}) or config_id in(select id from fixture_configuration_ids);
     delete from audit.rules where actor_auth_user_id=any(${ids}) or id in(select id from fixture_rule_ids);
     delete from audit.rule_members where actor_auth_user_id=any(${ids}) or rule_id in(select id from fixture_rule_ids);
     delete from audit.runtime_control where actor_auth_user_id=any(${ids});
     delete from audit.members where actor_auth_user_id=any(${ids}) or auth_user_id=any(${ids});
+    delete from audit.documents where id in(select id from fixture_document_ids);
     delete from admin.operations where actor_auth_user_id=any(${ids});
     alter table audit.configurations enable trigger immutable_history;
     alter table audit.prices enable trigger immutable_history;
@@ -43,6 +48,7 @@ async function removeFixtureUsers(service) {
     alter table audit.rule_members enable trigger immutable_history;
     alter table audit.runtime_control enable trigger immutable_history;
     alter table audit.members enable trigger immutable_history;
+    alter table audit.documents enable trigger immutable_history;
     commit;`);
   for (const user of users) { const { error } = await service.auth.admin.deleteUser(user.id); if (error) throw error; }
 }

@@ -70,6 +70,7 @@ function rpcError(error: {
 }
 export const sectionKinds: Record<AdminSection, readonly string[]> = {
   configurations: ["configurations", "adapters", "legal_documents"],
+  disclosures: ["documents"],
   rules: ["rules"],
   controls: [],
   usage: ["requests", "analytics"],
@@ -103,7 +104,7 @@ async function readBody(request: Request) {
       } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 65536) {
+      if (size > 1024 * 1024) {
         await reader.cancel();
         return null;
       }
@@ -188,7 +189,7 @@ export async function handleAdminGet(request: Request, deps: Dependencies = defa
     if (envelope.context.environment.toLowerCase() !== auth.environment.name || instance !== null && envelope.context.database_instance_id !== instance) return fail("CLIENT_UPDATE_REQUIRED");
     let payload: unknown;
     if (section === "controls") payload = z.null().parse(envelope.data);else if (section === "usage" && kind === "analytics") payload = adminAnalyticsSchema.parse(envelope.data);else {
-      const recordSchema = section === "configurations" ? kind === "adapters" ? adminAdapterSchema : kind === "legal_documents" ? adminDocumentSchema : adminConfigurationSchema : section === "rules" ? adminRuleSchema : adminRecordSchema;
+      const recordSchema = section === "configurations" ? kind === "adapters" ? adminAdapterSchema : kind === "legal_documents" ? adminDocumentSchema : adminConfigurationSchema : section === "disclosures" ? adminDocumentSchema.refine(doc => doc.kind === "AI_PROVIDER") : section === "rules" ? adminRuleSchema : adminRecordSchema;
       if (query.has("id")) payload = recordSchema.parse(envelope.data);else {
         const page = adminPageSchema.parse(envelope.data);
         payload = {

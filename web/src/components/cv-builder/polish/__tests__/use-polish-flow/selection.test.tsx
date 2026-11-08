@@ -21,11 +21,10 @@ describe("explicit provider selection", () => {
   it("selects a third Google recipient and accepts only its exact disclosure", async () => {
     const response = fixtureAvailability([1, 2, 3]);
     const google = response.availability.configurations[2];
-    google.name = "Google Gemini";
-    google.modelId = "gemini-3.8-flash";
+    google.displayName = "Google Gemini";
     google.status = "CONSENT_REQUIRED";
     google.legalDisplay.provider = { ...google.legalDisplay.provider,
-      recipient_name: "Google Gemini", model_id: "gemini-3.8-flash",
+      recipient_name: "Google Gemini",
       zh_title: "Google Gemini 数据处理说明", en_title: "Google Gemini processing disclosure"
     };
     const h = renderHarness({}, { deferAvailability: true });
@@ -40,7 +39,7 @@ describe("explicit provider selection", () => {
     act(() => h.flow().confirm());
     expect(h.acceptCalls).toHaveLength(1);
     expect(h.acceptCalls[0].legalDisplay).toMatchObject({
-      provider: { recipient_name: "Google Gemini", document_audit_id: "13", model_id: "gemini-3.8-flash" },
+      provider: { recipient_name: "Google Gemini", document_audit_id: "13" },
     });
     expect(h.polishCalls).toHaveLength(0);
     await act(async () => h.acceptCalls[0].resolve());

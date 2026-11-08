@@ -13,10 +13,7 @@ export function legalDocumentFixture(kind: LegalDocument["kind"] = "TERMS", id =
     en_body: "English introduction\n\n## Scope\n\n- English terms",
     enabled: true,
     revision: "1",
-    recipient_name: kind === "AI_PROVIDER" ? "Reviewed Service" : null,
-    adapter_id: kind === "AI_PROVIDER" ? 1 : null,
-    endpoint_url: kind === "AI_PROVIDER" ? "https://api.example.test/responses" : null,
-    model_id: kind === "AI_PROVIDER" ? "model-a" : null
+    recipient_name: kind === "AI_PROVIDER" ? "Reviewed Service" : null
   };
 }
 export function legalDisplayFixture(): LegalDisplay {

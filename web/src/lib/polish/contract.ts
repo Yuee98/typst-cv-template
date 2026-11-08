@@ -298,8 +298,7 @@ export const polishPostRequestSchema = polishRequestSchema.safeExtend({ expected
 export const polishAvailabilityConfigurationSchema = z.strictObject({
   configId: polishDatabaseIdSchema,
   configRevision: polishDatabaseIdSchema,
-  name: z.string().min(1),
-  modelId: z.string().min(1),
+  displayName: z.string().trim().min(1).max(200),
   status: z.enum(["READY", "CONSENT_REQUIRED", "UNAVAILABLE"]),
   reason: z.string().nullable(),
   legalDisplay: legalDisplaySchema

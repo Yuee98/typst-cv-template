@@ -15,7 +15,8 @@ import { useAdminMutation } from "./use-admin-mutation";
 import { AdminDetails } from "./admin-detail-sections";
 import { formatMinute, parseMinute } from "./format";
 import { AdminBusinessHistory } from "./admin-business-history";
-type Props = {
+import { AdminDisclosureDialog } from "./admin-disclosure-dialog";
+export type AdminEntityDialogProps = {
   client: SupabaseClient;
   actor: AdminSession;
   project: string;
@@ -29,6 +30,7 @@ type Props = {
   onClose(): void;
   onCommitted(): void;
 };
+type Props = AdminEntityDialogProps;
 const emptyPrice = {
   currency: "USD",
   input_standard_nanos_per_million: "0",
@@ -68,6 +70,9 @@ function Field({
 }
 const selectClass = "h-10 w-full min-w-0 rounded-md border border-border bg-bg px-3 text-base sm:text-sm";
 export function AdminEntityDialog(props: Props) {
+  return props.section === "disclosures" ? <AdminDisclosureDialog {...props} /> : <AdminRecordDialog {...props} />;
+}
+function AdminRecordDialog(props: Props) {
   const {
     client,
     actor,
@@ -128,6 +133,7 @@ function EntityEditor({
     id: "1",
     revision: "1",
     name: "",
+    display_name: "",
     adapter_id: 1,
     endpoint_url: "",
     model_id: "",
@@ -180,7 +186,7 @@ function EntityEditor({
   const legalDocs: LegalDocument[] = documents.records.map(row => legalDocumentSchema.parse(row));
   const currentDocument = legalDocs.find(doc => doc.document_id === configuration.legal_document_id);
   const common = legalDocs.find(doc => doc.kind === "AI_COMMON");
-  const matching = legalDocs.filter(doc => doc.kind === "AI_PROVIDER" && doc.adapter_id === configuration.adapter_id && (!configuration.endpoint_url || doc.endpoint_url === configuration.endpoint_url) && (!configuration.model_id || doc.model_id === configuration.model_id));
+  const availableDocuments = legalDocs.filter(doc => doc.kind === "AI_PROVIDER");
   const newer = baseline && record && record.revision !== baseline.revision;
   function close() {
     if (!mutation.busy && !mutation.uncertain && (!dirty || readonly || window.confirm(l("Discard unsaved changes?", "放弃尚未保存的修改？")))) onClose();
@@ -226,12 +232,13 @@ function EntityEditor({
       };
       let payload: unknown;
       if (section === "configurations") {
-        if (!currentDocument || currentDocument.adapter_id !== configuration.adapter_id || currentDocument.endpoint_url !== configuration.endpoint_url || currentDocument.model_id !== configuration.model_id) throw new Error(l("Select a disclosure matching the connection and model.", "请选择与接入地址和模型匹配的数据处理说明。"));
+        if (!currentDocument || currentDocument.kind !== "AI_PROVIDER" || configuration.enabled && !currentDocument.enabled) throw new Error(l("Select an available data-processing disclosure for this service.", "请为此服务选择可用的数据处理说明。"));
         payload = {
           ...base,
           operation: "admin_configuration_save",
           ...identity,
           name: configuration.name,
+          display_name: configuration.display_name,
           adapter_id: configuration.adapter_id,
           endpoint_url: configuration.endpoint_url,
           model_id: configuration.model_id,
@@ -308,10 +315,11 @@ function EntityEditor({
               ...configuration,
               name: event.target.value
             })} /></Field>
+              <Field label={l("Display name", "展示名称")}><Input required maxLength={200} value={configuration.display_name} onChange={event => setConfiguration({ ...configuration, display_name: event.target.value })} /></Field>
+              <p className="text-xs leading-5 text-foreground-muted">{l("Users see the display name. The configuration name is for internal administration.", "用户看到的是展示名称，配置名称仅用于内部管理。")}</p>
               <Field label={l("Adapter", "请求适配器")}><select className={selectClass} value={configuration.adapter_id} onChange={event => setConfiguration({
               ...configuration,
-              adapter_id: Number(event.target.value) as 1 | 2 | 3,
-              legal_document_id: ""
+              adapter_id: Number(event.target.value) as 1 | 2 | 3
             })}>{adapters.records.map(adapter => <option key={String(adapter.id)} value={String(adapter.id)}>{String(adapter.name)}</option>)}</select></Field>
               <Field label={l("Endpoint URL", "接入地址")}><Input type="url" required value={configuration.endpoint_url} onChange={event => setConfiguration({
               ...configuration,
@@ -327,14 +335,12 @@ function EntityEditor({
             })} /></Field>
               <p id={credentialHintId} className="text-xs leading-5 text-foreground-muted">{l("Enter the name of an environment variable configured on the server, not an API key.", "填写服务器已配置的环境变量名，不是 API Key。")}</p>
               <Field label={l("Data-processing disclosure", "数据处理说明")}><select required className={selectClass} value={configuration.legal_document_id} onChange={event => {
-              const doc = legalDocs.find(item => item.document_id === event.target.value);
               setConfiguration({
                 ...configuration,
-                legal_document_id: event.target.value,
-                endpoint_url: configuration.endpoint_url || doc?.endpoint_url || "",
-                model_id: configuration.model_id || doc?.model_id || ""
+                legal_document_id: event.target.value
               });
-            }}><option value="">{l("Select a matching document", "选择匹配的文档")}</option>{matching.map(doc => <option key={doc.document_id} value={doc.document_id}>{locale === "zh" ? doc.zh_title : doc.en_title}</option>)}</select></Field>
+            }}><option value="">{l("Select a disclosure", "选择数据处理说明")}</option>{availableDocuments.map(doc => <option key={doc.document_id} value={doc.document_id} disabled={configuration.enabled && !doc.enabled}>{locale === "zh" ? doc.zh_title : doc.en_title} · {doc.recipient_name}{doc.enabled ? "" : ` · ${l("Disabled", "已停用")}`}</option>)}</select></Field>
+              <p className="text-xs leading-5 text-foreground-muted">{l("Choose a disclosure that accurately describes the actual recipient and its data processing. Protocol compatibility does not make another supplier's disclosure applicable.", "请选择如实说明实际接收方及其数据处理方式的文档。请求协议兼容，并不表示可以使用其他供应商的说明。")}</p>
               {documents.hasMore && <Button variant="secondary" type="button" onClick={documents.loadMore}>{l("Load more disclosures", "加载更多披露")}</Button>}
               {currentDocument && common && <a target="_blank" rel="noopener noreferrer" className="inline-block text-sm text-accent underline" href={`/${locale}${aiDisclosureHref({
             common,

@@ -84,6 +84,8 @@ describe("current and precise audited reading", () => {
     });
     expect(getCurrentLegal).not.toHaveBeenCalled();
     expect(getLegalDocument).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(locale === "zh" ? `实际数据接收方：${display.provider.recipient_name}` : `Data recipient: ${display.provider.recipient_name}`)).toBeTruthy();
+    expect(screen.queryByText(/Adapter:|Endpoint:|Model:/)).toBeNull();
     expect(screen.queryByRole("link", {
       name: "Other service"
     })).toBeNull();
