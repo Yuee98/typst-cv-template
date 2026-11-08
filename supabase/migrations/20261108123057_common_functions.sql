@@ -50,24 +50,7 @@ create function common.auth_session_valid (p_user uuid, p_session uuid)
         and (not_after is null
           or not_after > clock_timestamp()))
 $$;
-create function common.auth_has_totp (p_user uuid)
-  returns boolean
-  language sql
-  stable
-  security definer
-  set search_path = ''
-  as $$
-  select
-    exists (
-      select
-        1
-      from
-        auth.mfa_factors
-      where
-        user_id = p_user
-        and status = 'verified'
-        and factor_type = 'totp')
-$$;
+
 create function common.auth_user_page (p_limit integer, p_after text)
   returns jsonb
   language sql
@@ -131,7 +114,7 @@ begin
     return u;
 end
 $$;
-create function common.admin_id (p_step_up boolean default false)
+create function common.admin_id ()
   returns uuid
   language plpgsql
   volatile
@@ -167,16 +150,6 @@ begin
   if not common.auth_session_valid (u, (j ->> 'session_id')::uuid) then
     perform
       common.fail ('UNAUTHORIZED', 'SESSION_EXPIRED');
-  end if;
-  if p_step_up and (j ->> 'aal' is distinct from 'aal2' or not common.auth_has_totp (u) or not exists (
-    select
-      1
-    from
-      jsonb_array_elements(coalesce(j -> 'amr', '[]')) a
-    where
-      a ->> 'method' = 'totp' and (a ->> 'timestamp')::numeric >= extract(epoch from clock_timestamp()) - 600)) then
-    perform
-      common.fail ('STEP_UP_REQUIRED');
   end if;
   return u;
 end

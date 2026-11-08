@@ -116,13 +116,13 @@ describe("runtime list and settings dialog", () => {
     });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
-  it("retains settings when the live server requires TOTP", async () => {
+  it("retains settings when the current revision conflicts", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: {
-        code: "STEP_UP_REQUIRED"
+        code: "CONFLICT"
       }
     }), {
-      status: 403
+      status: 409
     })));
     mount();
     fireEvent.click(await screen.findByRole("button", {
@@ -136,7 +136,7 @@ describe("runtime list and settings dialog", () => {
     fireEvent.click(screen.getByRole("button", {
       name: "Save"
     }));
-    await screen.findByText("STEP_UP_REQUIRED");
+    await screen.findByText("CONFLICT");
     expect((screen.getByLabelText("Requests per user / UTC day") as HTMLInputElement).value).toBe("25");
   });
 });

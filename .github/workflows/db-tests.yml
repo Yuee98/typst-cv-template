@@ -64,7 +64,7 @@ jobs:
         run: node scripts/db-remote-rehearsal.ts --mode=verify
       - name: Install pinned Chromium
         run: pnpm --filter web exec playwright install --with-deps chromium
-      - name: Real local Auth and TOTP browser tests
+      - name: Real local Auth and administrator authorization browser tests
         run: pnpm --filter web test:e2e:admin
       - name: Upload local rehearsal evidence
         if: always()

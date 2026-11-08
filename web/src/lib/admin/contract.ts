@@ -165,7 +165,7 @@ export const adminAdapterSchema = z.strictObject({
   name: z.string().min(1)
 });
 export const adminDocumentSchema = legalDocumentSchema;
-export const ADMIN_ERROR_CODES = ["UNAUTHORIZED", "FORBIDDEN", "INVALID_REQUEST", "NOT_FOUND", "CONFLICT", "STEP_UP_REQUIRED", "NOT_READY", "UNAVAILABLE", "CLIENT_UPDATE_REQUIRED", "INTERNAL_ERROR", "RATE_LIMITED", "QUOTA_EXCEEDED"] as const;
+export const ADMIN_ERROR_CODES = ["UNAUTHORIZED", "FORBIDDEN", "INVALID_REQUEST", "NOT_FOUND", "CONFLICT", "NOT_READY", "UNAVAILABLE", "CLIENT_UPDATE_REQUIRED", "INTERNAL_ERROR", "RATE_LIMITED", "QUOTA_EXCEEDED"] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
 export const adminConfigurationErrorReasonSchema = z.enum(["CREDENTIAL_UNAVAILABLE", "ENDPOINT_INVALID", "ENDPOINT_UNREACHABLE"]);
 export type AdminConfigurationErrorReason = z.infer<typeof adminConfigurationErrorReasonSchema>;
@@ -181,7 +181,6 @@ export const ADMIN_ERROR_STATUS: Record<AdminErrorCode, number> = {
   INVALID_REQUEST: 400,
   NOT_FOUND: 404,
   CONFLICT: 409,
-  STEP_UP_REQUIRED: 403,
   NOT_READY: 409,
   UNAVAILABLE: 503,
   CLIENT_UPDATE_REQUIRED: 409,

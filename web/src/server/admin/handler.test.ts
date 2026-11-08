@@ -222,21 +222,21 @@ describe("atomic current-row mutations", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(validateConfiguration).not.toHaveBeenCalled();
   });
-  it("propagates live step-up and conflicts", async () => {
+  it.each([["FORBIDDEN", 403], ["CONFLICT", 409]] as const)("propagates live refusal %s", async (code, status) => {
     rpc.mockImplementation(async (name: string) => name === "admin_context" ? {
       data: context,
       error: null
     } : {
       data: null,
       error: {
-        message: "STEP_UP_REQUIRED"
+        message: code
       }
     });
     expect((await handleAdminPost(post({
       ...base,
       operation: "admin_ai_disable",
       expected_revision: "1"
-    }), deps as never)).status).toBe(403);
+    }), deps as never)).status).toBe(status);
   });
   it("does not write if the selected key or endpoint fails validation", async () => {
     validateConfiguration.mockRejectedValue(new Error("Selected credential unavailable"));

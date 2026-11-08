@@ -24,10 +24,9 @@ create function public.keep_project_active ()
   select
     true
 $$;
--- No direct private RPC surface. These two projections are the only intentional Auth readers.
+-- No direct private RPC surface. These fixed private projections are the only intentional Auth readers.
 comment on function common.auth_user_active (uuid) is 'Private postgres-owned Auth boolean projection. app_api_owner gets no Auth table or column privilege.';
 comment on function common.auth_session_valid (uuid, uuid) is 'Private postgres-owned live/expiry session projection; never returns session secrets.';
-comment on function common.auth_has_totp (uuid) is 'Private postgres-owned verified-factor boolean only; never returns factor secrets.';
 comment on function common.auth_user_page (integer, text) is 'Private postgres-owned bounded Admin account projection; no credentials or Auth tokens.';
 do $$
 declare

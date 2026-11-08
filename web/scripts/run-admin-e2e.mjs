@@ -1,6 +1,4 @@
-// Runs the dedicated Admin Playwright config and always removes its output.
-// A failure during MFA enrollment must not leave a DOM snapshot containing a
-// temporary TOTP seed on disk or in CI artifacts.
+// Runs local Admin browser checks and always removes private browser output.
 
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";

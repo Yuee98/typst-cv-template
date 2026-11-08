@@ -2,7 +2,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path=public,extensions;
 select no_plan();
--- Privileged synthetic setup. This is not evidence of Auth/MFA verification.
+-- Privileged synthetic setup. This is not evidence of Auth sign-in/session verification.
 select common.audit_context(null,null,'Disposable runtime fixture, synthetic prices; not provider invoices','SYSTEM');
 insert into auth.users(id,aud,role,email,email_confirmed_at,created_at,updated_at) values
 ('00000000-0000-4000-8000-000000000091','authenticated','authenticated','runtime-fixture@example.invalid',clock_timestamp(),clock_timestamp(),clock_timestamp()),
@@ -31,10 +31,9 @@ create function pg_temp.complete(p_req text,p_usage jsonb,p_bill boolean default
 create function pg_temp.start(p_req text,p_no integer default 1) returns jsonb language sql as $$select public.ai_attempt_start(pg_temp.guard()||jsonb_build_object('request_id',p_req,'attempt_no',p_no)) $$;
 create function pg_temp.finish(p_req text) returns jsonb language sql as $$select public.ai_finalize(pg_temp.guard()||jsonb_build_object('request_id',p_req)) $$;
 
--- Explicit privileged synthetic Auth facts for SQL permission testing, not real MFA-login evidence.
+-- Explicit privileged synthetic Auth session for SQL role tests; real password-login evidence lives in the API suite.
 insert into auth.sessions(id,user_id) values('00000000-0000-4000-8000-000000000093','00000000-0000-4000-8000-000000000092');
-insert into auth.mfa_factors(id,user_id,status,factor_type,created_at,updated_at) values('00000000-0000-4000-8000-000000000094','00000000-0000-4000-8000-000000000092','verified','totp',clock_timestamp(),clock_timestamp());
-select set_config('request.jwt.claims',jsonb_build_object('sub','00000000-0000-4000-8000-000000000092','session_id','00000000-0000-4000-8000-000000000093','aal','aal2','amr',jsonb_build_array(jsonb_build_object('method','totp','timestamp',extract(epoch from clock_timestamp()))))::text,true);
+select set_config('request.jwt.claims',jsonb_build_object('sub','00000000-0000-4000-8000-000000000092','session_id','00000000-0000-4000-8000-000000000093','aal','aal1','amr',jsonb_build_array(jsonb_build_object('method','password','timestamp',extract(epoch from clock_timestamp()))))::text,true);
 create function pg_temp.admin_call(p_operation text,p_input jsonb) returns jsonb language plpgsql as $$declare r jsonb;begin execute format('select public.%I($1)','admin_'||p_operation) into r using jsonb_build_object('contract_code','cv_app_db_2','database_instance_id',(select database_instance_id from admin.environment),'operation_key',extensions.gen_random_uuid(),'reason','Synthetic SQL aggregate regression')||p_input;return r;end $$;
 create function pg_temp.save_enabled(p_enabled boolean) returns jsonb language sql as $$ select pg_temp.admin_call('configuration_save',admin.configuration_json(id)||jsonb_build_object('expected_revision',revision::text,'enabled',p_enabled)) from ai.configurations where adapter_id=1 limit 1 $$;
 create temp table cancel_cases(label text primary key,request_id text);
@@ -52,4 +51,6 @@ insert into cancel_cases values('audience',pg_temp.reserve());
 select lives_ok($$select pg_temp.admin_call('ai_update',(select common.api_json(to_jsonb(c)-'id')||jsonb_build_object('expected_revision',revision::text,'audience','ALLOWLIST') from ai.runtime_control c))$$,'audience narrowing safely cancels current nonmembers');
 select ok((select time_canceled is not null from ai.requests where external_id=(select request_id from cancel_cases where label='audience')),'audience narrowing persists cancellation');
 select throws_like($$delete from auth.users where id='00000000-0000-4000-8000-000000000092'$$,'%violates%','active administrator cannot bypass revoke through Auth deletion');
+update auth.sessions set not_after=clock_timestamp()-interval '1 second' where id='00000000-0000-4000-8000-000000000093';
+select throws_ok($$select public.admin_context()$$,'P0001','UNAUTHORIZED','expired live Auth session still blocks ordinary-session Admin access');
 select * from finish();rollback;

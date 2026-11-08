@@ -53,7 +53,6 @@ function configurationErrorMessage(error: string | null, locale: "zh" | "en"): s
     case "CREDENTIAL_UNAVAILABLE": return zh ? "服务器未配置此凭据引用，请填写已配置的环境变量名。" : "This credential reference is not configured on the server. Enter a configured environment variable name.";
     case "ENDPOINT_INVALID": return zh ? "接入地址无效，请填写规范的公网 HTTPS 地址。" : "The endpoint URL is invalid. Enter a canonical public HTTPS address.";
     case "ENDPOINT_UNREACHABLE": return zh ? "接入地址无法解析到可用的公网地址，请检查地址与服务器网络。" : "The endpoint cannot be resolved to an available public address. Check the URL and server network.";
-    case "STEP_UP_REQUIRED": return zh ? "请先到运行控制完成 TOTP 验证，再重试保存。" : "Complete TOTP verification under Runtime controls, then retry saving.";
     default: return error;
   }
 }
@@ -388,7 +387,7 @@ function EntityEditor({
               enabled: event.target.checked
             })} />{l("Enabled", "启用")}</label>
             </>}
-            {section === "users" && <><Field label={l("Account UUID", "账户 UUID")}><Input required value={authUserId} readOnly={Boolean(baseline)} onChange={event => setAuthUserId(event.target.value)} /></Field>{kind === "allowed_users" ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allowed} onChange={event => setAllowed(event.target.checked)} />{l("Allow AI access", "允许使用 AI")}</label> : <p className="text-sm text-foreground-muted">{l("Saving grants administrator access. Sensitive operations require recent TOTP verification.", "保存后授予管理员资格。敏感操作仍要求近期 TOTP 验证。")}</p>}</>}
+            {section === "users" && <><Field label={l("Account UUID", "账户 UUID")}><Input required value={authUserId} readOnly={Boolean(baseline)} onChange={event => setAuthUserId(event.target.value)} /></Field>{kind === "allowed_users" ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allowed} onChange={event => setAllowed(event.target.checked)} />{l("Allow AI access", "允许使用 AI")}</label> : <p className="text-sm text-foreground-muted">{l("Saving grants administrator access to this account.", "保存后向此账户授予管理员资格。")}</p>}</>}
           </form>}
       {isMember && !historyOpen && <Button type="button" variant="secondary" onClick={() => void revoke()} disabled={mutation.busy}>{l("Revoke administrator", "撤销管理员")}</Button>}
     </fieldset>

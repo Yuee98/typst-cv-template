@@ -8,7 +8,6 @@ import { useAdminSession } from "./admin-session";
 import { useAdminRead, type AdminRead } from "./admin-read";
 import { adminMessages } from "./messages";
 import { adminOAuthRedirectUrl } from "./navigation";
-import { AdminSecuritySettings } from "./security-settings";
 import { AdminRuntimeControls } from "./runtime-controls";
 import { AdminShell } from "./admin-shell";
 import { AdminAuthPanel } from "./admin-auth-panel";
@@ -149,7 +148,7 @@ export default function AdminApp({
     {error && <p role="alert" className="rounded-lg bg-danger-soft p-3 text-sm text-danger-foreground">{error}</p>}
     {context && <section key={`${owner}:${context.database_instance_id}`} hidden={!ready} aria-busy={!ready}>
       <fieldset disabled={!ready} className="min-w-0 space-y-5">
-        {section === "controls" ? <><AdminRuntimeControls client={client} actor={actor} context={context} locale={locale} enabled={ready} onCommitted={read.refreshAfterMutation} /><AdminSecuritySettings client={client} t={t} /></> : <>
+        {section === "controls" ? <><AdminRuntimeControls client={client} actor={actor} context={context} locale={locale} enabled={ready} onCommitted={read.refreshAfterMutation} /></> : <>
           {section === "usage" && <div className="flex gap-2">{[["analytics", l("Statistics", "统计")], ["requests", l("Requests", "请求")]].map(([value, label]) => <Button key={value} variant={currentSelection.kind === value ? "default" : "secondary"} onClick={() => choose(value)}>{label}</Button>)}</div>}
           {section === "users" && <div className="flex flex-wrap gap-2">{[["accounts", l("Accounts", "账户")], ["members", l("Administrators", "管理员")], ["allowed_users", l("Allowed AI accounts", "AI 允许账户")]].map(([value, label]) => <Button key={value} variant={currentSelection.kind === value ? "default" : "secondary"} onClick={() => choose(value)}>{label}</Button>)}</div>}
           {section === "audit" && <label className="block space-y-1 text-sm"><span>{l("Record type", "记录类型")}</span><select className="h-10 max-w-full rounded-md border border-border bg-surface px-3" value={currentSelection.kind} onChange={event => choose(event.target.value)}>{[["configurations", l("Configurations", "配置")], ["prices", l("Prices", "价格")], ["rules", l("Time rules", "时间规则")], ["rule_members", l("Rule options", "规则选项")], ["runtime_control", l("Runtime controls", "运行控制")], ["allowed_users", l("Allowed accounts", "允许账户")], ["documents", l("Legal documents", "法律文档")], ["acceptances", l("Acceptance records", "同意记录")], ["members", l("Administrators", "管理员")]].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}

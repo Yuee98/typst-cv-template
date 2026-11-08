@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminContextFixture, configurationFixture } from "./admin-test-fixtures";
 import { legalDisplayFixture } from "@/lib/legal/test-fixtures";
@@ -14,12 +14,6 @@ vi.mock("@/lib/supabase/client", () => ({
   getSupabaseConfig: () => ({
     url: "http://127.0.0.1:54321"
   })
-}));
-vi.mock("./security-settings", () => ({
-  AdminSecuritySettings: () => {
-    const [message, setMessage] = useState("");
-    return <div><button onClick={() => setMessage("TOTP verified and session refreshed.")}>Complete test MFA</button>{message && <p>{message}</p>}</div>;
-  }
 }));
 import AdminApp from "./admin-app";
 const session = (user = "A", token = user) => ({
@@ -182,24 +176,6 @@ describe("Admin business-page identity and dialog lifetime", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(getSession).toHaveBeenCalledTimes(1);
   });
-  it("retains MFA status through same-user token refresh", async () => {
-    view(<AdminApp locale="en" />);
-    fireEvent.click(await screen.findByRole("button", {
-      name: "Complete test MFA"
-    }));
-    let release!: () => void;
-    gate = new Promise(done => {
-      release = done;
-    });
-    act(() => state.listener!("TOKEN_REFRESHED", session("A", "new-token")));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("TOTP verified and session refreshed.")).toBeTruthy();
-    await act(async () => {
-      gate = null;
-      release();
-    });
-    expect(await screen.findByText("TOTP verified and session refreshed.")).toBeTruthy();
-  });
   it.each(["same-user", "different-user", "different-instance"] as const)("preserves an actual dialog draft only for the same owner (%s)", async transition => {
     view(<AdminApp locale="en" section="configurations" />);
     const input = await edit();
@@ -277,7 +253,7 @@ describe("Admin business-page identity and dialog lifetime", () => {
   it.each(["en", "zh"] as const)("explains configuration failures and the reference format in %s", async locale => {
     let failure = { code: "INVALID_REQUEST", reason: "CREDENTIAL_UNAVAILABLE" };
     const original = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation((input, init) => init?.method === "POST" ? Promise.resolve(new Response(JSON.stringify({ error: failure }), { status: failure.code === "STEP_UP_REQUIRED" ? 403 : 400 })) : original(input, init));
+    vi.mocked(fetch).mockImplementation((input, init) => init?.method === "POST" ? Promise.resolve(new Response(JSON.stringify({ error: failure }), { status: 400 })) : original(input, init));
     view(<AdminApp locale={locale} section="configurations" />);
     await screen.findByRole("heading", { name: configuration.name }); fireEvent.click(screen.getByRole("button", { name: locale === "zh" ? "编辑" : "Edit" }));
     const credential = await screen.findByLabelText(locale === "zh" ? "凭据引用名称" : "Credential reference") as HTMLInputElement;
@@ -290,7 +266,6 @@ describe("Admin business-page identity and dialog lifetime", () => {
       ["INVALID_REQUEST", "CREDENTIAL_UNAVAILABLE", "This credential reference is not configured on the server. Enter a configured environment variable name.", "服务器未配置此凭据引用，请填写已配置的环境变量名。"],
       ["INVALID_REQUEST", "ENDPOINT_INVALID", "The endpoint URL is invalid. Enter a canonical public HTTPS address.", "接入地址无效，请填写规范的公网 HTTPS 地址。"],
       ["INVALID_REQUEST", "ENDPOINT_UNREACHABLE", "The endpoint cannot be resolved to an available public address. Check the URL and server network.", "接入地址无法解析到可用的公网地址，请检查地址与服务器网络。"],
-      ["STEP_UP_REQUIRED", "", "Complete TOTP verification under Runtime controls, then retry saving.", "请先到运行控制完成 TOTP 验证，再重试保存。"],
     ];
     for (const [code, reason, en, zh] of cases) {
       failure = { code, reason };

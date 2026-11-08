@@ -1,7 +1,4 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
-import { createHmac } from "node:crypto";
-import { resetAdminFixtureMfa } from "./admin-e2e-mfa";
-test.afterEach(async () => { await resetAdminFixtureMfa({ url: process.env.NEXT_PUBLIC_SUPABASE_URL, secretKey: process.env.SUPABASE_SERVICE_ROLE_KEY }); });
 const users = {
   admin: {
     email: "admin-e2e-admin@example.test",
@@ -15,21 +12,10 @@ const users = {
 test.beforeEach(({ page }) => {
   page.on("pageerror", error => {
     // React's error number is sufficient to diagnose render failures without
-    // persisting component props, authentication state or enrollment content.
+    // persisting component props or authentication state.
     console.info("Browser runtime error", /^Minified React error #\d+/.exec(error.message)?.[0] ?? error.name);
   });
 });
-function totp(secret: string) {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  let bits = "";
-  for (const c of secret.replace(/=+$/, "").toUpperCase()) bits += alphabet.indexOf(c).toString(2).padStart(5, "0");
-  const key = Buffer.alloc(Math.floor(bits.length / 8));
-  for (let i = 0; i < key.length; i++) key[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
-  const hash = createHmac("sha1", key).update(counter).digest();
-  return String((hash.readUInt32BE(hash[hash.length - 1] & 15) & 0x7fffffff) % 1000000).padStart(6, "0");
-}
 async function login(page: Page, user: typeof users.admin) {
   await page.goto("/en/admin");
   await page.getByLabel("Email").fill(user.email);
@@ -38,6 +24,7 @@ async function login(page: Page, user: typeof users.admin) {
     name: "Sign in",
     exact: true
   }).click();
+  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 }
 function isAdminRead(request: Request, section?: string) {
   const url = new URL(request.url());
@@ -71,7 +58,6 @@ test("ordinary Auth users cannot open Admin data", async ({
 });
 test("soft navigation caches fresh lists and atomic configuration save refreshes its summary", async ({ page }) => {
   await login(page, users.admin);
-  await verifyTotp(page);
   const reads = recordReads(page);
   const cold = page.waitForResponse(response => isAdminRead(response.request(), "configurations"));
   await page.goto("/en/admin/configurations");
@@ -128,8 +114,6 @@ test("soft navigation caches fresh lists and atomic configuration save refreshes
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: /Monday 09:00–18:00 · Asia\/Shanghai/ })).toBeVisible();
   await openSection(page, "controls");
-  await page.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(page.getByText("TOTP factor removed.", { exact: true })).toBeVisible();
 });
 for (const code of ["UNAUTHORIZED", "FORBIDDEN"] as const) {
   test(`${code} clears cached records before returning to a list`, async ({ page }) => {
@@ -171,15 +155,8 @@ test("an instance mismatch performs exactly one unbound bootstrap", async ({ pag
   await openSection(page, "configurations");
   expect(new URL(reads[2].url()).searchParams.get("database_instance_id")).toBe(originalInstance);
 });
-async function verifyTotp(page: Page) {
-  await page.getByRole("button", { name: "Enroll TOTP", exact: true }).click();
-  const line = await page.getByText(/^Secret:/).innerText(), secret = line.slice(line.indexOf(":") + 1).trim();
-  await page.getByLabel("TOTP code").fill(totp(secret)); await page.getByRole("button", { name: "Verify", exact: true }).click();
-  await expect(page.getByText("TOTP verified and session refreshed.", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Session assurance: aal2/)).toBeVisible();
-}
-test("real TOTP authorizes membership grant through account details", async ({ page }) => {
-  await login(page, users.admin); await verifyTotp(page);
+test("ordinary administrator login can grant and revoke membership through details", async ({ page }) => {
+  await login(page, users.admin);
   await openSection(page, "users");
   const row = page.getByRole("heading", { name: users.ordinary.email, exact: true }).locator("../..");
   await row.getByRole("button", { name: "View", exact: true }).click();
@@ -194,6 +171,13 @@ test("real TOTP authorizes membership grant through account details", async ({ p
   const member = page.getByRole("heading", { name: id, exact: true }).locator("../..");
   await member.getByRole("button", { name: "View", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("Active");
+  page.once("dialog", confirmation => confirmation.accept());
+  const revoked = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await page.getByRole("dialog").getByRole("button", { name: "Revoke administrator", exact: true }).click();
+  expect((await revoked).ok()).toBe(true);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await member.getByRole("button", { name: "View", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("Revoked");
   await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   await openSection(page, "controls"); await openSection(page, "configurations"); await openSection(page, "controls");
 });
@@ -260,7 +244,7 @@ test("the same configuration dialog fits desktop and mobile viewports", async ({
     expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height + 1);
     await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeInViewport();
     // Explicit local opt-in only. This dialog contains credential names, never
-    // key values, session tokens or a TOTP enrollment secret.
+    // key values or session tokens.
     if (process.env.ADMIN_VISUAL_PROOF_DIR) {
       const { mkdir } = await import("node:fs/promises");
       const { resolve } = await import("node:path");
@@ -270,8 +254,7 @@ test("the same configuration dialog fits desktop and mobile viewports", async ({
     }
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await page.goto("/en/admin/controls");
-    await expect(page.getByRole("button", { name: "Enroll TOTP", exact: true })).toBeEnabled();
-    await expect(page.getByText(/^Secret:/)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "View", exact: true })).toBeEnabled();
     await page.evaluate(dark => { document.documentElement.classList.toggle("dark", dark); document.documentElement.style.colorScheme = dark ? "dark" : "light"; }, dark);
     if (process.env.ADMIN_VISUAL_PROOF_DIR) {
       const { resolve } = await import("node:path");

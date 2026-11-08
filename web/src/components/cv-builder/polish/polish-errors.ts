@@ -39,7 +39,6 @@ const KIND_BY_CODE: Record<string, PolishErrorKind> = {
   INVALID_REQUEST: "invalid_request",
   NOT_READY: "disabled",
   NOT_FOUND: "invalid_request",
-  STEP_UP_REQUIRED: "forbidden",
   INTERNAL_ERROR: "held",
   [POLISH_TRANSPORT_ERROR_CODES.clientTimeout]: "timeout",
   [POLISH_CLIENT_ERROR_CODES.invalidResponse]: "invalid_output",

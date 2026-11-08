@@ -14,9 +14,9 @@ CV 文档继续只支持当前 v7 和当前加密 envelope；Auth/OAuth/SSO 项�
 | --- | --- |
 | ai.adapters | 代码维护的只读 id/name。1=DeepSeek Responses，2=MiMo Responses，3=Gemini Interactions；固定 ID 不复用，不再有 provider code/capability 目录。 |
 | ai.configurations | id、name、adapter_id、endpoint_url、model_id、credential_ref、legal_document_id、enabled、revision。name 是用户可见别名，不要求唯一。 |
-| ai.prices | configuration_id 主键、currency、普通输入/缓存读取/缓存写入/输出四项整数 nanos_per_million 费率。与 configuration 同读同写、共用 revision，无独立开关/版本/价格时间线。 |
+| ai.prices | config_id 主键、currency、普通输入/缓存读取/缓存写入/输出四项整数 nanos_per_million 费率。与 configuration 同读同写、共用 revision，无独立开关/版本/价格时间线。 |
 | ai.routing_rules | id、weekday、start_minute、end_minute、enabled、revision。时间三列全 NULL 为兜底；普通规则三列全非 NULL，ISO weekday 1–7，分钟区间为 [start,end)。 |
-| ai.routing_rule_configurations | rule_id/configuration_id 联合主键、is_default。与规则作为一个保存单元；不得有重复成员，启用规则恰好一个默认成员。 |
+| ai.routing_rule_configurations | rule_id/config_id 联合主键、is_default。与规则作为一个保存单元；不得有重复成员，启用规则恰好一个默认成员。 |
 | ai.runtime_control | 唯一行 id=1；enabled、audience、三项额度、revision。没有 policy 指针、generation/close_cycle 或发布票据。revision 是整体状态与并发令牌，不是业务版本。 |
 | ai.allowed_users | auth_user_id 主键；状态变化由自己的 audit 记录。 |
 
@@ -76,6 +76,8 @@ user_quota_daily 只保留用户/UTC预留日/reserved_count/charged_count；glo
 
 六个业务入口：AI配置、时间规则、运行设置、用量与请求、账户与权限、操作记录。使用统一摘要列表，每行右侧 View/Edit；只读对象仅 View。价格属于配置弹窗，候选/default 属于规则弹窗，adapter 仅作为只读选择项。
 
+后台读写统一以有效账号、实时 Auth 会话和当前管理员资格授权。不要求 TOTP、AAL2 或近期二次验证，也不提供绑定/验证页面。匿名、普通用户、已撤权管理员和失效会话不能读写；实例、并发修订、幂等操作、最后管理员保护和审计继续保留。
+
 查看以字段和正文展示，编辑使用明确输入组件，移除 Object.entries 卡片/原始 JSON 展示、身份版本切换、发布/退役、验证票据及 digest 输入。保存成功失效相关缓存并保留分页/筛选/滚动位置；失败保留表单，冲突不自动更新 expected_revision 重提。
 
 手机与宽屏复用同一套组件；窄屏摘要折行，操作按钮靠右，Dialog 接近全屏、头尾固定、中间滚动。背景读取不能覆盖脏表单；旧请求回调不能关闭新 dialog 或跨账号/实例覆盖数据。
@@ -84,6 +86,6 @@ user_quota_daily 只保留用户/UTC预留日/reserved_count/charged_count；glo
 
 本轮明确替换上一轮十条 migrations。新文件由固定版本 CLI 创建，按 foundation、各 schema tables、跨 schema constraints、各 schema functions、public API、catalog/jobs 分阶段。每个文件支持事务及历史原子记录，权限默认收紧，public 接口最后开放。
 
-supabase/baseline.json 显式列出本次基线全部文件；不再以最初四条或任何固定文件数推断基线。正式落地后的修复仍 append-only。真实 key、管理员 UUID、运行配置不写死进迁移；固定 adapter/审核后的条款随迁移，本地测试数据单独准备。
+supabase/baseline.json 显式列出本次 15 条基线全部文件；不再以最初四条或任何固定文件数推断基线。本轮尚未线上部署，按用户授权直接修改原基线移除 TOTP helper、布尔参数与所有调用者，不追加兼容迁移，并重新构建本地测试库。正式发布后基线冻结，后续修复 append-only。真实 key、管理员 UUID、运行配置不写死进迁移；固定 adapter/审核后的条款随迁移，本地测试数据单独准备。
 
 先完成本地重建、SQL/API角色约束、竞态、Admin浏览器及两种构建验收。同步更新初始化/重建工具、清理清单、类型和fixture。test/prod 依然监听既有 main/release，GitHub keepalive 与 SSO/OAuth 配置保留，本轮不触发这些环境的重置或发布。

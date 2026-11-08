@@ -13,7 +13,7 @@ create function admin.receipt (p_id bigint)
   where
     id = p_id
 $$;
-create function admin.begin_operation (p_operation text, p_input jsonb, p_step_up boolean default true)
+create function admin.begin_operation (p_operation text, p_input jsonb)
   returns admin.operations
   language plpgsql
   set search_path = ''
@@ -25,7 +25,7 @@ declare
 begin
   perform
     common.guard (p_input);
-  u = common.admin_id (p_step_up);
+  u = common.admin_id ();
   perform
     1
   from
@@ -185,7 +185,7 @@ declare
   tries integer := 0;
   cn text;
 begin
-  o = admin.begin_operation (p_operation, p_input, p_operation <> 'ai_disable');
+  o = admin.begin_operation (p_operation, p_input);
   if o.entity_id is not null then
     return admin.receipt (o.id);
   end if;
@@ -605,7 +605,7 @@ create function public.admin_context ()
 declare
   u uuid;
 begin
-  u = common.admin_id (false);
+  u = common.admin_id ();
   return common.api_json (jsonb_build_object('ready', true, 'contract_code', 'cv_app_db_2', 'database_instance_id', (
         select
           database_instance_id

@@ -6,7 +6,7 @@ const SOURCE_CONTAINER = "supabase_db_typst-cv-template";
 const DATABASE = "cv_provider_live_fixture";
 const CONTRACT = "cv_app_db_2";
 const RPCS = new Set(["app_context", "legal_current", "legal_accept_document", "legal_accept_ai", "admin_read", "admin_legal_document_save", "admin_configuration_save", "admin_rule_save", "admin_ai_update", "admin_ai_disable", "admin_allowed_user_set", "ai_availability", "ai_quota", "ai_reserve", "ai_execution_snapshot", "ai_attempt_start", "ai_attempt_complete", "ai_cancel", "ai_finalize"]);
-const APP_ERRORS = new Set(["UNAUTHORIZED", "FORBIDDEN", "CONFLICT", "NOT_FOUND", "INVALID_REQUEST", "STEP_UP_REQUIRED", "NOT_READY", "UNAVAILABLE", "RATE_LIMITED", "QUOTA_EXCEEDED", "INTERNAL_ERROR", "CLIENT_UPDATE_REQUIRED"]);
+const APP_ERRORS = new Set(["UNAUTHORIZED", "FORBIDDEN", "CONFLICT", "NOT_FOUND", "INVALID_REQUEST", "NOT_READY", "UNAVAILABLE", "RATE_LIMITED", "QUOTA_EXCEEDED", "INTERNAL_ERROR", "CLIENT_UPDATE_REQUIRED"]);
 type Row = Record<string, unknown>;
 export type LiveAdapterId = 1 | 2 | 3;
 export interface LiveProviderConfiguration {
@@ -55,8 +55,8 @@ export async function createProviderLiveDbFixture() {
   const source = object(JSON.parse(psql("select public.app_context();", "postgres")));
   if (source.contract_code !== CONTRACT || source.environment !== "LOCAL" || source.ready !== true) throw new Error("Source must be the ready current LOCAL database");
   if (psql(`select count(*) from pg_catalog.pg_database where datname=${literal(DATABASE)};`, "template1") !== "0") throw new Error("Fixture database exists; refusing to overwrite it");
-  const userId = randomUUID(), sessionId = randomUUID(), factorId = randomUUID();
-  const claims = { sub: userId, role: "authenticated", session_id: sessionId, aal: "aal2", amr: [{ method: "totp", timestamp: Math.floor(Date.now() / 1000) }] };
+  const userId = randomUUID(), sessionId = randomUUID();
+  const claims = { sub: userId, role: "authenticated", session_id: sessionId, aal: "aal1", amr: [{ method: "password", timestamp: Math.floor(Date.now() / 1000) }] };
   let created = false, disposed = false, configured = false, instanceId = "";
   const guard = () => { if (!created || disposed) throw new Error("Fixture is closed"); };
   const common = () => ({ contract_code: CONTRACT, database_instance_id: instanceId });
@@ -99,7 +99,6 @@ export async function createProviderLiveDbFixture() {
       insert into ai.runtime_control(id) values(1);
       insert into auth.users(id,email,email_confirmed_at) values(${literal(userId)},${literal(`fixture-${userId}@fixture.invalid`)},clock_timestamp());
       insert into auth.sessions(id,user_id) values(${literal(sessionId)},${literal(userId)});
-      insert into auth.mfa_factors(id,user_id,status,factor_type,created_at,updated_at) values(${literal(factorId)},${literal(userId)},'verified','totp',clock_timestamp(),clock_timestamp());
       set role postgres;select admin.initialize('LOCAL',${literal(userId)});reset role;`);
     instanceId = String(required("app_context").database_instance_id);
   } catch (error) { await dispose(); throw error; }

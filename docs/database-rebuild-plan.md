@@ -17,6 +17,7 @@
 - legal.documents 保存当前普通/公共 AI/所选接入披露，双语正文为受限 Markdown TEXT。接收方、adapter、规范化 endpoint、model 为明确适用范围；accepted document audit 与 acceptance audit 保留准确历史。
 - 普通配置/价格/条款更新仅影响新 reservation；在途使用快照。停用持久写入 time_canceled，重新启用不会复活旧请求；迟到事实始终允许结算。
 - CV 保持唯一 v7 格式和当前加密封装。Auth 配置、GitHub SSO/OAuth 与 keep_project_active 保留。
+- Admin 仅要求有效登录会话和当前管理员资格；整套 TOTP 绑定/验证、AAL2 门槛及 step-up 错误已移出设计。按用户授权直接修改原 15 条基线并重建本地测试库，不追加兼容迁移。
 - migrations 全部重写为唯一新基线，按 schema 和建表/关联/函数/API 阶段组织。不维护第二份手工 DDL 镜像。
 
 ## 执行顺序

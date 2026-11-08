@@ -1,0 +1,14 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set local search_path=public,extensions;
+select no_plan();
+select ok(to_regprocedure('common.admin_id()') is not null,'one current no-argument Admin identity gate');
+select ok(to_regprocedure('admin.begin_operation(text,jsonb)') is not null,'one current two-argument operation gate');
+select ok(to_regprocedure('common.admin_id(boolean)') is null,'no obsolete bool authorization overload');
+select ok(to_regprocedure('admin.begin_operation(text,jsonb,boolean)') is null,'no obsolete bool operation overload');
+select ok(to_regprocedure('common.auth_has_totp(uuid)') is null,'no application factor-query projection remains');
+select ok(not exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in('common','admin','ai','legal','cv','audit','public') and(p.prosrc ~ '(p_step_up|STEP_UP_REQUIRED|auth_has_totp|aal2)' or coalesce(array_to_string(p.proargnames,','),'') ~ 'p_step_up')),'no current application routine has an extra authentication-tier gate');
+select ok(not has_function_privilege('authenticated','common.admin_id()','EXECUTE') and has_function_privilege('app_api_owner','common.admin_id()','EXECUTE'),'private identity gate retains minimum RPC-owner ACL');
+select ok(to_regclass('auth.mfa_factors') is not null and to_regclass('auth.mfa_challenges') is not null,'Supabase platform objects are preserved');
+select * from finish();
+rollback;
