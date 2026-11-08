@@ -7,6 +7,7 @@ create table ai.adapters (
 create table ai.configurations (
   id bigint generated always as identity primary key,
   name text not null check (length(btrim(name)) between 1 and 200),
+  display_name text not null check (length(btrim(display_name)) between 1 and 200),
   adapter_id smallint not null references ai.adapters (id),
   endpoint_url text not null check (length(endpoint_url) <= 2048 and endpoint_url ~ '^https://[^/@?#[:space:]]+(/[^?#[:space:]]*)?$'),
   model_id text not null check (length(btrim(model_id)) between 1 and 200),
@@ -86,6 +87,7 @@ create table ai.request_snapshots (
   config_id bigint not null,
   config_audit_id bigint not null,
   config_name text not null,
+  config_display_name text not null,
   config_revision bigint not null,
   adapter_id smallint not null check (adapter_id in (1, 2, 3)),
   execution_contract text not null,

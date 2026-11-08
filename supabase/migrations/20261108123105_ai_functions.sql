@@ -100,7 +100,7 @@ create function ai.allowed (p_user uuid)
   where
     id = 1
 $$;
-create function ai.scope_valid (p_config bigint)
+create function ai.configuration_ready (p_config bigint)
   returns boolean
   language sql
   stable
@@ -117,10 +117,7 @@ create function ai.scope_valid (p_config bigint)
       where
         c.id = p_config
         and d.enabled
-        and d.kind = 'AI_PROVIDER'
-        and d.adapter_id = c.adapter_id
-        and d.model_id = c.model_id
-        and d.endpoint_url = c.endpoint_url)
+        and d.kind = 'AI_PROVIDER')
 $$;
 create function public.ai_quota (p_input jsonb)
   returns jsonb
@@ -197,8 +194,8 @@ begin
   order by
     m.is_default desc,
     x.id loop
-      if v.enabled and ai.scope_valid (v.id) and common_doc is not null then
-        items = items || jsonb_build_array(common.api_json (jsonb_build_object('config_id', v.id, 'name', v.name, 'revision', v.revision, 'adapter_id', v.adapter_id, 'execution_contract', ai.execution_contract (v.adapter_id), 'endpoint_url', v.endpoint_url, 'model_id', v.model_id, 'credential_ref', v.credential_ref, 'eligible', why is null, 'reason', why, 'consent_required', legal.acceptance_for (u, common_doc) is null
+      if v.enabled and ai.configuration_ready (v.id) and common_doc is not null then
+        items = items || jsonb_build_array(common.api_json (jsonb_build_object('config_id', v.id, 'name', v.name, 'display_name', v.display_name, 'revision', v.revision, 'adapter_id', v.adapter_id, 'execution_contract', ai.execution_contract (v.adapter_id), 'endpoint_url', v.endpoint_url, 'model_id', v.model_id, 'credential_ref', v.credential_ref, 'eligible', why is null, 'reason', why, 'consent_required', legal.acceptance_for (u, common_doc) is null
               or legal.acceptance_for (u, v.legal_document_id) is null, 'legal_display', jsonb_build_object('contract', 'cv_app_db_2', 'common', legal.document_json ((
                   select
                     document_audit_id
@@ -339,7 +336,7 @@ begin
     ai.configurations
   where
     id = (p_input ->> 'config_id')::bigint;
-  if x.id is null or not x.enabled or not ai.scope_valid (x.id) or p_input ->> 'expected_config_revision' is distinct from x.revision::text or not exists (
+  if x.id is null or not x.enabled or not ai.configuration_ready (x.id) or p_input ->> 'expected_config_revision' is distinct from x.revision::text or not exists (
     select
       1
     from
@@ -430,12 +427,13 @@ begin
   order by
     audit_id desc
   limit 1;
-insert into ai.request_snapshots (request_id, config_id, config_audit_id, config_name, config_revision, adapter_id, execution_contract, endpoint_url, model_id, credential_ref, currency, input_standard_nanos_per_million, input_cache_read_nanos_per_million, input_cache_write_nanos_per_million, output_nanos_per_million, common_acceptance_audit_id, provider_acceptance_audit_id)
+insert into ai.request_snapshots (request_id, config_id, config_audit_id, config_name, config_display_name, config_revision, adapter_id, execution_contract, endpoint_url, model_id, credential_ref, currency, input_standard_nanos_per_million, input_cache_read_nanos_per_million, input_cache_write_nanos_per_million, output_nanos_per_million, common_acceptance_audit_id, provider_acceptance_audit_id)
 select
   r.id,
   x.id,
   rid,
   x.name,
+  x.display_name,
   x.revision,
   x.adapter_id,
   ai.execution_contract (x.adapter_id),
@@ -498,7 +496,7 @@ begin
     audit.acceptances
   where
     audit_id = s.provider_acceptance_audit_id;
-  return common.api_json (jsonb_build_object('request_id', r.external_id, 'state', r.state, 'config_id', s.config_id, 'config_name', s.config_name, 'config_revision', s.config_revision, 'adapter_id', s.adapter_id, 'execution_contract', s.execution_contract, 'endpoint_url', s.endpoint_url, 'model_id', s.model_id, 'credential_ref', s.credential_ref, 'price', jsonb_build_object('currency', s.currency, 'input_standard_nanos_per_million', s.input_standard_nanos_per_million, 'input_cache_read_nanos_per_million', s.input_cache_read_nanos_per_million, 'input_cache_write_nanos_per_million', s.input_cache_write_nanos_per_million, 'output_nanos_per_million', s.output_nanos_per_million), 'common_acceptance_audit_id', s.common_acceptance_audit_id, 'provider_acceptance_audit_id', s.provider_acceptance_audit_id, 'provider_document_id', d.document_id, 'provider_document_audit_id', d.document_audit_id, 'time_canceled', r.time_canceled, 'attempts', coalesce((
+  return common.api_json (jsonb_build_object('request_id', r.external_id, 'state', r.state, 'config_id', s.config_id, 'config_name', s.config_name, 'config_display_name', s.config_display_name, 'config_revision', s.config_revision, 'adapter_id', s.adapter_id, 'execution_contract', s.execution_contract, 'endpoint_url', s.endpoint_url, 'model_id', s.model_id, 'credential_ref', s.credential_ref, 'price', jsonb_build_object('currency', s.currency, 'input_standard_nanos_per_million', s.input_standard_nanos_per_million, 'input_cache_read_nanos_per_million', s.input_cache_read_nanos_per_million, 'input_cache_write_nanos_per_million', s.input_cache_write_nanos_per_million, 'output_nanos_per_million', s.output_nanos_per_million), 'common_acceptance_audit_id', s.common_acceptance_audit_id, 'provider_acceptance_audit_id', s.provider_acceptance_audit_id, 'provider_document_id', d.document_id, 'provider_document_audit_id', d.document_audit_id, 'time_canceled', r.time_canceled, 'attempts', coalesce((
         select
           jsonb_agg(jsonb_build_object('attempt_no', attempt_no, 'state', state, 'retry_allowed', retry_allowed, 'transmitted', transmitted)
         order by attempt_no)

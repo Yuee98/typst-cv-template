@@ -12,21 +12,15 @@ create table legal.documents (
   en_body text not null,
   effective_date date not null,
   recipient_name text,
-  adapter_id smallint references ai.adapters (id),
-  endpoint_url text,
-  model_id text,
   enabled boolean not null default false,
   revision bigint not null default 1 check (revision > 0),
   content_digest text not null,
   document_audit_id bigint,
-  constraint ck_document_scope check ((kind = 'AI_PROVIDER' and recipient_name is not null and length(btrim(recipient_name)) > 0 and adapter_id is not null and endpoint_url is not null and model_id is not null) or (kind <> 'AI_PROVIDER' and recipient_name is null and adapter_id is null and endpoint_url is null and model_id is null))
+  constraint ck_document_recipient check ((kind = 'AI_PROVIDER' and recipient_name is not null and length(btrim(recipient_name)) between 1 and 500) or (kind <> 'AI_PROVIDER' and recipient_name is null))
 );
 create unique index uq_general_document on legal.documents (kind)
 where
   kind <> 'AI_PROVIDER';
-create index ix_legal_scope on legal.documents (adapter_id, model_id)
-where
-  kind = 'AI_PROVIDER';
 create table legal.acceptances (
   id bigint generated always as identity primary key,
   owner_auth_user_id uuid not null references auth.users (id) on delete cascade,

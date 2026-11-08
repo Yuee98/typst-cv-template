@@ -15,7 +15,9 @@ describe.skipIf(!enabled)("current Admin aggregates through authenticated SQL tr
       expect(() => fixture.admin("admin_configuration_save", { ...input, operation_key: crypto.randomUUID() })).toThrow("CONFLICT/REVISION_CHANGED");
       const latest = await fixture.admin("admin_read", { expected_environment: "LOCAL", section: "configurations", id: row.id });
       expect(latest.data).toMatchObject({ revision: "2", price: { currency: "USD" } });
-      expect(() => fixture.admin("admin_configuration_save", { ...input, expected_revision: "2", operation_key: crypto.randomUUID(), model_id: "unreviewed-model" })).toThrow("INVALID_REQUEST/LEGAL_SCOPE_MISMATCH");
+      const documents = await fixture.admin("admin_read", { expected_environment: "LOCAL", section: "configurations", kind: "legal_documents" });
+      const terms = (documents.data as { records: Array<{ kind: string; document_id: string }> }).records.find(document => document.kind === "TERMS")!;
+      expect(() => fixture.admin("admin_configuration_save", { ...input, expected_revision: "2", operation_key: crypto.randomUUID(), legal_document_id: terms.document_id })).toThrow("INVALID_REQUEST/LEGAL_DOCUMENT_UNAVAILABLE");
       const unchanged = await fixture.admin("admin_read", { expected_environment: "LOCAL", section: "configurations", id: row.id });
       expect(unchanged.data).toEqual(latest.data);
     });

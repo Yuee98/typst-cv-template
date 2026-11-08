@@ -10,6 +10,7 @@ create table audit.configurations (
   action text not null check (action in ('INSERT', 'UPDATE', 'DELETE')),
   id bigint,
   name text,
+  display_name text,
   adapter_id smallint,
   endpoint_url text,
   model_id text,
@@ -109,9 +110,6 @@ create table audit.documents (
   en_body text,
   effective_date date,
   recipient_name text,
-  adapter_id smallint,
-  endpoint_url text,
-  model_id text,
   enabled boolean,
   revision bigint,
   content_digest text

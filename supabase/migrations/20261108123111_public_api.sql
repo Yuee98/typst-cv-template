@@ -84,14 +84,14 @@ $$;
 revoke create on schema public from app_api_owner;
 notify pgrst,
 'reload schema';
-comment on table ai.configurations is 'Editable current connections. Config+price save atomically under one revision. Protocol adapters are code-owned.';
+comment on table ai.configurations is 'Current connections with internal name and required user-visible display_name. Config+price save atomically under one revision; protocol adapters are code-owned.';
 comment on table ai.prices is 'One current four-rate native-currency estimate per configuration; no currency conversion or provider invoice claim.';
 comment on table ai.routing_rules is 'Asia/Shanghai, Monday=1. Half-open same-day periods. All NULL time columns derive the fallback.';
 comment on table ai.request_snapshots is 'Immutable typed execution, price and exact-consent facts captured at reserve; never read mutable configuration for historical execution.';
 comment on table ai.attempts is 'PK(request_id,attempt_no). Terminal producer facts are idempotent; unknown transmission remains HELD.';
 comment on table ai.configuration_usage_daily is 'Central UTC reserve-day metrics by frozen config audit and native currency; token/cost values are lower bounds when incompleteness counters are nonzero.';
 comment on table ai.global_quota_daily is 'Only actual first-attempt admissions on current locked UTC admission day; not reserve-day analytics.';
-comment on table legal.documents is 'Current bilingual Markdown document and exact recipient/adapter/endpoint/model scope; no bundle or published-version state machine.';
+comment on table legal.documents is 'Current bilingual Markdown disclosure for a recipient, independent of execution adapter, endpoint and model. No bundle or published-version state machine.';
 comment on table audit.acceptances is 'Immutable accepted document-audit link. Auth deletion only clears account UUIDs irreversibly through FK SET NULL; snapshot references survive.';
 comment on table admin.operations is 'Typed idempotency receipt; no generic JSON result. Deleted actors are irreversibly unlinked.';
 commit;

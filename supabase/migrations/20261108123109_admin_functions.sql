@@ -161,7 +161,7 @@ end if;
       where
         r.enabled
         and (not c.enabled
-          or not ai.scope_valid (c.id))) then
+          or not ai.configuration_ready (c.id))) then
     perform
       common.fail ('INVALID_REQUEST', 'INVALID_ROUTING_GRAPH');
 end if;
@@ -199,7 +199,7 @@ begin
     id = 1;
   if p_operation = 'configuration_save' then
     perform
-      common.required (p_input, array['name', 'adapter_id', 'endpoint_url', 'model_id', 'credential_ref', 'legal_document_id', 'enabled', 'price']);
+      common.required (p_input, array['name', 'display_name', 'adapter_id', 'endpoint_url', 'model_id', 'credential_ref', 'legal_document_id', 'enabled', 'price']);
     i = (p_input ->> 'id')::bigint;
     price = p_input -> 'price';
     perform
@@ -212,17 +212,17 @@ begin
       legal.documents
     where
       id = (p_input ->> 'legal_document_id')::bigint;
-    if d.id is null or d.kind <> 'AI_PROVIDER' or d.adapter_id is distinct from (p_input ->> 'adapter_id')::smallint or d.endpoint_url is distinct from p_input ->> 'endpoint_url' or d.model_id is distinct from p_input ->> 'model_id' or ((p_input ->> 'enabled')::boolean and not d.enabled) then
+    if d.id is null or d.kind <> 'AI_PROVIDER' or ((p_input ->> 'enabled')::boolean and not d.enabled) then
       perform
-        common.fail ('INVALID_REQUEST', 'LEGAL_SCOPE_MISMATCH');
+        common.fail ('INVALID_REQUEST', 'LEGAL_DOCUMENT_UNAVAILABLE');
     end if;
     if i is null then
       if p_input ->> 'expected_revision' is not null then
         perform
           common.fail ('CONFLICT', 'EXPECTED_NEW_ENTITY');
       end if;
-      insert into ai.configurations (name, adapter_id, endpoint_url, model_id, credential_ref, legal_document_id, enabled)
-        values (p_input ->> 'name', (p_input ->> 'adapter_id')::smallint, p_input ->> 'endpoint_url', p_input ->> 'model_id', p_input ->> 'credential_ref', d.id, (p_input ->> 'enabled')::boolean)
+      insert into ai.configurations (name, display_name, adapter_id, endpoint_url, model_id, credential_ref, legal_document_id, enabled)
+        values (p_input ->> 'name', p_input ->> 'display_name', (p_input ->> 'adapter_id')::smallint, p_input ->> 'endpoint_url', p_input ->> 'model_id', p_input ->> 'credential_ref', d.id, (p_input ->> 'enabled')::boolean)
       returning
         id, revision
       into
@@ -232,6 +232,7 @@ begin
         ai.configurations
       set
         name = p_input ->> 'name',
+        display_name = p_input ->> 'display_name',
         adapter_id = (p_input ->> 'adapter_id')::smallint,
         endpoint_url = p_input ->> 'endpoint_url',
         model_id = p_input ->> 'model_id',
@@ -261,7 +262,8 @@ begin
         input_cache_write_nanos_per_million = excluded.input_cache_write_nanos_per_million,
         output_nanos_per_million = excluded.output_nanos_per_million;
     if not (p_input ->> 'enabled')::boolean then
-      update ai.requests request_row
+      update
+        ai.requests request_row
       set
         time_canceled = coalesce(request_row.time_canceled, common.now())
       where
@@ -407,23 +409,26 @@ begin
         rev;
     end if;
     if p_operation = 'ai_disable' or (p_operation = 'ai_update' and not (p_input ->> 'enabled')::boolean) then
-      update ai.requests request_row
+      update
+        ai.requests request_row
       set
         time_canceled = coalesce(request_row.time_canceled, common.now())
       where
         request_row.state <> 'FINALIZED';
     elsif p_operation = 'allowed_user_set'
         and not (p_input ->> 'allowed')::boolean then
-        update ai.requests request_row
-      set
+        update
+          ai.requests request_row
+        set
           time_canceled = coalesce(request_row.time_canceled, common.now())
         where
           request_row.state <> 'FINALIZED'
           and request_row.owner_auth_user_id = (p_input ->> 'auth_user_id')::uuid;
     elsif p_operation = 'ai_update'
         and p_input ->> 'audience' = 'ALLOWLIST' then
-        update ai.requests request_row
-      set
+        update
+          ai.requests request_row
+        set
           time_canceled = coalesce(request_row.time_canceled, common.now())
         where
           request_row.state <> 'FINALIZED'
@@ -519,6 +524,10 @@ begin
       rev;
     kind = 'members';
   elsif p_operation = 'legal_document_save' then
+    if p_input ?| array['adapter_id', 'model_id', 'endpoint_url'] then
+      perform
+        common.fail ('INVALID_REQUEST', 'UNEXPECTED_LEGAL_FIELDS');
+    end if;
     i = (p_input ->> 'id')::bigint;
     perform
       common.required (p_input, array['kind', 'zh_title', 'en_title', 'zh_body', 'en_body', 'effective_date', 'enabled']);
@@ -529,8 +538,8 @@ begin
       end if;
       loop
         begin
-          insert into legal.documents (kind, zh_title, en_title, zh_body, en_body, effective_date, recipient_name, adapter_id, endpoint_url, model_id, enabled, content_digest)
-            values (p_input ->> 'kind', p_input ->> 'zh_title', p_input ->> 'en_title', p_input ->> 'zh_body', p_input ->> 'en_body', (p_input ->> 'effective_date')::date, p_input ->> 'recipient_name', (p_input ->> 'adapter_id')::smallint, p_input ->> 'endpoint_url', p_input ->> 'model_id', (p_input ->> 'enabled')::boolean, '')
+          insert into legal.documents (kind, zh_title, en_title, zh_body, en_body, effective_date, recipient_name, enabled, content_digest)
+            values (p_input ->> 'kind', p_input ->> 'zh_title', p_input ->> 'en_title', p_input ->> 'zh_body', p_input ->> 'en_body', (p_input ->> 'effective_date')::date, p_input ->> 'recipient_name', (p_input ->> 'enabled')::boolean, '')
           returning
             id, revision
           into
@@ -546,54 +555,62 @@ begin
         end;
       end loop;
     else
-      update
-        legal.documents
-      set
-        kind = p_input ->> 'kind',
-        zh_title = p_input ->> 'zh_title',
-        en_title = p_input ->> 'en_title',
-        zh_body = p_input ->> 'zh_body',
-        en_body = p_input ->> 'en_body',
-        effective_date = (p_input ->> 'effective_date')::date,
-        recipient_name = p_input ->> 'recipient_name',
-        adapter_id = (p_input ->> 'adapter_id')::smallint,
-        endpoint_url = p_input ->> 'endpoint_url',
-        model_id = p_input ->> 'model_id',
-        enabled = (p_input ->> 'enabled')::boolean,
-        revision = revision + 1
-      where
-        id = i
-        and revision = (p_input ->> 'expected_revision')::bigint
-      returning
-        revision
-      into
-        rev;
-        if not found then
-          perform
-            common.fail ('CONFLICT', 'REVISION_CHANGED');
-          end if;
+      if exists (
+        select
+          1
+        from
+          legal.documents current_document
+        where
+          current_document.id = i
+          and current_document.kind is distinct from p_input ->> 'kind') then
+      perform
+        common.fail ('INVALID_REQUEST', 'DOCUMENT_KIND_IMMUTABLE');
     end if;
-    kind = 'documents';
     update
-      ai.runtime_control
+      legal.documents
     set
+      kind = p_input ->> 'kind',
+      zh_title = p_input ->> 'zh_title',
+      en_title = p_input ->> 'en_title',
+      zh_body = p_input ->> 'zh_body',
+      en_body = p_input ->> 'en_body',
+      effective_date = (p_input ->> 'effective_date')::date,
+      recipient_name = p_input ->> 'recipient_name',
+      enabled = (p_input ->> 'enabled')::boolean,
       revision = revision + 1
     where
-      id = 1;
-    else
-      perform
-        common.fail ('INVALID_REQUEST', 'UNKNOWN_ADMIN_OPERATION');
+      id = i
+      and revision = (p_input ->> 'expected_revision')::bigint
+    returning
+      revision
+    into
+      rev;
+      if not found then
+        perform
+          common.fail ('CONFLICT', 'REVISION_CHANGED');
+        end if;
   end if;
+  kind = 'documents';
   update
-    admin.operations
+    ai.runtime_control
   set
-    entity_kind = kind,
-    entity_id = i,
-    revision = rev,
-    time_committed = common.now()
+    revision = revision + 1
   where
-    id = o.id;
-    return admin.receipt (o.id);
+    id = 1;
+  else
+    perform
+      common.fail ('INVALID_REQUEST', 'UNKNOWN_ADMIN_OPERATION');
+end if;
+update
+  admin.operations
+set
+  entity_kind = kind,
+  entity_id = i,
+  revision = rev,
+  time_committed = common.now()
+where
+  id = o.id;
+  return admin.receipt (o.id);
 end
 $$;
 create function public.admin_context ()
@@ -648,6 +665,7 @@ declare
   ids bigint[];
   target text;
   key text;
+  provider_documents boolean := false;
 begin
   ctx = public.admin_context ();
   if p_input ->> 'contract_code' is distinct from 'cv_app_db_2' or p_input ->> 'expected_environment' is distinct from ctx ->> 'environment' or (p_input ? 'database_instance_id' and p_input ->> 'database_instance_id' is distinct from ctx ->> 'database_instance_id') then
@@ -664,6 +682,8 @@ begin
   kind = coalesce(kind, case section
     when 'configurations' then
       'configurations'
+    when 'disclosures' then
+      'documents'
     when 'rules' then
       'rules'
     when 'usage' then
@@ -682,7 +702,7 @@ begin
         where
           day >= (common.now() at time zone 'UTC')::date - days + 1), '[]'), 'configurations', coalesce((
       select
-        jsonb_agg(common.api_json (to_jsonb (m) || jsonb_build_object('config_id', h.id, 'config_name', h.name, 'config_revision', h.revision))
+        jsonb_agg(common.api_json (to_jsonb (m) || jsonb_build_object('config_id', h.id, 'config_name', h.name, 'config_display_name', h.display_name, 'config_revision', h.revision))
         order by day, m.config_audit_id, currency)
       from ai.configuration_usage_daily m
       join audit.configurations h on h.audit_id = m.config_audit_id
@@ -737,6 +757,11 @@ begin
         'legal.documents'
       end;
       key = 'id';
+    elsif section = 'disclosures'
+        and kind = 'documents' then
+        target = 'legal.documents';
+      key = 'id';
+      provider_documents = true;
     elsif section = 'rules'
         and kind = 'rules' then
         target = 'ai.routing_rules';
@@ -771,7 +796,11 @@ begin
           end, key) into ids
         using coalesce(after_id, 0), (p_input ->> 'entity_id')::bigint, lim;
       else
-        execute format('select array_agg(v) from(select %I v from %s where %I>$1 order by %I limit $2)t', key, target, key, key) into ids
+        execute format('select array_agg(v) from(select %I v from %s where %I>$1%s order by %I limit $2)t', key, target, key, case when provider_documents then
+            ' and kind=''AI_PROVIDER'''
+          else
+            ''
+          end, key) into ids
         using coalesce(after_id, 0), lim;
       end if;
       end if;
@@ -784,13 +813,15 @@ begin
               data = admin.rule_json (after_id);
             elsif target = 'legal.documents' then
               select
-                legal.document_json (document_audit_id)
+                legal.document_json (current_document.document_audit_id)
               into
                 data
               from
-                legal.documents
+                legal.documents current_document
               where
-                id = after_id;
+                current_document.id = after_id
+                and (not provider_documents
+                  or current_document.kind = 'AI_PROVIDER');
             elsif target = 'ai.requests'
                 and i is not null then
                 data = jsonb_build_object('request', (

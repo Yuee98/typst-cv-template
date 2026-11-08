@@ -50,7 +50,6 @@ create function common.auth_session_valid (p_user uuid, p_session uuid)
         and (not_after is null
           or not_after > clock_timestamp()))
 $$;
-
 create function common.auth_user_page (p_limit integer, p_after text)
   returns jsonb
   language sql
@@ -555,13 +554,13 @@ begin
   else
     v = new;
   end if;
-  insert into audit.configurations (operation_id, actor_kind, actor_auth_user_id, reason, action, id, name, adapter_id, endpoint_url, model_id, credential_ref, legal_document_id, enabled, revision)
-    values (nullif (current_setting('app.operation_id', true), '')::bigint,coalesce(nullif(current_setting('app.actor_kind',true),''), 'MIGRATION'), case when common.auth_user_exists (nullif (current_setting('app.actor_id', true), '')::uuid) then nullif(current_setting('app.actor_id',true),'')::uuid
-    end, coalesce(current_setting('app.reason', true), ''), tg_op, v.id, v.name, v.adapter_id, v.endpoint_url, v.model_id, v.credential_ref, v.legal_document_id, v.enabled, v.revision)
-  returning
-    audit_id
-  into
-    a;
+  insert into audit.configurations (operation_id, actor_kind, actor_auth_user_id, reason, action, id, name, display_name, adapter_id, endpoint_url, model_id, credential_ref, legal_document_id, enabled, revision)
+    values (nullif (current_setting('app.operation_id', true), '')::bigint, coalesce(nullif (current_setting('app.actor_kind', true), ''), 'MIGRATION'), case when common.auth_user_exists (nullif (current_setting('app.actor_id', true), '')::uuid) then nullif(current_setting('app.actor_id',true),'')::uuid
+      end, coalesce(current_setting('app.reason', true), ''), tg_op, v.id, v.name, v.display_name, v.adapter_id, v.endpoint_url, v.model_id, v.credential_ref, v.legal_document_id, v.enabled, v.revision)
+    returning
+      audit_id
+    into
+      a;
   return coalesce(new, old);
 end
 $$;
@@ -753,9 +752,6 @@ begin
     new.en_body,
     new.effective_date,
     new.recipient_name,
-    new.adapter_id,
-    new.endpoint_url,
-    new.model_id,
     new.enabled,
     new.revision,
     new.content_digest) is not distinct from row (old.id,
@@ -767,9 +763,6 @@ begin
   old.en_body,
   old.effective_date,
   old.recipient_name,
-  old.adapter_id,
-  old.endpoint_url,
-  old.model_id,
   old.enabled,
   old.revision,
   old.content_digest) then
@@ -780,13 +773,13 @@ begin
   else
     v = new;
   end if;
-  insert into audit.documents (operation_id, actor_kind, actor_auth_user_id, reason, action, id, external_id, kind, zh_title, en_title, zh_body, en_body, effective_date, recipient_name, adapter_id, endpoint_url, model_id, enabled, revision, content_digest)
-    values (nullif (current_setting('app.operation_id', true), '')::bigint,coalesce(nullif(current_setting('app.actor_kind',true),''), 'MIGRATION'), case when common.auth_user_exists (nullif (current_setting('app.actor_id', true), '')::uuid) then nullif(current_setting('app.actor_id',true),'')::uuid
-    end, coalesce(current_setting('app.reason', true), ''), tg_op, v.id, v.external_id, v.kind, v.zh_title, v.en_title, v.zh_body, v.en_body, v.effective_date, v.recipient_name, v.adapter_id, v.endpoint_url, v.model_id, v.enabled, v.revision, v.content_digest)
-  returning
-    audit_id
-  into
-    a;
+  insert into audit.documents (operation_id, actor_kind, actor_auth_user_id, reason, action, id, external_id, kind, zh_title, en_title, zh_body, en_body, effective_date, recipient_name, enabled, revision, content_digest)
+    values (nullif (current_setting('app.operation_id', true), '')::bigint, coalesce(nullif (current_setting('app.actor_kind', true), ''), 'MIGRATION'), case when common.auth_user_exists (nullif (current_setting('app.actor_id', true), '')::uuid) then nullif(current_setting('app.actor_id',true),'')::uuid
+      end, coalesce(current_setting('app.reason', true), ''), tg_op, v.id, v.external_id, v.kind, v.zh_title, v.en_title, v.zh_body, v.en_body, v.effective_date, v.recipient_name, v.enabled, v.revision, v.content_digest)
+    returning
+      audit_id
+    into
+      a;
   if tg_op <> 'DELETE' then
     update
       legal.documents

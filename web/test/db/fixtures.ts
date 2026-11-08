@@ -3,6 +3,8 @@ import { createProviderLiveDbFixture, type LiveProviderConfiguration } from "../
 export const configurations: LiveProviderConfiguration[] = [1, 2, 3].map(index => ({
   adapterId: index as 1 | 2 | 3,
   name: `Synthetic adapter ${index}`,
+  displayName: `Visible choice ${index}`,
+  recipientName: `Synthetic recipient ${index}`,
   endpointUrl: ["https://api.deepseek.com/responses", "https://api.xiaomimimo.com/v1/responses", "https://generativelanguage.googleapis.com/v1/interactions"][index - 1],
   modelId: `synthetic-model-${index}`,
   credentialRef: `AI_PROVIDER_KEY_FIXTURE_${index}`,

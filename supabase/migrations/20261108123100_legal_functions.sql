@@ -6,11 +6,11 @@ create function legal.prepare_document ()
   set search_path = ''
   as $$
 begin
-  if length(btrim(new.zh_title)) = 0 or length(btrim(new.en_title)) = 0 or length(btrim(new.zh_body)) = 0 or length(btrim(new.en_body)) = 0 or octet_length(new.zh_body) > 131072 or octet_length(new.en_body) > 131072 then
+  if length(btrim(new.zh_title)) = 0 or length(btrim(new.en_title)) = 0 or length(btrim(new.zh_body)) = 0 or length(btrim(new.en_body)) = 0 or length(new.zh_body) > 65536 or length(new.en_body) > 65536 or octet_length(new.zh_body) > 262144 or octet_length(new.en_body) > 262144 then
     perform
       common.fail ('INVALID_REQUEST', 'INVALID_LEGAL_BODY');
   end if;
-  new.content_digest = common.digest(jsonb_build_array(new.kind, new.zh_title, new.en_title, new.zh_body, new.en_body, new.effective_date, new.recipient_name, new.adapter_id, new.endpoint_url, new.model_id));
+  new.content_digest = common.digest(jsonb_build_array(new.kind, new.zh_title, new.en_title, new.zh_body, new.en_body, new.effective_date, new.recipient_name));
   return new;
 end
 $$;
@@ -24,7 +24,7 @@ create function legal.document_json (p_audit bigint)
   set search_path = ''
   as $$
   select
-    common.api_json (jsonb_build_object('document_id', h.id, 'external_id', h.external_id, 'kind', h.kind, 'zh_title', h.zh_title, 'en_title', h.en_title, 'zh_body', h.zh_body, 'en_body', h.en_body, 'effective_date', h.effective_date, 'content_digest', h.content_digest, 'enabled', h.enabled, 'revision', h.revision, 'document_audit_id', h.audit_id, 'recipient_name', h.recipient_name, 'adapter_id', h.adapter_id, 'endpoint_url', h.endpoint_url, 'model_id', h.model_id))
+    common.api_json (jsonb_build_object('document_id', h.id, 'external_id', h.external_id, 'kind', h.kind, 'zh_title', h.zh_title, 'en_title', h.en_title, 'zh_body', h.zh_body, 'en_body', h.en_body, 'effective_date', h.effective_date, 'content_digest', h.content_digest, 'enabled', h.enabled, 'revision', h.revision, 'document_audit_id', h.audit_id, 'recipient_name', h.recipient_name))
   from
     audit.documents h
   where

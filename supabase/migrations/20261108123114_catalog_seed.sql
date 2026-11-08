@@ -16,8 +16,8 @@ declare
 begin
   loop
     begin
-      insert into legal.documents (enabled, recipient_name, adapter_id, endpoint_url, model_id, kind, effective_date, zh_title, en_title, zh_body, en_body, content_digest)
-        values (true, null, null, null, null, 'TERMS', '2026-07-03', '使用条款', 'Terms of Use', '本使用条款管辖你对 cv maker（https://cvmaker.dyue.org）及相关功能的使用。
+      insert into legal.documents (enabled, recipient_name, kind, effective_date, zh_title, en_title, zh_body, en_body, content_digest)
+        values (true, null, 'TERMS', '2026-07-03', '使用条款', 'Terms of Use', '本使用条款管辖你对 cv maker（https://cvmaker.dyue.org）及相关功能的使用。
 
 使用本服务即表示你同意本条款。如果你不同意，请勿使用本服务。
 
@@ -216,12 +216,12 @@ declare
 begin
   loop
     begin
-      insert into legal.documents (enabled, recipient_name, adapter_id, endpoint_url, model_id, kind, effective_date, zh_title, en_title, zh_body, en_body, content_digest)
-        values (true, null, null, null, null, 'AI_COMMON', '2026-11-08', 'AI 服务条款', 'AI Service Terms', '本 AI 服务条款管辖你对 cv maker（https://cvmaker.dyue.org）AI 润色功能的使用。本条款是使用条款与隐私政策的补充条款，与它们共同适用。
+      insert into legal.documents (enabled, recipient_name, kind, effective_date, zh_title, en_title, zh_body, en_body, content_digest)
+        values (true, null, 'AI_COMMON', '2026-11-08', 'AI 服务条款', 'AI Service Terms', '本 AI 服务条款管辖你对 cv maker（https://cvmaker.dyue.org）AI 润色功能的使用。本条款是使用条款与隐私政策的补充条款，与它们共同适用。
 
 我们为这项可选功能选择独立同意流程。使用适用条款前，你必须在功能界面中单独勾选同意；我们会记录用户 ID、公共条款与所选服务披露的精确内容与接受时间，以证明已获得授权。这是本服务运营者选择的披露与授权流程，不是对所有 AI 提供方通用要求的陈述。
 
-适用条款由公共 AI 条款和所选服务披露共同组成。你可以从当前时间段允许的提供方和模型选项中选择，发送前会提供完整披露的精确阅读链接，并要求接受对应内容。切换提供方不代表自动同意其他披露。
+适用条款由公共 AI 条款和所选服务披露共同组成。你可以从当前时间段允许的服务选项中选择，发送前会提供完整披露的精确阅读链接，并要求接受对应内容。切换提供方不代表自动同意其他披露。
 
 ## AI 润色功能
 
@@ -229,7 +229,7 @@ AI 润色功能应你的请求改写简历中选定的自由文本字段，例�
 
 当你确认润色请求时，你选中的文本以及你选择包含的上下文会以明文经我们的服务器转发至请求时披露的第三方 AI 服务处理。网络传输使用 HTTPS 保护，但你的请求内容对我们的服务器和实际接收方均为可读——本功能不适用端到端加密（见下文「加密与 AI 润色」）。
 
-可选集合和默认选项由服务端配置及请求时间决定，你明确选择本次使用的提供方和模型。每个已冻结请求只使用所选并已披露的一项服务和模型；服务故障不会在同一请求内触发未披露的跨服务自动切换。
+可选集合和默认选项由服务端配置及请求时间决定，你明确选择本次使用的服务。每个请求只使用所选并已披露的一项服务，执行配置在请求中冻结；服务故障不会在同一请求内触发未披露的跨服务自动切换。
 
 ## 发送的内容
 
@@ -259,11 +259,11 @@ AI 润色目前为免费功能，设有使用限制：每用户每天最多 20 �
 
 ## 提供方、路由与政策变化
 
-可用服务由运营者配置。实际接收方、接入地址与模型必须符合所选配置展示的披露，并在请求中冻结。请求格式兼容不代表接收方或数据处理条款相同。
+可用服务由运营者配置，并以公开名称展示。每项服务关联实际数据接收方的适用说明；运营者负责保持接收方和说明准确。公开名称或请求格式兼容不代表相同的数据处理保证。
 
 第三方按其自身条款与政策处理收到的内容，我们无法控制。请勿发送敏感、机密或不愿由实际接收方处理的信息。
 
-新增接收方、upstream、处理地区，或缓存、留存、训练/改进政策发生实质变化时，我们会更新适用披露，并在新请求前要求接受其当前内容。此前的同意不授权其他接收方或处理范围。
+实际接收方，或处理地区、缓存、留存、训练/改进政策发生实质变化时，我们会更新适用披露，并在新请求前要求接受其当前内容。此前的同意不授权其他接收方或实质变更后的处理条款。
 
 ## AI 输出需要你审阅
 
@@ -291,7 +291,7 @@ AI 生成的建议可能不准确、不完整、有偏见或不合适，也可�
 
 We chose a separate-consent flow for this optional feature. Before using the applicable terms, you must separately accept it in the feature interface; we record your user ID, the exact common terms and selected-service disclosure, and acceptance time to demonstrate authorization. This is the service operator''s chosen disclosure and authorization flow, not a statement that all AI providers universally require separate consent.
 
-The applicable terms consist of common AI terms and the selected service disclosure. You can choose among the provider and model options available for the current time period. The complete matching disclosure is available through an exact document link and requires acceptance before transmission. Selecting another provider does not automatically accept its disclosure.
+The applicable terms consist of common AI terms and the selected service disclosure. You can choose among the service options available for the current time period. The complete matching disclosure is available through an exact document link and requires acceptance before transmission. Selecting another provider does not automatically accept its disclosure.
 
 ## The AI Polish Feature
 
@@ -299,7 +299,7 @@ AI polish rewrites selected free-text fields of your resume at your request, suc
 
 When you confirm a polish request, the text you selected, together with any context you choose to include, is forwarded in plaintext through our server to the third-party AI service disclosed for that request. Network transmission uses HTTPS, but your request content is readable by our server and the actual recipient — end-to-end encryption does not apply to this feature (see "Encryption and AI Polish" below).
 
-The available options and default are determined by server-side configuration and request time; you explicitly select the provider and model for the request. Each frozen request uses one disclosed service and model; a service failure does not trigger an undisclosed automatic cross-provider fallback within that request.
+The available options and default are determined by server-side configuration and request time; you explicitly select the service for the request. Each request uses one disclosed service under its frozen execution configuration; a service failure does not trigger an undisclosed automatic cross-provider fallback within that request.
 
 ## What Is Sent
 
@@ -329,11 +329,11 @@ Quota is reserved when a request is accepted. If you cancel or interrupt it afte
 
 ## Providers, Routing, and Policy Changes
 
-Available services are configured by the operator. The actual recipient, endpoint and model must match the disclosure presented for the selected configuration and frozen for the request. A compatible request format does not establish the same recipient or data-processing terms.
+Available services are configured by the operator and shown by a public name. Each service links to the applicable disclosure for its actual data recipient. The operator must keep that recipient and disclosure accurate; a public name or compatible request format is not a data-processing guarantee.
 
 Each third party processes received content under its own terms and policies, which we do not control. Do not send sensitive, confidential, or other information that you do not want the actual recipient to process.
 
-If we add a recipient, upstream, or processing region, or materially change caching, retention, training, or improvement policies, we will update the applicable disclosure and require acceptance of its current content before a new request. An earlier acceptance does not authorize another recipient or processing scope.
+If we add a recipient or materially change processing regions, caching, retention, training, or improvement policies, we will update the applicable disclosure and require acceptance of its current content before a new request. An earlier acceptance does not authorize another recipient or materially different processing terms.
 
 ## AI Output Requires Your Review
 
@@ -372,12 +372,10 @@ declare
 begin
   loop
     begin
-      insert into legal.documents (kind, effective_date, enabled, recipient_name, adapter_id, endpoint_url, model_id, zh_title, en_title, zh_body, en_body, content_digest)
-        values ('AI_PROVIDER', '2026-11-08', true, 'Official DeepSeek Open Platform', 1, 'https://api.deepseek.com/responses', 'deepseek-flash', 'DeepSeek 官方开放平台 · deepseek-flash 数据处理说明', 'Official DeepSeek Open Platform · deepseek-flash data-processing disclosure', '实际服务: DeepSeek 官方开放平台
+      insert into legal.documents (kind, effective_date, enabled, recipient_name, zh_title, en_title, zh_body, en_body, content_digest)
+        values ('AI_PROVIDER', '2026-11-08', true, 'Official DeepSeek Open Platform', 'DeepSeek 官方开放平台 数据处理说明', 'Official DeepSeek Open Platform data-processing disclosure', '实际服务: DeepSeek 官方开放平台
 
 运营者/接收方: 杭州深度求索人工智能有限公司（DeepSeek）
-
-模型: deepseek-flash
 
 ## 发送内容
 
@@ -427,8 +425,6 @@ Responses API 技术事实：2026-11-07；政策证据沿用 2026-08-23（Asia/S
 - [官方来源 9](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html)','Service: Official DeepSeek Open Platform
 
 Operator/recipient: Hangzhou DeepSeek Artificial Intelligence Co., Ltd.
-
-Model: deepseek-flash
 
 ## What is sent
 
@@ -490,12 +486,10 @@ declare
 begin
   loop
     begin
-      insert into legal.documents (kind, effective_date, enabled, recipient_name, adapter_id, endpoint_url, model_id, zh_title, en_title, zh_body, en_body, content_digest)
-        values ('AI_PROVIDER', '2026-11-08', true, 'Official MiMo API (mainland-China access)', 2, 'https://api.xiaomimimo.com/v1/responses', 'mimo-v2.6-flash', 'MiMo 官方 API（中国大陆接入） · mimo-v2.6-flash 数据处理说明', 'Official MiMo API (mainland-China access) · mimo-v2.6-flash data-processing disclosure', '实际服务: MiMo 官方 API（中国大陆接入）
+      insert into legal.documents (kind, effective_date, enabled, recipient_name, zh_title, en_title, zh_body, en_body, content_digest)
+        values ('AI_PROVIDER', '2026-11-08', true, 'Official MiMo API (mainland-China access)', 'MiMo 官方 API（中国大陆接入） 数据处理说明', 'Official MiMo API (mainland-China access) data-processing disclosure', '实际服务: MiMo 官方 API（中国大陆接入）
 
 运营者/接收方: MiMo 官方 API；已核验页面未明确给出中国大陆适用运营主体的具体公司名称。中国大陆以外服务的条款列明 Xiaomi Technologies Singapore Pte. Ltd.。
-
-模型: mimo-v2.6-flash
 
 ## 发送内容
 
@@ -543,8 +537,6 @@ MiMo 将用户视为控制者、将自身描述为处理者，并称提交的 AP
 - [官方来源 6](https://mimo.mi.com/docs/en-US/terms/privacy-policy)','Service: Official MiMo API (mainland-China access)
 
 Operator/recipient: Official MiMo API. The reviewed pages do not identify the specific company operating the service in mainland China. The terms for service outside mainland China name Xiaomi Technologies Singapore Pte. Ltd.
-
-Model: mimo-v2.6-flash
 
 ## What is sent
 
@@ -604,12 +596,10 @@ declare
 begin
   loop
     begin
-      insert into legal.documents (kind, effective_date, enabled, recipient_name, adapter_id, endpoint_url, model_id, zh_title, en_title, zh_body, en_body, content_digest)
-        values ('AI_PROVIDER', '2026-11-08', true, 'Google Gemini API (AI Studio)', 3, 'https://generativelanguage.googleapis.com/v1/interactions', 'gemini-3.8-flash', 'Google Gemini API（AI Studio） · gemini-3.8-flash 数据处理说明', 'Google Gemini API (AI Studio) · gemini-3.8-flash data-processing disclosure', '实际服务: Google Gemini API（AI Studio）
+      insert into legal.documents (kind, effective_date, enabled, recipient_name, zh_title, en_title, zh_body, en_body, content_digest)
+        values ('AI_PROVIDER', '2026-11-08', true, 'Google Gemini API (AI Studio)', 'Google Gemini API（AI Studio） 数据处理说明', 'Google Gemini API (AI Studio) data-processing disclosure', '实际服务: Google Gemini API（AI Studio）
 
 运营者/接收方: 通过 Google AI Studio 使用 Google Gemini Developer API；实际签约的 Google 主体取决于适用账户、计费协议及司法辖区。
-
-模型: gemini-3.8-flash
 
 ## 发送内容
 
@@ -656,8 +646,6 @@ Google 将隐式内存缓存描述为按项目隔离的 RAM 存储，TTL 为 24 
 - [官方来源 5](https://ai.google.dev/gemini-api/docs/logs-policy)','Service: Google Gemini API (AI Studio)
 
 Operator/recipient: Google Gemini Developer API via Google AI Studio. The contracting Google entity depends on the applicable account, billing agreement and jurisdiction.
-
-Model: gemini-3.8-flash
 
 ## What is sent
 

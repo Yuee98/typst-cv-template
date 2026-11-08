@@ -12,6 +12,8 @@ export type LiveAdapterId = 1 | 2 | 3;
 export interface LiveProviderConfiguration {
   adapterId: LiveAdapterId;
   name: string;
+  displayName: string;
+  recipientName: string;
   endpointUrl: string;
   credentialRef: string;
   modelId: string;
@@ -37,7 +39,7 @@ const object = (value: unknown): Row => { if (!value || typeof value !== "object
 export function validateLiveConfigurations(configurations: readonly LiveProviderConfiguration[]) {
   if (!configurations.length || configurations.length > 3 || new Set(configurations.map(configuration => configuration.name)).size !== configurations.length) throw new Error("Choose one to three distinct named configurations");
   for (const configuration of configurations) {
-    if (![1, 2, 3].includes(configuration.adapterId) || !/^AI_PROVIDER_KEY_[A-Z0-9_]+$/.test(configuration.credentialRef) || !configuration.modelId.trim() || configuration.modelId.length > 200 || !configuration.name.trim()) throw new Error("Invalid local execution configuration");
+    if (![1, 2, 3].includes(configuration.adapterId) || !/^AI_PROVIDER_KEY_[A-Z0-9_]+$/.test(configuration.credentialRef) || !configuration.modelId.trim() || configuration.modelId.length > 200 || !configuration.name.trim() || typeof configuration.displayName !== "string" || !configuration.displayName.trim() || configuration.displayName.length > 200 || typeof configuration.recipientName !== "string" || !configuration.recipientName.trim() || configuration.recipientName.length > 500) throw new Error("Invalid local execution configuration");
     validateEndpoint(configuration.endpointUrl);
     if (!/^[A-Z]{3}$/.test(configuration.price.currency)) throw new Error("Invalid synthetic currency");
     for (const field of ["input_standard_nanos_per_million", "input_cache_read_nanos_per_million", "input_cache_write_nanos_per_million", "output_nanos_per_million"] as const) {
@@ -82,7 +84,7 @@ export async function createProviderLiveDbFixture() {
     const receipt = admin("admin_legal_document_save", {
       id: null, expected_revision: null, kind, zh_title: `本地测试 ${label}`, en_title: `Local fixture ${label}`,
       zh_body: "仅供本地集成测试；本披露不代表供应商实际政策。", en_body: "Synthetic integration fixture. These terms do not describe the supplier's actual policies.",
-      effective_date: new Date().toISOString().slice(0, 10), recipient_name: null, adapter_id: null, endpoint_url: null, model_id: null, enabled: true, ...scope
+      effective_date: new Date().toISOString().slice(0, 10), recipient_name: null, enabled: true, ...scope
     });
     const target = currentDocuments().find(item => item.document_id === receipt.entity_id);
     if (!target) throw new Error("Created legal document was not read back");
@@ -113,9 +115,9 @@ export async function createProviderLiveDbFixture() {
       required("legal_accept_document", { ...common(), expected_auth_user_id: userId, document_id: terms.document_id, document_audit_id: terms.document_audit_id }, true);
       const configIds: Record<string, string> = {};
       for (const configuration of configurations) {
-        const provider = document("AI_PROVIDER", configuration.name, { recipient_name: configuration.name, adapter_id: configuration.adapterId, endpoint_url: configuration.endpointUrl, model_id: configuration.modelId });
+        const provider = document("AI_PROVIDER", configuration.recipientName, { recipient_name: configuration.recipientName });
         required("legal_accept_ai", { ...common(), expected_auth_user_id: userId, common: { document_id: commonDocument.document_id, document_audit_id: commonDocument.document_audit_id }, provider: { document_id: provider.document_id, document_audit_id: provider.document_audit_id } }, true);
-        const receipt = admin("admin_configuration_save", { id: null, expected_revision: null, name: configuration.name, adapter_id: configuration.adapterId, endpoint_url: configuration.endpointUrl, credential_ref: configuration.credentialRef, model_id: configuration.modelId, legal_document_id: provider.document_id, enabled: true, price: configuration.price });
+        const receipt = admin("admin_configuration_save", { id: null, expected_revision: null, name: configuration.name, display_name: configuration.displayName, adapter_id: configuration.adapterId, endpoint_url: configuration.endpointUrl, credential_ref: configuration.credentialRef, model_id: configuration.modelId, legal_document_id: provider.document_id, enabled: true, price: configuration.price });
         configIds[configuration.name] = String(receipt.entity_id);
       }
       admin("admin_rule_save", { id: null, expected_revision: null, weekday: null, start_minute: null, end_minute: null, enabled: true, members: Object.values(configIds).map((id, index) => ({ config_id: id, is_default: index === 0 })) });

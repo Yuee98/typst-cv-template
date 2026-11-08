@@ -8,8 +8,15 @@ insert into auth.users(id,aud,role,email,email_confirmed_at,created_at,updated_a
 ('00000000-0000-4000-8000-000000000091','authenticated','authenticated','runtime-fixture@example.invalid',clock_timestamp(),clock_timestamp(),clock_timestamp()),
 ('00000000-0000-4000-8000-000000000092','authenticated','authenticated','bootstrap-fixture@example.invalid',clock_timestamp(),clock_timestamp(),clock_timestamp()) on conflict(id) do nothing;
 do $$begin if not exists(select 1 from admin.environment) then perform admin.initialize('LOCAL','00000000-0000-4000-8000-000000000092');end if;end $$;
-insert into ai.configurations(name,adapter_id,endpoint_url,model_id,credential_ref,legal_document_id,enabled)
- select 'Synthetic runtime fixture '||adapter_id,adapter_id,endpoint_url,model_id,'AI_PROVIDER_KEY_FIXTURE_'||adapter_id,id,true from legal.documents where kind='AI_PROVIDER' and enabled and not exists(select 1 from ai.configurations where name='Synthetic runtime fixture '||adapter_id);
+insert into ai.configurations(name,display_name,adapter_id,endpoint_url,model_id,credential_ref,legal_document_id,enabled)
+select 'Synthetic runtime fixture '||f.adapter_id,'Visible fixture choice '||f.adapter_id,f.adapter_id,f.endpoint_url,f.model_id,'AI_PROVIDER_KEY_FIXTURE_'||f.adapter_id,d.id,true
+from(values
+ (1,'https://api.deepseek.com/responses','deepseek-flash','Official DeepSeek Open Platform'),
+ (2,'https://api.xiaomimimo.com/v1/responses','mimo-v2.6-flash','Official MiMo API (mainland-China access)'),
+ (3,'https://generativelanguage.googleapis.com/v1/interactions','gemini-3.8-flash','Google Gemini API (AI Studio)')
+) f(adapter_id,endpoint_url,model_id,recipient_name)
+join legal.documents d on d.kind='AI_PROVIDER' and d.enabled and d.recipient_name=f.recipient_name
+where not exists(select 1 from ai.configurations c where c.name='Synthetic runtime fixture '||f.adapter_id);
 insert into ai.prices(config_id,currency,input_standard_nanos_per_million,input_cache_read_nanos_per_million,input_cache_write_nanos_per_million,output_nanos_per_million)
  select id,case when adapter_id=3 then 'USD' else 'CNY' end,1000000,100000,0,2000000 from ai.configurations c where name like 'Synthetic runtime fixture %' on conflict(config_id) do nothing;
 update ai.routing_rules set enabled=false where enabled;
