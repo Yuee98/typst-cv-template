@@ -1,6 +1,6 @@
 # 第二轮重构验证记录
 
-状态：本地实施与验收完成。汇总见 [本轮机器记录](evidence/database-rebuild-v2-local.json)。旧版证据不能证明 cv_app_db_2 或本轮新基线。
+状态：原始第二轮基线验收与后续修改分别记录。下方原始记录及其 [机器记录](evidence/database-rebuild-v2-local.json) 绑定 `3967ca5`，不会自动证明后来改写的迁移或应用代码。当前移除 TOTP 的重建验收见末节。
 
 ## 实施范围
 
@@ -9,7 +9,7 @@
 - 工具 manifest 改为读取显式 baseline.json，覆盖基线文件数变化、追加文件、乱序/重复/路径越界负向测试。
 - 本轮不执行 hosted SQL、不重置 test/prod、不 push、不 promotion 或发布。
 
-## 已完成的本地验收
+## 原始基线的本地验收（3967ca5）
 
 | 范围 | 通过条件 | 状态 |
 | --- | --- | --- |
@@ -60,10 +60,22 @@
 
 移走检查点时拒绝再次清库；同时移走检查点与历史时也拒绝。另以明确构造的 reset_started 状态验证“检查实时 catalog 后恢复”，不重复 reset。此次初始中断已有 durable migrations 检查点，因此 `initial_checkpoint_loss_recovery_passed=false` 如实保留；构造状态恢复单独记录为 `TEST_CONSTRUCTED_STATE_ONLY_NO_REPEAT_RESET`，不冒充真实网络故障导致的检查点丢失。
 
-完整本地 proof：`tmp/remote-rehearsal-proof.json`，SHA-256 `8e305d07f7da29bc6d7a18c19c08897bacd099b8758d6df904d2cc40be9bfe84`；安全摘要 `tmp/g3-v2-final-summary.json`。日志为 `/tmp/cv-g3-v2-run.log`、`/tmp/cv-g3-v2-checkpoint-guards.log`、`/tmp/cv-g3-v2-verify.log`。这些是本地候选代码证据，不能代替未来实际项目、合并 SHA 和维护窗口的执行记录。
+原始 proof 已归档至 `tmp/pre-no-totp-g3-3967ca5-20261108T233027/remote-rehearsal-proof.json`，SHA-256 `8e305d07f7da29bc6d7a18c19c08897bacd099b8758d6df904d2cc40be9bfe84`；安全摘要 `tmp/g3-v2-final-summary.json`。日志为 `/tmp/cv-g3-v2-run.log`、`/tmp/cv-g3-v2-checkpoint-guards.log`、`/tmp/cv-g3-v2-verify.log`。这些是原始候选代码证据，不能代替当前新基线或未来实际项目、合并 SHA 和维护窗口的执行记录。
 
 ## 后续交互修复：新建 AI 配置的错误提示
 
 本地 Gemini 表单使用了未配置的 `AI_PROVIDER_KEY_G`，BFF 把缺少服务器凭据引用与所有地址校验错误统一降为 `INVALID_REQUEST`，客户端也丢弃了已有的 reason 字段。现改为仅传递三种安全原因：凭据引用不存在、地址无效、地址无法解析为可用公网目标。界面提供中英具体提示、凭据字段说明及格式校验，并明确指引 TOTP 验证；不增加名称别名、不输出 Key，也不放宽校验。
 
 本次 `pnpm test` 为 1,223 项 Web / 35 项工具测试全通过，typecheck/lint 通过。真实本地 HTTPS/Chromium 复测确认：错误引用显示具体原因且保留表单；正确的 `AI_PROVIDER_KEY_GEMINI_LOCAL` 通过配置校验，未完成 TOTP 的会话仍被写入安全门拦截。未创建配置、未调用 Provider、未改数据库结构或线上环境。日志为 `tmp/admin-configuration-final-unit.log`、`tmp/admin-configuration-http-verification.json`、`tmp/admin-configuration-browser.log`。上节 G3 证明仍保留其原 SHA，本次未重新生成数据库切换证明。
+
+## 当前变更：整体移除应用 TOTP
+
+用户明确要求取消整套 TOTP 设计，并直接修改现有迁移、重建本地测试库。已删除应用绑定/验证组件、二维码与验证码逻辑、中英文文案、AAL2/近期验证门槛、step-up 参数及错误码。普通 Auth 登录、实时会话与管理员资格、账户/实例隔离、CAS、审计和最后管理员保护保留。既有 Supabase SDK 与平台表不由应用迁移删除；独立演练中的平台因素行仅是保留哨兵，不构成应用功能。
+
+仍为原 15 个文件，新基线与完整清单 digest 均为 `3615590132917d8dfc69a585d7c620990731c34fe6d53670d0fbb178d9e7f8da`，不存在新增的第 16 条迁移或旧签名兼容重载。主本地库已按新文件完整重建，实例为 `57c3f500-800b-4395-9363-b598731b1cf2`。91 项 SQL、19 项真实 Auth/API 测试通过；普通密码登录的管理员可写，匿名、普通用户、已撤权管理员及失效会话仍被拒绝；数据库 lint/advisors 均无错误或警告。
+
+当前运行代码提交 `9dd1bb8753267dca83c6cd37757bfbedbfe0ec51`，汇总见 [无 TOTP 验证记录](evidence/admin-without-totp-local.json)。1,220 项 Web 测试、35 项工具测试、完整类型检查与 lint 通过；9 项真实 Admin 浏览器测试确认普通登录后的配置/价格/规则原子保存和管理员授予/撤销。server → static → server 生产构建通过，静态边界扫描 139 文件通过。测试固定使用已安装的 CLI/Node 入口，不让浏览器副本的包管理器介入工作区依赖。文档和只读统计命令一并对齐当前 `admin_read` 契约。
+
+新的独立 G3 将旧 60 条链重建为改写后的 15 条链，12 项平台指纹相等。真实迁移后中断恢复、重复恢复、缺检查点拒绝、缺检查点与历史拒绝，以及明确构造的检查点恢复都通过；没有冒称真实丢失检查点的故障。新 proof 为 `tmp/remote-rehearsal-proof.json`，SHA-256 `dadc0358777582208bc77e11691cd851011e42c584ac601b518061adc5ffdcc1`，新安全摘要 `tmp/g3-no-totp-final-summary.json`，绑定上述 `9dd1bb8` 和新 digest。
+
+本地预览账号已使用原邮箱/密码恢复；实际内网 HTTPS/Chromium 验证普通登录可保存原样且保持关闭的运行设置（HTTP 200），绑定入口与因素请求均为零。窄屏页面已人工查看。未调用 Provider、未操作 test/prod、未 push 或发布；本地库实例变化后需退出旧会话并重新登录。后续纯文档提交不重绑上述源码证据，未来 hosted 切换仍需针对实际候选 SHA 重新验收。

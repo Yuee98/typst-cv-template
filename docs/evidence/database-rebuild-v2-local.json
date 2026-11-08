@@ -259,7 +259,8 @@
       "unrelated_cron",
       "role_membership",
       "platform_versions"
-    ]
+    ],
+    "archived_proof_file": "tmp/pre-no-totp-g3-3967ca5-20261108T233027/remote-rehearsal-proof.json"
   },
   "limitations": [
     "No hosted reset, Auth/SSO inspection, deployment or paid upstream call was performed this round.",
