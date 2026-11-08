@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { adminCommittedOperationSchema, adminErrorSchema, adminMutationRequestSchema, type AdminMutationRequest } from "@/lib/admin/contract";
+import { adminCommittedOperationSchema, adminConfigurationErrorReasonSchema, adminErrorSchema, adminMutationRequestSchema, type AdminMutationRequest } from "@/lib/admin/contract";
 import { currentAdminSession, type AdminSession } from "./admin-session";
 export function useAdminMutation(client: SupabaseClient, actor: AdminSession, onCommitted: () => void) {
   const mounted = useRef(true);
@@ -41,7 +41,9 @@ export function useAdminMutation(client: SupabaseClient, actor: AdminSession, on
       });
       const raw: unknown = await response.json();
       if (!response.ok) {
-        const code = adminErrorSchema.parse(raw).error.code;
+        const failure = adminErrorSchema.parse(raw).error;
+        const code = failure.code;
+        const safeReason = adminConfigurationErrorReasonSchema.safeParse(input.operation === "admin_configuration_save" && code === "INVALID_REQUEST" ? failure.reason : undefined);
         // A retry's preflight/validation rejection cannot prove that the
         // earlier write failed. Only a receipt or a new DB contract/instance
         // releases an operation whose outcome was already unknown.
@@ -50,7 +52,7 @@ export function useAdminMutation(client: SupabaseClient, actor: AdminSession, on
         unknownOutcome.current = keepUnknown;
         if (current()) {
           setUncertain(keepUnknown);
-          setError(keepUnknown ? "RESULT_UNKNOWN" : code);
+          setError(keepUnknown ? "RESULT_UNKNOWN" : safeReason.success ? safeReason.data : code);
         }
         if ([401, 403].includes(response.status)) onCommitted();
         return false;

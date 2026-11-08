@@ -274,6 +274,32 @@ describe("Admin business-page identity and dialog lifetime", () => {
     const call = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "POST")!;
     expect(JSON.parse(String(call[1]!.body)).expected_revision).toBe("1");
   });
+  it.each(["en", "zh"] as const)("explains configuration failures and the reference format in %s", async locale => {
+    let failure = { code: "INVALID_REQUEST", reason: "CREDENTIAL_UNAVAILABLE" };
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => init?.method === "POST" ? Promise.resolve(new Response(JSON.stringify({ error: failure }), { status: failure.code === "STEP_UP_REQUIRED" ? 403 : 400 })) : original(input, init));
+    view(<AdminApp locale={locale} section="configurations" />);
+    await screen.findByRole("heading", { name: configuration.name }); fireEvent.click(screen.getByRole("button", { name: locale === "zh" ? "编辑" : "Edit" }));
+    const credential = await screen.findByLabelText(locale === "zh" ? "凭据引用名称" : "Credential reference") as HTMLInputElement;
+    await waitFor(() => expect(credential.matches(":disabled")).toBe(false));
+    const hint = screen.getByText(locale === "zh" ? "填写服务器已配置的环境变量名，不是 API Key。" : "Enter the name of an environment variable configured on the server, not an API key.");
+    expect(credential.getAttribute("aria-describedby")).toBe(hint.id);
+    fireEvent.change(credential, { target: { value: "not-an-env-name" } }); expect(credential.checkValidity()).toBe(false);
+    fireEvent.change(credential, { target: { value: "AI_PROVIDER_KEY_TEST" } }); expect(credential.checkValidity()).toBe(true);
+    const cases = [
+      ["INVALID_REQUEST", "CREDENTIAL_UNAVAILABLE", "This credential reference is not configured on the server. Enter a configured environment variable name.", "服务器未配置此凭据引用，请填写已配置的环境变量名。"],
+      ["INVALID_REQUEST", "ENDPOINT_INVALID", "The endpoint URL is invalid. Enter a canonical public HTTPS address.", "接入地址无效，请填写规范的公网 HTTPS 地址。"],
+      ["INVALID_REQUEST", "ENDPOINT_UNREACHABLE", "The endpoint cannot be resolved to an available public address. Check the URL and server network.", "接入地址无法解析到可用的公网地址，请检查地址与服务器网络。"],
+      ["STEP_UP_REQUIRED", "", "Complete TOTP verification under Runtime controls, then retry saving.", "请先到运行控制完成 TOTP 验证，再重试保存。"],
+    ];
+    for (const [code, reason, en, zh] of cases) {
+      failure = { code, reason };
+      fireEvent.click(screen.getByRole("button", { name: locale === "zh" ? "保存" : "Save" }));
+      await screen.findByText(locale === "zh" ? zh : en);
+      expect(screen.queryByText(code)).toBeNull(); await waitFor(() => expect(credential.matches(":disabled")).toBe(false));
+    }
+  });
+
   it("requires explicit prices for new configurations instead of defaulting to free", async () => {
     view(<AdminApp locale="en" section="configurations" />);
     fireEvent.click(await screen.findByRole("button", { name: "New" }));

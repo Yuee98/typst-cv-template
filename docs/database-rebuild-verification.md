@@ -48,9 +48,9 @@
 - `b41a8f8`：数据库新基线、typed audit、SQL/API 测试与生成类型。
 - `807f796`：显式基线清单、初始化/重建/竞态工具和安全 fixture。
 - `eda5830`：AI、精确同意和 Admin 六页整体切换。
-- `3967ca5`：最后的缓存提交计数寿命回归修复。最终运行代码 SHA 为 `3967ca536b0127d729f7b536c1a064c85fd9c9d1`；本轮演练以此 SHA 绑定。
+- `3967ca5`：第二轮基线的缓存提交计数寿命回归修复。上述基线验收的运行代码 SHA 为 `3967ca536b0127d729f7b536c1a064c85fd9c9d1`；本轮演练以此 SHA 绑定。
 
-后续验证记录提交仅包含文档与证据，不改变上述运行代码。未来 hosted 切换仍须对实际合并/发布 SHA 重新生成材料，本记录不授予线上发布或清库授权。
+紧随其后的 `09705d5` 仅包含文档与证据。后续修复单独记录，不会自动重绑已有证明。未来 hosted 切换仍须对实际合并/发布 SHA 重新生成材料，本记录不授予线上发布或清库授权。
 
 ## 隔离重建和恢复演练
 
@@ -61,3 +61,9 @@
 移走检查点时拒绝再次清库；同时移走检查点与历史时也拒绝。另以明确构造的 reset_started 状态验证“检查实时 catalog 后恢复”，不重复 reset。此次初始中断已有 durable migrations 检查点，因此 `initial_checkpoint_loss_recovery_passed=false` 如实保留；构造状态恢复单独记录为 `TEST_CONSTRUCTED_STATE_ONLY_NO_REPEAT_RESET`，不冒充真实网络故障导致的检查点丢失。
 
 完整本地 proof：`tmp/remote-rehearsal-proof.json`，SHA-256 `8e305d07f7da29bc6d7a18c19c08897bacd099b8758d6df904d2cc40be9bfe84`；安全摘要 `tmp/g3-v2-final-summary.json`。日志为 `/tmp/cv-g3-v2-run.log`、`/tmp/cv-g3-v2-checkpoint-guards.log`、`/tmp/cv-g3-v2-verify.log`。这些是本地候选代码证据，不能代替未来实际项目、合并 SHA 和维护窗口的执行记录。
+
+## 后续交互修复：新建 AI 配置的错误提示
+
+本地 Gemini 表单使用了未配置的 `AI_PROVIDER_KEY_G`，BFF 把缺少服务器凭据引用与所有地址校验错误统一降为 `INVALID_REQUEST`，客户端也丢弃了已有的 reason 字段。现改为仅传递三种安全原因：凭据引用不存在、地址无效、地址无法解析为可用公网目标。界面提供中英具体提示、凭据字段说明及格式校验，并明确指引 TOTP 验证；不增加名称别名、不输出 Key，也不放宽校验。
+
+本次 `pnpm test` 为 1,223 项 Web / 35 项工具测试全通过，typecheck/lint 通过。真实本地 HTTPS/Chromium 复测确认：错误引用显示具体原因且保留表单；正确的 `AI_PROVIDER_KEY_GEMINI_LOCAL` 通过配置校验，未完成 TOTP 的会话仍被写入安全门拦截。未创建配置、未调用 Provider、未改数据库结构或线上环境。日志为 `tmp/admin-configuration-final-unit.log`、`tmp/admin-configuration-http-verification.json`、`tmp/admin-configuration-browser.log`。上节 G3 证明仍保留其原 SHA，本次未重新生成数据库切换证明。

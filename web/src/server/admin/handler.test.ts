@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-import { handleAdminGet, handleAdminPost } from "./handler";
+import { AdminConfigurationValidationError, handleAdminGet, handleAdminPost, validateAdminConfiguration } from "./handler";
 const instance = "00000000-0000-4000-8000-000000000001",
   key = "00000000-0000-4000-8000-000000000002";
 const context = {
@@ -252,6 +252,26 @@ describe("atomic current-row mutations", () => {
     }), deps as never)).status).toBe(400);
     expect(rpc).toHaveBeenCalledTimes(1);
   });
+  it.each([1, 2, 3])("explains an unavailable credential reference for adapter %s without writing", async adapter_id => {
+    vi.stubEnv("AI_PROVIDER_KEY_G", "");
+    try {
+      const fields = { ...configuration };
+      delete (fields as Partial<typeof configuration>).revision;
+      const result = await handleAdminPost(post({
+        ...base,
+        operation: "admin_configuration_save",
+        ...fields,
+        adapter_id,
+        credential_ref: "AI_PROVIDER_KEY_G",
+        expected_revision: "1"
+      }), { ...deps, validateConfiguration: undefined } as never);
+      expect(result.status).toBe(400);
+      expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST", reason: "CREDENTIAL_UNAVAILABLE" } });
+      expect(rpc).toHaveBeenCalledExactlyOnceWith("admin_context");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("rejects former publish/report commands rather than keeping compatibility", async () => {
     expect((await handleAdminPost(post({
       ...base,
@@ -259,5 +279,43 @@ describe("atomic current-row mutations", () => {
       passed: true
     }), deps as never)).status).toBe(400);
     expect(rpc).not.toHaveBeenCalled();
+  });
+});
+describe("safe configuration validation reasons", () => {
+  const selected = {
+    adapter_id: 3 as const,
+    endpoint_url: "https://generativelanguage.googleapis.com/v1/interactions",
+    model_id: "gemini-3.8-flash",
+    credential_ref: "AI_PROVIDER_KEY_GEMINI_LOCAL"
+  };
+  const env = { AI_PROVIDER_KEY_GEMINI_LOCAL: "synthetic-key-not-transmitted" };
+  it("validates a configured credential and resolves the checked endpoint without inference", async () => {
+    const resolve = vi.fn().mockResolvedValue({});
+    const signal = new AbortController().signal;
+    await validateAdminConfiguration(selected, signal, env, resolve);
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(selected.endpoint_url, undefined, signal);
+  });
+  it("distinguishes an invalid destination from unavailable DNS", async () => {
+    const resolve = vi.fn().mockRejectedValue(new Error("Internal resolver details must stay private"));
+    const signal = new AbortController().signal;
+    await expect(validateAdminConfiguration({ ...selected, endpoint_url: "https://127.0.0.1/inference" }, signal, env, resolve)).rejects.toMatchObject({ reason: "ENDPOINT_INVALID" });
+    expect(resolve).not.toHaveBeenCalled();
+    await expect(validateAdminConfiguration(selected, signal, env, resolve)).rejects.toMatchObject({ reason: "ENDPOINT_UNREACHABLE", message: "ENDPOINT_UNREACHABLE" });
+  });
+  it.each(["CREDENTIAL_UNAVAILABLE", "ENDPOINT_INVALID", "ENDPOINT_UNREACHABLE"] as const)("returns only the public reason %s", async reason => {
+    validateConfiguration.mockRejectedValue(new AdminConfigurationValidationError(reason));
+    const fields = { ...configuration };
+    delete (fields as Partial<typeof configuration>).revision;
+    const result = await handleAdminPost(post({ ...base, operation: "admin_configuration_save", ...fields, expected_revision: "1" }), deps as never);
+    expect(result.status).toBe(400);
+    expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST", reason } });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("admin_context");
+  });
+  it("does not expose an arbitrary validation exception", async () => {
+    validateConfiguration.mockRejectedValue(new Error("private-key-and-transport-details"));
+    const fields = { ...configuration };
+    delete (fields as Partial<typeof configuration>).revision;
+    const result = await handleAdminPost(post({ ...base, operation: "admin_configuration_save", ...fields, expected_revision: "1" }), deps as never);
+    expect(await result.json()).toEqual({ error: { code: "INVALID_REQUEST" } });
   });
 });

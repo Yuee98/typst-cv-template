@@ -22,11 +22,14 @@ export type ExecutionConfiguration = z.infer<typeof executionConfigurationSchema
 export interface InferenceProvider {
   complete(request: PolishInferenceRequest, options: { signal: AbortSignal; timeoutMs: number }): Promise<PolishInferenceResult>;
 }
+export class MissingProviderCredentialError extends Error {
+  constructor() { super("Selected credential unavailable"); }
+}
 export function validateExecutionConfiguration(value: unknown, env: Readonly<Record<string, string | undefined>> = process.env): ExecutionConfiguration {
   const configuration = executionConfigurationSchema.parse(value);
   if (configuration.execution_contract !== ADAPTERS[configuration.adapter_id].executionContract) throw new Error("Unsupported execution contract");
   validateEndpoint(configuration.endpoint_url);
-  if (!env[configuration.credential_ref]?.trim()) throw new Error("Selected credential unavailable");
+  if (!env[configuration.credential_ref]?.trim()) throw new MissingProviderCredentialError();
   return configuration;
 }
 /** Actual key bytes are captured here once; the database freezes only the reference. */

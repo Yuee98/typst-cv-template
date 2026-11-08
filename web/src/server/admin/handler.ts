@@ -1,9 +1,9 @@
 import "server-only";
 import { z } from "zod";
-import { ADMIN_ERROR_CODES, ADMIN_ERROR_STATUS, adminContextSchema, adminReadResponseSchema, adminSectionSchema, adminAnalyticsSchema, adminPageSchema, adminRecordSchema, adminMutationRequestSchema, adminCommittedOperationSchema, entityIdSchema, adminConfigurationSchema, adminRuleSchema, adminAdapterSchema, adminDocumentSchema, type AdminErrorCode, type AdminSection, type AdminConfiguration } from "@/lib/admin/contract";
+import { ADMIN_ERROR_CODES, ADMIN_ERROR_STATUS, adminContextSchema, adminReadResponseSchema, adminSectionSchema, adminAnalyticsSchema, adminPageSchema, adminRecordSchema, adminMutationRequestSchema, adminCommittedOperationSchema, entityIdSchema, adminConfigurationSchema, adminRuleSchema, adminAdapterSchema, adminDocumentSchema, type AdminErrorCode, type AdminSection, type AdminConfiguration, type AdminConfigurationErrorReason } from "@/lib/admin/contract";
 import { resolveAdminEnvironment, type AdminEnvironment } from "./environment";
 import { createAdminRequestClient } from "./request-client";
-import { ADAPTERS, validateExecutionConfiguration } from "@/server/ai/provider";
+import { ADAPTERS, MissingProviderCredentialError, validateExecutionConfiguration } from "@/server/ai/provider";
 import { resolveEndpoint } from "@/server/ai/outbound";
 type Client = ReturnType<typeof createAdminRequestClient>;
 interface Dependencies {
@@ -11,28 +11,46 @@ interface Dependencies {
   client(environment: AdminEnvironment, token: string, signal?: AbortSignal): Pick<Client, "auth" | "rpc">;
   validateConfiguration?(configuration: Pick<AdminConfiguration, "adapter_id" | "endpoint_url" | "credential_ref" | "model_id">, signal: AbortSignal): Promise<void>;
 }
-const defaults: Dependencies = {
-  environment: () => resolveAdminEnvironment(process.env),
-  client: createAdminRequestClient,
-  validateConfiguration: async (configuration, signal) => {
+export class AdminConfigurationValidationError extends Error {
+  constructor(readonly reason: AdminConfigurationErrorReason) { super(reason); }
+}
+export async function validateAdminConfiguration(
+  configuration: Pick<AdminConfiguration, "adapter_id" | "endpoint_url" | "credential_ref" | "model_id">,
+  signal: AbortSignal,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  resolve: typeof resolveEndpoint = resolveEndpoint
+): Promise<void> {
+  try {
     validateExecutionConfiguration({
       adapter_id: configuration.adapter_id,
       execution_contract: ADAPTERS[configuration.adapter_id].executionContract,
       endpoint_url: configuration.endpoint_url,
       credential_ref: configuration.credential_ref,
       model_id: configuration.model_id
-    });
-    await resolveEndpoint(configuration.endpoint_url, undefined, signal);
+    }, env);
+  } catch (error) {
+    throw new AdminConfigurationValidationError(error instanceof MissingProviderCredentialError ? "CREDENTIAL_UNAVAILABLE" : "ENDPOINT_INVALID");
   }
+  try {
+    await resolve(configuration.endpoint_url, undefined, signal);
+  } catch {
+    throw new AdminConfigurationValidationError("ENDPOINT_UNREACHABLE");
+  }
+}
+const defaults: Dependencies = {
+  environment: () => resolveAdminEnvironment(process.env),
+  client: createAdminRequestClient,
+  validateConfiguration: validateAdminConfiguration
 };
 const headers = {
   "Cache-Control": "private, no-store",
   Vary: "Authorization"
 };
-function fail(code: AdminErrorCode) {
+function fail(code: AdminErrorCode, reason?: AdminConfigurationErrorReason) {
   return Response.json({
     error: {
-      code
+      code,
+      ...(reason ? { reason } : {})
     }
   }, {
     status: ADMIN_ERROR_STATUS[code],
@@ -203,8 +221,8 @@ export async function handleAdminPost(request: Request, deps: Dependencies = def
     if (mutation.data.operation === "admin_configuration_save") {
       try {
         await (deps.validateConfiguration ?? defaults.validateConfiguration!)(mutation.data, request.signal);
-      } catch {
-        return fail("INVALID_REQUEST");
+      } catch (error) {
+        return fail("INVALID_REQUEST", error instanceof AdminConfigurationValidationError ? error.reason : undefined);
       }
     }
     if (request.signal.aborted) return fail("UNAUTHORIZED");

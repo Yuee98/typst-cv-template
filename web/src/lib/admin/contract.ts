@@ -167,6 +167,8 @@ export const adminAdapterSchema = z.strictObject({
 export const adminDocumentSchema = legalDocumentSchema;
 export const ADMIN_ERROR_CODES = ["UNAUTHORIZED", "FORBIDDEN", "INVALID_REQUEST", "NOT_FOUND", "CONFLICT", "STEP_UP_REQUIRED", "NOT_READY", "UNAVAILABLE", "CLIENT_UPDATE_REQUIRED", "INTERNAL_ERROR", "RATE_LIMITED", "QUOTA_EXCEEDED"] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
+export const adminConfigurationErrorReasonSchema = z.enum(["CREDENTIAL_UNAVAILABLE", "ENDPOINT_INVALID", "ENDPOINT_UNREACHABLE"]);
+export type AdminConfigurationErrorReason = z.infer<typeof adminConfigurationErrorReasonSchema>;
 export const adminErrorSchema = z.strictObject({
   error: z.strictObject({
     code: z.enum(ADMIN_ERROR_CODES),

@@ -47,6 +47,16 @@ export function parsePrice(value: string): string {
   const [whole, fraction = ""] = value.split(".");
   return String(BigInt(whole) * BigInt(1000000000) + BigInt(fraction.padEnd(9, "0")));
 }
+function configurationErrorMessage(error: string | null, locale: "zh" | "en"): string | null {
+  const zh = locale === "zh";
+  switch (error) {
+    case "CREDENTIAL_UNAVAILABLE": return zh ? "服务器未配置此凭据引用，请填写已配置的环境变量名。" : "This credential reference is not configured on the server. Enter a configured environment variable name.";
+    case "ENDPOINT_INVALID": return zh ? "接入地址无效，请填写规范的公网 HTTPS 地址。" : "The endpoint URL is invalid. Enter a canonical public HTTPS address.";
+    case "ENDPOINT_UNREACHABLE": return zh ? "接入地址无法解析到可用的公网地址，请检查地址与服务器网络。" : "The endpoint cannot be resolved to an available public address. Check the URL and server network.";
+    case "STEP_UP_REQUIRED": return zh ? "请先到运行控制完成 TOTP 验证，再重试保存。" : "Complete TOTP verification under Runtime controls, then retry saving.";
+    default: return error;
+  }
+}
 function Field({
   label,
   children
@@ -107,6 +117,7 @@ function EntityEditor({
   const [mode, setMode] = useState(initialMode);
   const [baseline, setBaseline] = useState(record);
   const formId = useId();
+  const credentialHintId = useId();
   const [localError, setLocalError] = useState<string | null>(null);
   const mutation = useAdminMutation(client, actor, onCommitted);
   const optionsEnabled = section === "configurations" || section === "rules";
@@ -282,7 +293,7 @@ function EntityEditor({
     {!readonly && !historyOpen && <Button type="submit" form={formId} disabled={!canUse || mutation.busy}>{mutation.busy ? l("Saving…", "正在保存…") : mutation.uncertain ? l("Retry same operation", "重试同一操作") : l("Save", "保存")}</Button>}
   </>}>
     {(!ready || !metadataReady) && <p role="status">{l("Loading…", "正在加载…")}</p>}
-    {(localError || mutation.error || adapters.error || documents.error || configurations.error) && <p role="alert" className="rounded-lg bg-danger-soft p-3 text-sm text-danger-foreground">{mutation.error === "RESULT_UNKNOWN" ? l("Result unknown. Keep this dialog open and retry the same operation.", "结果尚不确定，请保留此弹窗并重试同一操作。") : mutation.error === "CONFLICT" ? l("This record changed. Your edits are preserved. Refresh and load the latest record before saving again.", "记录已变化。你的修改已保留，请刷新并载入最新记录后再保存。") : localError ?? mutation.error ?? adapters.error ?? documents.error ?? configurations.error}</p>}
+    {(localError || mutation.error || adapters.error || documents.error || configurations.error) && <p role="alert" className="rounded-lg bg-danger-soft p-3 text-sm text-danger-foreground">{mutation.error === "RESULT_UNKNOWN" ? l("Result unknown. Keep this dialog open and retry the same operation.", "结果尚不确定，请保留此弹窗并重试同一操作。") : mutation.error === "CONFLICT" ? l("This record changed. Your edits are preserved. Refresh and load the latest record before saving again.", "记录已变化。你的修改已保留，请刷新并载入最新记录后再保存。") : localError ?? configurationErrorMessage(mutation.error, locale) ?? adapters.error ?? documents.error ?? configurations.error}</p>}
     {(newer || mutation.error === "CONFLICT") && <div className="flex flex-wrap items-center gap-2 text-sm"><span>{l("A newer record is available.", "记录已有更新。")}</span><Button variant="secondary" type="button" onClick={reload}>{l("Refresh record", "刷新记录")}</Button><Button variant="secondary" type="button" onClick={replaceBaseline} disabled={!ready || !newer || mutation.busy || mutation.uncertain}>{l("Load latest", "载入最新记录")}</Button></div>}
     <fieldset disabled={!canUse || mutation.busy || mutation.uncertain} hidden={!ready} className="min-w-0 space-y-4">
       {baseline && ["configurations", "rules", "users"].includes(section) && !["accounts", "allowed_users"].includes(kind) && <div className="flex gap-2"><Button variant="secondary" size="sm" type="button" onClick={() => setHistoryOpen(false)}>{l("Details", "详情")}</Button><Button variant="secondary" size="sm" type="button" onClick={() => setHistoryOpen(true)}>{l("History", "变更历史")}</Button></div>}
@@ -311,10 +322,11 @@ function EntityEditor({
               ...configuration,
               model_id: event.target.value
             })} /></Field>
-              <Field label={l("Credential reference", "凭据引用名称")}><Input required autoComplete="off" spellCheck={false} placeholder="AI_PROVIDER_KEY_…" value={configuration.credential_ref} onChange={event => setConfiguration({
+              <Field label={l("Credential reference", "凭据引用名称")}><Input required pattern="AI_PROVIDER_KEY_[A-Z0-9_]+" aria-describedby={credentialHintId} autoComplete="off" spellCheck={false} placeholder="AI_PROVIDER_KEY_…" value={configuration.credential_ref} onChange={event => setConfiguration({
               ...configuration,
               credential_ref: event.target.value
             })} /></Field>
+              <p id={credentialHintId} className="text-xs leading-5 text-foreground-muted">{l("Enter the name of an environment variable configured on the server, not an API key.", "填写服务器已配置的环境变量名，不是 API Key。")}</p>
               <Field label={l("Data-processing disclosure", "数据处理说明")}><select required className={selectClass} value={configuration.legal_document_id} onChange={event => {
               const doc = legalDocs.find(item => item.document_id === event.target.value);
               setConfiguration({

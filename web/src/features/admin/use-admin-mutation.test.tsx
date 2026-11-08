@@ -13,16 +13,29 @@ function harness() {
   const onCommitted = vi.fn();
   return { ...renderHook(() => { const actor = useAdminSession(client); return { actor, mutation: useAdminMutation(client, actor, onCommitted) }; }), onCommitted };
 }
-const error = (code: string, status: number) => new Response(JSON.stringify({ error: { code } }), { status });
+const error = (code: string, status: number, reason?: string) => new Response(JSON.stringify({ error: { code, ...(reason ? { reason } : {}) } }), { status });
 const success = () => new Response(JSON.stringify({ operation_id: "20", operation: "configuration_save", entity_kind: "configurations", entity_id: "3", revision: "1", time_committed: "2026-11-08T00:00:00Z" }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("Admin mutation retry identity", () => {
   it("keeps an unknown CREATE frozen through a retry's transient 4xx", async () => {
-    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Response lost after commit")).mockResolvedValueOnce(error("INVALID_REQUEST", 400)).mockResolvedValueOnce(success()); vi.stubGlobal("fetch", fetcher);
+    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Response lost after commit")).mockResolvedValueOnce(error("INVALID_REQUEST", 400, "CREDENTIAL_UNAVAILABLE")).mockResolvedValueOnce(success()); vi.stubGlobal("fetch", fetcher);
     const h = harness(); await waitFor(() => expect(h.result.current.actor.ready).toBe(true));
     await act(() => h.result.current.mutation.submit(payload(0))); expect(h.result.current.mutation.uncertain).toBe(true);
-    await act(() => h.result.current.mutation.submit(payload(1))); const stillUnknown = h.result.current.mutation.uncertain;
+    await act(() => h.result.current.mutation.submit(payload(1))); const stillUnknown = h.result.current.mutation.uncertain; const unresolvedError = h.result.current.mutation.error;
     await act(() => h.result.current.mutation.submit(payload(2)));
-    const sent = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init.body))); expect(sent).toHaveLength(3); expect(sent[1]).toEqual(sent[0]); expect(sent[2]).toEqual(sent[0]); expect(stillUnknown).toBe(true); expect(h.onCommitted).toHaveBeenCalledOnce(); expect(h.result.current.mutation.uncertain).toBe(false);
+    const sent = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init.body))); expect(sent).toHaveLength(3); expect(sent[1]).toEqual(sent[0]); expect(sent[2]).toEqual(sent[0]); expect(stillUnknown).toBe(true); expect(unresolvedError).toBe("RESULT_UNKNOWN"); expect(h.onCommitted).toHaveBeenCalledOnce(); expect(h.result.current.mutation.uncertain).toBe(false);
   });
+  it.each(["CREDENTIAL_UNAVAILABLE", "ENDPOINT_INVALID", "ENDPOINT_UNREACHABLE"])("uses the safe configuration failure reason %s", async reason => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(error("INVALID_REQUEST", 400, reason)));
+    const h = harness(); await waitFor(() => expect(h.result.current.actor.ready).toBe(true));
+    await act(() => h.result.current.mutation.submit(payload(0)));
+    expect(h.result.current.mutation.error).toBe(reason); expect(h.result.current.mutation.uncertain).toBe(false);
+  });
+  it.each(["UNRECOGNIZED_REASON", "Private stack at /internal/config", "CREDENTIAL_UNAVAILABLE\nextra text"])("does not expose arbitrary backend reason %s", async reason => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(error("INVALID_REQUEST", 400, reason)));
+    const h = harness(); await waitFor(() => expect(h.result.current.actor.ready).toBe(true));
+    await act(() => h.result.current.mutation.submit(payload(0)));
+    expect(h.result.current.mutation.error).toBe("INVALID_REQUEST"); expect(h.result.current.mutation.uncertain).toBe(false);
+  });
+
 });
