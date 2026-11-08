@@ -13,6 +13,7 @@ const repoRoot = basename(invocationRoot) === "web"
   : invocationRoot;
 const status = spawnSync("pnpm", ["exec", "supabase", "status", "-o", "env"], {
   cwd: repoRoot,
+  env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1" },
   shell: process.platform === "win32",
   encoding: "utf8",
   timeout: 120_000,

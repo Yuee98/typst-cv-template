@@ -205,7 +205,7 @@ export function makeClient(options: MakeClientOptions = {}) {
             ...response,
             availability: {
               ...response.availability,
-              options: response.availability.options.map(option => ({
+              configurations: response.availability.configurations.map(option => ({
                 ...option,
                 status: option.status === "UNAVAILABLE" ? "UNAVAILABLE" as const : termsAccepted ? "READY" as const : "CONSENT_REQUIRED" as const
               }))

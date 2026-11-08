@@ -18,18 +18,17 @@ const session = (user = "A", token = user) => ({
 function context(instance = instance1, revision = "1") {
   return {
     ready: true,
-    capabilities: [],
+    capabilities: {
+      cv_schema_version: 7,
+      encrypted_envelope_version: 1
+    },
     environment: "LOCAL",
     database_instance_id: instance,
-    contract_code: "cv_app_db_1",
-    member_id: "adm_AAAAAAAAAAAA",
-    aal: "aal1",
+    contract_code: "cv_app_db_2",
+    member_id: "1",
     control: {
       enabled: false,
-      active_policy_version_id: null,
       audience: "ALLOWLIST",
-      generation: "1",
-      close_cycle: "1",
       revision,
       user_daily_limit: "20",
       global_daily_limit: "2000",
@@ -90,8 +89,8 @@ function harness(initial: Partial<AdminReadParams> = {}, existingAuth = auth(), 
   });
   if (!existingCache) clients.push(queryClient);
   const params: AdminReadParams = {
-    section: "providers",
-    kind: "versions",
+    section: "configurations",
+    kind: "configurations",
     cursor: null,
     ...initial
   };
@@ -160,34 +159,34 @@ describe("Admin read lifetime and cache isolation", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(String(vi.mocked(fetch).mock.calls[0][0])).not.toContain("database_instance_id");
     expect(h.queryClient.getQueryData(adminReadKey(project, h.result.current.actor, instance1, {
-      section: "providers",
-      kind: "versions",
+      section: "configurations",
+      kind: "configurations",
       cursor: null
     }))).toBeTruthy();
     expect(h.queryClient.getQueryCache().getAll().some(query => query.queryKey[5] === "bootstrap")).toBe(false);
   });
   it("uses one request per new page and revisits fresh data without rolling shared context back", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(response("providers", instance1, "1")).mockResolvedValueOnce(response("profiles", instance1, "2"));
+    vi.mocked(fetch).mockResolvedValueOnce(response("configurations", instance1, "1")).mockResolvedValueOnce(response("rules", instance1, "2"));
     const h = harness();
     await done(h);
     h.go({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     h.go({
-      section: "providers"
+      section: "configurations"
     });
     await done(h);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(h.result.current.read.result?.context.control.revision).toBe("2");
     expect(h.result.current.read.result?.data).toEqual({
       records: [{
-        label: "providers"
+        label: "configurations"
       }],
       next_cursor: null
     });
   });
-  it.each(["overview", "controls"] as const)("always refreshes %s when returning", async section => {
+  it.each(["controls"] as const)("always refreshes %s when returning", async section => {
     vi.mocked(fetch).mockImplementation(async input => response("row", instance1, "1", String(input).includes(`section=${section}`) ? null : {
       records: [],
       next_cursor: null
@@ -197,7 +196,7 @@ describe("Admin read lifetime and cache isolation", () => {
     });
     await done(h);
     h.go({
-      section: "providers"
+      section: "configurations"
     });
     await done(h);
     h.go({
@@ -210,52 +209,52 @@ describe("Admin read lifetime and cache isolation", () => {
     const h = harness();
     await done(h);
     const key = adminReadKey(project, h.result.current.actor, instance1, {
-      section: "providers",
-      kind: "versions",
+      section: "configurations",
+      kind: "configurations",
       cursor: null
     });
     h.queryClient.setQueryData(key, h.queryClient.getQueryData(key), {
       updatedAt: Date.now() - 31_000
     });
     h.go({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     h.go({
-      section: "providers"
+      section: "configurations"
     });
     await done(h);
     expect(fetch).toHaveBeenCalledTimes(3);
   });
   it("separates kind, cursor, record and project keys", async () => {
     const h = harness({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     h.go({
-      section: "profiles",
-      kind: "identities"
+      section: "rules",
+      kind: "adapters"
     });
     await done(h);
     h.go({
-      section: "profiles",
+      section: "rules",
       cursor: "next"
     });
     await done(h);
     vi.mocked(fetch).mockResolvedValueOnce(response("detail", instance1, "1", {
-      external_id: "pfv_AAAAAAAAAAAA"
+      id: "11"
     }));
     h.go({
-      section: "profiles",
-      recordId: "pfv_AAAAAAAAAAAA"
+      section: "rules",
+      recordId: "11"
     });
     await done(h);
     h.go({
-      section: "profiles"
+      section: "rules"
     }, "http://127.0.0.2:54321");
     await done(h);
     expect(fetch).toHaveBeenCalledTimes(5);
-    expect(String(vi.mocked(fetch).mock.calls[1][0])).toContain("kind=identities");
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toContain("kind=adapters");
     expect(String(vi.mocked(fetch).mock.calls[2][0])).toContain("after=next");
     expect(String(vi.mocked(fetch).mock.calls[4][0])).not.toContain("database_instance_id");
   });
@@ -298,7 +297,7 @@ describe("Admin read lifetime and cache isolation", () => {
     const h = harness();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     h.go({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
@@ -318,13 +317,13 @@ describe("Admin read lifetime and cache isolation", () => {
     const h = harness();
     await done(h);
     h.go({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     expect(h.result.current.read.error).toBe(status === 401 ? "UNAUTHORIZED" : "FORBIDDEN");
     expect(h.queryClient.getQueryCache().getAll()).toHaveLength(0);
     h.go({
-      section: "providers"
+      section: "configurations"
     });
     await done(h);
     expect(fetch).toHaveBeenCalledTimes(3);
@@ -345,11 +344,11 @@ describe("Admin read lifetime and cache isolation", () => {
       status: 403
     })));
     h.go({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     h.go({
-      section: "providers"
+      section: "configurations"
     });
     await done(h);
     expect(fetch).toHaveBeenCalledTimes(3);
@@ -371,7 +370,7 @@ describe("Admin read lifetime and cache isolation", () => {
     const h = harness();
     await done(h);
     h.go({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     expect(fetch).toHaveBeenCalledTimes(3);
@@ -395,23 +394,23 @@ describe("Admin read lifetime and cache isolation", () => {
   });
   it("invalidates related lists and details after a mutation while retaining unrelated users", async () => {
     const h = harness({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     const key = (section: AdminReadParams["section"], recordId?: string) => adminReadKey(project, h.result.current.actor, instance1, {
       section,
-      kind: "versions",
+      kind: "configurations",
       cursor: null,
       recordId
     });
-    for (const section of ["users", "prices", "audit"] as const) h.queryClient.setQueryData(key(section), {
+    for (const section of ["users", "configurations", "audit"] as const) h.queryClient.setQueryData(key(section), {
       context: context(),
       data: {
         records: [],
         next_cursor: null
       }
     });
-    h.queryClient.setQueryData(key("profiles", "pfv_AAAAAAAAAAAA"), {
+    h.queryClient.setQueryData(key("rules", "11"), {
       context: context(),
       data: {}
     });
@@ -419,17 +418,17 @@ describe("Admin read lifetime and cache isolation", () => {
     await done(h);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(h.queryClient.getQueryState(key("users"))?.isInvalidated).toBe(false);
-    expect(h.queryClient.getQueryState(key("prices"))?.isInvalidated).toBe(true);
+    expect(h.queryClient.getQueryState(key("configurations"))?.isInvalidated).toBe(true);
     expect(h.queryClient.getQueryState(key("audit"))?.isInvalidated).toBe(true);
-    expect(h.queryClient.getQueryState(key("profiles", "pfv_AAAAAAAAAAAA"))?.isInvalidated).toBe(true);
+    expect(h.queryClient.getQueryState(key("rules", "11"))?.isInvalidated).toBe(true);
   });
   it("refreshes a mounted related page after an external invalidation", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response("old prices")).mockResolvedValueOnce(response("new prices"));
     const h = harness({
-      section: "prices"
+      section: "configurations"
     });
     await done(h);
-    act(() => invalidateAdminReads(h.queryClient, project, h.result.current.actor, "profiles"));
+    act(() => invalidateAdminReads(h.queryClient, project, h.result.current.actor, "rules"));
     await waitFor(() => expect(h.result.current.read.result?.data).toEqual({
       records: [{
         label: "new prices"
@@ -441,13 +440,13 @@ describe("Admin read lifetime and cache isolation", () => {
   it("refreshes B when an unmounted A's mutation completes after soft navigation", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response("profile A")).mockResolvedValueOnce(response("old prices B")).mockResolvedValueOnce(response("updated prices B"));
     const a = harness({
-      section: "profiles"
+      section: "rules"
     });
     await done(a);
     const completeOldMutation = a.result.current.read.refreshAfterMutation;
     a.unmount();
     const b = harness({
-      section: "prices"
+      section: "configurations"
     }, a.auth, a.queryClient);
     await done(b);
     act(() => completeOldMutation());
@@ -463,18 +462,18 @@ describe("Admin read lifetime and cache isolation", () => {
     const pending = deferred<Response>();
     vi.mocked(fetch).mockResolvedValueOnce(response("profile A")).mockResolvedValueOnce(response("cached prices B")).mockReturnValueOnce(pending.promise).mockResolvedValueOnce(response("prices after A committed"));
     const a = harness({
-      section: "profiles"
+      section: "rules"
     });
     await done(a);
     const completeOldMutation = a.result.current.read.refreshAfterMutation;
     a.unmount();
     const b = harness({
-      section: "prices"
+      section: "configurations"
     }, a.auth, a.queryClient);
     await done(b);
     const key = adminReadKey(project, b.result.current.actor, instance1, {
-      section: "prices",
-      kind: "versions",
+      section: "configurations",
+      kind: "configurations",
       cursor: null
     });
     act(() => b.result.current.read.refreshRead());
@@ -495,7 +494,7 @@ describe("Admin read lifetime and cache isolation", () => {
   it("invalidates the same user's current epoch when a pre-refresh mutation commits late", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response("initial")).mockResolvedValueOnce(response("before commit")).mockResolvedValueOnce(response("after commit"));
     const h = harness({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     const complete = h.result.current.read.refreshAfterMutation;
@@ -514,7 +513,7 @@ describe("Admin read lifetime and cache isolation", () => {
     const pending = deferred<Response>();
     vi.mocked(fetch).mockResolvedValueOnce(response("initial")).mockReturnValueOnce(pending.promise).mockResolvedValueOnce(response("after commit"));
     const h = harness({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     const complete = h.result.current.read.refreshAfterMutation;
@@ -533,7 +532,7 @@ describe("Admin read lifetime and cache isolation", () => {
   it.each(["account", "returning-account", "instance"] as const)("rejects a late mutation invalidation after a different %s is active", async transition => {
     vi.mocked(fetch).mockResolvedValueOnce(response("initial"));
     const h = harness({
-      section: "profiles"
+      section: "rules"
     });
     await done(h);
     const complete = h.result.current.read.refreshAfterMutation;
@@ -564,4 +563,28 @@ describe("Admin read lifetime and cache isolation", () => {
     });
     expect(fetch).toHaveBeenCalledTimes(calls);
   });
+  it("rechecks every parallel history reader after a second commit during an already-invalidated read", async () => {
+    const pendingA = deferred<Response>(), pendingB = deferred<Response>();
+    let readsA = 0, readsB = 0;
+    vi.mocked(fetch).mockImplementation(async input => {
+      const query = new URL(String(input), "http://local.test").searchParams;
+      if (query.get("section") !== "audit") return response("writer");
+      if (query.get("kind") === "configurations") { readsA++; return readsA === 1 ? response("original configuration audit") : readsA === 2 ? pendingA.promise : response("configuration audit after commit"); }
+      readsB++; return readsB === 1 ? response("original price audit") : readsB === 2 ? pendingB.promise : response("price audit after commit");
+    });
+    const shared = auth(), writer = harness({}, shared); await done(writer);
+    const commit = writer.result.current.read.refreshAfterMutation, actor = writer.result.current.actor;
+    writer.unmount();
+    const a = harness({ section: "audit", kind: "configurations", entityId: "1" }, shared, writer.queryClient); await done(a);
+    const b = harness({ section: "audit", kind: "prices", entityId: "1" }, shared, writer.queryClient); await done(b);
+    act(() => invalidateAdminReads(writer.queryClient, project, actor, "configurations"));
+    await waitFor(() => { expect(readsA).toBe(2); expect(readsB).toBe(2); });
+    act(() => commit());
+    await act(async () => pendingA.resolve(response("configuration audit snapshot before commit")));
+    await waitFor(() => expect(a.result.current.read.result?.data).toEqual({ records: [{ label: "configuration audit after commit" }], next_cursor: null }));
+    await act(async () => pendingB.resolve(response("price audit snapshot before commit")));
+    await waitFor(() => expect(b.result.current.read.result?.data).toEqual({ records: [{ label: "price audit after commit" }], next_cursor: null }));
+    expect(readsA).toBe(3); expect(readsB).toBe(3);
+  });
+
 });

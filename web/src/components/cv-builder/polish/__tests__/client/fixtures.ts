@@ -40,8 +40,8 @@ export const DISABLED_AVAILABILITY_BODY = {
   availability: {
     ...fixtureAvailability().availability,
     enabled: false,
-    options: [],
-    defaultOptionId: null
+    configurations: [],
+    defaultConfigId: null
   }
 };
 export function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}) {

@@ -69,7 +69,7 @@ describe("current database execution", () => {
     await executePolish(deps, user, request, signal());
     await expect(executePolish(deps, user, {
       ...request,
-      expectedRoute: polishExpectedRouteFromAvailability(availability, availability.options[1].optionId)!
+      expectedRoute: polishExpectedRouteFromAvailability(availability, availability.configurations[1].configId)!
     }, signal())).rejects.toMatchObject({
       code: "CONFLICT",
       reason: "IDEMPOTENCY_MISMATCH"
@@ -86,7 +86,7 @@ describe("current database execution", () => {
       complete
     });
     deps.db.call = async (name, input) => name === "ai_attempt_start" ? {
-      attempt_id: "att_000000000001",
+      request_id: "req_000000000001",
       attempt_no: 1,
       state: "STARTED",
       may_transmit: false
@@ -197,7 +197,7 @@ describe("current database execution", () => {
       reason: "EXECUTION_CONFIG_UNAVAILABLE"
     });
     const q = await deps.db.call("ai_quota", {
-      contract_code: "cv_app_db_1",
+      contract_code: "cv_app_db_2",
       owner_auth_user_id: user,
       database_instance_id: fixtureInstance
     });
@@ -240,7 +240,7 @@ describe("lost admission responses", () => {
     });
     expect(complete).not.toHaveBeenCalled();
     const q = await original("ai_quota", {
-      contract_code: "cv_app_db_1",
+      contract_code: "cv_app_db_2",
       owner_auth_user_id: user,
       database_instance_id: fixtureInstance
     });
@@ -275,7 +275,7 @@ describe("failed upstream billing evidence", () => {
       reason: "FAILED_UPSTREAM"
     });
     expect(facts).toHaveLength(2);
-    expect(facts.every(fact => fact.provider_billable === null && fact.estimated_cost_nanos === null)).toBe(true);
+    expect(facts.every(fact => fact.provider_billable === null && fact.usage_complete === false && !("estimated_cost_nanos" in fact))).toBe(true);
   });
 });
 describe("canonical database quota", () => {
@@ -310,7 +310,7 @@ describe("canonical database quota", () => {
       else if (result && typeof result === "object" && "quota" in result) observed.push(result.quota);
       return result;
     };
-    const input = { contract_code: "cv_app_db_1", owner_auth_user_id: user, database_instance_id: fixtureInstance };
+    const input = { contract_code: "cv_app_db_2", owner_auth_user_id: user, database_instance_id: fixtureInstance };
     await deps.db.call("ai_quota", input);
     const result = await executePolish(deps, user, request, signal());
     await deps.db.call("ai_quota", input);
@@ -323,8 +323,132 @@ describe("canonical database quota", () => {
     const { deps, request } = await setup();
     deps.prepare = vi.fn(deps.prepare!);
     for (let i = 0; i < 20; i++) await executePolish(deps, user, { ...request, clientRequestId: crypto.randomUUID() }, signal());
-    expect(await deps.db.call("ai_quota", { contract_code: "cv_app_db_1", owner_auth_user_id: user, database_instance_id: fixtureInstance })).toMatchObject({ limit: "20", remaining: "0" });
+    expect(await deps.db.call("ai_quota", { contract_code: "cv_app_db_2", owner_auth_user_id: user, database_instance_id: fixtureInstance })).toMatchObject({ limit: "20", remaining: "0" });
     await expect(executePolish(deps, user, { ...request, clientRequestId: crypto.randomUUID() }, signal())).rejects.toMatchObject({ code: "QUOTA_EXCEEDED" });
     expect(deps.prepare).toHaveBeenCalledTimes(20);
+  });
+});
+
+describe("mutable configuration and frozen request boundaries", () => {
+  it("uses the reserved endpoint, model and credential reference after the current configuration changes", async () => {
+    const { deps, request } = await setup();
+    const original = deps.db.call;
+    const prepared: Array<Record<string, unknown>> = [];
+    const prepare = deps.prepare!;
+    deps.prepare = (configuration, onTransmit) => {
+      prepared.push({ ...configuration });
+      return prepare(configuration, onTransmit);
+    };
+    deps.db.call = async (name, input) => {
+      const result = await original(name, input);
+      if (name === "ai_reserve") Object.assign(deps.fixture.configurations[0], { endpoint_url: "https://another-supplier.example/responses", model_id: "another-model", credential_ref: "AI_PROVIDER_KEY_ROTATED", revision: "2" });
+      return result;
+    };
+    await executePolish(deps, user, request, signal());
+    expect(prepared).toEqual([expect.objectContaining({ endpoint_url: "https://api.deepseek.com/responses", model_id: "fixture-model-1", credential_ref: "AI_PROVIDER_KEY_FIXTURE_1" })]);
+  });
+  it("does not resurrect a reserved request after disable followed by enable", async () => {
+    const { deps, request } = await setup();
+    const original = deps.db.call, complete = vi.fn();
+    deps.prepare = () => ({ complete });
+    deps.db.call = async (name, input) => {
+      const result = await original(name, input);
+      if (name === "ai_reserve") { deps.fixture.setEnabled(false); deps.fixture.setEnabled(true); }
+      return result;
+    };
+    await expect(executePolish(deps, user, request, signal())).rejects.toMatchObject({ reason: "REQUEST_NOT_TRANSMITTABLE" });
+    expect(complete).not.toHaveBeenCalled();
+    expect(await original("ai_quota", { contract_code: "cv_app_db_2", database_instance_id: fixtureInstance, owner_auth_user_id: user })).toMatchObject({ remaining: "20" });
+  });
+  it("isolates subject HMACs by the frozen connection and recipient endpoint", async () => {
+    const subjects: string[] = [];
+    for (const [configId, endpoint, recipientAudit] of [["1", "https://first.example/responses", "11"], ["2", "https://first.example/responses", "11"], ["1", "https://second.example/responses", "11"], ["1", "https://first.example/responses", "12"]]) {
+      const { deps, request } = await setup(), original = deps.db.call, prepare = deps.prepare!;
+      deps.db.call = async (name, input) => {
+        const result = await original(name, input);
+        return name === "ai_execution_snapshot" ? { ...(result as Record<string, unknown>), config_id: configId, endpoint_url: endpoint, provider_document_audit_id: recipientAudit } : result;
+      };
+      deps.prepare = (configuration, onTransmit) => {
+        const provider = prepare(configuration, onTransmit);
+        return { complete: async (input, options) => { subjects.push(input.providerSubjectId); return provider.complete(input, options); } };
+      };
+      await executePolish(deps, user, request, signal());
+    }
+    expect(new Set(subjects).size).toBe(4);
+    expect(subjects.every(subject => /^[0-9a-f]{64}$/.test(subject))).toBe(true);
+  });
+  it("sends structured usage facts without client cost, provider code or attempt identifiers", async () => {
+    const { deps, request } = await setup(), original = deps.db.call;
+    const facts: Array<Record<string, unknown>> = [];
+    deps.db.call = async (name, input) => { if (name === "ai_attempt_complete") facts.push(input); return original(name, input); };
+    await executePolish(deps, user, request, signal());
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toMatchObject({ attempt_no: 1, usage_complete: true, usage: { input_total: "10", cache_write: null, output: "10" } });
+    expect(Object.keys(facts[0]).sort()).toEqual(["contract_code", "owner_auth_user_id", "database_instance_id", "request_id", "attempt_no", "state", "transmitted", "provider_billable", "retry_allowed", "usage_complete", "usage"].sort());
+  });
+});
+
+describe("late settlement after cancellation authority disappears", () => {
+  it("finalizes persisted terminal facts even if cancellation fails after the account was deleted", async () => {
+    const { deps, request } = await setup(), original = deps.db.call, prepare = deps.prepare!;
+    const controller = new AbortController();
+    const calls: string[] = [];
+    deps.db.call = async (name, input) => {
+      calls.push(name);
+      if (name === "ai_cancel") throw Object.assign(new Error("account no longer active"), { code: "UNAUTHORIZED" });
+      return original(name, input);
+    };
+    deps.prepare = (configuration, onTransmit) => {
+      const provider = prepare(configuration, onTransmit);
+      return { complete: async (...args) => { const result = await provider.complete(...args); controller.abort(); return result; } };
+    };
+    // The response and usage are already known. A failed cancel cannot suppress
+    // its trusted terminal write or the service-only finalization path.
+    await expect(executePolish(deps, user, request, controller.signal)).rejects.toMatchObject({ code: "UNAVAILABLE", reason: "CANCELED" });
+    expect(calls).toContain("ai_cancel");
+    expect(calls.slice(-2)).toEqual(["ai_attempt_complete", "ai_finalize"]);
+    const quota = await original("ai_quota", { contract_code: "cv_app_db_2", database_instance_id: fixtureInstance, owner_auth_user_id: user });
+    expect(quota).toMatchObject({ reserved: "0", charged: "1" });
+  });
+});
+
+describe("strict terminal acknowledgment", () => {
+  it("does not retry when completion committed but its acknowledgment is malformed", async () => {
+    const { deps, request } = await setup(), original = deps.db.call, prepare = deps.prepare!;
+    let transmissions = 0;
+    deps.prepare = (configuration, onTransmit) => {
+      const provider = prepare(configuration, onTransmit);
+      return { complete: async (...args) => { transmissions++; const response = await provider.complete(...args); return { ...response, text: "invalid JSON" }; } };
+    };
+    deps.db.call = async (name, input) => { const result = await original(name, input); return name === "ai_attempt_complete" ? null : result; };
+    await expect(executePolish(deps, user, request, signal())).rejects.toThrow();
+    expect(transmissions).toBe(1);
+  });
+});
+
+describe("cancellation while waiting before another transmission", () => {
+  it.each(["snapshot", "retry_backoff"] as const)("still finalizes known facts when cancel fails during %s", async phase => {
+    const { deps, request } = await setup(), original = deps.db.call;
+    const controller = new AbortController();
+    const calls: string[] = [];
+    let transmissions = 0;
+    deps.prepare = (_configuration, onTransmit) => ({ complete: async () => {
+      transmissions++;
+      onTransmit();
+      throw Object.assign(new Error("known rate-limit response"), { code: "UPSTREAM_ERROR", upstreamStatus: 429, retryAfterMs: 5000 });
+    } });
+    deps.db.call = async (name, input) => {
+      calls.push(name);
+      if (name === "ai_cancel") throw Object.assign(new Error("cancellation authority disappeared"), { code: "UNAUTHORIZED" });
+      const result = await original(name, input);
+      if (phase === "snapshot" && name === "ai_execution_snapshot") controller.abort();
+      if (phase === "retry_backoff" && name === "ai_attempt_complete") setTimeout(() => controller.abort(), 0);
+      return result;
+    };
+    await expect(executePolish(deps, user, request, controller.signal)).rejects.toMatchObject({ code: "UNAVAILABLE", reason: phase === "snapshot" ? "RELEASED" : "FAILED_UPSTREAM" });
+    expect(transmissions).toBe(phase === "snapshot" ? 0 : 1);
+    expect(calls).toContain("ai_cancel");
+    expect(calls.at(-1)).toBe("ai_finalize");
+    expect(await original("ai_quota", { contract_code: "cv_app_db_2", database_instance_id: fixtureInstance, owner_auth_user_id: user })).toMatchObject({ reserved: "0", charged: "0", remaining: "20" });
   });
 });

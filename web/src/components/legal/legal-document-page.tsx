@@ -1,14 +1,16 @@
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
-
 import { Link } from "@/i18n/navigation";
 import type { LegalDocument } from "@/content/legal";
-
-export function LegalDocumentPage({ document, children }: { document: LegalDocument; children?: ReactNode }) {
+export function LegalDocumentPage({
+  document,
+  children
+}: {
+  document: LegalDocument;
+  children?: ReactNode;
+}) {
   const t = useTranslations("LegalDocumentPage");
-
-  return (
-    <main className="h-screen overflow-y-auto bg-bg px-4 py-8 text-foreground sm:px-6 lg:px-8">
+  return <main className="h-screen overflow-y-auto bg-bg px-4 py-8 text-foreground sm:px-6 lg:px-8">
       <article className="mx-auto max-w-3xl rounded-xl border border-border bg-surface px-5 py-6 shadow-sm sm:px-8 sm:py-8">
         <nav className="mb-8 flex flex-wrap items-center gap-3 text-sm text-foreground-muted">
           <Link className="font-medium text-accent-soft-foreground hover:text-accent" href="/">
@@ -23,68 +25,38 @@ export function LegalDocumentPage({ document, children }: { document: LegalDocum
             {document.title}
           </h1>
           <p className="mt-2 text-sm text-foreground-muted">
-            {t("effectiveDate", { date: document.effectiveDate })}
+            {t("effectiveDate", {
+            date: document.effectiveDate
+          })}
           </p>
           <div className="mt-5 space-y-3 text-base leading-7 text-foreground-muted">
-            {document.intro.map((paragraph) => (
-              <p key={paragraph}>{paragraph}</p>
-            ))}
+            {document.intro.map(paragraph => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </header>
 
         <div className="space-y-8 pt-8">
-          {document.sections.map((section, index) => (
-            <section
-              key={section.id ?? section.heading}
-              className="scroll-mt-6 space-y-3"
-              id={section.id}
-            >
+          {document.sections.map((section, index) => <section key={section.id ?? section.heading} className="scroll-mt-6 space-y-3" id={section.id}>
               <h2 className="text-lg font-semibold text-foreground">
                 {index + 1}. {section.heading}
               </h2>
               <div className="space-y-3 text-base leading-7 text-foreground-muted">
-                {section.body.map((paragraph) => (
-                  <p key={paragraph}>{paragraph}</p>
-                ))}
-                {section.bullets && (
-                  <ul className="list-disc space-y-2 pl-6">
-                    {section.bullets.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                )}
-                {section.links && (
-                  <ul className="list-disc space-y-2 pl-6">
-                    {section.links.map((link) => (
-                      <li key={`${link.kind}:${link.href}:${link.label}`}>
-                        {link.kind === "external" ? (
-                          <a
-                            className="break-all font-medium text-accent-soft-foreground underline underline-offset-2 hover:text-accent"
-                            href={link.href}
-                            rel="noopener noreferrer"
-                            target="_blank"
-                          >
+                {section.body.map(paragraph => <p key={paragraph}>{paragraph}</p>)}
+                {section.bullets && <ul className="list-disc space-y-2 pl-6">
+                    {section.bullets.map(item => <li key={item}>{item}</li>)}
+                  </ul>}
+                {section.links && <ul className="list-disc space-y-2 pl-6">
+                    {section.links.map(link => <li key={`${link.kind}:${link.href}:${link.label}`}>
+                        {link.kind === "external" ? <a className="break-all font-medium text-accent-soft-foreground underline underline-offset-2 hover:text-accent" href={link.href} rel="noopener noreferrer" target="_blank">
                             {link.label}
-                          </a>
-                        ) : (
-                          <Link
-                            className="font-medium text-accent-soft-foreground underline underline-offset-2 hover:text-accent"
-                            href={link.href}
-                            locale={link.locale}
-                          >
+                          </a> : <Link className="font-medium text-accent-soft-foreground underline underline-offset-2 hover:text-accent" href={link.href} locale={link.locale}>
                             {link.label}
-                          </Link>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                          </Link>}
+                      </li>)}
+                  </ul>}
               </div>
-            </section>
-          ))}
+            </section>)}
           {children}
         </div>
       </article>
-    </main>
-  );
+    </main>;
 }

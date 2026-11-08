@@ -53,7 +53,7 @@ function createClient(initialResult: Promise<{
       rpc: vi.fn(async () => ({
         data: {
           ready: true,
-          contract_code: "cv_app_db_1",
+          contract_code: "cv_app_db_2",
           database_instance_id: "00000000-0000-4000-8000-000000000001"
         },
         error: null

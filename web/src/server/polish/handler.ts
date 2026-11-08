@@ -86,7 +86,7 @@ export const POST = handler(async (request, userId, deps, _instance, requestId) 
 export const GET = handler(async (_request, userId, deps, instance, requestId) => Response.json({
   requestId,
   quota: parseQuota(await deps.db.call("ai_quota", {
-    contract_code: "cv_app_db_1",
+    contract_code: "cv_app_db_2",
     owner_auth_user_id: userId,
     database_instance_id: instance
   }))

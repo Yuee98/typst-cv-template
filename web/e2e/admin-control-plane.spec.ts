@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { createHmac } from "node:crypto";
+import { resetAdminFixtureMfa } from "./admin-e2e-mfa";
+test.afterEach(async () => { await resetAdminFixtureMfa({ url: process.env.NEXT_PUBLIC_SUPABASE_URL, secretKey: process.env.SUPABASE_SERVICE_ROLE_KEY }); });
 const users = {
   admin: {
     email: "admin-e2e-admin@example.test",
@@ -67,207 +69,133 @@ test("ordinary Auth users cannot open Admin data", async ({
     exact: false
   })).toHaveCount(0);
 });
-test("soft navigation caches fresh pages and a committed profile invalidates its records", async ({
-  page
-}) => {
+test("soft navigation caches fresh lists and atomic configuration save refreshes its summary", async ({ page }) => {
   await login(page, users.admin);
-  await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
-  await page.waitForLoadState("networkidle");
+  await verifyTotp(page);
   const reads = recordReads(page);
-  const cold = page.waitForResponse(response => isAdminRead(response.request(), "providers"));
-  await page.goto("/en/admin/providers");
+  const cold = page.waitForResponse(response => isAdminRead(response.request(), "configurations"));
+  await page.goto("/en/admin/configurations");
   const envelope = await (await cold).json();
-  expect(envelope.context.environment).toBe("LOCAL");
-  expect(envelope.data.records.length).toBeGreaterThan(0);
+  expect(envelope.context.contract_code).toBe("cv_app_db_2");
   await page.waitForLoadState("networkidle");
-  expect(reads.map(request => new URL(request.url()).searchParams.get("section"))).toEqual(["providers"]);
+  expect(reads).toHaveLength(1);
   expect(new URL(reads[0].url()).searchParams.has("database_instance_id")).toBe(false);
   await page.evaluate(() => Object.assign(window, { __adminNavigationSentinel: "same-document" }));
   const documents: string[] = [];
-  page.on("request", request => {
-    if (request.resourceType() === "document") documents.push(request.url());
-  });
-  const provider = await page.locator("dd").filter({
-    hasText: /^prv_[0-9A-HJKMNP-TV-Z]{12}$/
-  }).first().innerText();
-  await openSection(page, "profiles");
+  page.on("request", request => { if (request.resourceType() === "document") documents.push(request.url()); });
+  await openSection(page, "rules");
   expect(reads).toHaveLength(2);
-  expect(new URL(reads[1].url()).searchParams.get("database_instance_id")).toBe(envelope.context.database_instance_id);
-  await page.locator('nav a[href="/en/admin/providers"]').click();
-  await expect(page.locator('nav a[href="/en/admin/providers"]')).toHaveAttribute("aria-current", "page");
-  await expect(page.locator("dd").filter({ hasText: provider }).first()).toBeVisible();
+  await page.locator('nav a[href="/en/admin/configurations"]').click();
+  await expect(page.getByRole("button", { name: "New", exact: true })).toBeEnabled();
   await page.waitForLoadState("networkidle");
   expect(reads).toHaveLength(2);
   expect(await page.evaluate(() => Reflect.get(window, "__adminNavigationSentinel"))).toBe("same-document");
   expect(documents).toEqual([]);
-  await page.locator('nav a[href="/en/admin/profiles"]').click();
-  await expect(page.getByLabel("provider id", { exact: true })).toBeVisible();
-  await page.waitForLoadState("networkidle");
-  expect(reads).toHaveLength(2);
-  const profileName = `Local browser draft ${Date.now()}`;
-  await page.getByLabel("provider id", {
-    exact: true
-  }).fill(provider);
-  await page.getByLabel("code", {
-    exact: true
-  }).fill(`ADMIN_E2E_${Date.now()}`);
-  await page.getByLabel("name", {
-    exact: true
-  }).fill(profileName);
-  await page.getByLabel("description", {
-    exact: true
-  }).fill("Real Auth browser test");
-  await page.getByLabel("Reason", {
-    exact: true
-  }).fill("Verify draft from the new baseline");
-  const refreshed = page.waitForResponse(response => isAdminRead(response.request(), "profiles"));
-  await page.getByRole("button", {
-    name: "Submit",
-    exact: true
-  }).click();
-  await expect(page.getByRole("status")).toContainText("Committed: op_");
-  expect((await refreshed).ok()).toBe(true);
-  expect(reads).toHaveLength(3);
-  const identities = page.waitForResponse(response => isAdminRead(response.request(), "profiles"));
-  await page.getByLabel("Record kind").selectOption("identities");
-  expect((await identities).ok()).toBe(true);
-  await expect(page.locator("article").filter({ hasText: profileName })).toBeVisible();
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Configuration name", { exact: true })).toBeEnabled();
+  const name = `ADMIN_E2E_BROWSER_${Date.now()}`;
+  await dialog.getByLabel("Configuration name", { exact: true }).fill(name);
+  await dialog.getByLabel("Endpoint URL", { exact: true }).fill("https://api.deepseek.com/responses");
+  await dialog.getByLabel("Model", { exact: true }).fill("deepseek-flash");
+  await dialog.getByLabel("Credential reference", { exact: true }).fill("AI_PROVIDER_KEY_ADMIN_E2E");
+  const disclosure = dialog.getByRole("combobox", { name: "Data-processing disclosure", exact: true });
+  const target = await disclosure.locator("option").filter({ hasText: /DeepSeek/ }).getAttribute("value");
+  expect(target).not.toBeNull(); await disclosure.selectOption(target!);
+  await dialog.getByLabel("Input", { exact: true }).fill("1.25");
+  for (const label of ["Cache read", "Cache write", "Output"]) await dialog.getByLabel(label, { exact: true }).fill("0");
+  const committed = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await committed).ok()).toBe(true);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  const row = page.getByRole("heading", { name, exact: true }).locator("../..");
+  await row.getByRole("button", { name: "View", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText(name);
+  await expect(page.getByRole("dialog")).toContainText("1.25 USD");
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+  await openSection(page, "rules");
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  const rule = page.getByRole("dialog");
+  await expect(rule.getByLabel("Fallback for other periods")).toBeEnabled();
+  await rule.getByLabel("Fallback for other periods").uncheck();
+  await rule.getByLabel("Start time", { exact: true }).fill("09:00");
+  await rule.getByLabel("End time", { exact: true }).fill("18:00");
+  await rule.getByRole("checkbox", { name: new RegExp(name) }).check();
+  const ruleSaved = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await rule.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await ruleSaved).ok()).toBe(true);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: /Monday 09:00–18:00 · Asia\/Shanghai/ })).toBeVisible();
+  await openSection(page, "controls");
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(page.getByText("TOTP factor removed.", { exact: true })).toBeVisible();
 });
 for (const code of ["UNAUTHORIZED", "FORBIDDEN"] as const) {
-  test(`${code} clears cached administrator records before a page is revisited`, async ({ page }) => {
-    await login(page, users.admin);
-    await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
-    await openSection(page, "providers");
-    await expect(page.locator("article").first()).toBeVisible();
-    await page.route("**/api/admin?**", async route => {
-      if (isAdminRead(route.request(), "profiles")) {
-        await route.fulfill({ status: code === "UNAUTHORIZED" ? 401 : 403, json: { error: { code } } });
-      } else await route.continue();
-    });
-    const failed = page.waitForResponse(response => isAdminRead(response.request(), "profiles"));
-    await page.locator('nav a[href="/en/admin/profiles"]').click();
-    expect((await failed).status()).toBe(code === "UNAUTHORIZED" ? 401 : 403);
+  test(`${code} clears cached records before returning to a list`, async ({ page }) => {
+    await login(page, users.admin); await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+    await openSection(page, "configurations");
+    await page.route("**/api/admin?**", async route => { if (isAdminRead(route.request(), "rules")) await route.fulfill({ status: code === "UNAUTHORIZED" ? 401 : 403, json: { error: { code } } }); else await route.continue(); });
+    const denied = page.waitForResponse(response => isAdminRead(response.request(), "rules"));
+    await page.locator('nav a[href="/en/admin/rules"]').click();
+    expect((await denied).status()).toBe(code === "UNAUTHORIZED" ? 401 : 403);
     await expect(page.getByRole("alert").filter({ hasText: code })).toHaveText(code);
-    await expect(page.locator("article")).toHaveCount(0);
     await expect(page.getByText(/Environment: LOCAL/)).toHaveCount(0);
     await page.unroute("**/api/admin?**");
-    // A fresh read, rather than reuse of the earlier cached provider page, is required.
-    await openSection(page, "providers");
-    await expect(page.locator("article").first()).toBeVisible();
+    await openSection(page, "configurations");
+    await expect(page.getByRole("button", { name: "New", exact: true })).toBeEnabled();
   });
 }
-test("signing out clears cached administrator data before another account signs in", async ({ page }) => {
-  await login(page, users.admin);
-  await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
-  await openSection(page, "providers");
-  await expect(page.locator("article").first()).toBeVisible();
+test("signing out isolates cached administrator data from the next account", async ({ page }) => {
+  await login(page, users.admin); await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+  await openSection(page, "configurations");
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Email")).toBeVisible();
-  await expect(page.locator("article")).toHaveCount(0);
-  await page.getByLabel("Email").fill(users.ordinary.email);
-  await page.getByLabel("Password").fill(users.ordinary.password);
+  await page.getByLabel("Email").fill(users.ordinary.email); await page.getByLabel("Password").fill(users.ordinary.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "FORBIDDEN" })).toHaveText("FORBIDDEN");
-  await expect(page.locator("article")).toHaveCount(0);
-  await expect(page.getByText(/Environment: LOCAL/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New", exact: true })).toHaveCount(0);
 });
-test("a stale instance clears the prior cache and bootstraps the new instance once", async ({ page }) => {
-  await login(page, users.admin);
-  await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+test("an instance mismatch performs exactly one unbound bootstrap", async ({ page }) => {
+  await login(page, users.admin); await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
   const staleInstance = "10000000-0000-4000-8000-000000000099";
   let originalInstance: string | undefined;
-  await page.route("**/api/admin?**", async route => {
-    if (isAdminRead(route.request(), "providers") && !originalInstance) {
-      const response = await route.fetch();
-      const envelope = await response.json();
-      originalInstance = envelope.context.database_instance_id;
-      envelope.context.database_instance_id = staleInstance;
-      await route.fulfill({ response, json: envelope });
-    } else await route.continue();
-  });
-  await page.goto("/en/admin/providers");
-  await expect(page.getByText(new RegExp(`Environment: LOCAL.*${staleInstance}`))).toBeVisible();
+  await page.route("**/api/admin?**", async route => { if (isAdminRead(route.request(), "configurations") && !originalInstance) { const response = await route.fetch(); const envelope = await response.json(); originalInstance = envelope.context.database_instance_id; envelope.context.database_instance_id = staleInstance; await route.fulfill({ response, json: envelope }); } else await route.continue(); });
+  await page.goto("/en/admin/configurations");
+  await expect(page.getByRole("button", { name: "New", exact: true })).toBeEnabled();
   const reads = recordReads(page);
-  const recovered = page.waitForResponse(response => isAdminRead(response.request(), "profiles") && response.ok());
-  await page.locator('nav a[href="/en/admin/profiles"]').click();
-  await recovered;
-  await expect(page.getByText(new RegExp(`Environment: LOCAL.*${originalInstance}`))).toBeVisible();
+  const recovered = page.waitForResponse(response => isAdminRead(response.request(), "rules") && response.ok());
+  await page.locator('nav a[href="/en/admin/rules"]').click(); await recovered;
   await page.waitForLoadState("networkidle");
   expect(reads.map(request => new URL(request.url()).searchParams.get("database_instance_id"))).toEqual([staleInstance, null]);
-  await openSection(page, "providers");
+  await openSection(page, "configurations");
   expect(new URL(reads[2].url()).searchParams.get("database_instance_id")).toBe(originalInstance);
-  await expect(page.getByText(staleInstance, { exact: false })).toHaveCount(0);
 });
-test("real TOTP enrollment verifies the current administrator session", async ({
-  page
-}) => {
-  const authStatuses: { path: string; status: number }[] = [];
-  page.on("response", response => {
-    const path = new URL(response.url()).pathname;
-    if (path.startsWith("/auth/v1/")) authStatuses.push({ path, status: response.status() });
-  });
-  await login(page, users.admin);
-  await page.getByRole("button", {
-    name: "Enroll TOTP"
-  }).click();
-  const secretLine = await page.getByText(/^Secret:/).innerText();
-  const secret = secretLine.slice(secretLine.indexOf(":") + 1).trim();
-  await page.getByLabel("TOTP code").fill(totp(secret));
-  await page.getByRole("button", {
-    name: "Verify"
-  }).click();
-  try {
-    await expect(page.getByText("TOTP verified and session refreshed.", {
-      exact: true
-    })).toBeVisible();
-  } catch (error) {
-    // Never capture the page body, enrollment seed, token, or QR image.
-    console.info("Local TOTP diagnostic", {
-      authStatuses,
-      assurance: await page.getByText(/Session assurance:/).allTextContents(),
-      securityUnavailable: await page.getByText("Security settings are temporarily unavailable.", { exact: true }).count()
-    });
-    throw error;
-  }
+async function verifyTotp(page: Page) {
+  await page.getByRole("button", { name: "Enroll TOTP", exact: true }).click();
+  const line = await page.getByText(/^Secret:/).innerText(), secret = line.slice(line.indexOf(":") + 1).trim();
+  await page.getByLabel("TOTP code").fill(totp(secret)); await page.getByRole("button", { name: "Verify", exact: true }).click();
+  await expect(page.getByText("TOTP verified and session refreshed.", { exact: true })).toBeVisible();
   await expect(page.getByText(/Session assurance: aal2/)).toBeVisible();
+}
+test("real TOTP authorizes membership grant through account details", async ({ page }) => {
+  await login(page, users.admin); await verifyTotp(page);
   await openSection(page, "users");
-  const ordinary = page.locator("article").filter({
-    hasText: users.ordinary.email
-  });
-  const id = await ordinary.locator("dt").filter({
-    hasText: "auth user id"
-  }).locator("..").locator("dd").innerText();
-  await page.getByLabel("auth user id", {
-    exact: true
-  }).fill(id);
-  await page.getByLabel("Reason", {
-    exact: true
-  }).fill("Verify authenticated TOTP membership grant");
-  await page.getByRole("button", {
-    name: "Submit",
-    exact: true
-  }).click();
-  await expect(page.getByRole("status")).toContainText("Committed: op_");
-  await page.getByLabel("Record kind").selectOption("members");
-  const member = page.locator("article").filter({
-    has: page.locator("dd").filter({
-      hasText: id
-    })
-  });
-  await expect(member.locator("dt").filter({
-    hasText: "revision"
-  })).toBeVisible();
-  await member.getByRole("link", {
-    name: "Details",
-    exact: true
-  }).click();
-  await expect(page.getByLabel("expected revision", {
-    exact: true
-  })).toHaveValue("1");
-  await openSection(page, "controls");
-  await openSection(page, "providers");
-  // Sensitive controls are always read again, even within the list cache window.
-  await openSection(page, "controls");
+  const row = page.getByRole("heading", { name: users.ordinary.email, exact: true }).locator("../..");
+  await row.getByRole("button", { name: "View", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const id = await dialog.locator("dt").filter({ hasText: /^Account UUID$/ }).locator("..").locator("dd").innerText();
+  await dialog.getByRole("button", { name: "Grant administrator", exact: true }).click();
+  await expect(dialog.getByLabel("Account UUID", { exact: true })).toHaveValue(id);
+  const granted = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/admin");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click(); expect((await granted).ok()).toBe(true);
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "Administrators", exact: true }).click();
+  const member = page.getByRole("heading", { name: id, exact: true }).locator("../..");
+  await member.getByRole("button", { name: "View", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("Active");
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+  await openSection(page, "controls"); await openSection(page, "configurations"); await openSection(page, "controls");
 });
 test("current database terms and provider disclosures render in both languages", async ({
   page
@@ -283,7 +211,7 @@ test("current database terms and provider disclosures render in both languages",
       name: locale === "en" ? "AI Service Terms" : "AI 服务条款",
       exact: true
     })).toBeVisible();
-    const providerLinks = page.locator('a[href*="disclosure="]');
+    const providerLinks = page.locator('a[href*="provider_audit="]');
     await expect(providerLinks).toHaveCount(3);
     const targets: { provider: RegExp; href: string }[] = [];
     for (const provider of [/DeepSeek/, /MiMo/, /Google|Gemini/]) {
@@ -293,7 +221,7 @@ test("current database terms and provider disclosures render in both languages",
       expect(href).not.toBeNull();
       const url = new URL(href!, page.url());
       expect(url.pathname).toBe(`/${locale}/ai-terms`);
-      expect([...url.searchParams.keys()].sort()).toEqual(["bundle", "digest", "disclosure", "manifest"]);
+      expect([...url.searchParams.keys()].sort()).toEqual(["common", "common_audit", "common_digest", "provider", "provider_audit", "provider_digest"]);
       targets.push({ provider, href: url.href });
     }
     for (const { provider, href } of targets) {
@@ -301,8 +229,53 @@ test("current database terms and provider disclosures render in both languages",
       await expect(page.getByRole("heading", { name: provider })).toBeVisible();
       // An exact disclosure is the document, rather than the generic selector
       // or all other providers' complete disclosures appended to the page.
-      await expect(page.locator('a[href*="disclosure="]')).toHaveCount(0);
+      await expect(page.locator('a[href*="provider_audit="]')).toHaveCount(0);
       await expect(page.locator("article p").first()).toBeVisible();
+    }
+  }
+});
+
+test("the same configuration dialog fits desktop and mobile viewports", async ({ page }) => {
+  await login(page, users.admin);
+  await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+  for (const viewport of [{ width: 1536, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/en/admin/configurations");
+    await expect(page.getByRole("button", { name: "New", exact: true })).toBeEnabled();
+    const dark = viewport.width < 600;
+    await page.evaluate(dark => { document.documentElement.classList.toggle("dark", dark); document.documentElement.style.colorScheme = dark ? "dark" : "light"; }, dark);
+    if (process.env.ADMIN_VISUAL_PROOF_DIR) {
+      const { mkdir } = await import("node:fs/promises"); const { resolve } = await import("node:path");
+      await mkdir(resolve(process.env.ADMIN_VISUAL_PROOF_DIR), { recursive: true });
+      await page.screenshot({ path: resolve(process.env.ADMIN_VISUAL_PROOF_DIR, `configurations-${viewport.width}-${dark ? "dark" : "light"}.png`), fullPage: true });
+    }
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Configuration name", { exact: true })).toBeEnabled();
+    const box = await dialog.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width + 1);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height + 1);
+    await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeInViewport();
+    // Explicit local opt-in only. This dialog contains credential names, never
+    // key values, session tokens or a TOTP enrollment secret.
+    if (process.env.ADMIN_VISUAL_PROOF_DIR) {
+      const { mkdir } = await import("node:fs/promises");
+      const { resolve } = await import("node:path");
+      const directory = resolve(process.env.ADMIN_VISUAL_PROOF_DIR);
+      await mkdir(directory, { recursive: true });
+      await dialog.screenshot({ path: resolve(directory, `configuration-${viewport.width}.png`) });
+    }
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await page.goto("/en/admin/controls");
+    await expect(page.getByRole("button", { name: "Enroll TOTP", exact: true })).toBeEnabled();
+    await expect(page.getByText(/^Secret:/)).toHaveCount(0);
+    await page.evaluate(dark => { document.documentElement.classList.toggle("dark", dark); document.documentElement.style.colorScheme = dark ? "dark" : "light"; }, dark);
+    if (process.env.ADMIN_VISUAL_PROOF_DIR) {
+      const { resolve } = await import("node:path");
+      await page.screenshot({ path: resolve(process.env.ADMIN_VISUAL_PROOF_DIR, `controls-${viewport.width}-${dark ? "dark" : "light"}.png`), fullPage: true });
     }
   }
 });

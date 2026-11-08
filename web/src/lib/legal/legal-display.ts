@@ -1,28 +1,39 @@
 import { z } from "zod";
-const externalId = (prefix: string) => z.string().regex(new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{12}$`));
-const text = (max: number) => z.string().trim().min(1).max(max);
-const block = z.discriminatedUnion("kind", [z.strictObject({
-  kind: z.literal("paragraph"),
-  text: text(4000)
-}), z.strictObject({
-  kind: z.literal("bulletList"),
-  items: z.array(text(1000)).min(1).max(20)
-})]);
-export const legalLanguageSchema = z.strictObject({
-  providerLabel: text(200),
-  modelLabel: text(200),
-  blocks: z.array(block).min(1).max(24)
-});
+import { parseLegalMarkdown } from "./markdown";
+export const legalIdSchema = z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => /^[1-9][0-9]{0,18}$/.test(value) && BigInt(value) <= BigInt("9223372036854775807"));
+export const legalExternalIdSchema = z.string().regex(/^ldoc_[0-9A-HJKMNP-TV-Z]{12}$/);
+export const legalDigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
+const body = z.string().min(1).max(65536).refine(value => {
+  try {
+    parseLegalMarkdown(value);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Invalid legal Markdown");
+export const legalDocumentSchema = z.strictObject({
+  document_id: legalIdSchema,
+  external_id: legalExternalIdSchema,
+  kind: z.enum(["TERMS", "AI_COMMON", "AI_PROVIDER"]),
+  document_audit_id: legalIdSchema,
+  content_digest: legalDigestSchema,
+  effective_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  zh_title: z.string().min(1).max(500),
+  en_title: z.string().min(1).max(500),
+  zh_body: body,
+  en_body: body,
+  enabled: z.boolean(),
+  revision: legalIdSchema,
+  recipient_name: z.string().min(1).max(500).nullable(),
+  adapter_id: z.number().int().min(1).max(32767).nullable(),
+  endpoint_url: z.string().url().max(2048).nullable(),
+  model_id: z.string().min(1).max(200).nullable()
+}).refine(doc => doc.kind === "AI_PROVIDER" ? doc.recipient_name !== null && doc.adapter_id !== null && doc.endpoint_url !== null && doc.model_id !== null : doc.recipient_name === null && doc.adapter_id === null && doc.endpoint_url === null && doc.model_id === null, "Invalid document scope");
+export type LegalDocument = z.infer<typeof legalDocumentSchema>;
 export const legalDisplaySchema = z.strictObject({
-  contract: z.literal("cv_app_db_1"),
-  disclosureId: externalId("lds"),
-  bundleId: externalId("lgb"),
-  providerId: externalId("prv"),
-  recipientCode: text(200),
-  modelId: text(200),
-  manifestDigest: z.string().regex(/^[0-9a-f]{64}$/),
-  contentDigest: z.string().regex(/^[0-9a-f]{64}$/),
-  zh: legalLanguageSchema,
-  en: legalLanguageSchema
-}).refine(value => new TextEncoder().encode(JSON.stringify([value.zh, value.en])).byteLength <= 32768, "Disclosure text exceeds size limit");
+  contract: z.literal("cv_app_db_2"),
+  common: legalDocumentSchema.refine(doc => doc.kind === "AI_COMMON"),
+  provider: legalDocumentSchema.refine(doc => doc.kind === "AI_PROVIDER")
+});
 export type LegalDisplay = z.infer<typeof legalDisplaySchema>;
+export type LegalDocumentTarget = Pick<LegalDocument, "document_id" | "external_id" | "document_audit_id" | "content_digest">;

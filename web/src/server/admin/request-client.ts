@@ -7,7 +7,12 @@ import type { AdminEnvironment } from "./environment";
 export function createAdminRequestClient(environment: AdminEnvironment, token: string, signal?: AbortSignal) {
   return createClient<Database>(environment.supabaseUrl, environment.publishableKey, {
     global: {
-      ...(signal ? { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, signal }) } : {}),
+      ...(signal ? {
+        fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
+          ...init,
+          signal
+        })
+      } : {}),
       headers: {
         Authorization: `Bearer ${token}`
       }

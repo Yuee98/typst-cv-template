@@ -25,7 +25,7 @@ function boundedRetryAfterMs(value: unknown): number {
   return Math.min(Math.floor(value), MAX_PROVIDER_RETRY_AFTER_MS);
 }
 /**
- * Decide whether one more call to the SAME frozen profile is safe.
+ * Decide whether one more call to the SAME frozen configuration is safe.
  *
  * - malformed/auth/payment/policy/content 4xx failures are terminal;
  * - 408/425/429, 5xx, network failures and timeouts may retry;

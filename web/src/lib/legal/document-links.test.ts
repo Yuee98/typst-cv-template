@@ -1,40 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { aiDisclosureHref, parseLegalReadTarget, termsDocumentHref } from "./document-links";
-
-const terms = { external_id: "ldv_111111111111", content_digest: "a".repeat(64) };
-const disclosure = { bundleId: "lgb_111111111111", manifestDigest: "b".repeat(64), disclosureId: "lds_111111111111", contentDigest: "c".repeat(64) };
+import { legalDisplayFixture, legalDocumentFixture } from "./test-fixtures";
+const terms = legalDocumentFixture(),
+  display = legalDisplayFixture();
 const query = (href: string) => new URL(href, "https://preview.test").searchParams;
-
-describe("versioned legal reading links", () => {
-  it("retains the exact ordinary terms target", () => {
-    expect(parseLegalReadTarget("terms", query(termsDocumentHref(terms)))).toEqual({ type: "terms", documentId: terms.external_id, contentDigest: terms.content_digest });
-  });
-  it("retains the selected disclosure and its whole bundle binding", () => {
-    expect(parseLegalReadTarget("ai_terms", query(aiDisclosureHref(disclosure)))).toEqual({ type: "disclosure", ...disclosure });
-  });
-  it.each(["terms", "ai_terms"] as const)("keeps the %s directory available without pins", kind => {
-    expect(parseLegalReadTarget(kind, new URLSearchParams("utm_source=footer"))).toEqual({ type: "current" });
-  });
-  it.each(["bundle", "manifest", "disclosure", "digest"])("rejects missing or duplicate AI %s instead of reading the current directory", key => {
-    const missing = query(aiDisclosureHref(disclosure));
+const pin = (doc: typeof terms) => ({
+  external_id: doc.external_id,
+  document_audit_id: doc.document_audit_id,
+  content_digest: doc.content_digest
+});
+describe("exact audited legal links", () => {
+  it("pins ordinary terms including its exact audit", () => expect(parseLegalReadTarget("terms", query(termsDocumentHref(terms)))).toEqual({
+    type: "terms",
+    document: pin(terms)
+  }));
+  it("independently pins common and selected-service documents", () => expect(parseLegalReadTarget("ai_terms", query(aiDisclosureHref(display)))).toEqual({
+    type: "provider",
+    common: pin(display.common),
+    provider: pin(display.provider)
+  }));
+  it.each(["terms", "ai_terms"] as const)("supports the unpinned %s directory", kind => expect(parseLegalReadTarget(kind, new URLSearchParams("utm_source=footer"))).toEqual({
+    type: "current"
+  }));
+  it.each(["common", "common_audit", "common_digest", "provider", "provider_audit", "provider_digest"])("fails closed on missing/duplicate %s", key => {
+    const missing = query(aiDisclosureHref(display));
     missing.delete(key);
-    expect(parseLegalReadTarget("ai_terms", missing)).toEqual({ type: "invalid" });
-    const duplicate = query(aiDisclosureHref(disclosure));
+    expect(parseLegalReadTarget("ai_terms", missing).type).toBe("invalid");
+    const duplicate = query(aiDisclosureHref(display));
     duplicate.append(key, duplicate.get(key)!);
-    expect(parseLegalReadTarget("ai_terms", duplicate)).toEqual({ type: "invalid" });
+    expect(parseLegalReadTarget("ai_terms", duplicate).type).toBe("invalid");
   });
-  it.each(["document", "digest"])("rejects partial or duplicate ordinary %s pins", key => {
-    const missing = query(termsDocumentHref(terms)); missing.delete(key);
-    expect(parseLegalReadTarget("terms", missing)).toEqual({ type: "invalid" });
-    const duplicate = query(termsDocumentHref(terms)); duplicate.append(key, duplicate.get(key)!);
-    expect(parseLegalReadTarget("terms", duplicate)).toEqual({ type: "invalid" });
+  it.each(["document", "audit", "digest"])("fails closed on incomplete ordinary %s", key => {
+    const invalid = query(termsDocumentHref(terms));
+    invalid.delete(key);
+    expect(parseLegalReadTarget("terms", invalid).type).toBe("invalid");
   });
-  it("rejects wrong kinds, IDs and digests", () => {
-    expect(parseLegalReadTarget("terms", query(aiDisclosureHref(disclosure)))).toEqual({ type: "invalid" });
-    expect(parseLegalReadTarget("ai_terms", query(termsDocumentHref(terms)))).toEqual({ type: "invalid" });
-    for (const [key, value] of [["bundle", "lds_111111111111"], ["disclosure", "invalid"], ["manifest", ""], ["digest", "not-a-digest"]]) {
-      const invalid = query(aiDisclosureHref(disclosure)); invalid.set(key, value);
-      expect(parseLegalReadTarget("ai_terms", invalid)).toEqual({ type: "invalid" });
-    }
+  it("rejects wrong-kind pins and numeric overflow", () => {
+    expect(parseLegalReadTarget("terms", query(aiDisclosureHref(display))).type).toBe("invalid");
+    const invalid = query(termsDocumentHref(terms));
+    invalid.set("audit", "9223372036854775808");
+    expect(parseLegalReadTarget("terms", invalid).type).toBe("invalid");
   });
 });

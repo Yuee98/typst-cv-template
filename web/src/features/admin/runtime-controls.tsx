@@ -1,58 +1,97 @@
 "use client";
 
 import { useState } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { adminErrorSchema, adminRuntimeReadbackSchema, adminValidationReportSchema, type AdminContext } from "@/lib/admin/contract";
-import { AdminRecordActions } from "./record-actions";
+import { ModalDialog } from "@/components/ui/modal-dialog";
+import type { AdminContext } from "@/lib/admin/contract";
+import { DetailFields } from "./admin-detail-sections";
+import type { AdminSession } from "./admin-session";
+import { useAdminMutation } from "./use-admin-mutation";
 export function AdminRuntimeControls({
+  client,
+  actor,
   context,
-  accessToken,
   locale,
-  onCommitted
+  onCommitted,
+  enabled = true
 }: {
+  client: SupabaseClient;
+  actor: AdminSession;
   context: AdminContext;
-  accessToken: string;
   locale: "zh" | "en";
-  onCommitted: () => void;
+  enabled?: boolean;
+  onCommitted(): void;
 }) {
-  const [targetKind, setTargetKind] = useState("PROFILE");
-  const [targetId, setTargetId] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  async function produce(operation: "validate" | "readback") {
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/admin", {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          operation,
-          contract_code: context.contract_code,
-          database_instance_id: context.database_instance_id,
-          ...(operation === "validate" ? {
-            target_kind: targetKind,
-            target_id: targetId
-          } : {})
-        })
-      });
-      const raw: unknown = await response.json();
-      if (!response.ok) {
-        setMessage(adminErrorSchema.parse(raw).error.code);
-        return;
-      }
-      const report = operation === "validate" ? adminValidationReportSchema.parse(raw) : adminRuntimeReadbackSchema.parse(raw);
-      setMessage(`${report.external_id}: ${report.passed ? locale === "zh" ? "通过" : "Passed" : report.reasons.join(", ")} · ${report.time_expires}`);
-    } catch {
-      setMessage(locale === "zh" ? "检查失败，请刷新后重试。" : "Check unavailable. Refresh and retry.");
-    } finally {
-      setBusy(false);
-    }
+  const l = (en: string, zh: string) => locale === "zh" ? zh : en;
+  const [mode, setMode] = useState<"view" | "edit" | null>(null);
+  const [baseline, setBaseline] = useState(context.control),
+    [draft, setDraft] = useState(context.control);
+  const mutation = useAdminMutation(client, actor, onCommitted),
+    emergency = useAdminMutation(client, actor, onCommitted);
+  const changed = context.control.revision !== baseline.revision,
+    dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
+  function open(mode: "view" | "edit") {
+    setBaseline(context.control);
+    setDraft(context.control);
+    setMode(mode);
   }
-  return <div className="min-w-0 space-y-4"><section className="min-w-0 space-y-3 rounded border border-border p-4"><h2 className="break-words font-semibold">{locale === "zh" ? "配置验证" : "Configuration verification"}</h2><p className="min-w-0 break-words text-sm text-foreground-muted">{locale === "zh" ? "发布前验证目标及全部依赖；开启前检查当前策略中所有时段的候选配置。检查不发送上游请求。" : "Validate the target and all dependencies before publishing; check every option in all policy periods before enabling. These checks do not send upstream requests."}</p><select aria-label="Target kind" value={targetKind} onChange={e => setTargetKind(e.target.value)} className="min-w-0 max-w-full rounded border border-border bg-bg p-2"><option value="PROFILE">{locale === "zh" ? "配置版本" : "Profile version"}</option><option value="PRICE">{locale === "zh" ? "价格版本" : "Price version"}</option><option value="POLICY">{locale === "zh" ? "策略版本" : "Policy version"}</option></select><Input className="min-w-0 max-w-full" aria-label="Target ID" value={targetId} onChange={e => setTargetId(e.target.value)} /><div className="flex min-w-0 flex-wrap gap-2"><Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" disabled={busy || !targetId} onClick={() => void produce("validate")}>{locale === "zh" ? "验证目标" : "Validate target"}</Button><Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" variant="secondary" disabled={busy} onClick={() => void produce("readback")}>{locale === "zh" ? "检查当前策略" : "Check current policy"}</Button></div>{message && <p role="status" className="min-w-0 break-all text-sm">{message}</p>}</section><AdminRecordActions section="controls" context={context} accessToken={accessToken} locale={locale} onCommitted={onCommitted} /></div>;
+  function close() {
+    if (!mutation.busy && !mutation.uncertain && (mode !== "edit" || !dirty || window.confirm(l("Discard unsaved changes?", "放弃尚未保存的修改？")))) setMode(null);
+  }
+  async function save() {
+    const success = await mutation.submit({
+      operation: "admin_ai_update",
+      contract_code: "cv_app_db_2",
+      database_instance_id: context.database_instance_id,
+      operation_key: crypto.randomUUID(),
+      reason: "Save runtime controls",
+      expected_revision: baseline.revision,
+      enabled: draft.enabled,
+      audience: draft.audience,
+      user_daily_limit: draft.user_daily_limit,
+      global_daily_limit: draft.global_daily_limit,
+      user_minute_limit: draft.user_minute_limit
+    });
+    if (success) setMode(null);
+  }
+  const values = mode === "view" ? context.control : draft;
+  return <div className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-surface p-4"><div><h3 className="text-sm font-semibold">{l("AI service settings", "AI 服务设置")}</h3><p className="mt-1 text-sm text-foreground-muted">{context.control.enabled ? l("Enabled", "已启用") : l("Disabled", "未启用")} · {context.control.audience === "ALL" ? l("All accounts", "全部账户") : l("Allowed accounts", "指定账户")}</p></div><div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => open("view")}>{l("View", "查看")}</Button><Button size="sm" variant="secondary" onClick={() => open("edit")}>{l("Edit", "编辑")}</Button></div></div>
+    <Button disabled={emergency.busy || !context.control.enabled} type="button" variant="secondary" onClick={() => void emergency.submit({
+      operation: "admin_ai_disable",
+      contract_code: "cv_app_db_2",
+      database_instance_id: context.database_instance_id,
+      operation_key: crypto.randomUUID(),
+      expected_revision: context.control.revision,
+      reason: "Emergency disable AI"
+    })}>{emergency.busy ? l("Disabling…", "正在关闭…") : l("Emergency disable AI", "紧急关闭 AI")}</Button>
+    {emergency.error && <p role="alert" className="text-sm text-danger-foreground">{emergency.error}</p>}
+    {mode && <ModalDialog open title={mode === "view" ? l("AI service settings", "AI 服务设置") : l("Edit AI service settings", "编辑 AI 服务设置")} closeLabel={l("Close dialog", "关闭弹窗")} onClose={close} closeDisabled={mutation.busy || mutation.uncertain} className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-2xl sm:h-auto sm:max-h-[calc(100dvh-3rem)]" footer={<><Button type="button" variant="secondary" onClick={close} disabled={mutation.busy || mutation.uncertain}>{l("Close", "关闭")}</Button>{mode === "view" ? <Button disabled={!enabled} onClick={() => setMode("edit")}>{l("Edit", "编辑")}</Button> : <Button type="submit" form="admin-runtime-settings" disabled={!enabled || mutation.busy}>{mutation.busy ? l("Saving…", "正在保存…") : mutation.uncertain ? l("Retry same operation", "重试同一操作") : l("Save", "保存")}</Button>}</>}>
+      {changed && mode === "edit" && <p className="space-y-2 text-sm">{l("Settings changed. Your edits are preserved.", "运行设置已有更新，你的修改已保留。")}{" "}<Button type="button" variant="secondary" onClick={() => {
+          if (!dirty || window.confirm(l("Replace unsaved edits?", "替换尚未保存的修改？"))) {
+            setBaseline(context.control);
+            setDraft(context.control);
+          }
+        }}>{l("Load latest", "载入最新设置")}</Button></p>}
+      {mutation.error && <p role="alert" className="text-sm text-danger-foreground">{mutation.error === "RESULT_UNKNOWN" ? l("Result unknown. Keep this dialog open and retry the same operation.", "结果尚不确定，请保留弹窗并重试同一操作。") : mutation.error}</p>}
+      {mode === "view" ? <div hidden={!enabled}><DetailFields items={[[l("AI enabled", "AI 已启用"), values.enabled ? l("Yes", "是") : l("No", "否")], [l("Audience", "开放范围"), values.audience === "ALL" ? l("All accounts", "全部账户") : l("Allowed accounts", "指定账户")], [l("User daily limit (UTC)", "每用户每日额度（UTC）"), values.user_daily_limit], [l("Service daily capacity", "服务每日总容量"), values.global_daily_limit], [l("User minute limit", "每用户每分钟额度"), values.user_minute_limit]]} /></div> : <form id="admin-runtime-settings" className="space-y-4" onSubmit={event => {
+        event.preventDefault();
+        void save();
+      }}><fieldset disabled={!enabled || mutation.busy || mutation.uncertain} hidden={!enabled} className="space-y-4">
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({
+              ...draft,
+              enabled: event.target.checked
+            })} />{l("Enable AI", "启用 AI")}</label>
+        <label className="block space-y-1 text-sm"><span>{l("Audience", "开放范围")}</span><select className="h-10 w-full rounded-md border border-border bg-bg px-3" value={draft.audience} onChange={event => setDraft({
+              ...draft,
+              audience: event.target.value as "ALL" | "ALLOWLIST"
+            })}><option value="ALLOWLIST">{l("Allowed accounts", "指定账户")}</option><option value="ALL">{l("All accounts", "全部账户")}</option></select></label>
+        {(["user_daily_limit", "global_daily_limit", "user_minute_limit"] as const).map((key, index) => <label key={key} className="block space-y-1 text-sm"><span>{l(["Requests per user / UTC day", "Service daily capacity", "Requests per user / minute"][index], ["每用户每日请求数（UTC）", "服务每日总容量", "每用户每分钟请求数"][index])}</span><Input required inputMode="numeric" pattern="(0|[1-9][0-9]*)" value={draft[key]} onChange={event => setDraft({
+              ...draft,
+              [key]: event.target.value
+            })} /></label>)}
+      </fieldset></form>}
+    </ModalDialog>}
+  </div>;
 }

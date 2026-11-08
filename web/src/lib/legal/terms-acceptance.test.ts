@@ -1,130 +1,139 @@
 import { describe, expect, it, vi } from "vitest";
-import { acceptAiLegalDisclosure, acceptCurrentTerms, legalCurrentSchema } from "./terms-acceptance";
-import type { LegalDisplay } from "./legal-display";
+import { acceptAiLegalDisclosure, acceptCurrentTerms, getLegalDocument, hasAcceptedTerms, legalCurrentSchema } from "./terms-acceptance";
+import { legalDisplayFixture, legalDocumentFixture } from "./test-fixtures";
+const user = "00000000-0000-4000-8000-000000000001",
+  instance = "00000000-0000-4000-8000-000000000002";
 vi.mock("@/lib/supabase/user-client", () => ({
   bindSupabaseUser: async (client: {
-    auth: {
-      getUser: () => Promise<{
-        data: {
-          user: {
-            id: string;
-          };
-        };
-      }>;
-    };
-  }, expectedUserId: string) => {
-    const result = await client.auth.getUser();
-    if (result.data.user.id !== expectedUserId) throw new Error("Authenticated user changed");
+    user: string;
+  }, expected: string) => {
+    if (client.user !== expected) throw new Error("Authenticated user changed");
     return client;
   }
 }));
-const user = "00000000-0000-4000-8000-000000000001";
-const instance = "00000000-0000-4000-8000-000000000002";
-const language = {
-  providerLabel: "Provider",
-  modelLabel: "Model",
-  blocks: [{
-    kind: "paragraph" as const,
-    text: "Terms and selected provider disclosure"
-  }]
-};
-const display: LegalDisplay = {
-  contract: "cv_app_db_1",
-  disclosureId: "lds_0123456789AB",
-  bundleId: "lgb_0123456789AB",
-  providerId: "prv_0123456789AB",
-  recipientCode: "DEEPSEEK",
-  modelId: "model",
-  contentDigest: "a".repeat(64),
-  manifestDigest: "b".repeat(64),
-  zh: language,
-  en: language
-};
+vi.mock("@/lib/supabase/app-context", () => ({
+  requireAppContext: vi.fn(),
+  clientWriteContext: async () => ({
+    contract_code: "cv_app_db_2",
+    database_instance_id: instance,
+    expected_auth_user_id: user
+  })
+}));
+const target = legalDocumentFixture(),
+  display = legalDisplayFixture();
 function client() {
-  const rpc = vi.fn().mockImplementation(async (name: string) => name === "app_context" ? {
-    data: {
-      ready: true,
-      contract_code: "cv_app_db_1",
-      database_instance_id: instance
-    },
-    error: null
-  } : {
-    data: {
-      accepted: true,
-      target_id: display.disclosureId,
-      content_digest: display.contentDigest
-    },
-    error: null
-  });
   return {
-    rpc,
-    auth: {
-      getUser: vi.fn().mockResolvedValue({
-        data: {
-          user: {
-            id: user
-          }
-        },
-        error: null
-      })
-    }
+    user,
+    rpc: vi.fn().mockResolvedValue({
+      data: {
+        accepted: true,
+        acceptance_audit_id: "10"
+      },
+      error: null
+    })
   };
 }
-describe("exact current legal consent", () => {
-  it("binds acceptance to the displayed disclosure and current database instance", async () => {
+describe("audited legal acceptance", () => {
+  it("writes only the exact displayed document audit", async () => {
     const c = client();
+    await acceptCurrentTerms(c as never, target, user);
+    expect(c.rpc).toHaveBeenCalledWith("legal_accept_document", {
+      p_input: {
+        contract_code: "cv_app_db_2",
+        database_instance_id: instance,
+        expected_auth_user_id: user,
+        document_id: target.document_id,
+        document_audit_id: target.document_audit_id
+      }
+    });
+  });
+  it("accepts both AI documents atomically", async () => {
+    const c = client();
+    c.rpc.mockResolvedValue({
+      data: {
+        accepted: true,
+        common_acceptance_audit_id: "10",
+        provider_acceptance_audit_id: "11"
+      },
+      error: null
+    });
     await acceptAiLegalDisclosure(c as never, {
       expectedUserId: user,
       legalDisplay: display
     });
-    expect(c.rpc).toHaveBeenLastCalledWith("legal_accept_disclosure", {
+    expect(c.rpc).toHaveBeenCalledExactlyOnceWith("legal_accept_ai", {
       p_input: {
-        contract_code: "cv_app_db_1",
+        contract_code: "cv_app_db_2",
         database_instance_id: instance,
         expected_auth_user_id: user,
-        disclosure_id: display.disclosureId,
-        bundle_id: display.bundleId,
-        manifest_digest: display.manifestDigest,
-        content_digest: display.contentDigest
+        common: {
+          document_id: "2",
+          document_audit_id: "2"
+        },
+        provider: {
+          document_id: "3",
+          document_audit_id: "3"
+        }
       }
     });
   });
   it("does not write after an account switch", async () => {
     const c = client();
-    await expect(acceptAiLegalDisclosure(c as never, {
-      expectedUserId: instance,
-      legalDisplay: display
-    })).rejects.toThrow(/user changed/);
+    await expect(acceptCurrentTerms(c as never, target, instance)).rejects.toThrow(/user changed/);
     expect(c.rpc).not.toHaveBeenCalled();
   });
-  it("rejects a receipt for a different provider disclosure", async () => {
+  it("rejects undisplayed terms and old contracts", async () => {
     const c = client();
-    c.rpc.mockImplementation(async (name: string) => name === "app_context" ? {
+    await expect(acceptCurrentTerms(c as never)).rejects.toThrow(/displayed/);
+    expect(legalCurrentSchema.safeParse({
+      terms: {}
+    }).success).toBe(false);
+  });
+  it("propagates a stale target rejection instead of accepting latest content", async () => {
+    const c = client();
+    c.rpc.mockResolvedValue({
+      data: null,
+      error: new Error("CONFLICT")
+    });
+    await expect(acceptCurrentTerms(c as never, target, user)).rejects.toThrow("CONFLICT");
+    expect(c.rpc).toHaveBeenCalledTimes(1);
+  });
+  it("reads acceptance with a token fixed to its owner and derived digest", async () => {
+    const eq = vi.fn().mockReturnThis(),
+      maybeSingle = vi.fn().mockResolvedValue({
+        data: {
+          document_id: "1"
+        },
+        error: null
+      });
+    const from = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq,
+        maybeSingle
+      })
+    });
+    eq.mockReturnValue({
+      eq,
+      maybeSingle
+    });
+    const c = {
+      ...client(),
+      from
+    };
+    expect(await hasAcceptedTerms(c as never, target, user)).toBe(true);
+    expect(eq).toHaveBeenCalledWith("content_digest", target.content_digest);
+    await expect(hasAcceptedTerms(c as never, target, instance)).rejects.toThrow(/user changed/);
+    expect(from).toHaveBeenCalledTimes(1);
+  });
+  it("rejects a historical read that returns another audit", async () => {
+    const c = client();
+    c.rpc.mockResolvedValue({
       data: {
-        ready: true,
-        contract_code: "cv_app_db_1",
-        database_instance_id: instance
-      },
-      error: null
-    } : {
-      data: {
-        accepted: true,
-        target_id: "lds_BBBBBBBBBBBB",
-        content_digest: display.contentDigest
+        ...target,
+        document_audit_id: "99"
       },
       error: null
     });
-    await expect(acceptAiLegalDisclosure(c as never, {
-      expectedUserId: user,
-      legalDisplay: display
-    })).rejects.toThrow(/receipt/);
-  });
-  it("never accepts undisplayed current terms or old current DTOs", async () => {
-    const c = client();
-    await expect(acceptCurrentTerms(c as never)).rejects.toThrow(/displayed/);
-    expect(c.rpc).not.toHaveBeenCalled();
-    expect(legalCurrentSchema.safeParse({
-      schemaVersion: "legal_current_v2"
-    }).success).toBe(false);
+    await expect(getLegalDocument(c as never, target)).rejects.toThrow(/Invalid legal target/);
   });
 });

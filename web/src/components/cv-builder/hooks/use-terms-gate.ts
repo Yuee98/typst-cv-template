@@ -51,10 +51,10 @@ export function useTermsGate({
     const actor = userId;
     const seq = ++sequence.current;
     try {
-      const {
-        terms
-      } = await getCurrentLegal(client);
-      const accepted = await hasAcceptedTerms(client, terms);
+      const current = await getCurrentLegal(client);
+      const terms = current.documents.find(document => document.kind === "TERMS" && document.enabled);
+      if (!terms) throw new Error("Terms unavailable");
+      const accepted = await hasAcceptedTerms(client, terms, actor);
       if (owner.current !== actor || sequence.current !== seq) return false;
       setOwned({
         userId: actor,

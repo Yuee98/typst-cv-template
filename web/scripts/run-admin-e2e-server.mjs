@@ -36,6 +36,8 @@ try {
   // A local env file is optional.
 }
 
+env.AI_PROVIDER_KEY_ADMIN_E2E = "synthetic-local-admin-e2e-never-transmitted";
+
 if (
   !env.NEXT_PUBLIC_SUPABASE_URL ||
   !env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||

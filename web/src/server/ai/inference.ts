@@ -48,10 +48,6 @@ export interface PolishInferenceResult {
     actualUpstreamEndpoint?: string;
     actualModelId?: string;
   };
-  providerReportedCost?: {
-    currency: string;
-    nanos: string;
-  };
 }
 export class InferenceContractError extends Error {
   constructor(message: string) {

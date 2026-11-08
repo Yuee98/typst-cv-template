@@ -1,96 +1,46 @@
 import { z } from "zod";
 import { legalDisplaySchema } from "@/lib/legal/legal-display";
-import { polishAvailabilitySchema } from "@/lib/polish/contract";
+import { polishAvailabilitySchema, polishDatabaseIdSchema } from "@/lib/polish/contract";
 import type { AiDatabase } from "./database";
-import { validateProviderConfiguration, providerProfileSchema } from "./provider";
-import { AiError } from "./errors";
-const option = z.object({
-  option_id: z.string(),
-  profile_version_id: z.string(),
-  provider_id: z.string(),
-  provider_code: z.string(),
-  provider_name: z.string(),
-  model_id: z.string(),
-  disclosure_id: z.string(),
-  content_digest: z.string(),
-  bundle_id: z.string(),
-  manifest_digest: z.string(),
-  recipient_code: z.string(),
-  content: z.object({
-    zh: z.unknown(),
-    en: z.unknown()
-  }),
-  status: z.enum(["READY", "CONSENT_REQUIRED", "UNAVAILABLE"]),
-  reason: z.string().nullable(),
-  runtime_profile: z.unknown()
+import { validateExecutionConfiguration, executionConfigurationSchema } from "./provider";
+
+const rawSchema = z.strictObject({
+  contract_code: z.literal("cv_app_db_2"), database_instance_id: z.uuid(),
+  enabled: z.boolean(), reason: z.string().nullable(),
+  control_revision: polishDatabaseIdSchema,
+  default_config_id: polishDatabaseIdSchema.nullable(), quota: z.unknown(),
+  configurations: z.array(z.strictObject({
+    config_id: polishDatabaseIdSchema, name: z.string().min(1), revision: polishDatabaseIdSchema,
+    ...executionConfigurationSchema.shape,
+    eligible: z.boolean(), reason: z.string().nullable(), consent_required: z.boolean(),
+    legal_display: legalDisplaySchema
+  }))
 });
-const rawSchema = z.object({
-  generation: z.string(),
-  policy_version_id: z.string().nullable(),
-  rule_ordinal: z.number().nullable(),
-  options: z.array(option),
-  default_option_id: z.string().nullable(),
-  observed_at: z.string(),
-  next_change_at: z.string().nullable(),
-  enabled: z.boolean(),
-  reason: z.string().nullable(),
-  database_instance_id: z.string(),
-  contract_code: z.literal("cv_app_db_1")
-});
-/** Only this projection crosses the browser boundary; credentials and endpoints stay server-side. */
+/** Credentials stay server-side. Public recipient facts remain in the exact legal document. */
 export async function readAvailability(db: AiDatabase, userId: string, instance: string, env: Readonly<Record<string, string | undefined>> = process.env, checkProviders = true) {
-  const common = {
-    contract_code: "cv_app_db_1",
-    owner_auth_user_id: userId,
-    database_instance_id: instance
-  };
-  for (let read = 0; read < 2; read++) {
-    const raw = rawSchema.parse(await db.call("ai_availability", common));
-    const options = raw.options.map(option => {
-      let status = option.status,
-        reason = option.reason;
+  const raw = rawSchema.parse(await db.call("ai_availability", {
+    contract_code: "cv_app_db_2", owner_auth_user_id: userId, database_instance_id: instance
+  }));
+  return polishAvailabilitySchema.parse({
+    enabled: raw.enabled && raw.reason === null,
+    contract: raw.contract_code, databaseInstanceId: raw.database_instance_id,
+    controlRevision: raw.control_revision, defaultConfigId: raw.default_config_id, reason: raw.reason,
+    configurations: raw.configurations.map(configuration => {
+      let status: "READY" | "CONSENT_REQUIRED" | "UNAVAILABLE" = !configuration.eligible ? "UNAVAILABLE" : configuration.consent_required ? "CONSENT_REQUIRED" : "READY";
+      let reason = configuration.reason;
       try {
-        if (checkProviders) validateProviderConfiguration(Object.fromEntries(Object.keys(providerProfileSchema.shape).map(key => [key, z.record(z.string(), z.unknown()).parse(option.runtime_profile)[key]])), env);
+        if (checkProviders) validateExecutionConfiguration(Object.fromEntries(Object.keys(executionConfigurationSchema.shape).map(key => [key, configuration[key as keyof typeof configuration]])), env);
+        const legal = configuration.legal_display.provider;
+        if (legal.adapter_id !== configuration.adapter_id || legal.endpoint_url !== configuration.endpoint_url || legal.model_id !== configuration.model_id || !legal.enabled || !configuration.legal_display.common.enabled) throw new Error("Legal scope does not match configuration");
       } catch {
         status = "UNAVAILABLE";
         reason = "EXECUTION_CONFIG_UNAVAILABLE";
       }
       return {
-        optionId: option.option_id,
-        profileVersionId: option.profile_version_id,
-        providerName: option.provider_name,
-        modelName: option.model_id,
-        status,
-        reason,
-        legalDisplay: legalDisplaySchema.parse({
-          contract: "cv_app_db_1",
-          disclosureId: option.disclosure_id,
-          bundleId: option.bundle_id,
-          manifestDigest: option.manifest_digest,
-          providerId: option.provider_id,
-          recipientCode: option.recipient_code,
-          modelId: option.model_id,
-          contentDigest: option.content_digest,
-          zh: option.content.zh,
-          en: option.content.en
-        })
+        configId: configuration.config_id, configRevision: configuration.revision,
+        name: configuration.name, modelId: configuration.model_id,
+        status, reason, legalDisplay: configuration.legal_display
       };
-    });
-    const confirm = rawSchema.parse(await db.call("ai_availability", common));
-    if (confirm.generation !== raw.generation || confirm.rule_ordinal !== raw.rule_ordinal) continue;
-    return polishAvailabilitySchema.parse({
-      enabled: raw.enabled && raw.reason === null,
-      contract: raw.contract_code,
-      databaseInstanceId: raw.database_instance_id,
-      configGeneration: raw.generation,
-      policyVersionId: raw.policy_version_id,
-      ruleOrdinal: raw.rule_ordinal,
-      options,
-      defaultOptionId: raw.default_option_id,
-      observedAt: raw.observed_at,
-      nextChangeAt: raw.next_change_at,
-      reason: raw.reason
-    });
-  }
-  throw new AiError("CONFLICT", "CONFIG_CHANGED");
+    })
+  });
 }

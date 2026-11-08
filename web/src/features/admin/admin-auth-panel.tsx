@@ -4,7 +4,6 @@ import { useId } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AdminMessages } from "./messages";
-
 export function AdminAuthPanel({
   t,
   email,
@@ -14,7 +13,7 @@ export function AdminAuthPanel({
   onEmailChange,
   onPasswordChange,
   onSubmit,
-  onGithubSignIn,
+  onGithubSignIn
 }: {
   t: AdminMessages;
   email: string;

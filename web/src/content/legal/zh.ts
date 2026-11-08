@@ -1,16 +1,14 @@
-import { DEEPSEEK_LEGAL_DISPLAY_KEY, DEEPSEEK_LEGAL_MANIFEST_ID, MIMO_LEGAL_DISPLAY_KEY, MIMO_LEGAL_MANIFEST_ID, GEMINI_LEGAL_DISPLAY_KEY, GEMINI_LEGAL_MANIFEST_ID, SERVICE_CONTACT_EMAIL, SERVICE_NAME, SERVICE_OPERATOR, SERVICE_WEBSITE } from "./constants";
-import { defineAiProviderLegalManifest, type LegalDocument, type LegalSection } from "./types";
+import { SERVICE_CONTACT_EMAIL, SERVICE_NAME, SERVICE_OPERATOR, SERVICE_WEBSITE } from "./constants";
+import { defineAiProviderEvidence, type LegalDocument } from "./types";
 export const LEGAL_EFFECTIVE_DATE = "2026 年 7 月 3 日";
 export const PRIVACY_EFFECTIVE_DATE = "2026 年 11 月 7 日";
-export const AI_TERMS_EFFECTIVE_DATE = "2026 年 11 月 7 日";
-export const deepseekLegalManifest = defineAiProviderLegalManifest({
-  manifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
-  displayKey: DEEPSEEK_LEGAL_DISPLAY_KEY,
+export const AI_TERMS_EFFECTIVE_DATE = "2026 年 11 月 8 日";
+export const deepseekEvidence = defineAiProviderEvidence({
   reviewedAt: "Responses API 技术事实：2026-11-07；政策证据沿用 2026-08-23（Asia/Shanghai）",
   provider: "DeepSeek 官方开放平台",
   gatewayOperator: "杭州深度求索人工智能有限公司（DeepSeek）",
   modelVendor: "DeepSeek",
-  models: ["deepseek-flash（Responses API profile）"],
+  models: ["deepseek-flash"],
   upstream: "DeepSeek 官方 Responses API（https://api.deepseek.com/responses）",
   submittedData: ["用户选中的简历正文、所选上下文以及风格指令", "通过 Responses API user 字段发送的 HMAC-SHA256 假名标识；不发送邮箱、用户名或原始账户 ID"],
   providerSubjectId: "通过 Responses API 的 user 字段发送 HMAC-SHA256 假名标识；DeepSeek 文档称其用于内容安全、缓存隔离与调度隔离。",
@@ -22,14 +20,12 @@ export const deepseekLegalManifest = defineAiProviderLegalManifest({
   unknowns: ["API 内容除上下文缓存外的具体保留和删除期限", "API 特定的处理/存储地点、传输路径以及任何退出机制是否覆盖 API 请求"],
   sources: ["https://api-docs.deepseek.com/quick_start/pricing/", "https://api-docs.deepseek.com/api/create-response/", "https://api-docs.deepseek.com/guides/responses_api/", "https://api-docs.deepseek.com/quick_start/rate_limit/", "https://api-docs.deepseek.com/guides/kv_cache/", "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html", "https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html", "https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html", "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"]
 });
-export const mimoLegalManifest = defineAiProviderLegalManifest({
-  manifestId: MIMO_LEGAL_MANIFEST_ID,
-  displayKey: MIMO_LEGAL_DISPLAY_KEY,
+export const mimoEvidence = defineAiProviderEvidence({
   reviewedAt: "2026-08-23（Asia/Shanghai）",
-  provider: "MiMo 官方 API（中国大陆 profile）",
+  provider: "MiMo 官方 API（中国大陆接入）",
   gatewayOperator: "MiMo 官方 API；已核验页面未明确给出中国大陆适用运营主体的具体公司名称。中国大陆以外服务的条款列明 Xiaomi Technologies Singapore Pte. Ltd.。",
   modelVendor: "Xiaomi / MiMo",
-  models: ["mimo-v2.5-pro（Responses API profile）"],
+  models: ["mimo-v2.6-flash"],
   upstream: "MiMo 官方 Responses API（api.xiaomimimo.com/v1/responses）",
   submittedData: ["用户选中的简历正文、所选上下文以及风格指令", "初版 adapter 不发送 HMAC provider subject ID、邮箱、用户名或原始账户 ID"],
   providerSubjectId: "不发送 provider subject ID。",
@@ -41,41 +37,24 @@ export const mimoLegalManifest = defineAiProviderLegalManifest({
   unknowns: ["中国大陆适用服务运营主体的确切公司名称", "每次 API 请求的保证处理区域", "API 内容缓存 TTL、缓存作用域、退出机制与固定内容保留期限"],
   sources: ["https://mimo.mi.com/docs/en-US/api/chat/responses", "https://mimo.mi.com/docs/en-US/price/pay-as-you-go", "https://mimo.mi.com/docs/en-US/api/guidance/rate-limit", "https://mimo.mi.com/docs/en-US/api/guidance/error-codes", "https://mimo.mi.com/docs/quick-start/terms/user-agreement", "https://mimo.mi.com/docs/en-US/terms/privacy-policy"]
 });
-export const geminiLegalManifest = defineAiProviderLegalManifest({
-  "manifestId": GEMINI_LEGAL_MANIFEST_ID,
-  "displayKey": GEMINI_LEGAL_DISPLAY_KEY,
+export const geminiEvidence = defineAiProviderEvidence({
   "reviewedAt": "2026-11-07 (Asia/Shanghai)",
   "modelVendor": "Google",
-  "sources": [
-    "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
-    "https://aistudio.google.com/api-reference/interactions-api/create-interaction?api-version=v1",
-    "https://ai.google.dev/gemini-api/terms",
-    "https://ai.google.dev/gemini-api/docs/zdr",
-    "https://ai.google.dev/gemini-api/docs/logs-policy"
-  ],
+  "sources": ["https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash", "https://aistudio.google.com/api-reference/interactions-api/create-interaction?api-version=v1", "https://ai.google.dev/gemini-api/terms", "https://ai.google.dev/gemini-api/docs/zdr", "https://ai.google.dev/gemini-api/docs/logs-policy"],
   "provider": "Google Gemini API（AI Studio）",
   "gatewayOperator": "通过 Google AI Studio 使用 Google Gemini Developer API；实际签约的 Google 主体取决于适用账户、计费协议及司法辖区。",
-  "models": [
-    "gemini-3.8-flash（Interactions API profile）"
-  ],
+  "models": ["gemini-3.8-flash"],
   "upstream": "Google 官方 Interactions API（https://generativelanguage.googleapis.com/v1/interactions）",
-  "submittedData": [
-    "用户选中的简历正文、所选上下文以及风格指令",
-    "不发送 HMAC provider subject ID、邮箱、用户名或原始账户 ID"
-  ],
+  "submittedData": ["用户选中的简历正文、所选上下文以及风格指令", "不发送 HMAC provider subject ID、邮箱、用户名或原始账户 ID"],
   "providerSubjectId": "不发送 provider subject ID。此配置只处理单次文本请求，不使用工具、搜索 grounding、上传文件、后台执行或续接会话状态。",
   "processingRegion": "付费 API 条款允许在 Google 或其代理拥有设施的任何国家临时存储或缓存数据；此配置未核实每次请求的处理地区或数据驻留保证。",
   "cache": "Google 将隐式内存缓存描述为按项目隔离的 RAM 存储，TTL 为 24 小时。本服务不创建显式缓存；关闭 interaction 存储不代表关闭所有缓存或滥用监控记录。",
   "retention": "本服务明确请求不保存 interaction 以供之后查询或续接会话。独立的滥用监控日志及项目日志、数据集设置仍受 Google 条款约束；不承诺整体零留存或固定的全部删除期限。",
   "training": "免费服务可能使用提交内容和响应改进产品及机器学习技术，并可人工审阅；Google 条款要求不要向免费服务提交个人、敏感或机密信息。关联活跃 Cloud Billing 项目的付费服务不将提示词和响应用于产品改进，但仍有有限的滥用监控；开发者位于欧洲经济区、瑞士和英国时，免费服务也适用付费服务的数据使用规则。主动分享的日志、数据集或反馈可用于改进和人工审阅。本应用不启用此类分享；仅凭 key 或模型名不能证明项目计费层级与设置。",
   "transfer": "数据可能依据适用 Google 协议及保障措施在你所在国家以外处理。运营者应在真实简历使用前核实项目计费与数据分享设置；独立同意不构成处理地域或零留存证明。",
-  "unknowns": [
-    "实际部署项目的计费与数据分享设置，除非由其所有者另行核实",
-    "每次请求的实际处理地区及完整滥用监控保留、删除期限",
-    "任何另行约定的企业保障是否适用；本服务不假设存在此类安排"
-  ]
+  "unknowns": ["实际部署项目的计费与数据分享设置，除非由其所有者另行核实", "每次请求的实际处理地区及完整滥用监控保留、删除期限", "任何另行约定的企业保障是否适用；本服务不假设存在此类安排"]
 });
-export const aiProviderLegalManifests = Object.freeze([deepseekLegalManifest, mimoLegalManifest, geminiLegalManifest]);
+export const providerEvidence = Object.freeze([deepseekEvidence, mimoEvidence, geminiEvidence]);
 export const termsDocument: LegalDocument = {
   title: "使用条款",
   effectiveDate: LEGAL_EFFECTIVE_DATE,
@@ -145,37 +124,37 @@ export const privacyDocument: LegalDocument = {
     body: ["我们和我们的服务提供商可能会在你居住国以外的国家处理数据。", "在 GDPR 适用且个人数据被传输至欧洲经济区以外的情况下，我们将在需要时依赖适当的保障措施，例如充分性认定、标准合同条款或其他合法的传输机制。", "AI 润色的实际接收方与可能处理地区取决于请求时冻结的路由。当前 DeepSeek、MiMo 与 Google Gemini 路径的已知处理地区、传输安排和未确认事项列在 AI 服务条款的提供方附录中。", "在适用法律要求且没有其他适当保障时，我们可能依赖你对这项可选功能的明示同意。我们选择使用独立同意流程来披露风险和记录授权；这并不表示每一家 AI 提供方普遍要求独立同意，也不构成对每个司法管辖区的法律结论。"],
     links: [{
       kind: "internal",
-      label: "查看 DeepSeek 提供方附录",
-      href: "/ai-terms#provider-deepseek",
+      label: "查看 DeepSeek 数据处理说明",
+      href: "/ai-terms",
       locale: "zh"
     }, {
       kind: "internal",
-      label: "查看 MiMo 提供方附录",
-      href: "/ai-terms#provider-mimo",
+      label: "查看 MiMo 数据处理说明",
+      href: "/ai-terms",
       locale: "zh"
     }, {
       kind: "internal",
       label: "Google Gemini 提供方附录",
-      href: "/ai-terms#provider-gemini",
+      href: "/ai-terms",
       locale: "zh"
     }]
   }, {
     heading: "AI 功能",
-    body: ["如果你使用 AI 润色功能，你选中的简历文本及你选择包含的上下文会以明文经我们的服务器转发至请求时披露的第三方 AI 服务处理。支持的接收方为 DeepSeek 官方开放平台、MiMo 官方 API，以及通过 AI Studio 使用的 Google Gemini API。已披露的接收方仍须完成配置发布与启用后才可使用。", "使用所选提供方前，我们会要求你单独接受公共 AI 服务条款与该提供方的精确披露。接受内容说明发送数据、标识符、缓存、留存、训练或服务改进、处理地区、未确认事项、我们的元数据日志与配额规则；不要求接受未选择的提供方。", "每次请求前，界面会展示你所选提供方和模型的披露。切换选项会更新披露及接受状态；同意披露与选择提供方是两个明确的操作。选项失效时会要求你重新选择，不会静默改选另一家或自动重发。", "你可以停止使用 AI 润色来撤回对未来请求的同意；这不影响撤回前已经发生的处理，也不要求我们删除为证明历史同意、结算配额、安全或法律义务而必须保留的记录。你也可以按「你的权利」一节联系我们。", "端到端加密（如可用）不适用于发送至 AI 服务的内容；你加密简历的其余部分仍按本政策所述受到保护。"],
+    body: ["如果你使用 AI 润色功能，你选中的简历文本及你选择包含的上下文会以明文经我们的服务器转发至请求时披露的第三方 AI 服务处理。实际接收方以你所选配置的数据处理说明为准。只有已启用且匹配明确披露的配置才可使用；请求格式兼容不代表其他接收方适用相同的数据处理条款。", "使用所选提供方前，我们会要求你单独接受公共 AI 服务条款与该提供方的精确披露。接受内容说明发送数据、标识符、缓存、留存、训练或服务改进、处理地区、未确认事项、我们的元数据日志与配额规则；不要求接受未选择的提供方。", "每次请求前，界面会展示你所选提供方和模型的披露。切换选项会更新披露及接受状态；同意披露与选择提供方是两个明确的操作。选项失效时会要求你重新选择，不会静默改选另一家或自动重发。", "你可以停止使用 AI 润色来撤回对未来请求的同意；这不影响撤回前已经发生的处理，也不要求我们删除为证明历史同意、结算配额、安全或法律义务而必须保留的记录。你也可以按「你的权利」一节联系我们。", "端到端加密（如可用）不适用于发送至 AI 服务的内容；你加密简历的其余部分仍按本政策所述受到保护。"],
     links: [{
       kind: "internal",
       label: "AI 服务条款 — DeepSeek 提供方附录",
-      href: "/ai-terms#provider-deepseek",
+      href: "/ai-terms",
       locale: "zh"
     }, {
       kind: "internal",
       label: "AI 服务条款 — MiMo 提供方附录",
-      href: "/ai-terms#provider-mimo",
+      href: "/ai-terms",
       locale: "zh"
     }, {
       kind: "internal",
       label: "Google Gemini 提供方附录",
-      href: "/ai-terms#provider-gemini",
+      href: "/ai-terms",
       locale: "zh"
     }]
   }, {
@@ -203,45 +182,33 @@ export const privacyDocument: LegalDocument = {
   }]
 };
 export const termsAcceptanceSummary = ["云端存储会同步简历数据到 Supabase。加密云端存储会在浏览器中加密简历正文内容，但标题和元数据可能仍然可见。", "如果丢失加密密码或受信任设备密钥，加密简历内容可能无法恢复。", "服务按原样提供。请自行备份重要的简历数据和导出文件。"];
-function providerAnnexSection(title: string, manifest: (typeof aiProviderLegalManifests)[number]): LegalSection {
-  return {
-    id: `provider-annex-${manifest.displayKey}`,
-    heading: `提供方附录：${title}`,
-    body: [`Manifest ID：${manifest.manifestId}；显示键：${manifest.displayKey}；核验时间：${manifest.reviewedAt}。`, `提供方：${manifest.provider}。Gateway/operator：${manifest.gatewayOperator}。模型提供方：${manifest.modelVendor}。模型：${manifest.models.join("、")}。Upstream：${manifest.upstream}。`, `发送内容：${manifest.submittedData.join("；")}。Provider subject ID：${manifest.providerSubjectId}`, `处理地区：${manifest.processingRegion}`, `缓存：${manifest.cache}`, `留存：${manifest.retention}`, `训练/服务改进：${manifest.training}`, `传输机制：${manifest.transfer}`, `尚未确认：${manifest.unknowns.join("；")}。这些未知事项不得由 DB 配置或产品文案改写为保证。`, "核验来源："],
-    links: manifest.sources.map((href, index) => ({
-      kind: "external",
-      label: `官方来源 ${index + 1}：${href}`,
-      href
-    }))
-  };
-}
 export const aiTermsDocument: LegalDocument = {
   title: "AI 服务条款",
   effectiveDate: AI_TERMS_EFFECTIVE_DATE,
-  intro: [`本 AI 服务条款管辖你对 ${SERVICE_NAME}（${SERVICE_WEBSITE}）AI 润色功能的使用。本条款是使用条款与隐私政策的补充条款，与它们共同适用。`, "我们为这项可选功能选择独立同意流程。首次使用当前版本前，你必须在功能界面中单独勾选同意；我们会记录用户 ID、所选提供方的精确披露内容版本、摘要与接受时间，以证明已获得授权。这是本服务运营者选择的披露与授权流程，不是对所有 AI 提供方通用要求的陈述。", "本版本由公共 AI 条款和所选提供方的披露共同组成。你可以从当前时间段允许的提供方和模型选项中选择，发送前会展示并要求接受对应的完整披露。切换提供方不代表自动同意其他披露。"],
+  intro: [`本 AI 服务条款管辖你对 ${SERVICE_NAME}（${SERVICE_WEBSITE}）AI 润色功能的使用。本条款是使用条款与隐私政策的补充条款，与它们共同适用。`, "我们为这项可选功能选择独立同意流程。使用适用条款前，你必须在功能界面中单独勾选同意；我们会记录用户 ID、公共条款与所选服务披露的精确内容与接受时间，以证明已获得授权。这是本服务运营者选择的披露与授权流程，不是对所有 AI 提供方通用要求的陈述。", "适用条款由公共 AI 条款和所选服务披露共同组成。你可以从当前时间段允许的提供方和模型选项中选择，发送前会提供完整披露的精确阅读链接，并要求接受对应内容。切换提供方不代表自动同意其他披露。"],
   sections: [{
     heading: "AI 润色功能",
-    body: ["AI 润色功能应你的请求改写简历中选定的自由文本字段，例如个人简介、要点描述和技能描述。它只改变措辞，不刻意改变事实、数字、雇主、职位等事实性内容，也绝不会自动应用任何修改。", "当你确认润色请求时，你选中的文本以及你选择包含的上下文会以明文经我们的服务器转发至请求时披露的第三方 AI 服务处理。网络传输使用 HTTPS 保护，但你的请求内容对我们的服务器和实际接收方均为可读——本功能不适用端到端加密（见下文「加密与 AI 润色」）。", "可选集合和默认选项由服务端配置及请求时间决定，你明确选择本次使用的提供方和模型。每个已冻结请求只使用一个已披露的 provider/model profile；provider 故障不会在同一请求内触发未披露的跨 provider 自动 fallback。"]
+    body: ["AI 润色功能应你的请求改写简历中选定的自由文本字段，例如个人简介、要点描述和技能描述。它只改变措辞，不刻意改变事实、数字、雇主、职位等事实性内容，也绝不会自动应用任何修改。", "当你确认润色请求时，你选中的文本以及你选择包含的上下文会以明文经我们的服务器转发至请求时披露的第三方 AI 服务处理。网络传输使用 HTTPS 保护，但你的请求内容对我们的服务器和实际接收方均为可读——本功能不适用端到端加密（见下文「加密与 AI 润色」）。", "可选集合和默认选项由服务端配置及请求时间决定，你明确选择本次使用的提供方和模型。每个已冻结请求只使用所选并已披露的一项服务和模型；服务故障不会在同一请求内触发未披露的跨服务自动切换。"]
   }, {
     heading: "发送的内容",
-    body: ["我们不会主动发送简历页眉中的姓名、邮箱和电话——任何上下文级别都不会读取它们。但如果你选中的正文及上下文本身包含个人信息，这些信息仍会作为请求的一部分发送至 AI 服务。", "我们不会向 AI 服务发送你的邮箱、用户名或原始账户 ID。是否发送 HMAC-SHA256 假名标识符取决于实际 provider profile：当前 DeepSeek profile 会发送，MiMo 与 Google Gemini profile 不会发送；详见对应提供方附录。", "每次请求前，功能会如实展示将要发送的完整内容。请仔细检查披露内容，移除或避免包含你不愿分享的信息。你选择的上下文级别决定发送范围："],
+    body: ["我们不会主动发送简历页眉中的姓名、邮箱和电话——任何上下文级别都不会读取它们。但如果你选中的正文及上下文本身包含个人信息，这些信息仍会作为请求的一部分发送至 AI 服务。", "我们不会向 AI 服务发送你的邮箱、用户名或原始账户 ID。是否发送 HMAC-SHA256 假名标识符取决于所选接入已实现的请求格式；所选服务的精确数据处理说明会说明是否发送此标识符。", "每次请求前，功能会如实展示将要发送的完整内容。请仔细检查披露内容，移除或避免包含你不愿分享的信息。你选择的上下文级别决定发送范围："],
     bullets: ["Level 0（仅原文）：只发送你选中的正文文本，以及你设置的风格预设或自定义风格指令（如有）。", "Level 1（相邻条目）：在 Level 0 的基础上，额外发送所选范围的元信息（如公司或机构名称、项目标题与详情、教育经历的机构/名称/详情、研究标题与日期、技能类别），以及同一条目或同一章节内未被选中的相邻条目文本。", "Level 2（简介与技能）：在 Level 1 的基础上，再额外发送你的个人简介正文与技能标签。"]
   }, {
     heading: "我们存储的内容",
-    body: ["我们不会在服务器上刻意存储你发送用于润色的简历正文或 AI 生成的输出。请求内容仅在内存中处理，响应返回后即被丢弃。", "我们会保留每次请求与尝试的元数据 ledger/log，例如：请求时间戳、你的用户 ID、请求/尝试 ID、冻结的 route/profile/price/legal bundle、润色粒度、条目数量、上下文级别、语言、模型与提示词/校验器版本、尝试次数、完成状态或失败阶段、可解释的 token/缓存用量、耗时、成本与配额结算结果。这些日志绝不包含你的简历正文、AI 输出或风格指令。若 provider usage 无法可靠解释，对应明细或成本会保持未知而不是猜测。", "请求元数据日志在请求结束 90 天后、按分钟的频率限制计数在 2 天后、按天的用量聚合在 90 天后进入删除计划。删除由每天运行一次的清理任务执行，因此每条记录会在越过保留阈值后的首次计划运行时被删除，最多可能多保留约一天。你对本 AI 服务条款的同意记录会保留至你删除账户为止。"]
+    body: ["我们不会在服务器上刻意存储你发送用于润色的简历正文或 AI 生成的输出。请求内容仅在内存中处理，响应返回后即被丢弃。", "我们会保留每次请求与尝试的元数据 ledger/log，例如：请求时间戳、你的用户 ID、请求/尝试 ID、冻结的配置、时间规则、价格与精确法律同意记录、润色粒度、条目数量、上下文级别、语言、模型与提示词/校验器版本、尝试次数、完成状态或失败阶段、可解释的 token/缓存用量、耗时、成本与配额结算结果。这些日志绝不包含你的简历正文、AI 输出或风格指令。若 provider usage 无法可靠解释，对应明细或成本会保持未知而不是猜测。", "请求元数据日志在请求结束 90 天后、按分钟的频率限制计数在 2 天后、按天的用量聚合在 90 天后进入删除计划。删除由每天运行一次的清理任务执行，因此每条记录会在越过保留阈值后的首次计划运行时被删除，最多可能多保留约一天。你对本 AI 服务条款的同意记录会保留至你删除账户为止。"]
   }, {
     heading: "使用限制、配额与取消",
     body: ["AI 润色目前为免费功能，设有使用限制：每用户每天最多 20 次请求（UTC 零点重置）、每分钟最多 3 次；全服务另设有每日总容量上限，达到后功能会暂时不可用。我们可能会调整这些限制；对于滥用、过度使用或给服务带来风险的情况，我们可能会暂停访问权限。", "请求被接受时会预留配额。若请求在已发送给 AI 服务后被取消或中断，该次配额仍会计入，因为提供方处理或成本已经发生；若在发送前失败，或按服务结算规则属于可返还的提供方/校验失败，预留配额会被返还。重试属于同一冻结 route 下的尝试，不会静默改用另一提供方。"]
   }, {
     heading: "提供方、路由与政策变化",
-    body: ["当前 legal bundle 列出 DeepSeek 官方开放平台、MiMo 官方 API，以及通过 AI Studio 使用的 Google Gemini API。列入附录并不表示该 profile 已激活；实际接收方以请求前披露并由服务端冻结的 route 为准。", "第三方按其自身条款与政策处理收到的内容，我们无法控制。请勿发送敏感、机密或不愿由实际接收方处理的信息。", "新增接收方、upstream、处理地区，或缓存、留存、训练/改进政策发生实质变化时，我们会更新附录和版本，并在需要时要求你重新同意。旧版本同意不能授权需要新 legal bundle 的 route。"]
+    body: ["可用服务由运营者配置。实际接收方、接入地址与模型必须符合所选配置展示的披露，并在请求中冻结。请求格式兼容不代表接收方或数据处理条款相同。", "第三方按其自身条款与政策处理收到的内容，我们无法控制。请勿发送敏感、机密或不愿由实际接收方处理的信息。", "新增接收方、upstream、处理地区，或缓存、留存、训练/改进政策发生实质变化时，我们会更新适用披露，并在新请求前要求接受其当前内容。此前的同意不授权其他接收方或处理范围。"]
   }, {
     heading: "AI 输出需要你审阅",
     body: ["AI 生成的建议可能不准确、不完整、有偏见或不合适，也可能以非预期的方式改变语义或侧重。它们仅作为起草建议提供。", "润色后的文本绝不会自动应用。你必须逐条审阅并明确接受或拒绝每条建议。你对简历的最终内容负全部责任。"]
   }, {
     heading: "加密与 AI 润色",
     body: ["端到端加密（如可用）仅保护你云端保存的简历静态数据，不适用于 AI 润色功能。", "当你对加密的简历使用 AI 润色时，选中的明文会离开你的设备，经我们的服务器发送至 AI 服务。你简历的其余加密部分仍按隐私政策所述受到保护。"]
-  }, providerAnnexSection("DeepSeek 官方开放平台", deepseekLegalManifest), providerAnnexSection("MiMo 官方 API（中国大陆 profile）", mimoLegalManifest), providerAnnexSection("Google Gemini API（AI Studio）", geminiLegalManifest), {
+  }, {
     heading: "变更",
     body: ["我们可能会不时更新本 AI 服务条款。如果变更具有实质性，我们将更新生效日期，并要求你重新同意后方能继续使用 AI 润色。"]
   }, {

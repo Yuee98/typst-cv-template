@@ -68,7 +68,7 @@ function AvailabilityDisclosure({
   flow: PolishFlow;
 }) {
   const t = useTranslations("PolishDialog");
-  const locale = useLocale();
+  const zh = useLocale().toLowerCase().startsWith("zh");
   if (!flow.signedIn) return null;
   const status = flow.availabilityStatus;
   if (status === "idle" || status === "loading") {
@@ -84,13 +84,12 @@ function AvailabilityDisclosure({
   }
   const candidate = flow.availabilityCandidate;
   if (status === "error" || !candidate) return <div role="status"><span>{t("availability.error")}</span><Button type="button" variant="ghost" size="sm" onClick={flow.availabilityRetry}>{t("availability.retry")}</Button></div>;
-  const zh = locale.toLowerCase().startsWith("zh");
-  const selected = candidate.options.find(option => option.optionId === candidate.selectedOptionId);
+  const selected = candidate.configurations.find(option => option.configId === candidate.selectedConfigId);
   return <div className="space-y-3 rounded-md border border-accent-border bg-accent-soft px-3 py-2 text-sm">
     <label className="block font-medium" htmlFor="polish-provider-choice">{zh ? "选择 AI Provider 和模型" : "Choose AI provider and model"}</label>
-    <select id="polish-provider-choice" className="w-full rounded border border-border bg-surface px-2 py-2" value={candidate.selectedOptionId ?? ""} onChange={event => flow.selectOption(event.target.value)}>
+    <select id="polish-provider-choice" className="w-full rounded border border-border bg-surface px-2 py-2" value={candidate.selectedConfigId ?? ""} onChange={event => flow.selectConfiguration(event.target.value)}>
       <option value="" disabled>{zh ? "请选择一个可用选项" : "Select an available option"}</option>
-      {candidate.options.map(option => <option key={option.optionId} value={option.optionId} disabled={option.status === "UNAVAILABLE"}>{option.providerName} · {option.modelName}{option.status === "UNAVAILABLE" ? zh ? "（暂不可用）" : " (unavailable)" : ""}</option>)}
+      {candidate.configurations.map(option => <option key={option.configId} value={option.configId} disabled={option.status === "UNAVAILABLE"}>{option.name} · {option.modelId}{option.status === "UNAVAILABLE" ? zh ? "（暂不可用）" : " (unavailable)" : ""}</option>)}
     </select>
     {!selected && <p role="status">{zh ? "原选项已失效，请重新选择并确认。" : "Your previous option is unavailable. Select an option and confirm again."}</p>}
   </div>;
@@ -256,7 +255,6 @@ function TermsRow({
   flow: PolishFlow;
 }) {
   const t = useTranslations("PolishDialog");
-  const locale = useLocale();
   const {
     terms
   } = flow;
@@ -277,9 +275,9 @@ function TermsRow({
         </Button>
       </div>;
   }
-  const selected = flow.availabilityCandidate?.options.find(option => option.optionId === flow.availabilityCandidate?.selectedOptionId);
+  const selected = flow.availabilityCandidate?.configurations.find(option => option.configId === flow.availabilityCandidate?.selectedConfigId);
   if (!selected) return null;
-  const provider = selected.legalDisplay[locale.toLowerCase().startsWith("zh") ? "zh" : "en"].providerLabel;
+  const provider = selected.legalDisplay.provider.recipient_name!;
   // required | accepting — the progressive consent checkbox (roadmap).
   return <div className={cn("rounded-md border px-3 py-2", terms.serverRejected ? "border-danger-border bg-danger-soft" : "border-border bg-surface-hover")}>
       <label className="flex items-start gap-2 text-sm leading-5 text-foreground-muted">

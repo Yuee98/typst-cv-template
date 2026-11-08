@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createGeminiInteractionsTransport, GeminiInteractionsAdapterError } from "./gemini";
 import { prepareProvider } from "./provider";
-import { fixtureProfile } from "./fixtures";
-import { calculateCost, usageForDatabase } from "./accounting";
+import { fixtureExecutionConfiguration } from "./fixtures";
+import { usageForDatabase } from "./accounting";
 import { POLISH_STABLE_PROMPT_BLOCK_ID, POLISH_VARIABLE_PROMPT_BLOCK_ID } from "./prompt";
 import type { PolishInferenceRequest } from "./inference";
 
@@ -51,9 +51,9 @@ describe("Google Gemini Interactions", () => {
     expect(result.finishReason).toBe("stop");
     expect(result.route).toMatchObject({ providerRequestId: "v1_fixture_interaction", actualUpstreamEndpoint: endpoint, actualModelId: model });
   });
-  it("dispatches a database-configured GEMINI profile through Interactions", async () => {
-    const profile = { ...fixtureProfile(3), model_id: model }, fetchImpl = vi.fn<typeof fetch>(async () => Response.json(payload()));
-    const provider = prepareProvider(profile, { AI_PROVIDER_KEY_GEMINI_LOCAL: "synthetic-google-key" }, fetchImpl);
+  it("dispatches a database-configured Gemini connection through Interactions", async () => {
+    const profile = { ...fixtureExecutionConfiguration(3), model_id: model }, fetchImpl = vi.fn<typeof fetch>(async () => Response.json(payload()));
+    const provider = prepareProvider(profile, { AI_PROVIDER_KEY_FIXTURE_3: "synthetic-google-key" }, fetchImpl);
     expect((await provider.complete(request(), { signal: new AbortController().signal, timeoutMs: 1000 })).text).toBe(text);
     expect(fetchImpl.mock.calls[0][0]).toBe(endpoint);
   });
@@ -61,7 +61,6 @@ describe("Google Gemini Interactions", () => {
     const result = await complete(async () => Response.json(payload()));
     expect(result.usage).toEqual({ schemaVersion: "normalized_usage", inputTotalTokens: 100, inputCacheReadTokens: 20, inputCacheWriteTokens: null, inputStandardTokens: 80, outputTokens: 12, reasoningTokens: 5, cacheUsageReporting: "unavailable", usageComplete: true });
     expect(usageForDatabase(result.usage)).toEqual({ input_total: "100", cache_read: "20", cache_write: null, input_standard: "80", output: "12", reasoning: "5" });
-    expect(calculateCost(result.usage, { currency: "USD", calculator_kind: "linear_token_v1", parameters: {}, components: { INPUT_STANDARD: "1000000", INPUT_CACHE_READ: "100000", INPUT_CACHE_WRITE: "0", OUTPUT: "2000000" } })).toEqual({ estimated: "106", known: "106", reasons: [] });
   });
   it("ignores known thought steps but concatenates only text from model outputs", async () => {
     const result = await complete(async () => Response.json(payload({ steps: [{ type: "thought", signature: "private" }, { type: "model_output", content: [{ type: "text", text: text.slice(0, 12) }] }, { type: "model_output", content: [{ type: "text", text: text.slice(12) }] }] })));

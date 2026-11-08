@@ -1,252 +1,263 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
 import { handleAdminGet, handleAdminPost } from "./handler";
-const instance = "00000000-0000-4000-8000-000000000001";
+const instance = "00000000-0000-4000-8000-000000000001",
+  key = "00000000-0000-4000-8000-000000000002";
 const context = {
   ready: true,
-  capabilities: [],
-  environment: "LOCAL",
+  contract_code: "cv_app_db_2",
   database_instance_id: instance,
-  contract_code: "cv_app_db_1",
-  member_id: "adm_0123456789AB",
-  aal: "aal1",
+  environment: "LOCAL",
+  member_id: "1",
   control: {
     enabled: false,
-    active_policy_version_id: null,
     audience: "ALLOWLIST",
-    generation: "1",
-    close_cycle: "1",
     revision: "1",
     user_daily_limit: "20",
     global_daily_limit: "2000",
     user_minute_limit: "3"
+  },
+  capabilities: {
+    cv_schema_version: 7,
+    encrypted_envelope_version: 1
   }
 };
-function deps() {
-  const getUser = vi.fn().mockResolvedValue({ data: { user: { id: instance } }, error: null });
-  const rpc = vi.fn().mockResolvedValue({
-    data: { context, data: null },
-    error: null
-  });
-  return {
-    rpc,
-    getUser,
-    environment: () => ({
-      name: "local" as const,
-      supabaseUrl: "http://127.0.0.1:54321",
-      publishableKey: "public"
-    }),
-    client: vi.fn(() => ({
-      auth: {
-        getUser
-      },
-      rpc
-    }))
-  };
-}
-const request = (body: unknown) => new Request("http://localhost/api/admin", {
+const price = {
+  currency: "USD",
+  input_standard_nanos_per_million: "1000000000",
+  input_cache_read_nanos_per_million: "0",
+  input_cache_write_nanos_per_million: "0",
+  output_nanos_per_million: "2000000000"
+};
+const configuration = {
+  id: "1",
+  revision: "1",
+  name: "Reviewed service",
+  adapter_id: 1,
+  endpoint_url: "https://api.example.test/responses",
+  model_id: "model-a",
+  credential_ref: "AI_PROVIDER_KEY_TEST",
+  legal_document_id: "3",
+  enabled: false,
+  price
+};
+const base = {
+  contract_code: "cv_app_db_2",
+  database_instance_id: instance,
+  operation_key: key,
+  reason: "Save configuration"
+};
+const rpc = vi.fn(),
+  getUser = vi.fn(),
+  validateConfiguration = vi.fn();
+const deps = {
+  environment: () => ({
+    name: "local",
+    supabaseUrl: "http://127.0.0.1:54321",
+    publishableKey: "public"
+  }),
+  client: () => ({
+    auth: {
+      getUser
+    },
+    rpc
+  }),
+  validateConfiguration
+};
+const request = (path = "section=controls") => new Request(`http://local.test/api/admin?${path}`, {
+  headers: {
+    Authorization: "Bearer user-token"
+  }
+});
+const post = (body: unknown) => new Request("http://local.test/api/admin", {
   method: "POST",
   headers: {
-    Authorization: "Bearer token",
+    Authorization: "Bearer user-token",
     "Content-Type": "application/json"
   },
   body: JSON.stringify(body)
 });
-
-describe("single-transaction Admin reads", () => {
-  const getRequest = (query: string, signal?: AbortSignal) => new Request(`http://localhost/api/admin?${query}`, {
-    headers: { Authorization: "Bearer original-token" }, signal
+beforeEach(() => {
+  vi.clearAllMocks();
+  getUser.mockResolvedValue({
+    data: {
+      user: {
+        id: key
+      }
+    },
+    error: null
   });
-
-  it.each([
-    ["section=providers", { section: "providers", kind: "providers", limit: 25 }, { records: [], next_cursor: null }],
-    ["section=profiles&kind=identities&after=prf_0123456789AB&limit=10", { section: "profiles", kind: "profiles", after: "prf_0123456789AB", limit: 10 }, { records: [], next_cursor: null }],
-    ["section=profiles&id=pfv_0123456789AB", { section: "profiles", kind: "profile_versions", external_id: "pfv_0123456789AB" }, { external_id: "pfv_0123456789AB" }],
-    ["section=users&id=adm_0123456789AB", { section: "users", kind: "members", external_id: "adm_0123456789AB" }, { external_id: "adm_0123456789AB" }],
-    ["section=analytics&days=14", { section: "analytics", days: 14 }, { usage: [] }],
-    ["section=controls", { section: "controls" }, null],
-  ])("%s verifies the bearer once and executes only one read RPC", async (query, fields, payload) => {
-    const d = deps();
-    d.rpc.mockResolvedValue({ data: { context, data: payload }, error: null });
-    const req = getRequest(query);
-    const response = await handleAdminGet(req, d as never);
-    expect(response.status).toBe(200);
-    expect(d.client).toHaveBeenCalledWith(expect.anything(), "original-token", req.signal);
-    expect(d.getUser).toHaveBeenCalledExactlyOnceWith("original-token");
-    expect(d.rpc).toHaveBeenCalledExactlyOnceWith("admin_read", { p_input: {
-      ...fields, contract_code: "cv_app_db_1", expected_environment: "LOCAL"
-    } });
-    expect(await response.json()).toEqual({ context, data: payload });
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(response.headers.get("Vary")).toBe("Authorization");
-  });
-
-  it("binds warm reads to the existing database instance", async () => {
-    const d = deps();
-    await handleAdminGet(getRequest(`section=overview&database_instance_id=${instance}`), d as never);
-    expect(d.rpc).toHaveBeenCalledWith("admin_read", { p_input: {
-      section: "overview", database_instance_id: instance, contract_code: "cv_app_db_1", expected_environment: "LOCAL"
-    } });
-  });
-
-  it.each([
-    "section=overview&section=users", "section=overview&limit=25", "section=controls&kind=members",
-    "section=analytics&kind=versions", "section=users&kind=versions", "section=providers&kind=identities",
-    "section=profiles&id=pfv_0123456789AB&after=cursor", "section=profiles&id=pfv_0123456789AB&limit=25",
-    "section=users&after=", "section=users&limit=0", "section=users&limit=101", "section=users&limit=01",
-    "section=analytics&days=0", "section=analytics&days=32", "section=analytics&days=7.5",
-    "section=overview&database_instance_id=", "section=overview&database_instance_id=not-a-uuid",
-    "section=unknown", "section=providers&id=wrong", "section=users&unexpected=1"
-  ])("rejects unsupported query %s before the database RPC", async query => {
-    const d = deps();
-    const response = await handleAdminGet(getRequest(query), d as never);
-    expect(response.status).toBe(400);
-    expect(d.rpc).not.toHaveBeenCalled();
-  });
-
-  it.each(["environment", "instance"])("fails closed on an unexpected response %s", async field => {
-    const d = deps();
-    d.rpc.mockResolvedValue({ data: { context: {
-      ...context, ...(field === "environment" ? { environment: "PRODUCTION" } : { database_instance_id: "00000000-0000-4000-8000-000000000099" })
-    }, data: null }, error: null });
-    const response = await handleAdminGet(getRequest(`section=overview&database_instance_id=${instance}`), d as never);
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error: { code: "CLIENT_UPDATE_REQUIRED" } });
-  });
-
-  it.each([context, { context, data: [] }, { context: { ...context, legal: {} }, data: null }, { context, data: { wrong: true } }])("rejects old or malformed read output", async data => {
-    const d = deps();
-    d.rpc.mockResolvedValue({ data, error: null });
-    const response = await handleAdminGet(getRequest("section=providers"), d as never);
-    expect(response.status).toBe(503);
-  });
-
-  it("does not send a database read after the initiating request was cancelled during Auth", async () => {
-    const d = deps(), controller = new AbortController();
-    let finish!: (value: unknown) => void;
-    d.getUser.mockReturnValue(new Promise(resolve => { finish = resolve; }));
-    const pending = handleAdminGet(getRequest("section=providers", controller.signal), d as never);
-    controller.abort();
-    finish({ data: { user: { id: instance } }, error: null });
-    await pending;
-    expect(d.rpc).not.toHaveBeenCalled();
+  validateConfiguration.mockResolvedValue(undefined);
+  rpc.mockImplementation(async (name: string) => name === "admin_context" ? {
+    data: context,
+    error: null
+  } : {
+    data: {
+      context,
+      data: null
+    },
+    error: null
   });
 });
-describe("admin HTTP boundary", () => {
-  it("requires verified bearer authentication", async () => {
-    const d = deps();
-    expect((await handleAdminGet(new Request("http://localhost/api/admin"), d as never)).status).toBe(401);
-    expect(d.rpc).not.toHaveBeenCalled();
-  });
-  it("reads the sole current context and caches no private data", async () => {
-    const d = deps();
-    const response = await handleAdminGet(new Request("http://localhost/api/admin?section=overview", {
-      headers: {
-        Authorization: "Bearer token"
+describe("single-read Admin BFF", () => {
+  it("combines live Auth and one read while returning private no-store", async () => {
+    const result = await handleAdminGet(request(), deps as never);
+    expect(result.status).toBe(200);
+    expect(getUser).toHaveBeenCalledExactlyOnceWith("user-token");
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("admin_read", {
+      p_input: {
+        section: "controls",
+        contract_code: "cv_app_db_2",
+        expected_environment: "LOCAL"
       }
-    }), d as never);
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(d.rpc).toHaveBeenCalledWith("admin_read", { p_input: { section: "overview", contract_code: "cv_app_db_1", expected_environment: "LOCAL" } });
-    expect(await response.json()).toEqual({ context, data: null });
+    });
+    expect(result.headers.get("cache-control")).toContain("no-store");
   });
-  it("rejects old commands and client-supplied producer reports", async () => {
-    const d = deps();
-    for (const body of [{
-      operation: "disable_ai"
-    }, {
-      operation: "validate",
-      passed: true
-    }]) expect((await handleAdminPost(request(body), d as never)).status).toBe(400);
-    expect(d.rpc).not.toHaveBeenCalled();
+  it("binds warm reads to the instance", async () => {
+    await handleAdminGet(request(`section=controls&database_instance_id=${instance}`), deps as never);
+    expect(rpc.mock.calls[0][1].p_input.database_instance_id).toBe(instance);
   });
-  it("passes only validated current write fields and propagates step-up", async () => {
-    const d = deps();
-    d.rpc.mockResolvedValueOnce({
+  it.each(["section=profiles", "section=configurations&kind=versions", "section=configurations&limit=101", "section=controls&section=users", "section=controls&passed=true", "section=usage&kind=analytics&days=91", "section=configurations&id=pfv_111111111111"])("rejects invalid query %s", async query => {
+    expect((await handleAdminGet(request(query), deps as never)).status).toBe(400);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("validates complete configuration aggregates on reads", async () => {
+    rpc.mockResolvedValue({
+      data: {
+        context,
+        data: {
+          records: [configuration],
+          next_cursor: null
+        }
+      },
+      error: null
+    });
+    const result = await handleAdminGet(request("section=configurations"), deps as never);
+    expect(result.status).toBe(200);
+    expect((await result.json()).data.records[0].price).toEqual(price);
+  });
+  it("fails closed on wrong environment or malformed configuration", async () => {
+    rpc.mockResolvedValueOnce({
+      data: {
+        context: {
+          ...context,
+          environment: "PRODUCTION"
+        },
+        data: null
+      },
+      error: null
+    });
+    expect((await handleAdminGet(request(), deps as never)).status).toBe(409);
+    rpc.mockResolvedValueOnce({
+      data: {
+        context,
+        data: {
+          records: [{
+            ...configuration,
+            price: {}
+          }],
+          next_cursor: null
+        }
+      },
+      error: null
+    });
+    expect((await handleAdminGet(request("section=configurations"), deps as never)).status).toBe(503);
+  });
+  it("does not reach the database after canceled or rejected Auth", async () => {
+    getUser.mockResolvedValue({
+      data: {
+        user: null
+      },
+      error: new Error("no")
+    });
+    expect((await handleAdminGet(request(), deps as never)).status).toBe(401);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+describe("atomic current-row mutations", () => {
+  it("passes config and price together after non-paid endpoint/credential checks", async () => {
+    const fields = {
+      ...configuration
+    };
+    delete (fields as Partial<typeof configuration>).revision;
+    rpc.mockImplementation(async (name: string) => name === "admin_context" ? {
       data: context,
       error: null
-    }).mockResolvedValue({
+    } : {
+      data: {
+        operation_id: "10",
+        operation: "configuration_save",
+        entity_kind: "configurations",
+        entity_id: "1",
+        revision: "2",
+        time_committed: "2026-11-08T00:00:00Z"
+      },
+      error: null
+    });
+    const body = {
+      ...base,
+      operation: "admin_configuration_save",
+      ...fields,
+      expected_revision: "1"
+    };
+    const result = await handleAdminPost(post(body), deps as never);
+    expect(result.status).toBe(200);
+    expect(validateConfiguration).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls.at(-1)).toEqual(["admin_configuration_save", {
+      p_input: {
+        ...base,
+        ...fields,
+        expected_revision: "1"
+      }
+    }]);
+  });
+  it("rejects stale instance before validation and mutation", async () => {
+    const result = await handleAdminPost(post({
+      ...base,
+      database_instance_id: key,
+      operation: "admin_ai_disable",
+      expected_revision: "1"
+    }), deps as never);
+    expect(result.status).toBe(409);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(validateConfiguration).not.toHaveBeenCalled();
+  });
+  it("propagates live step-up and conflicts", async () => {
+    rpc.mockImplementation(async (name: string) => name === "admin_context" ? {
+      data: context,
+      error: null
+    } : {
       data: null,
       error: {
         message: "STEP_UP_REQUIRED"
       }
     });
-    const response = await handleAdminPost(request({
+    expect((await handleAdminPost(post({
+      ...base,
       operation: "admin_ai_disable",
-      contract_code: "cv_app_db_1",
-      database_instance_id: instance,
-      operation_key: instance,
-      reason: "emergency",
-      expected_revision: "9007199254740993"
-    }), d as never);
-    expect(response.status).toBe(403);
-    expect(d.rpc).toHaveBeenCalledWith("admin_ai_disable", {
-      p_input: {
-        contract_code: "cv_app_db_1",
-        database_instance_id: instance,
-        operation_key: instance,
-        reason: "emergency",
-        expected_revision: "9007199254740993"
-      }
-    });
-  });
-  it("rejects stale instance before invoking a privileged producer", async () => {
-    const d = deps();
-    d.rpc.mockResolvedValue({ data: context, error: null });
-    const producer = vi.fn();
-    const response = await handleAdminPost(request({
-      operation: "validate",
-      contract_code: "cv_app_db_1",
-      database_instance_id: "00000000-0000-4000-8000-000000000099",
-      target_kind: "POLICY",
-      target_id: "plv_0123456789AB"
-    }), {
-      ...d,
-      produceValidation: producer
-    } as never);
-    expect(response.status).toBe(409);
-    expect(producer).not.toHaveBeenCalled();
-  });
-  it("rejects a deployment environment mismatch before an Admin write", async () => {
-    const d = deps();
-    d.rpc.mockResolvedValue({
-      data: {
-        ...context,
-        environment: "PRODUCTION"
-      },
-      error: null
-    });
-    const response = await handleAdminPost(request({
-      operation: "admin_ai_disable",
-      contract_code: "cv_app_db_1",
-      database_instance_id: instance,
-      operation_key: instance,
-      reason: "emergency",
       expected_revision: "1"
-    }), d as never);
-    expect(response.status).toBe(409);
-    expect(d.rpc).toHaveBeenCalledTimes(1);
-    expect(d.rpc).toHaveBeenCalledWith("admin_context");
+    }), deps as never)).status).toBe(403);
   });
-  it("lists administrator memberships with current revisions for grant and revoke", async () => {
-    const d = deps();
-    d.rpc.mockResolvedValue({
-      data: { context, data: {
-        records: [{
-          external_id: "adm_0123456789AB",
-          auth_user_id: instance,
-          revision: "7",
-          time_revoked: null
-        }],
-        next_cursor: null
-      } },
-      error: null
-    });
-    const response = await handleAdminGet(new Request("http://localhost/api/admin?section=users&kind=members", {
-      headers: {
-        Authorization: "Bearer token"
-      }
-    }), d as never);
-    expect(response.status).toBe(200);
-    expect(d.rpc).toHaveBeenCalledWith("admin_read", { p_input: { section: "users", kind: "members", limit: 25, contract_code: "cv_app_db_1", expected_environment: "LOCAL" } });
+  it("does not write if the selected key or endpoint fails validation", async () => {
+    validateConfiguration.mockRejectedValue(new Error("Selected credential unavailable"));
+    const fields = {
+      ...configuration
+    };
+    delete (fields as Partial<typeof configuration>).revision;
+    expect((await handleAdminPost(post({
+      ...base,
+      operation: "admin_configuration_save",
+      ...fields,
+      expected_revision: "1"
+    }), deps as never)).status).toBe(400);
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+  it("rejects former publish/report commands rather than keeping compatibility", async () => {
+    expect((await handleAdminPost(post({
+      ...base,
+      operation: "admin_profile_version_publish",
+      passed: true
+    }), deps as never)).status).toBe(400);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

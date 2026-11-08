@@ -45,7 +45,7 @@ function backend() {
     if (name === "app_context") return {
       data: {
         ready: true,
-        contract_code: "cv_app_db_1",
+        contract_code: "cv_app_db_2",
         database_instance_id: instanceId
       },
       error: null

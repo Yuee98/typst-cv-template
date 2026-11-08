@@ -37,8 +37,8 @@ function makeFlow(): PolishFlow {
   return {
     isOpen: true, state: { ...createInitialState<PolishSnapshot>(), snapshot }, scope: null, scopeFailure: null,
     signedIn: true, encrypted: true, getValue: vi.fn(), quota: null, quotaStatus: "ready",
-    availabilityCandidate: { ...availability, selectedOptionId: availability.options[0].optionId },
-    availabilityStatus: "ready", selectOption: vi.fn(),
+    availabilityCandidate: { ...availability, selectedConfigId: availability.configurations[0].configId },
+    availabilityStatus: "ready", selectConfiguration: vi.fn(),
     terms: { status: "required", checked: false, serverRejected: false, setChecked: vi.fn() },
     configChangedHint: false, routeChangedHint: false, staleItemIds: new Set(), referencesStale: false, canConfirm: false,
     open: vi.fn(), close: vi.fn(), setLevel: vi.fn(), setStylePreset: vi.fn(), setStyleInstruction: vi.fn(),
@@ -53,15 +53,15 @@ function renderPhase(flow: PolishFlow, locale: "zh" | "en" = "en") {
 }
 
 function expectPinnedLinks(flow: PolishFlow) {
-  const option = flow.availabilityCandidate!.options.find(o => o.optionId === flow.availabilityCandidate!.selectedOptionId)!;
+  const option = flow.availabilityCandidate!.configurations.find(o => o.configId === flow.availabilityCandidate!.selectedConfigId)!;
   const links = screen.getAllByRole("link");
   expect(links).toHaveLength(1);
   for (const link of links) {
     const url = new URL(link.getAttribute("href")!, "https://preview.example");
     expect(url.pathname).toBe("/ai-terms");
     expect(Object.fromEntries(url.searchParams)).toEqual({
-      bundle: option.legalDisplay.bundleId, manifest: option.legalDisplay.manifestDigest,
-      disclosure: option.legalDisplay.disclosureId, digest: option.legalDisplay.contentDigest,
+      common: option.legalDisplay.common.external_id, common_audit: option.legalDisplay.common.document_audit_id, common_digest: option.legalDisplay.common.content_digest,
+      provider: option.legalDisplay.provider.external_id, provider_audit: option.legalDisplay.provider.document_audit_id, provider_digest: option.legalDisplay.provider.content_digest,
     });
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noreferrer");
@@ -85,7 +85,7 @@ describe("PolishConfigPhase exact provider reading links", () => {
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
     expect(flow.terms.setChecked).not.toHaveBeenCalled();
     expect(flow.confirm).not.toHaveBeenCalled();
-    expect(flow.selectOption).not.toHaveBeenCalled();
+    expect(flow.selectConfiguration).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("checkbox"));
     expect(flow.terms.setChecked).toHaveBeenCalledWith(true);
     expect(flow.confirm).not.toHaveBeenCalled();
@@ -95,14 +95,14 @@ describe("PolishConfigPhase exact provider reading links", () => {
     const flow = makeFlow();
     const view = render(renderPhase(flow));
     for (const index of [1, 2]) {
-      const option = flow.availabilityCandidate!.options[index];
-      option.legalDisplay.contentDigest = String(index + 2).repeat(64);
-      fireEvent.change(screen.getByRole("combobox"), { target: { value: option.optionId } });
-      expect(flow.selectOption).toHaveBeenLastCalledWith(option.optionId);
-      flow.availabilityCandidate = { ...flow.availabilityCandidate!, selectedOptionId: option.optionId };
+      const option = flow.availabilityCandidate!.configurations[index];
+      option.legalDisplay.provider.content_digest = String(index + 2).repeat(64);
+      fireEvent.change(screen.getByRole("combobox"), { target: { value: option.configId } });
+      expect(flow.selectConfiguration).toHaveBeenLastCalledWith(option.configId);
+      flow.availabilityCandidate = { ...flow.availabilityCandidate!, selectedConfigId: option.configId };
       view.rerender(renderPhase(flow));
       expectPinnedLinks(flow);
-      const checkbox = screen.getByRole("checkbox", { name: new RegExp(option.legalDisplay.en.providerLabel) }) as HTMLInputElement;
+      const checkbox = screen.getByRole("checkbox", { name: new RegExp(option.legalDisplay.provider.recipient_name!) }) as HTMLInputElement;
       expect(checkbox.checked).toBe(false);
       expect(screen.queryByRole("checkbox", { name: /DeepSeek/ })).toBeNull();
       expect(flow.confirm).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe("PolishConfigPhase exact provider reading links", () => {
 
   it("does not show an unpinned consent checkbox without a selected provider", () => {
     const flow = makeFlow();
-    flow.availabilityCandidate = { ...flow.availabilityCandidate!, selectedOptionId: null };
+    flow.availabilityCandidate = { ...flow.availabilityCandidate!, selectedConfigId: null };
     render(renderPhase(flow));
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();

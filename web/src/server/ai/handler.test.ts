@@ -36,7 +36,7 @@ describe("current HTTP runtime", () => {
     const {
       availability
     } = polishAvailabilityResponseSchema.parse(await available.json());
-    expect(availability.options).toHaveLength(2);
+    expect(availability.configurations).toHaveLength(2);
     expect(JSON.stringify(availability)).not.toContain("credential_ref");
     const payload = {
       clientRequestId: crypto.randomUUID(),
@@ -52,7 +52,7 @@ describe("current HTTP runtime", () => {
         level: 0,
         references: []
       },
-      expectedRoute: polishExpectedRouteFromAvailability(availability, availability.options[1].optionId)
+      expectedRoute: polishExpectedRouteFromAvailability(availability, availability.configurations[1].configId)
     };
     const r = await h.POST(request("/api/polish", {
       method: "POST",

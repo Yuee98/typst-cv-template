@@ -7,14 +7,13 @@ import { ADMIN_SECTIONS, type AdminSection } from "@/lib/admin/contract";
 import { cn } from "@/lib/utils";
 import type { AdminMessages } from "./messages";
 import { adminNavigationPath } from "./navigation";
-
 export function AdminShell({
   locale,
   t,
   section,
   environment,
   onSignOut,
-  children,
+  children
 }: {
   locale: "zh" | "en";
   t: AdminMessages;
@@ -45,15 +44,7 @@ export function AdminShell({
         </div>
       </header>
       {section && <nav aria-label={t.navigation} className="flex gap-2 overflow-x-auto rounded-xl border border-border bg-surface p-2 shadow-sm">
-        {ADMIN_SECTIONS.map(item => <Link
-          key={item}
-          href={adminNavigationPath(locale, item)!}
-          aria-current={section === item ? "page" : undefined}
-          className={cn(
-            "shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            section === item ? "bg-accent text-accent-foreground" : "text-foreground-muted hover:bg-surface-hover hover:text-foreground",
-          )}
-        >{t[item]}</Link>)}
+        {ADMIN_SECTIONS.map(item => <Link key={item} href={adminNavigationPath(locale, item)!} aria-current={section === item ? "page" : undefined} className={cn("shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", section === item ? "bg-accent text-accent-foreground" : "text-foreground-muted hover:bg-surface-hover hover:text-foreground")}>{t[item]}</Link>)}
       </nav>}
       <div className="min-w-0 space-y-6">{children}</div>
     </div>

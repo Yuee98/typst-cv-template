@@ -8,12 +8,9 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/legal/terms-acceptance", () => mocks);
 import { useTermsGate } from "./use-terms-gate";
-const terms = {
-  external_id: "ldv_0123456789AB",
-  content_digest: "a".repeat(64),
-  content: {},
-  renderer_contract: "legal_document_1"
-};
+import { legalDocumentFixture } from "@/lib/legal/test-fixtures";
+const terms = legalDocumentFixture();
+
 function args(userId: string | null) {
   return {
     userId,
@@ -25,7 +22,7 @@ function args(userId: string | null) {
 describe("current terms gate", () => {
   it("displays a target before accepting its exact version", async () => {
     mocks.getCurrentLegal.mockResolvedValue({
-      terms
+      documents: [terms]
     });
     mocks.hasAcceptedTerms.mockResolvedValue(false);
     mocks.acceptCurrentTerms.mockResolvedValue(undefined);
@@ -67,7 +64,7 @@ describe("current terms gate", () => {
     });
     await act(async () => {
       resolve({
-        terms
+        documents: [terms]
       });
       await pending;
     });

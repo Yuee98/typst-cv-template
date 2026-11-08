@@ -283,60 +283,47 @@ export const polishRequestSchema = z.strictObject({
 // Response schemas
 // ---------------------------------------------------------------------------
 
-/** Canonical bigint text; never round a revision through a JavaScript number. */
-export const polishConfigGenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,18})$/).refine(value => BigInt(value) <= BigInt("9223372036854775807"));
-const externalId = (prefix: string) => z.string().regex(new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{12}$`));
+/** Canonical positive PostgreSQL bigint IDs and CAS revisions. */
+export const polishDatabaseIdSchema = z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => BigInt(value) <= BigInt("9223372036854775807"));
 export const polishExpectedRouteSchema = z.strictObject({
-  contract: z.literal("cv_app_db_1"),
+  contract: z.literal("cv_app_db_2"),
   databaseInstanceId: z.uuid(),
-  configGeneration: polishConfigGenerationSchema,
-  policyVersionId: externalId("plv"),
-  selectedOptionId: externalId("opt"),
-  profileVersionId: externalId("pfv"),
-  disclosureId: externalId("lds"),
-  contentDigest: z.string().regex(/^[0-9a-f]{64}$/)
+  controlRevision: polishDatabaseIdSchema,
+  configId: polishDatabaseIdSchema,
+  configRevision: polishDatabaseIdSchema,
+  commonDocumentAuditId: polishDatabaseIdSchema,
+  providerDocumentAuditId: polishDatabaseIdSchema
 });
-export const polishPostRequestSchema = polishRequestSchema.safeExtend({
-  expectedRoute: polishExpectedRouteSchema
-});
-export const polishAvailabilityOptionSchema = z.strictObject({
-  optionId: externalId("opt"),
-  profileVersionId: externalId("pfv"),
-  providerName: z.string().min(1),
-  modelName: z.string().min(1),
+export const polishPostRequestSchema = polishRequestSchema.safeExtend({ expectedRoute: polishExpectedRouteSchema });
+export const polishAvailabilityConfigurationSchema = z.strictObject({
+  configId: polishDatabaseIdSchema,
+  configRevision: polishDatabaseIdSchema,
+  name: z.string().min(1),
+  modelId: z.string().min(1),
   status: z.enum(["READY", "CONSENT_REQUIRED", "UNAVAILABLE"]),
   reason: z.string().nullable(),
   legalDisplay: legalDisplaySchema
 });
 export const polishAvailabilitySchema = z.strictObject({
   enabled: z.boolean(),
-  contract: z.literal("cv_app_db_1"),
+  contract: z.literal("cv_app_db_2"),
   databaseInstanceId: z.uuid(),
-  configGeneration: polishConfigGenerationSchema,
-  policyVersionId: externalId("plv").nullable(),
-  ruleOrdinal: z.number().int().nullable(),
-  options: z.array(polishAvailabilityOptionSchema),
-  defaultOptionId: externalId("opt").nullable(),
-  observedAt: z.iso.datetime({
-    offset: true
-  }),
-  nextChangeAt: z.iso.datetime({
-    offset: true
-  }).nullable(),
+  controlRevision: polishDatabaseIdSchema,
+  configurations: z.array(polishAvailabilityConfigurationSchema),
+  defaultConfigId: polishDatabaseIdSchema.nullable(),
   reason: z.string().nullable()
 });
-export function polishExpectedRouteFromAvailability(availability: z.infer<typeof polishAvailabilitySchema>, optionId: string | null = availability.defaultOptionId): z.infer<typeof polishExpectedRouteSchema> | null {
-  const option = availability.options.find(option => option.optionId === optionId);
-  if (!availability.enabled || !availability.policyVersionId || !option || option.status === "UNAVAILABLE") return null;
+export function polishExpectedRouteFromAvailability(availability: z.infer<typeof polishAvailabilitySchema>, configId: string | null = availability.defaultConfigId): z.infer<typeof polishExpectedRouteSchema> | null {
+  const configuration = availability.configurations.find(configuration => configuration.configId === configId);
+  if (!availability.enabled || !configuration || configuration.status === "UNAVAILABLE") return null;
   return polishExpectedRouteSchema.parse({
     contract: availability.contract,
     databaseInstanceId: availability.databaseInstanceId,
-    configGeneration: availability.configGeneration,
-    policyVersionId: availability.policyVersionId,
-    selectedOptionId: option.optionId,
-    profileVersionId: option.profileVersionId,
-    disclosureId: option.legalDisplay.disclosureId,
-    contentDigest: option.legalDisplay.contentDigest
+    controlRevision: availability.controlRevision,
+    configId: configuration.configId,
+    configRevision: configuration.configRevision,
+    commonDocumentAuditId: configuration.legalDisplay.common.document_audit_id,
+    providerDocumentAuditId: configuration.legalDisplay.provider.document_audit_id
   });
 }
 export const polishAvailabilityResponseSchema = z.strictObject({
@@ -453,7 +440,7 @@ export type PolishExpectedRoute = z.infer<typeof polishExpectedRouteSchema>;
 export type PolishPostRequest = z.infer<typeof polishPostRequestSchema>;
 export type PolishAvailability = z.infer<typeof polishAvailabilitySchema>;
 export type PolishAvailabilityResponse = z.infer<typeof polishAvailabilityResponseSchema>;
-export type PolishAvailabilityOption = z.infer<typeof polishAvailabilityOptionSchema>;
+export type PolishAvailabilityConfiguration = z.infer<typeof polishAvailabilityConfigurationSchema>;
 export type PolishQuota = z.infer<typeof polishQuotaSchema>;
 export type PolishSuccessResponse = z.infer<typeof polishSuccessResponseSchema>;
 export type PolishQuotaResponse = z.infer<typeof polishQuotaResponseSchema>;

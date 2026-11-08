@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { ReactNode } from "react";
@@ -7,118 +6,144 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import messagesEn from "../../../messages/en.json";
 import messagesZh from "../../../messages/zh.json";
 import { aiDisclosureHref, termsDocumentHref } from "@/lib/legal/document-links";
-import { getCurrentLegal, type CurrentLegal } from "@/lib/legal/terms-acceptance";
+import { getCurrentLegal, getLegalDocument } from "@/lib/legal/terms-acceptance";
+import { legalDisplayFixture, legalDocumentFixture } from "@/lib/legal/test-fixtures";
 import { CurrentLegalDocument } from "./current-legal-document";
-
-const state = vi.hoisted(() => ({ search: "", client: {} as object | null }));
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(state.search) }));
-vi.mock("@/lib/supabase/client", () => ({ getSupabaseBrowserClient: () => state.client }));
-vi.mock("@/lib/legal/terms-acceptance", () => ({ getCurrentLegal: vi.fn() }));
-vi.mock("@/i18n/navigation", () => ({ Link: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a> }));
-
-const termsId = "ldv_111111111111", bundleId = "lgb_111111111111", disclosureId = "lds_111111111111";
-const termsDigest = "a".repeat(64), manifestDigest = "b".repeat(64), contentDigest = "c".repeat(64);
-function fixture(): CurrentLegal {
-  const terms = { title: "Service terms", effectiveDate: "2026-11-08", intro: ["ORDINARY TERMS BODY"], sections: [] };
-  const common = { title: "AI service terms", effectiveDate: "2026-11-08", intro: ["COMMON INTRO"], sections: [{ heading: "Common obligations", body: ["COMMON BODY"] }] };
-  const content = (providerLabel: string, modelLabel: string) => ({ providerLabel, modelLabel, blocks: [
-    { kind: "paragraph" as const, text: "COMMON INTRO" },
-    { kind: "bulletList" as const, items: [`${providerLabel} SPECIFIC BULLET`] },
-    { kind: "paragraph" as const, text: `${providerLabel} LAST PARAGRAPH` },
-  ] });
-  const ds = content("DeepSeek", "deepseek-flash"), mimo = content("MiMo", "mimo-v2.6-flash");
-  return {
-    terms: { external_id: termsId, content_digest: termsDigest, renderer_contract: "legal_document_1", content: { zh: terms, en: terms } },
-    ai_bundle: {
-      external_id: bundleId, manifest_digest: manifestDigest,
-      ai_terms: { external_id: "ldv_222222222222", content_digest: "d".repeat(64), renderer_contract: "legal_document_1", content: { zh: common, en: common } },
-      disclosures: [
-        { external_id: disclosureId, provider_code: "DEEPSEEK", content_digest: contentDigest, renderer_contract: "legal_display_1", content: { zh: ds, en: ds } },
-        { external_id: "lds_222222222222", provider_code: "MIMO", content_digest: "e".repeat(64), renderer_contract: "legal_display_1", content: { zh: mimo, en: mimo } },
-      ],
-    },
-  };
-}
-function exactAi(data = fixture()) {
-  return aiDisclosureHref({ bundleId: data.ai_bundle!.external_id, manifestDigest: data.ai_bundle!.manifest_digest, disclosureId: data.ai_bundle!.disclosures[0].external_id, contentDigest: data.ai_bundle!.disclosures[0].content_digest });
-}
-function setQuery(href: string) { state.search = href.split("?")[1] ?? ""; }
+const state = vi.hoisted(() => ({
+  search: "",
+  client: {} as object | null
+}));
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(state.search)
+}));
+vi.mock("@/lib/supabase/client", () => ({
+  getSupabaseBrowserClient: () => state.client
+}));
+vi.mock("@/lib/legal/terms-acceptance", () => ({
+  getCurrentLegal: vi.fn(),
+  getLegalDocument: vi.fn()
+}));
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({
+    href,
+    children,
+    ...rest
+  }: {
+    href: string;
+    children: ReactNode;
+  }) => <a href={href} {...rest}>{children}</a>
+}));
+const terms = legalDocumentFixture(),
+  display = legalDisplayFixture();
+const providerB = {
+  ...legalDocumentFixture("AI_PROVIDER", "4"),
+  en_title: "Other service",
+  zh_title: "另一服务"
+};
+const all = [terms, display.common, display.provider, providerB];
 function page(locale: "zh" | "en" = "en", kind: "terms" | "ai_terms" = "ai_terms") {
   return <NextIntlClientProvider locale={locale} messages={locale === "zh" ? messagesZh : messagesEn}><CurrentLegalDocument locale={locale} kind={kind} /></NextIntlClientProvider>;
 }
-beforeEach(() => { vi.clearAllMocks(); state.search = ""; state.client = {}; vi.mocked(getCurrentLegal).mockResolvedValue(fixture()); });
+function query(href: string) {
+  state.search = href.split("?")[1] ?? "";
+}
+beforeEach(() => {
+  vi.clearAllMocks();
+  state.search = "";
+  state.client = {};
+  vi.mocked(getCurrentLegal).mockResolvedValue({
+    documents: all
+  });
+  vi.mocked(getLegalDocument).mockImplementation(async (_client, pin) => {
+    const found = all.find(doc => doc.external_id === pin.external_id && doc.document_audit_id === pin.document_audit_id && doc.content_digest === pin.content_digest);
+    if (!found) throw new Error("NOT_FOUND");
+    return found;
+  });
+});
 afterEach(cleanup);
-
-describe("current and exact legal reading pages", () => {
-  it.each(["zh", "en"] as const)("shows common terms once and links to complete Provider documents in %s", async locale => {
-    const view = render(page(locale));
-    await screen.findByRole("heading", { name: "AI service terms", level: 1 });
-    expect(screen.getAllByText("COMMON INTRO")).toHaveLength(1);
-    expect(screen.queryByText("DeepSeek SPECIFIC BULLET")).toBeNull();
-    expect(screen.queryByText("MiMo SPECIFIC BULLET")).toBeNull();
-    expect(screen.getByRole("link", { name: "DeepSeek · deepseek-flash" }).getAttribute("href")).toBe(exactAi());
-    expect(view.container.querySelector("#provider-deepseek")).not.toBeNull();
-    expect(view.container.querySelector("#provider-mimo")).not.toBeNull();
+describe("current and precise audited reading", () => {
+  it.each(["zh", "en"] as const)("renders the %s common terms once with exact provider links", async locale => {
+    render(page(locale));
+    await screen.findByRole("heading", {
+      level: 1,
+      name: locale === "zh" ? display.common.zh_title : display.common.en_title
+    });
+    expect(screen.getAllByText(locale === "zh" ? "中文介绍" : "English introduction")).toHaveLength(1);
+    expect(screen.getByRole("link", {
+      name: locale === "zh" ? providerB.zh_title : providerB.en_title
+    }).getAttribute("href")).toBe(aiDisclosureHref({
+      common: display.common,
+      provider: providerB
+    }));
   });
-  it.each(["zh", "en"] as const)("renders only the exact selected document in its original block order in %s", async locale => {
-    setQuery(exactAi());
-    const view = render(page(locale));
-    await screen.findByRole("heading", { level: 1, name: "AI service terms · DeepSeek · deepseek-flash" });
-    expect(screen.getAllByText("COMMON INTRO")).toHaveLength(1);
-    expect(screen.queryByText("COMMON BODY")).toBeNull();
-    expect(screen.queryByText("MiMo SPECIFIC BULLET")).toBeNull();
-    expect(screen.queryByRole("link", { name: /MiMo/ })).toBeNull();
-    expect(Array.from(view.container.querySelector("#provider-deepseek")!.children).map(x => x.tagName)).toEqual(["P", "UL", "P"]);
-    expect(view.container.querySelector("#provider-deepseek")!.textContent).toBe("COMMON INTRODeepSeek SPECIFIC BULLETDeepSeek LAST PARAGRAPH");
+  it.each(["zh", "en"] as const)("reads two independently pinned historical %s bodies without latest substitution", async locale => {
+    query(aiDisclosureHref(display));
+    render(page(locale));
+    await screen.findByRole("heading", {
+      name: locale === "zh" ? display.provider.zh_title : display.provider.en_title
+    });
+    expect(getCurrentLegal).not.toHaveBeenCalled();
+    expect(getLegalDocument).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("link", {
+      name: "Other service"
+    })).toBeNull();
+    expect(screen.getAllByText(locale === "zh" ? "中文介绍" : "English introduction")).toHaveLength(2);
   });
-  it.each(["bundle", "manifest", "disclosure", "digest"])("does not substitute current or another Provider for a mismatched %s", async key => {
-    const url = new URL(exactAi(), "https://preview.test");
-    url.searchParams.set(key, key === "bundle" ? "lgb_222222222222" : key === "disclosure" ? "lds_222222222222" : "f".repeat(64));
-    state.search = url.searchParams.toString();
+  it("retains paragraph/list/paragraph order", async () => {
+    const doc = {
+      ...display.provider,
+      en_body: "First paragraph\n\n- Middle bullet\n\nLast paragraph"
+    };
+    vi.mocked(getLegalDocument).mockImplementation(async (_c, pin) => pin.external_id === doc.external_id ? doc : display.common);
+    query(aiDisclosureHref(display));
+    const view = render(page());
+    await screen.findByText("Last paragraph");
+    const nodes = Array.from(view.container.querySelectorAll("p,li")).filter(node => /First paragraph|Middle bullet|Last paragraph/.test(node.textContent ?? ""));
+    expect(nodes.map(node => node.tagName)).toEqual(["P", "LI", "P"]);
+  });
+  it("does not fall back to current content when one historical document is missing", async () => {
+    query(aiDisclosureHref(display));
+    vi.mocked(getLegalDocument).mockRejectedValue(new Error("NOT_FOUND"));
     render(page());
     await screen.findByRole("alert");
-    expect(screen.queryByText("COMMON INTRO")).toBeNull();
-    expect(screen.queryByText(/SPECIFIC BULLET/)).toBeNull();
+    expect(getCurrentLegal).not.toHaveBeenCalled();
+    expect(screen.queryByText("English introduction")).toBeNull();
   });
-  it("rejects an incomplete exact link without a legal read", async () => {
-    state.search = `disclosure=${disclosureId}`;
+  it("rejects partial/legacy pins without reading", () => {
+    state.search = "common_audit=2";
     render(page());
     expect(screen.getByRole("alert")).toBeTruthy();
+    expect(getLegalDocument).not.toHaveBeenCalled();
     expect(getCurrentLegal).not.toHaveBeenCalled();
   });
-  it("shows the ordinary terms at their matching target", async () => {
-    setQuery(termsDocumentHref(fixture().terms));
+  it("reads the exact ordinary terms audit", async () => {
+    query(termsDocumentHref(terms));
     render(page("en", "terms"));
-    await screen.findByRole("heading", { name: "Service terms", level: 1 });
-    expect(screen.getByText("ORDINARY TERMS BODY")).toBeTruthy();
+    await screen.findByRole("heading", {
+      level: 1,
+      name: terms.en_title
+    });
+    expect(getLegalDocument).toHaveBeenCalledTimes(1);
   });
-  it.each(["document", "digest"])("rejects a changed ordinary terms %s", async key => {
-    const url = new URL(termsDocumentHref(fixture().terms), "https://preview.test");
-    url.searchParams.set(key, key === "document" ? "ldv_222222222222" : "f".repeat(64));
-    state.search = url.searchParams.toString();
-    render(page("en", "terms"));
-    await screen.findByRole("alert");
-    expect(screen.queryByText("ORDINARY TERMS BODY")).toBeNull();
-  });
-  it("does not show a document when the public read fails", async () => {
-    vi.mocked(getCurrentLegal).mockRejectedValueOnce(new Error("unavailable"));
-    render(page());
-    await screen.findByText("Current terms are unavailable. Please refresh later.");
-    expect(screen.queryByText("COMMON INTRO")).toBeNull();
-  });
-  it("does not adopt an older query's late response after navigating to another exact document", async () => {
-    const old = fixture(), newer = fixture();
-    newer.ai_bundle!.external_id = "lgb_333333333333";
-    newer.ai_bundle!.disclosures[0].content.en.blocks[0] = { kind: "paragraph", text: "NEW DOCUMENT" };
-    let finish!: (value: CurrentLegal) => void;
-    vi.mocked(getCurrentLegal).mockReturnValueOnce(new Promise(resolve => { finish = resolve; })).mockResolvedValueOnce(newer);
-    setQuery(exactAi(old));
+  it("hides the old body immediately when the query changes and ignores late old results", async () => {
+    let resolve!: (value: typeof display.provider) => void;
+    vi.mocked(getLegalDocument).mockImplementation(async (_c, pin) => pin.external_id === display.provider.external_id ? new Promise(done => {
+      resolve = done;
+    }) : display.common);
+    query(aiDisclosureHref(display));
     const view = render(page());
-    setQuery(exactAi(newer));
+    query(aiDisclosureHref({
+      common: display.common,
+      provider: providerB
+    }));
+    vi.mocked(getLegalDocument).mockResolvedValueOnce(display.common).mockResolvedValueOnce(providerB);
     view.rerender(page());
-    await screen.findByText("NEW DOCUMENT");
-    await act(async () => { finish(old); });
-    expect(screen.getByText("NEW DOCUMENT")).toBeTruthy();
-    expect(screen.queryByText("COMMON INTRO")).toBeNull();
+    await screen.findByRole("heading", {
+      name: providerB.en_title
+    });
+    await act(async () => resolve(display.provider));
+    expect(screen.queryByRole("heading", {
+      name: display.provider.en_title
+    })).toBeNull();
   });
 });

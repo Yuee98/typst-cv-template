@@ -7,18 +7,18 @@ export interface AiDatabase {
   call(name: ServiceRpc, input: Record<string, unknown>): Promise<unknown>;
   context(): Promise<{
     ready: boolean;
-    contract_code: "cv_app_db_1";
+    contract_code: "cv_app_db_2";
     database_instance_id: string | null;
     environment: string | null;
-    capabilities: unknown[];
+    capabilities: { cv_schema_version: 7; encrypted_envelope_version: 1 };
   }>;
 }
 const contextSchema = z.strictObject({
   ready: z.boolean(),
-  contract_code: z.literal("cv_app_db_1"),
+  contract_code: z.literal("cv_app_db_2"),
   database_instance_id: z.uuid().nullable(),
   environment: z.string().nullable(),
-  capabilities: z.array(z.unknown())
+  capabilities: z.strictObject({ cv_schema_version: z.literal(7), encrypted_envelope_version: z.literal(1) })
 });
 export function createAiDatabase(client: SupabaseClient): AiDatabase {
   return {

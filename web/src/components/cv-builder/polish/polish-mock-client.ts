@@ -8,7 +8,7 @@ import type { PolishApiClient } from "./polish-client";
 // Development mock
 // ---------------------------------------------------------------------------
 
-/** Codewords scanned in `styleInstruction`, mirroring the 0.4 fake provider. */
+/** Codewords scanned in `styleInstruction`, for the deterministic local transport. */
 export const MOCK_CLIENT_CODEWORDS = {
   failUpstream: "FAIL_UPSTREAM",
   failJson: "FAIL_JSON",
@@ -23,7 +23,7 @@ export interface CreateMockPolishClientOptions {
   quotaLimit?: number;
   /** Deterministic runtime kill-switch state returned by availability. */
   availabilityEnabled?: boolean;
-  /** Exact-bundle acceptance bit exposed by the fake availability authority. */
+  /** Exact-document acceptance bit exposed by the fake availability authority. */
   termsAccepted?: boolean;
 }
 export const MOCK_POLISH_AVAILABILITY_RESPONSE = fixtureAvailability();
@@ -32,8 +32,8 @@ const MOCK_POLISH_DISABLED_RESPONSE = {
   availability: {
     ...fixtureAvailability().availability,
     enabled: false,
-    options: [],
-    defaultOptionId: null
+    configurations: [],
+    defaultConfigId: null
   }
 };
 function sameExpectedRoute(left: PolishExpectedRoute, right: PolishExpectedRoute): boolean {
@@ -108,7 +108,7 @@ export function createMockPolishClient(options: CreateMockPolishClientOptions = 
           status: 503
         });
       }
-      if (!sameExpectedRoute(parsed.data.expectedRoute, polishExpectedRouteFromAvailability(MOCK_POLISH_AVAILABILITY_RESPONSE.availability, parsed.data.expectedRoute.selectedOptionId)!)) {
+      if (!sameExpectedRoute(parsed.data.expectedRoute, polishExpectedRouteFromAvailability(MOCK_POLISH_AVAILABILITY_RESPONSE.availability, parsed.data.expectedRoute.configId)!)) {
         throw new PolishApiError({
           code: "CONFLICT",
           status: 409
@@ -165,7 +165,7 @@ export function createMockPolishClient(options: CreateMockPolishClientOptions = 
         ...MOCK_POLISH_AVAILABILITY_RESPONSE,
         availability: {
           ...MOCK_POLISH_AVAILABILITY_RESPONSE.availability,
-          options: fixtureAvailability([1, 2], options.termsAccepted ?? true).availability.options
+          configurations: fixtureAvailability([1, 2], options.termsAccepted ?? true).availability.configurations
         }
       });
     },

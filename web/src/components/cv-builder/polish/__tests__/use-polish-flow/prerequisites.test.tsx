@@ -43,12 +43,12 @@ describe("terms-acceptance window", () => {
       clientRequestId: "fixed"
     });
     expect(expectedRoute).toMatchObject({
-      contract: "cv_app_db_1",
-      selectedOptionId: "opt_000000000001",
-      profileVersionId: "pfv_000000000001",
-      disclosureId: "lds_000000000001"
+      contract: "cv_app_db_2",
+      configId: "1",
+      configRevision: "1",
+      providerDocumentAuditId: "11"
     });
-    expect(h.acceptCalls[0].legalDisplay.disclosureId).toBe(expectedRoute.disclosureId);
+    expect(h.acceptCalls[0].legalDisplay.provider.document_audit_id).toBe(expectedRoute.providerDocumentAuditId);
     expect(h.flow().state.phase).toBe("loading");
   });
   it("close during acceptance → no request", async () => {

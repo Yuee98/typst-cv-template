@@ -1,26 +1,23 @@
-# AI legal bundle evidence — DeepSeek, MiMo and Google Gemini
+# AI disclosure evidence — DeepSeek, MiMo and Google Gemini
 
-> Current bundle code: `CV_APP_GEMINI_20261107`; `CURRENT_20261107` and `CV_APP_RESPONSES_20261107` remain sealed historical content. Runtime acceptance uses database-generated `lgb_`/`lds_` IDs and exact digests.
-> Provider policy evidence: **2026-08-23, Asia/Shanghai**. DeepSeek Responses API, identifier and cache technical facts rechecked **2026-11-07**; the source templates distinguish that delta from retained policy evidence. Google Gemini Interactions API and applicable data terms checked **2026-11-07**. This is not a new review of all DeepSeek or MiMo policy sources.
-> Scope: official DeepSeek, official MiMo and Google Gemini Developer API through AI Studio routes only. OpenRouter, GPT/Luna, and other gateways are not covered by this bundle.
+> Provider policy evidence: **2026-08-23, Asia/Shanghai**. DeepSeek Responses API, identifier and cache technical facts rechecked **2026-11-07**. Google Gemini Interactions API and applicable data terms checked **2026-11-07**. The 2026-11-08 database restructuring and current MiMo model selection do not claim a new review of those policies.
+> Scope: the three official services below only. Compatible adapters and model names do not extend these disclosures to another recipient or endpoint.
 
-This file records the official sources and conservative wording decisions behind the bilingual `aiTermsDocument`, Privacy Policy AI sections, and immutable provider manifests. It is an engineering evidence record, not qualified legal advice.
+This records the official sources and conservative wording behind the bilingual legal seed and Privacy Policy. It is an engineering evidence record.
 
-## 1. Immutable manifest mapping
+## 1. Exact service scope and current documents
 
-| Source manifest ID | Source display key | Provider/profile covered | Baseline activation state |
+| Actual service | Adapter | Endpoint | Model |
 |---|---|---|---|
-| `deepseek-official-responses-2026-11-07-v1` | `deepseek-official-responses-v1` | Official DeepSeek `deepseek-flash` Responses profile; technical review 2026-11-07, policy evidence retained from 2026-08-23 | Disabled; a new matching execution profile and policy must be configured |
-| `mimo-cn-2026-08-23-v1` | `mimo-cn-v1` | Official MiMo `mimo-v2.5-pro` Responses profile for the mainland-China configuration | Disabled; no execution profile or active policy is seeded |
-| `google-ai-studio-interactions-2026-11-07-v1` | `google-ai-studio-interactions-v1` | Official Google AI Studio `gemini-3.8-flash`, native stable Interactions API | Disabled; actual project tier and data-sharing settings require separate owner verification |
+| Official DeepSeek Open Platform | 1 — DeepSeek Responses | `https://api.deepseek.com/responses` | `deepseek-flash` |
+| Official MiMo API, mainland-China access | 2 — MiMo Responses | `https://api.xiaomimimo.com/v1/responses` | `mimo-v2.6-flash` |
+| Google Gemini API through AI Studio | 3 — Gemini Interactions | `https://generativelanguage.googleapis.com/v1/interactions` | `gemini-3.8-flash` |
 
-These source IDs identify the stated review scope; they are not a runtime code allowlist or acceptance target. The database catalogue creates a sealed bundle containing common AI terms and one exact disclosure per provider/model. Each disclosure digest includes the common AI document and bundle manifest digests. A user accepts only the complete selected-provider disclosure; accepting DeepSeek does not accept MiMo. Listing a disclosure does not activate its profile.
+The canonical seed is `seed.ts`: one TERMS document, one AI_COMMON document and one AI_PROVIDER document for each explicit scope. Each current row contains both languages in restricted Markdown. The database computes a digest over the document scope, effective date, titles and both bodies, and records the complete typed row in its audit table. Enabled state and ordinary row revision do not alter the content digest.
 
-The preceding Responses change created a new bundle and DeepSeek disclosure (`DEEPSEEK_RESPONSES_DEEPSEEK_FLASH_20261107`), reusing the generic AI document and copying the reviewed MiMo disclosure unchanged. The new manifest/bundle binding produces new disclosure identities and digests, including copied content; old acceptances do not authorize the new exact targets. Old sealed rows are never edited. Publishing current closes AI, clears the policy pointer and invalidates old reopen evidence before new profiles/policy are published.
+Configurations explicitly reference the matching document. Names or credentials may differ while deliberately sharing the same reviewed scope, but another recipient, endpoint or model never inherits consent solely because its wire format is compatible. Runtime uses `ldoc_` external IDs and exact document-audit references. AI acceptance atomically records the common and selected-provider targets, separately from ordinary Terms of Use. Each request freezes two acceptance-audit references; their document-audit references reconstruct exactly what was accepted. There is no bundle, sealing or publishing lifecycle.
 
-Adding Google creates a new common AI document and `CV_APP_GEMINI_20261107` bundle. Copies of the DeepSeek/MiMo disclosures change only the shared provider enumeration and identifier list; their provider-specific facts and the old sealed bytes are preserved. Google has its own complete reviewed disclosure. The new bundle/content digests require exact acceptance again.
-
-Owner-controlled publication creates and seals legal content; ordinary Admin configuration cannot rewrite it. Profiles reference the matching database disclosure, and policy publication checks the current bundle. A new recipient, gateway, upstream, or material policy change requires reviewed content, a new sealed bundle/disclosure identity and renewed acceptance where applicable. Code validates supported execution semantics and transport safety rather than a historical manifest-ID list.
+Admin offers matched read-only legal previews. Any authorized document update must preserve a full bilingual audit snapshot and requires renewed acceptance when the applicable content/scope digest changes. Reading a historical document does not authorize a new request under changed current terms.
 
 ## 2. DeepSeek official sources
 
@@ -40,7 +37,7 @@ Owner-controlled publication creates and seals legal content; ordinary Admin con
 
 - Submitted data: selected CV text, selected context, style instructions, and an HMAC-SHA256 pseudonymous identifier in the Responses `user` field; no email, username, or raw account ID.
 - Operator: Hangzhou DeepSeek Artificial Intelligence Co., Ltd.; official Responses endpoint `https://api.deepseek.com/responses`. The transport sends no `store` parameter, because that parameter is unsupported.
-- Region and transfer: the general Privacy Policy's PRC statement expressly excludes products and services provided by downstream users. It does not establish where content submitted by this service through the Open Platform API is processed or stored. API-specific location, region, and transfer path remain unverified; the annex makes no PRC API-content claim.
+- Region and transfer: the general Privacy Policy's PRC statement expressly excludes products and services provided by downstream users. It does not establish where content submitted by this service through the Open Platform API is processed or stored. API-specific location, region, and transfer path remain unverified; the disclosure makes no PRC API-content claim.
 - Retention: stateless response/conversation behavior is a narrow API fact. The documented disk cache remains enabled by default, with unused entries usually removed within hours to days. Neither a response carrying `store:false` nor omitting the unsupported request parameter establishes zero retention of caches or safety logs, a fixed overall API-content deletion period, a processing region, or a no-training promise.
 - Training/service improvement: the separate Terms of Use applies to Services including APIs and describes limited de-identified improvement use. The Open Platform Terms' model-training clause is developer permission, not provider-use authority. There is no API-specific no-training promise or verified opt-out, and no provider-training claim is inferred from the Open Platform Terms or the excluded downstream scope of the general Privacy Policy.
 - User warning: treat submitted content as potentially retained or used for service improvement; do not submit sensitive or confidential data; review all output.
@@ -59,11 +56,11 @@ Owner-controlled publication creates and seals legal content; ordinary Admin con
 ### MiMo wording decisions
 
 - Submitted data: selected CV text, selected context, and style instructions. The initial adapter sends no HMAC provider subject ID, email, username, or raw account ID.
-- Operator: the reviewed pages did not explicitly identify the exact company operating the mainland-China service, so the annex marks it unverified instead of inferring it. The outside-mainland terms name Xiaomi Technologies Singapore Pte. Ltd.
+- Operator: the reviewed pages did not explicitly identify the exact company operating the mainland-China service, so the disclosure marks it unverified instead of inferring it. The outside-mainland terms name Xiaomi Technologies Singapore Pte. Ltd.
 - Region: the Privacy Policy describes global data centers including the Netherlands and Singapore and possible other-party/region transfers. A request's actual region is request/arrangement-dependent and is not guaranteed.
 - Retention: the policy states a general necessary-period rule followed by deletion or anonymization; no fixed numeric API-content TTL was found.
 - Training/service improvement: MiMo describes the user as Controller and itself as Processor, and states that submitted API content is not used for model training or other purposes.
-- Caching: no fixed API cache TTL, cache scope, or opt-out mechanism was verified. The annex must not convert automatic-cache pricing behavior into a retention promise.
+- Caching: no fixed API cache TTL, cache scope, or opt-out mechanism was verified. The disclosure must not convert automatic-cache pricing behavior into a retention promise.
 
 ## 4. Google Gemini API through AI Studio
 
@@ -83,20 +80,20 @@ The key/model name and a successful synthetic request cannot attest to Paid-tier
 - The database defines the current time period's candidate set and default. The user explicitly chooses the request option and sees its matching provider/model disclosure. Selection and exact acceptance are separate actions; changing an option updates the disclosure and accepted state. No unselected provider needs to be accepted.
 - The service operator chose a separate acceptance flow for this optional feature. The terms do not claim that every provider generically requires separate consent.
 - Selected CV content is plaintext to this service's server and the disclosed AI recipient even when cloud-save content is end-to-end encrypted at rest.
-- The service does not intentionally persist CV text, style instructions, or AI output in its request/attempt ledger or logs. It does store content-free routing, profile, price, legal-bundle, usage, cost, timing, status, and quota metadata.
+- The service does not intentionally persist CV text, style instructions, or AI output in its request/attempt ledger or logs. It does store content-free configuration, routing-rule, price, exact legal-acceptance, usage, cost, timing, status, and quota metadata.
 - Current retention schedule: finalized request/attempt metadata and daily aggregates 90 days, per-minute rate counters 2 days, followed by bounded cleanup runs. Unsettled/HELD requests and their related daily facts are retained for reconciliation rather than automatically erased. Acceptance records are removed with account deletion; immutable configuration and administrative audit history have no automatic expiry.
 - Quota is reserved at acceptance. Cancellation after provider transmission remains chargeable; pre-transmission and settlement-classified refundable failures release quota. Retries remain under the same frozen route and never trigger undisclosed cross-provider fallback.
 - AI suggestions may be inaccurate, biased, incomplete, or unsuitable. They are never auto-applied and the user remains responsible for final CV content.
-- Before a new reserve, a changed policy/generation, invalid option or current legal target rejects the submission and refreshes the choice/disclosure; there is no silent provider substitution or automatic resend. A successful reserve freezes its selected option, legal evidence and price, including permitted retries across a time boundary. Later current-pointer changes do not rewrite that request; emergency disable still prevents a new attempt.
+- Before a new reserve, a changed configuration/control revision, invalid option or current legal target rejects the submission and refreshes the choice/disclosure; there is no silent provider substitution or automatic resend. A successful reserve freezes its selected option, legal evidence and price, including permitted retries across a time boundary. Later current-row changes do not rewrite that request; emergency disable still prevents a new attempt.
 
 ## 6. Privacy and transfer boundary
 
-The Privacy Policy links the actual recipient to the route-specific provider annex. It does not make one provider's transfer mechanism or region statement apply to the other. Where applicable law requires it and no other suitable safeguard is available, the service may rely on explicit consent for the optional transfer. This describes the operator's chosen flow and is not a universal legal conclusion for every user or jurisdiction.
+The Privacy Policy links the actual recipient to the selected-service data-processing disclosure. It does not make one provider's transfer mechanism or region statement apply to the other. Where applicable law requires it and no other suitable safeguard is available, the service may rely on explicit consent for the optional transfer. This describes the operator's chosen flow and is not a universal legal conclusion for every user or jurisdiction.
 
 ## 7. Release gates and unresolved facts
 
-1. All supported providers begin disabled with no active policy. Configure and validate supported profile/price/policy versions, bind the exact current disclosure, and obtain current readback before an administrator opens the allowlist. Upstream smoke is a separately authorized operation, with its execution evidence recorded independently; a successful request does not change these legal-source conclusions.
-2. Re-check every official source when a provider changes policy, endpoint, operator, region, caching, retention, or training/service-improvement terms.
-3. Do not activate a profile whose provider/model/recipient facts differ from its exact disclosure, whose bundle is unsealed or not current, or whose execution semantics are unsupported by the deployed code. Validation covers future periods and nondefault options; credential presence alone is not proof of upstream success.
+1. AI begins disabled. Save matching configurations with prices and time rules, verify credential availability and reviewed legal scope, then explicitly enable access. Provider smoke requires separate authorization and does not verify billing tier or change these legal conclusions.
+2. Re-check the relevant official sources when the recipient, endpoint, operator, region, caching, retention or training/service-improvement terms change.
+3. Do not enable a configuration whose adapter, endpoint, model or actual recipient differs from its explicit disclosure. Every active rule option must satisfy these constraints; credential presence is not proof of upstream success.
 4. The following remain deliberately unknown: DeepSeek's API-specific processing/storage location and transfer path, complete API-content retention/deletion period, and API training opt-out coverage; MiMo's mainland-China operating company, guaranteed per-request region, fixed API-content TTL, and cache TTL/scope/opt-out; Google's deployed project tier/sharing settings, actual request region and complete abuse-monitoring retention period.
 5. Obtain qualified legal review before relying on a consent derogation for a broad or high-risk cross-border rollout.

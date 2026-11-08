@@ -28,21 +28,21 @@ describe("createMockPolishClient", () => {
       delayMs: 1
     }).getAvailability(AUTH);
     expect(polishAvailabilityResponseSchema.safeParse(enabled).success).toBe(true);
-    expect(enabled.availability.options).toHaveLength(2);
-    expect(enabled.availability.options[0].status).toBe("READY");
+    expect(enabled.availability.configurations).toHaveLength(2);
+    expect(enabled.availability.configurations[0].status).toBe("READY");
     const unaccepted = await createMockPolishClient({
       delayMs: 1,
       termsAccepted: false
     }).getAvailability(AUTH);
-    expect(unaccepted.availability.options[0].status).toBe("CONSENT_REQUIRED");
+    expect(unaccepted.availability.configurations[0].status).toBe("CONSENT_REQUIRED");
     const disabled = await createMockPolishClient({
       delayMs: 1,
       availabilityEnabled: false
     }).getAvailability(AUTH);
     expect(disabled.availability).toMatchObject({
       enabled: false,
-      options: [],
-      defaultOptionId: null
+      configurations: [],
+      defaultConfigId: null
     });
   });
   it("returns a contract-valid deterministic success", async () => {
@@ -134,7 +134,7 @@ describe("createMockPolishClient", () => {
       ...request,
       expectedRoute: {
         ...request.expectedRoute,
-        configGeneration: "2"
+        controlRevision: "2"
       }
     }, AUTH).catch((caught: unknown) => caught)) as PolishApiError;
     expect(error.code).toBe("CONFLICT");

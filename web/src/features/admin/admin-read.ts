@@ -10,6 +10,8 @@ export type AdminReadParams = {
   kind: string;
   cursor: string | null;
   recordId?: string;
+  entityId?: string;
+  limit?: number;
 };
 export type AdminRead = {
   context: AdminContext;
@@ -31,16 +33,14 @@ class ReadError extends Error {
     super(code);
   }
 }
-const freshFor = (section: AdminSection) => ["overview", "controls"].includes(section) ? 0 : 30_000;
+const freshFor = (section: AdminSection) => ["controls"].includes(section) ? 0 : 30_000;
 const ownerKey = (project: string, actor: AdminSession) => ["admin", project, actor.session?.user.id ?? "signed-out", actor.epoch] as const;
 const scopeKey = (project: string, actor: AdminSession) => [...ownerKey(project, actor), "scope"] as const;
-const pendingInvalidationsKey = (project: string, actor: AdminSession) => [...ownerKey(project, actor), "pending-invalidations"] as const;
-type PendingInvalidation = {
-  instanceId: string;
-  section: AdminSection;
-};
+const commitEpochPrefix = (project: string, actor: AdminSession) => [...ownerKey(project, actor), "commit-epochs"] as const;
+const commitEpochKey = (project: string, actor: AdminSession, instanceId: string) => [...commitEpochPrefix(project, actor), instanceId] as const;
+type CommitEpochs = Partial<Record<AdminSection, number>>;
 export function adminReadKey(project: string, actor: AdminSession, instanceId: string | null, params: AdminReadParams) {
-  return [...ownerKey(project, actor), "read", instanceId ?? "bootstrap", params.section, params.kind, params.cursor ?? "", params.recordId ?? ""] as const;
+  return [...ownerKey(project, actor), "read", instanceId ?? "bootstrap", params.section, params.kind, params.cursor ?? "", params.recordId ?? "", params.entityId ?? "", params.limit ?? 25] as const;
 }
 function clearOwner(queryClient: QueryClient, project: string, actor: AdminSession) {
   const queryKey = ownerKey(project, actor);
@@ -53,23 +53,20 @@ function clearOwner(queryClient: QueryClient, project: string, actor: AdminSessi
 }
 function parseRead(raw: unknown, params: AdminReadParams): AdminRead {
   const result = adminReadResponseSchema.parse(raw);
-  if (["overview", "controls"].includes(params.section) && result.data !== null) throw new Error("UNAVAILABLE");
-  const data = ["overview", "controls"].includes(params.section) ? null : params.section === "analytics" ? adminAnalyticsSchema.parse(result.data) : params.recordId ? adminRecordSchema.parse(result.data) : adminPageSchema.parse(result.data);
+  if (["controls"].includes(params.section) && result.data !== null) throw new Error("UNAVAILABLE");
+  const data = ["controls"].includes(params.section) ? null : params.section === "usage" && params.kind === "analytics" ? adminAnalyticsSchema.parse(result.data) : params.recordId ? adminRecordSchema.parse(result.data) : adminPageSchema.parse(result.data);
   return {
     context: result.context,
     data
   };
 }
 const related: Record<AdminSection, AdminSection[]> = {
-  overview: ["overview", "controls", "audit"],
-  controls: ["overview", "controls", "users", "audit"],
-  users: ["overview", "controls", "users", "audit"],
-  providers: ["overview", "controls", "providers", "profiles", "prices", "policies", "audit"],
-  profiles: ["overview", "controls", "profiles", "prices", "policies", "audit"],
-  prices: ["overview", "controls", "prices", "profiles", "policies", "audit"],
-  policies: ["overview", "controls", "policies", "audit"],
-  analytics: ["overview", "controls", "analytics", "audit"],
-  audit: ["overview", "controls", "audit"]
+  configurations: ["configurations", "rules", "controls", "usage", "audit"],
+  rules: ["rules", "configurations", "controls", "audit"],
+  controls: ["controls", "users", "audit"],
+  usage: ["usage", "audit"],
+  users: ["users", "controls", "audit"],
+  audit: ["audit"]
 };
 export function invalidateAdminReads(queryClient: QueryClient, project: string, actor: AdminSession, section: AdminSection) {
   void queryClient.invalidateQueries({
@@ -77,7 +74,7 @@ export function invalidateAdminReads(queryClient: QueryClient, project: string, 
     predicate: query => query.queryKey[4] === "read" && related[section].includes(query.queryKey[6] as AdminSection)
   });
 }
-export function useAdminRead(client: SupabaseClient | null, project: string, actor: AdminSession, params: AdminReadParams) {
+export function useAdminRead(client: SupabaseClient | null, project: string, actor: AdminSession, params: AdminReadParams, enabled = true) {
   const queryClient = useQueryClient();
   const signature = JSON.stringify(params);
   const [refresh, setRefresh] = useState(0);
@@ -103,7 +100,7 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
     };
     void queryClient.cancelQueries(obsolete);
     queryClient.removeQueries(obsolete);
-    if (!client || !actor.session) return;
+    if (!enabled || !client || !actor.session) return;
     let active = true;
     let inFlight: readonly unknown[] | null = null;
     const current = () => active && isCurrentAdminSession(client, actor);
@@ -111,7 +108,7 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
     const initialScope = queryClient.getQueryData<Scope>(scopeKey(project, actor));
     const initialData = initialScope ? queryClient.getQueryData<AdminRead>(adminReadKey(project, actor, initialScope.instanceId, requested)) : undefined;
     async function load(retried = false): Promise<AdminRead> {
-      const observedInvalidations = queryClient.getQueryData<PendingInvalidation[]>(pendingInvalidationsKey(project, actor)) ?? [];
+      const observedEpochs = queryClient.getQueriesData<CommitEpochs>({ queryKey: commitEpochPrefix(project, actor) });
       const before = queryClient.getQueryData<Scope>(scopeKey(project, actor));
       const key = adminReadKey(project, actor, before?.instanceId ?? null, requested);
       inFlight = key;
@@ -129,12 +126,13 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
             const query = new URLSearchParams({
               section: requested.section
             });
-            if (["users", "profiles", "policies"].includes(requested.section)) query.set("kind", requested.kind);
-            if (requested.recordId) query.set("id", requested.recordId);else if (!["overview", "controls", "analytics"].includes(requested.section)) {
-              query.set("limit", "25");
+            if (requested.section !== "controls") query.set("kind", requested.kind);
+            if (requested.recordId) query.set("id", requested.recordId);else if (requested.section !== "controls" && !(requested.section === "usage" && requested.kind === "analytics")) {
+              query.set("limit", String(requested.limit ?? 25));
               if (requested.cursor) query.set("after", requested.cursor);
             }
-            if (requested.section === "analytics") query.set("days", "7");
+            if (requested.section === "usage" && requested.kind === "analytics") query.set("days", "7");
+            if (requested.entityId) query.set("entity_id", requested.entityId);
             if (before) query.set("database_instance_id", before.instanceId);
             const response = await fetch(`/api/admin?${query}`, {
               signal,
@@ -160,14 +158,12 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
           context: latest?.context ?? result.context
         };
         if (before && result.context.database_instance_id !== before.instanceId) throw new ReadError("CLIENT_UPDATE_REQUIRED", 409);
-        const pending = queryClient.getQueryData<PendingInvalidation[]>(pendingInvalidationsKey(project, actor)) ?? [];
-        queryClient.removeQueries({
-          queryKey: pendingInvalidationsKey(project, actor),
-          exact: true
-        });
-        if (pending.some(entry => !observedInvalidations.includes(entry) && entry.instanceId === result.context.database_instance_id && related[entry.section].includes(requested.section))) {
-          // This bootstrap read began before the same-instance write committed.
-          // Discard its old snapshot; a different instance never takes this path.
+        const instanceId = result.context.database_instance_id;
+        const observedEpoch = observedEpochs.find(([key]) => key[5] === instanceId)?.[1]?.[requested.section] ?? 0;
+        const currentEpoch = queryClient.getQueryData<CommitEpochs>(commitEpochKey(project, actor, instanceId))?.[requested.section] ?? 0;
+        if (currentEpoch > observedEpoch) {
+          // Every reader independently verifies its own start boundary. One
+          // completed read cannot consume another in-flight read's commit.
           queryClient.removeQueries({
             queryKey: key,
             exact: true
@@ -242,7 +238,7 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
         exact: true
       });
     };
-  }, [client, project, actor, signature, refresh, queryClient]);
+  }, [client, project, actor, signature, refresh, queryClient, enabled]);
   const refreshRead = useCallback(() => {
     const latest = queryClient.getQueryData<Scope>(scopeKey(project, actor));
     void queryClient.invalidateQueries({
@@ -258,12 +254,13 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
     const latestScope = queryClient.getQueryData<Scope>(scopeKey(project, latestActor));
     const section = (JSON.parse(signature) as AdminReadParams).section;
     if (latestScope && latestScope.instanceId !== scope.instanceId) return;
-    // Commit boundaries must survive repeated invalidate() calls while a read
-    // is already invalidated. Keep only instance/section provenance, never data.
-    queryClient.setQueryData<PendingInvalidation[]>(pendingInvalidationsKey(project, latestActor), current => [...(current ?? []), {
-      instanceId: scope.instanceId,
-      section
-    }]);
+    // Six bounded section counters per instance, scoped to this actor epoch.
+    // Retain them until owner cleanup so parallel readers cannot consume them.
+    queryClient.setQueryData<CommitEpochs>(commitEpochKey(project, latestActor, scope.instanceId), previous => {
+      const next = { ...previous };
+      for (const affected of related[section]) next[affected] = (previous?.[affected] ?? 0) + 1;
+      return next;
+    });
     if (!latestScope) return;
     invalidateAdminReads(queryClient, project, latestActor, section);
     if (latestActor === actor) refreshRead();
@@ -272,7 +269,7 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
   return {
     result: visible?.result ?? cachedResult,
     error: visible?.error ?? null,
-    loading: visible?.loading ?? Boolean(actor.session),
+    loading: enabled && (visible?.loading ?? Boolean(actor.session)),
     refreshRead,
     refreshAfterMutation
   };

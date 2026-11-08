@@ -6,7 +6,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import messagesEn from "../../../../messages/en.json";
 import messagesZh from "../../../../messages/zh.json";
-import type { CurrentTerms } from "@/lib/legal/terms-acceptance";
+import { legalDocumentFixture } from "@/lib/legal/test-fixtures";
 import { TermsAcceptanceModal } from "./terms-acceptance-modal";
 
 vi.mock("@/i18n/navigation", () => ({
@@ -15,15 +15,7 @@ vi.mock("@/i18n/navigation", () => ({
 
 afterEach(cleanup);
 
-const terms: CurrentTerms = {
-  external_id: "ldv_000000000001",
-  content_digest: "1".repeat(64),
-  renderer_contract: "legal_document_1",
-  content: {
-    en: { title: "Long current terms", effectiveDate: "2026-11-07", intro: ["Full document belongs on its own page."], sections: [] },
-    zh: { title: "完整使用条款", effectiveDate: "2026-11-07", intro: ["完整条款只应出现在独立页面。"], sections: [] },
-  },
-};
+const terms = legalDocumentFixture();
 
 function setup(locale: "zh" | "en" = "en", overrides: Partial<ComponentProps<typeof TermsAcceptanceModal>> = {}) {
   const props = {
@@ -42,12 +34,12 @@ describe("TermsAcceptanceModal document links", () => {
     const link = screen.getByRole("link", { name: locale === "zh" ? "使用条款" : "Terms of Use" });
     const url = new URL(link.getAttribute("href")!, "https://preview.example");
     expect(url.pathname).toBe("/terms");
-    expect(Object.fromEntries(url.searchParams)).toEqual({ document: terms.external_id, digest: terms.content_digest });
+    expect(Object.fromEntries(url.searchParams)).toEqual({ document: terms.external_id, audit: terms.document_audit_id, digest: terms.content_digest });
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noreferrer");
     expect(link.getAttribute("rel")).toContain("noopener");
     expect(screen.getByRole("link", { name: locale === "zh" ? "隐私政策" : "Privacy Policy" }).getAttribute("href")).toBe("/privacy");
-    expect(screen.queryByText(terms.content[locale].intro[0])).toBeNull();
+    expect(screen.queryByText(locale === "zh" ? terms.zh_body : terms.en_body)).toBeNull();
     expect(screen.queryByText(terms.external_id, { exact: false })).toBeNull();
     const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
     expect(checkbox.checked).toBe(false);

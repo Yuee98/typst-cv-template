@@ -1,7 +1,7 @@
 import "server-only";
 import { notFound } from "next/navigation";
 import AdminApp from "@/features/admin/admin-app";
-import { adminRecordSectionSchema, adminSectionSchema, externalIdSchema } from "@/lib/admin/contract";
+import { adminSectionSchema } from "@/lib/admin/contract";
 export default async function AdminPage({
   params
 }: {
@@ -15,9 +15,8 @@ export default async function AdminPage({
     segments = []
   } = await params;
   if (locale !== "zh" && locale !== "en") notFound();
-  if (segments.length === 0) return <AdminApp locale={locale} />;
+  if (!segments.length) return <AdminApp locale={locale} section="controls" />;
   const section = adminSectionSchema.safeParse(segments[0]);
-  const recordSection = adminRecordSectionSchema.safeParse(segments[0]);
-  if (!section.success || section.data === "overview" || segments.length > 2 || segments[1] && (!recordSection.success || !externalIdSchema.safeParse(segments[1]).success)) notFound();
-  return <AdminApp locale={locale} section={section.data} recordId={segments[1]} />;
+  if (!section.success || segments.length !== 1) notFound();
+  return <AdminApp locale={locale} section={section.data} />;
 }

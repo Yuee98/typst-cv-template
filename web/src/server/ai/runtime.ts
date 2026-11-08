@@ -3,8 +3,8 @@ import { z } from "zod";
 import { polishQuotaSchema, type PolishPostRequest, type PolishQuota } from "@/lib/polish/contract";
 import { type AiDatabase } from "./database";
 import { AiError } from "./errors";
-import { prepareProvider, providerProfileSchema, type ProviderProfile, type InferenceProvider } from "./provider";
-import { priceSchema, calculateCost, usageForDatabase } from "./accounting";
+import { prepareProvider, executionConfigurationSchema, type ExecutionConfiguration, type InferenceProvider } from "./provider";
+import { priceSchema, usageForDatabase } from "./accounting";
 import { buildPolishPromptBlocks, POLISH_PROMPT_VERSION } from "./prompt";
 import { validatePolishOutput, POLISH_VALIDATOR_VERSION } from "./validate";
 import type { PolishInferenceResult } from "./inference";
@@ -17,28 +17,32 @@ const reservation = z.strictObject({
   replayed: z.boolean(),
   quota: z.unknown()
 });
+const databaseId = z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => BigInt(value) <= BigInt("9223372036854775807"));
 export const snapshotSchema = z.strictObject({
-  request_id: id("req"),
-  state,
-  selected_option_id: id("opt"),
-  policy_version_id: id("plv"),
-  profile_id: id("prf"),
-  profile_version_id: id("pfv"),
-  price_version_id: id("pcv"),
-  provider_id: id("prv"),
-  recipient_code: z.string(),
-  ...providerProfileSchema.shape,
+  request_id: id("req"), state,
+  config_id: databaseId, config_name: z.string(), config_revision: databaseId,
+  ...executionConfigurationSchema.shape,
   price: priceSchema,
-  disclosure_id: id("lds"),
-  content_digest: z.string().regex(/^[0-9a-f]{64}$/),
-  cancel_sequence: z.string(),
-  attempts: z.array(z.unknown())
+  common_acceptance_audit_id: databaseId,
+  provider_acceptance_audit_id: databaseId,
+  provider_document_id: databaseId,
+  provider_document_audit_id: databaseId,
+  time_canceled: z.string().nullable(),
+  attempts: z.array(z.strictObject({
+    attempt_no: z.union([z.literal(1), z.literal(2)]), state: z.string(),
+    retry_allowed: z.boolean().nullable(), transmitted: z.boolean().nullable()
+  }))
 });
 const startSchema = z.strictObject({
-  attempt_id: id("att"),
+  request_id: id("req"),
   attempt_no: z.union([z.literal(1), z.literal(2)]),
-  state: z.string(),
-  may_transmit: z.boolean()
+  state: z.string(), may_transmit: z.boolean()
+});
+const completionSchema = z.strictObject({
+  request_id: id("req"),
+  attempt_no: z.union([z.literal(1), z.literal(2)]),
+  state: z.enum(["SUCCEEDED", "CANCELED", "FAILED_UPSTREAM", "TIMED_OUT", "INVALID_OUTPUT", "UNKNOWN"]),
+  replayed: z.boolean()
 });
 const finalSchema = z.strictObject({
   request_id: id("req"),
@@ -69,28 +73,27 @@ export interface RuntimeDependencies {
   db: AiDatabase;
   secret: string;
   env?: Readonly<Record<string, string | undefined>>;
-  prepare?: (profile: ProviderProfile, onTransmit: () => void) => InferenceProvider;
+  prepare?: (configuration: ExecutionConfiguration, onTransmit: () => void) => InferenceProvider;
 }
 /** Fingerprints cover content and the exact user-selected configuration; only the HMAC is stored. */
 export async function executePolish(deps: RuntimeDependencies, userId: string, request: PolishPostRequest, signal: AbortSignal) {
   const route = request.expectedRoute;
   const common = {
-    contract_code: "cv_app_db_1",
+    contract_code: "cv_app_db_2",
     owner_auth_user_id: userId,
     database_instance_id: route.databaseInstanceId
   };
-  const fingerprint = createHmac("sha256", deps.secret).update("cv_app_db_1:request:").update(canonical(request)).digest("hex");
+  const fingerprint = createHmac("sha256", deps.secret).update("cv_app_db_2:request:").update(canonical(request)).digest("hex");
   const reserved = reservation.parse(await deps.db.call("ai_reserve", {
     ...common,
     contract_code: route.contract,
     client_request_key: request.clientRequestId,
     request_fingerprint: fingerprint,
-    selected_option_id: route.selectedOptionId,
-    expected_generation: route.configGeneration,
-    expected_policy_version_id: route.policyVersionId,
-    expected_profile_version_id: route.profileVersionId,
-    disclosure_id: route.disclosureId,
-    content_digest: route.contentDigest
+    config_id: route.configId,
+    expected_config_revision: route.configRevision,
+    expected_control_revision: route.controlRevision,
+    common_document_audit_id: route.commonDocumentAuditId,
+    provider_document_audit_id: route.providerDocumentAuditId
   }));
   // Replaying a reservation never grants a second transmission, including response-loss cases.
   if (reserved.replayed) throw new AiError("CONFLICT", reserved.state === "FINALIZED" ? "ALREADY_FINALIZED" : "REQUEST_IN_PROGRESS");
@@ -114,21 +117,17 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
   try {
     if (signal.aborted) {
       cancel();
-      await cancellation;
+      await Promise.resolve(cancellation).catch(() => undefined);
       const final = finalSchema.parse(await deps.db.call("ai_finalize", input));
       throw new AiError("UNAVAILABLE", final.outcome ?? "CANCELED");
     }
     const snapshot = snapshotSchema.parse(await deps.db.call("ai_execution_snapshot", input));
-    const profile = providerProfileSchema.parse(Object.fromEntries(Object.keys(providerProfileSchema.shape).map(key => [key, snapshot[key as keyof typeof snapshot]])));
+    const configuration = executionConfigurationSchema.parse(Object.fromEntries(Object.keys(executionConfigurationSchema.shape).map(key => [key, snapshot[key as keyof typeof snapshot]])));
     let didTransmit = false;
     let provider: InferenceProvider;
     try {
-      provider = deps.prepare ? deps.prepare(profile, () => {
-        didTransmit = true;
-      }) : prepareProvider(profile, deps.env, async (...args: Parameters<typeof fetch>) => {
-        didTransmit = true;
-        return fetch(...args);
-      });
+      const onTransmit = () => { didTransmit = true; };
+      provider = deps.prepare ? deps.prepare(configuration, onTransmit) : prepareProvider(configuration, deps.env, undefined, onTransmit);
     } catch {
       await deps.db.call("ai_finalize", input);
       throw new AiError("UNAVAILABLE", "EXECUTION_CONFIG_UNAVAILABLE");
@@ -137,7 +136,7 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
     for (let attemptNo = 1; attemptNo <= 2; attemptNo++) {
       if (signal.aborted) {
         cancel();
-        await cancellation;
+        await Promise.resolve(cancellation).catch(() => undefined);
         break;
       }
       if (Date.now() >= deadline) break;
@@ -151,6 +150,7 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
         await deps.db.call("ai_finalize", input).catch(() => undefined);
         throw error;
       }
+      if (admission.request_id !== reserved.request_id || admission.attempt_no !== attemptNo) throw new AiError("INTERNAL_ERROR", "INVALID_ATTEMPT_AUTHORIZATION");
       if (!admission.may_transmit) throw new AiError("CONFLICT", "REQUEST_IN_PROGRESS");
       didTransmit = false;
       let response: PolishInferenceResult | null = null;
@@ -170,7 +170,7 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
           styleInstruction: request.styleInstruction,
           retryFeedback: feedback
         });
-        const subject = createHmac("sha256", deps.secret).update(`cv_app_db_1:provider:${profile.provider_code}:${userId}`).digest("hex");
+        const subject = createHmac("sha256", deps.secret).update(canonical({ contract: "cv_app_db_2", config: snapshot.config_id, origin: new URL(snapshot.endpoint_url).origin, recipientAudit: snapshot.provider_document_audit_id, user: userId })).digest("hex");
         response = await provider.complete({
           schemaVersion: "polish_inference_request",
           prompt,
@@ -189,18 +189,23 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
           signal,
           timeoutMs: Math.max(1, Math.min(40000, deadline - Date.now()))
         });
-        const validation = validatePolishOutput(response, {
-          items: request.items,
-          language: request.language
-        });
         billable = true;
-        if (validation.ok) {
-          terminal = "SUCCEEDED";
-          resultItems = validation.items;
+        if (signal.aborted) {
+          // Usage is already known even when cancellation authority vanished.
+          terminal = "CANCELED";
         } else {
-          terminal = validation.classification === "upstream" ? "FAILED_UPSTREAM" : "INVALID_OUTPUT";
-          retry = true;
-          feedback = validation.reason;
+          const validation = validatePolishOutput(response, {
+            items: request.items,
+            language: request.language
+          });
+          if (validation.ok) {
+            terminal = "SUCCEEDED";
+            resultItems = validation.items;
+          } else {
+            terminal = validation.classification === "upstream" ? "FAILED_UPSTREAM" : "INVALID_OUTPUT";
+            retry = true;
+            feedback = validation.reason;
+          }
         }
       } catch (error) {
         if (signal.aborted) {
@@ -218,25 +223,19 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
           }
         }
       }
-      const cost = response ? calculateCost(response.usage, snapshot.price) : {
-        estimated: null,
-        known: null,
-        reasons: ["USAGE_UNAVAILABLE"]
-      };
+      if (!didTransmit) billable = false;
       // No provider call is retried if this write is uncertain or fails.
-      await deps.db.call("ai_attempt_complete", {
+      const completed = completionSchema.parse(await deps.db.call("ai_attempt_complete", {
         ...input,
-        attempt_id: admission.attempt_id,
+        attempt_no: admission.attempt_no,
         state: terminal,
         transmitted: didTransmit,
         provider_billable: billable,
         retry_allowed: retry && attemptNo === 1 && !signal.aborted,
-        usage: usageForDatabase(response?.usage ?? null),
-        estimated_cost_nanos: cost.estimated,
-        known_estimated_cost_nanos: cost.known,
-        provider_reported_cost_nanos: response?.providerReportedCost?.currency === snapshot.price.currency ? response.providerReportedCost.nanos : null,
-        incomplete_reasons: cost.reasons
-      });
+        usage_complete: response?.usage.usageComplete ?? false,
+        usage: usageForDatabase(response?.usage ?? null)
+      }));
+      if (completed.request_id !== reserved.request_id || completed.attempt_no !== attemptNo || completed.state !== terminal) throw new AiError("INTERNAL_ERROR", "INVALID_ATTEMPT_ACKNOWLEDGMENT");
       if (terminal === "UNKNOWN" || terminal === "SUCCEEDED" || !retry || attemptNo === 2 || signal.aborted) break;
       if (delay > 0) {
         if (Date.now() + delay >= deadline) break;
@@ -251,7 +250,7 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
         });
       }
     }
-    if (cancellation) await cancellation;
+    await Promise.resolve(cancellation).catch(() => undefined);
     const final = finalSchema.parse(await deps.db.call("ai_finalize", input));
     if (final.state !== "FINALIZED") throw new AiError("UNAVAILABLE", "HELD");
     if (final.outcome !== "SUCCEEDED" || !resultItems) throw new AiError("UNAVAILABLE", final.outcome ?? "FAILED_UPSTREAM");

@@ -1,16 +1,14 @@
-import { DEEPSEEK_LEGAL_DISPLAY_KEY, DEEPSEEK_LEGAL_MANIFEST_ID, MIMO_LEGAL_DISPLAY_KEY, MIMO_LEGAL_MANIFEST_ID, GEMINI_LEGAL_DISPLAY_KEY, GEMINI_LEGAL_MANIFEST_ID, SERVICE_CONTACT_EMAIL, SERVICE_NAME, SERVICE_OPERATOR, SERVICE_WEBSITE } from "./constants";
-import { defineAiProviderLegalManifest, type LegalDocument, type LegalSection } from "./types";
+import { SERVICE_CONTACT_EMAIL, SERVICE_NAME, SERVICE_OPERATOR, SERVICE_WEBSITE } from "./constants";
+import { defineAiProviderEvidence, type LegalDocument } from "./types";
 export const LEGAL_EFFECTIVE_DATE = "July 3, 2026";
 export const PRIVACY_EFFECTIVE_DATE = "November 7, 2026";
-export const AI_TERMS_EFFECTIVE_DATE = "November 7, 2026";
-export const deepseekLegalManifest = defineAiProviderLegalManifest({
-  manifestId: DEEPSEEK_LEGAL_MANIFEST_ID,
-  displayKey: DEEPSEEK_LEGAL_DISPLAY_KEY,
+export const AI_TERMS_EFFECTIVE_DATE = "November 8, 2026";
+export const deepseekEvidence = defineAiProviderEvidence({
   reviewedAt: "Responses API technical facts: 2026-11-07; policy evidence retained from 2026-08-23 (Asia/Shanghai)",
   provider: "Official DeepSeek Open Platform",
   gatewayOperator: "Hangzhou DeepSeek Artificial Intelligence Co., Ltd.",
   modelVendor: "DeepSeek",
-  models: ["deepseek-flash (Responses API profile)"],
+  models: ["deepseek-flash"],
   upstream: "Official DeepSeek Responses API (https://api.deepseek.com/responses)",
   submittedData: ["The resume text selected by the user, chosen context, and style instructions", "An HMAC-SHA256 pseudonymous identifier in the Responses API user field; no email address, username, or raw account ID"],
   providerSubjectId: "An HMAC-SHA256 pseudonymous identifier is sent in the Responses API user field. DeepSeek documents it for content safety, cache isolation, and scheduling isolation.",
@@ -22,16 +20,14 @@ export const deepseekLegalManifest = defineAiProviderLegalManifest({
   unknowns: ["Specific retention and deletion periods for API content beyond context caching", "The API-specific processing/storage location, transfer path, and whether any opt-out covers API requests"],
   sources: ["https://api-docs.deepseek.com/quick_start/pricing/", "https://api-docs.deepseek.com/api/create-response/", "https://api-docs.deepseek.com/guides/responses_api/", "https://api-docs.deepseek.com/quick_start/rate_limit/", "https://api-docs.deepseek.com/guides/kv_cache/", "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html", "https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html", "https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html", "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"]
 });
-export const mimoLegalManifest = defineAiProviderLegalManifest({
-  manifestId: MIMO_LEGAL_MANIFEST_ID,
-  displayKey: MIMO_LEGAL_DISPLAY_KEY,
-  reviewedAt: "2026-08-23 (Asia/Shanghai)",
-  provider: "Official MiMo API (mainland-China profile)",
+export const mimoEvidence = defineAiProviderEvidence({
+  reviewedAt: "Model selection updated: 2026-11-08; policy evidence retained from 2026-08-23 (Asia/Shanghai)",
+  provider: "Official MiMo API (mainland-China access)",
   gatewayOperator: "Official MiMo API. The reviewed pages do not identify the specific company operating the service in mainland China. The terms for service outside mainland China name Xiaomi Technologies Singapore Pte. Ltd.",
   modelVendor: "Xiaomi / MiMo",
-  models: ["mimo-v2.5-pro (Responses API profile)"],
+  models: ["mimo-v2.6-flash"],
   upstream: "Official MiMo Responses API (api.xiaomimimo.com/v1/responses)",
-  submittedData: ["The resume text selected by the user, chosen context, and style instructions", "The initial adapter sends no HMAC provider subject ID, email address, username, or raw account ID"],
+  submittedData: ["The resume text selected by the user, chosen context, and style instructions", "The adapter sends no HMAC provider subject ID, email address, username, or raw account ID"],
   providerSubjectId: "No provider subject ID is sent.",
   processingRegion: "The Privacy Policy describes global data centers, including the Netherlands and Singapore, and possible transfers involving other parties or regions. The actual request region depends on the request or a separate arrangement and is not guaranteed.",
   cache: "We could not verify a fixed TTL, scope, or opt-out mechanism for API-content caching from the reviewed official materials.",
@@ -41,41 +37,24 @@ export const mimoLegalManifest = defineAiProviderLegalManifest({
   unknowns: ["The exact company operating the service in mainland China", "A guaranteed processing region for each API request", "API-content cache TTL, cache scope, opt-out mechanism, and fixed content-retention period"],
   sources: ["https://mimo.mi.com/docs/en-US/api/chat/responses", "https://mimo.mi.com/docs/en-US/price/pay-as-you-go", "https://mimo.mi.com/docs/en-US/api/guidance/rate-limit", "https://mimo.mi.com/docs/en-US/api/guidance/error-codes", "https://mimo.mi.com/docs/quick-start/terms/user-agreement", "https://mimo.mi.com/docs/en-US/terms/privacy-policy"]
 });
-export const geminiLegalManifest = defineAiProviderLegalManifest({
-  "manifestId": GEMINI_LEGAL_MANIFEST_ID,
-  "displayKey": GEMINI_LEGAL_DISPLAY_KEY,
+export const geminiEvidence = defineAiProviderEvidence({
   "reviewedAt": "2026-11-07 (Asia/Shanghai)",
   "modelVendor": "Google",
-  "sources": [
-    "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
-    "https://aistudio.google.com/api-reference/interactions-api/create-interaction?api-version=v1",
-    "https://ai.google.dev/gemini-api/terms",
-    "https://ai.google.dev/gemini-api/docs/zdr",
-    "https://ai.google.dev/gemini-api/docs/logs-policy"
-  ],
+  "sources": ["https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash", "https://aistudio.google.com/api-reference/interactions-api/create-interaction?api-version=v1", "https://ai.google.dev/gemini-api/terms", "https://ai.google.dev/gemini-api/docs/zdr", "https://ai.google.dev/gemini-api/docs/logs-policy"],
   "provider": "Google Gemini API (AI Studio)",
   "gatewayOperator": "Google Gemini Developer API via Google AI Studio. The contracting Google entity depends on the applicable account, billing agreement and jurisdiction.",
-  "models": [
-    "gemini-3.8-flash (Interactions API profile)"
-  ],
+  "models": ["gemini-3.8-flash"],
   "upstream": "Official Google Interactions API (https://generativelanguage.googleapis.com/v1/interactions)",
-  "submittedData": [
-    "The resume text selected by the user, chosen context, and style instructions",
-    "No HMAC provider subject ID, email address, username, or raw account ID is sent"
-  ],
-  "providerSubjectId": "No provider subject ID is sent. This profile uses a single text request without tools, grounding, uploaded files, background execution or continued conversation state.",
-  "processingRegion": "The paid API terms allow transient storage or caching in any country where Google or its agents maintain facilities. No per-request processing region or data-residency guarantee has been verified for this profile.",
+  "submittedData": ["The resume text selected by the user, chosen context, and style instructions", "No HMAC provider subject ID, email address, username, or raw account ID is sent"],
+  "providerSubjectId": "No provider subject ID is sent. This connection uses a single text request without tools, grounding, uploaded files, background execution or continued conversation state.",
+  "processingRegion": "The paid API terms allow transient storage or caching in any country where Google or its agents maintain facilities. No per-request processing region or data-residency guarantee has been verified for this connection.",
   "cache": "Google describes implicit in-memory caching as project-isolated RAM storage with a 24-hour TTL. This service does not create explicit caches. The interaction-storage opt-out does not disable every cache or abuse-monitoring record.",
   "retention": "This service explicitly opts out of storing the interaction for later retrieval or conversation continuation. Separate abuse-monitoring logs and any project logging or dataset settings remain subject to Google terms; no overall zero-retention or fixed deletion deadline is promised.",
   "training": "For Unpaid Services, Google may use submitted content and responses to improve products and machine-learning technologies, with human review; its terms say not to submit personal, sensitive or confidential information. For Paid Services tied to an active Cloud Billing project, Google does not use prompts/responses for product improvement, but limited abuse monitoring remains. For developers in the EEA, Switzerland and UK, the paid data-use rules also apply to Unpaid Services. Voluntarily shared logs, datasets or feedback can be used for improvement and human review. This app does not enable such sharing, and a key or model name alone does not prove the project tier or settings.",
   "transfer": "Data may be processed outside your country under the applicable Google agreement and safeguards. The operator must verify the project billing and data-sharing settings before real CV use; separate consent does not establish a processing region or zero retention.",
-  "unknowns": [
-    "The billing and data-sharing settings of the deployed project, unless separately verified by its owner",
-    "The actual region of each request and complete abuse-monitoring retention/deletion period",
-    "Whether any separately arranged enterprise safeguards apply; no such arrangement is assumed"
-  ]
+  "unknowns": ["The billing and data-sharing settings of the deployed project, unless separately verified by its owner", "The actual region of each request and complete abuse-monitoring retention/deletion period", "Whether any separately arranged enterprise safeguards apply; no such arrangement is assumed"]
 });
-export const aiProviderLegalManifests = Object.freeze([deepseekLegalManifest, mimoLegalManifest, geminiLegalManifest]);
+export const providerEvidence = Object.freeze([deepseekEvidence, mimoEvidence, geminiEvidence]);
 export const termsDocument: LegalDocument = {
   title: "Terms of Use",
   effectiveDate: LEGAL_EFFECTIVE_DATE,
@@ -145,37 +124,37 @@ export const privacyDocument: LegalDocument = {
     body: ["We and our service providers may process data in countries other than your country of residence.", "Where GDPR applies and personal data is transferred outside the European Economic Area, we rely on appropriate safeguards where required, such as adequacy decisions, standard contractual clauses, or other lawful transfer mechanisms.", "The actual recipient and possible processing regions for AI polish depend on the route frozen for the request. The known processing regions, transfer arrangements, and unresolved points for the current DeepSeek, MiMo and Google Gemini routes are listed in the provider annexes to the AI Service Terms.", "Where applicable law requires it and no other appropriate safeguard is available, we may rely on your explicit consent for this optional feature. We chose a separate-consent flow to disclose risk and record authorization; this does not mean that every AI provider universally requires separate consent, nor is it a legal conclusion for every jurisdiction."],
     links: [{
       kind: "internal",
-      label: "View the DeepSeek provider annex",
-      href: "/ai-terms#provider-deepseek",
+      label: "View the DeepSeek data-processing disclosure",
+      href: "/ai-terms",
       locale: "en"
     }, {
       kind: "internal",
-      label: "View the MiMo provider annex",
-      href: "/ai-terms#provider-mimo",
+      label: "View the MiMo data-processing disclosure",
+      href: "/ai-terms",
       locale: "en"
     }, {
       kind: "internal",
       label: "Google Gemini provider annex",
-      href: "/ai-terms#provider-gemini",
+      href: "/ai-terms",
       locale: "en"
     }]
   }, {
     heading: "AI Features",
-    body: ["If you use AI polish, the resume text you select and the context you choose to include are forwarded in plaintext through our server to the third-party AI service disclosed for that request. The supported recipients are the official DeepSeek Open Platform, official MiMo API and Google Gemini API through AI Studio. A disclosed recipient remains unavailable until its configuration is published and enabled.", "Before using the selected provider, we ask you to separately accept the common AI Service Terms together with that provider's exact disclosure. The accepted content covers submitted data, identifiers, caching, retention, training or service improvement, processing regions, unresolved points, and our metadata logging and quota rules. You do not need to accept an unselected provider.", "Before each request, the interface discloses your selected provider and model. Changing an option updates its disclosure and acceptance status; accepting a disclosure and selecting a provider are separate explicit actions. An unavailable option requires a new selection, without silently switching providers or automatically resending.", "You may withdraw consent for future requests by ceasing to use AI polish. This does not affect processing that already occurred, and it does not require deletion of records we must retain to prove historical consent, settle quota, protect security, or satisfy legal obligations. You may also contact us as described under \"Your Rights\".", "End-to-end encryption, where available, does not apply to content sent to the AI provider; the rest of your encrypted resume remains protected as described in this policy."],
+    body: ["If you use AI polish, the resume text you select and the context you choose to include are forwarded in plaintext through our server to the third-party AI service disclosed for that request. The actual recipient is the service identified in the disclosure for your selected configuration. Only enabled configurations with a matching disclosure are available; a compatible request format does not make another recipient subject to the same data-processing terms.", "Before using the selected provider, we ask you to separately accept the common AI Service Terms together with that provider's exact disclosure. The accepted content covers submitted data, identifiers, caching, retention, training or service improvement, processing regions, unresolved points, and our metadata logging and quota rules. You do not need to accept an unselected provider.", "Before each request, the interface discloses your selected provider and model. Changing an option updates its disclosure and acceptance status; accepting a disclosure and selecting a provider are separate explicit actions. An unavailable option requires a new selection, without silently switching providers or automatically resending.", "You may withdraw consent for future requests by ceasing to use AI polish. This does not affect processing that already occurred, and it does not require deletion of records we must retain to prove historical consent, settle quota, protect security, or satisfy legal obligations. You may also contact us as described under \"Your Rights\".", "End-to-end encryption, where available, does not apply to content sent to the AI provider; the rest of your encrypted resume remains protected as described in this policy."],
     links: [{
       kind: "internal",
       label: "AI Service Terms — DeepSeek provider annex",
-      href: "/ai-terms#provider-deepseek",
+      href: "/ai-terms",
       locale: "en"
     }, {
       kind: "internal",
       label: "AI Service Terms — MiMo provider annex",
-      href: "/ai-terms#provider-mimo",
+      href: "/ai-terms",
       locale: "en"
     }, {
       kind: "internal",
       label: "Google Gemini provider annex",
-      href: "/ai-terms#provider-gemini",
+      href: "/ai-terms",
       locale: "en"
     }]
   }, {
@@ -203,45 +182,33 @@ export const privacyDocument: LegalDocument = {
   }]
 };
 export const termsAcceptanceSummary = ["Cloud storage syncs CV data to Supabase. Encrypted cloud storage encrypts CV body content in your browser, but titles and metadata may remain visible.", "If you lose an encryption password or trusted-device key, encrypted CV content may not be recoverable.", "The service is provided as-is. Keep your own backups of important CV data and exported files."];
-function providerAnnexSection(title: string, manifest: (typeof aiProviderLegalManifests)[number]): LegalSection {
-  return {
-    id: `provider-annex-${manifest.displayKey}`,
-    heading: `Provider Annex: ${title}`,
-    body: [`Manifest ID: ${manifest.manifestId}; display key: ${manifest.displayKey}; reviewed: ${manifest.reviewedAt}.`, `Provider: ${manifest.provider}. Gateway/operator: ${manifest.gatewayOperator}. Model vendor: ${manifest.modelVendor}. Models: ${manifest.models.join(", ")}. Upstream: ${manifest.upstream}.`, `Submitted data: ${manifest.submittedData.join("; ")}. Provider subject ID: ${manifest.providerSubjectId}`, `Processing region: ${manifest.processingRegion}`, `Caching: ${manifest.cache}`, `Retention: ${manifest.retention}`, `Training/service improvement: ${manifest.training}`, `Transfer mechanism: ${manifest.transfer}`, `Unresolved: ${manifest.unknowns.join("; ")}. Database configuration and product copy must not turn these unknowns into guarantees.`, "Sources reviewed:"],
-    links: manifest.sources.map((href, index) => ({
-      kind: "external",
-      label: `Official source ${index + 1}: ${href}`,
-      href
-    }))
-  };
-}
 export const aiTermsDocument: LegalDocument = {
   title: "AI Service Terms",
   effectiveDate: AI_TERMS_EFFECTIVE_DATE,
-  intro: [`These AI Service Terms govern your use of the AI polish feature of ${SERVICE_NAME} at ${SERVICE_WEBSITE}. They supplement the Terms of Use and the Privacy Policy and apply together with them.`, "We chose a separate-consent flow for this optional feature. Before first use of the current version, you must separately accept it in the feature interface; we record your user ID, the exact selected-provider disclosure version and digest, and acceptance time to demonstrate authorization. This is the service operator's chosen disclosure and authorization flow, not a statement that all AI providers universally require separate consent.", "This version consists of common AI terms and the selected provider disclosure. You can choose among the provider and model options available for the current time period. The complete matching disclosure is displayed and requires acceptance before transmission. Selecting another provider does not automatically accept its disclosure."],
+  intro: [`These AI Service Terms govern your use of the AI polish feature of ${SERVICE_NAME} at ${SERVICE_WEBSITE}. They supplement the Terms of Use and the Privacy Policy and apply together with them.`, "We chose a separate-consent flow for this optional feature. Before using the applicable terms, you must separately accept it in the feature interface; we record your user ID, the exact common terms and selected-service disclosure, and acceptance time to demonstrate authorization. This is the service operator's chosen disclosure and authorization flow, not a statement that all AI providers universally require separate consent.", "The applicable terms consist of common AI terms and the selected service disclosure. You can choose among the provider and model options available for the current time period. The complete matching disclosure is available through an exact document link and requires acceptance before transmission. Selecting another provider does not automatically accept its disclosure."],
   sections: [{
     heading: "The AI Polish Feature",
-    body: ["AI polish rewrites selected free-text fields of your resume at your request, such as profile summaries, bullet points, and skill descriptions. It is intended to change wording only, not facts, figures, employers, job titles, or other factual content, and it never applies changes automatically.", "When you confirm a polish request, the text you selected, together with any context you choose to include, is forwarded in plaintext through our server to the third-party AI service disclosed for that request. Network transmission uses HTTPS, but your request content is readable by our server and the actual recipient — end-to-end encryption does not apply to this feature (see \"Encryption and AI Polish\" below).", "The available options and default are determined by server-side configuration and request time; you explicitly select the provider and model for the request. Each frozen request uses one disclosed provider/model profile; a provider failure does not trigger an undisclosed automatic cross-provider fallback within that request."]
+    body: ["AI polish rewrites selected free-text fields of your resume at your request, such as profile summaries, bullet points, and skill descriptions. It is intended to change wording only, not facts, figures, employers, job titles, or other factual content, and it never applies changes automatically.", "When you confirm a polish request, the text you selected, together with any context you choose to include, is forwarded in plaintext through our server to the third-party AI service disclosed for that request. Network transmission uses HTTPS, but your request content is readable by our server and the actual recipient — end-to-end encryption does not apply to this feature (see \"Encryption and AI Polish\" below).", "The available options and default are determined by server-side configuration and request time; you explicitly select the provider and model for the request. Each frozen request uses one disclosed service and model; a service failure does not trigger an undisclosed automatic cross-provider fallback within that request."]
   }, {
     heading: "What Is Sent",
-    body: ["We do not actively send the name, email address, or phone number from your resume header — they are never read at any context level. However, any personal information contained in the text and context you select will still be sent to the AI provider as part of your request.", "We never send your email address, username, or raw account ID to the AI provider. Whether an HMAC-SHA256 pseudonymous identifier is sent depends on the actual provider profile: the current DeepSeek profile sends one, while MiMo and Google Gemini profiles do not. See the applicable provider annex.", "Before each request, the feature shows you exactly what will be sent. Review this disclosure carefully and remove or avoid content you do not want to share. The context level you choose determines the scope:"],
+    body: ["We do not actively send the name, email address, or phone number from your resume header — they are never read at any context level. However, any personal information contained in the text and context you select will still be sent to the AI provider as part of your request.", "We never send your email address, username, or raw account ID to the AI provider. Whether an HMAC-SHA256 pseudonymous identifier is sent depends on the selected connection’s implemented request format. The exact selected-service disclosure states whether this identifier is sent.", "Before each request, the feature shows you exactly what will be sent. Review this disclosure carefully and remove or avoid content you do not want to share. The context level you choose determines the scope:"],
     bullets: ["Level 0 (text only): only the texts you selected, plus the style preset or custom style instruction if you set one.", "Level 1 (sibling items): in addition to Level 0, scope metadata (such as company or organization names, project titles and details, education institution/title/details, research titles and dates, and skill categories) and the unselected sibling text items in the same entry or section.", "Level 2 (profile & skills): in addition to Level 1, your profile summary bodies and your skill labels."]
   }, {
     heading: "What We Store",
-    body: ["We do not intentionally store the resume text you send for polishing or the AI-generated output on our servers. Request content is processed in memory and discarded after the response is returned.", "We keep metadata ledgers/logs about each request and attempt, such as: request timestamps, your user ID, request/attempt IDs, the frozen route/profile/price/legal bundle, polish granularity, item count, context level, language, model and prompt/validator versions, attempt count, completion status or failure stage, explainable token/cache usage, latency, cost, and the quota settlement outcome. These logs never include your resume text, the AI output, or your style instructions. If provider usage cannot be interpreted reliably, the relevant usage detail or cost remains unknown rather than being guessed.", "Request metadata logs are scheduled for deletion 90 days after the request completes, per-minute rate-limit counters after 2 days, and daily usage aggregates after 90 days. Deletion is performed by a cleanup job that runs once per day, so each record is deleted at the first scheduled run after it crosses its retention threshold and may remain for up to roughly one additional day. Records of your acceptance of these AI Service Terms are kept until you delete your account."]
+    body: ["We do not intentionally store the resume text you send for polishing or the AI-generated output on our servers. Request content is processed in memory and discarded after the response is returned.", "We keep metadata ledgers/logs about each request and attempt, such as: request timestamps, your user ID, request/attempt IDs, the frozen configuration, routing rule, price and exact legal acceptance records, polish granularity, item count, context level, language, model and prompt/validator versions, attempt count, completion status or failure stage, explainable token/cache usage, latency, cost, and the quota settlement outcome. These logs never include your resume text, the AI output, or your style instructions. If provider usage cannot be interpreted reliably, the relevant usage detail or cost remains unknown rather than being guessed.", "Request metadata logs are scheduled for deletion 90 days after the request completes, per-minute rate-limit counters after 2 days, and daily usage aggregates after 90 days. Deletion is performed by a cleanup job that runs once per day, so each record is deleted at the first scheduled run after it crosses its retention threshold and may remain for up to roughly one additional day. Records of your acceptance of these AI Service Terms are kept until you delete your account."]
   }, {
     heading: "Usage Limits, Quota, and Cancellation",
     body: ["AI polish is currently a free feature with usage limits: at most 20 requests per user per day (reset at midnight UTC) and at most 3 requests per minute; a service-wide daily capacity limit also applies, after which the feature becomes temporarily unavailable. We may adjust these limits, and we may suspend access in cases of abuse, excessive use, or risk to the service.", "Quota is reserved when a request is accepted. If you cancel or interrupt it after it has been sent to the AI provider, the quota remains charged because provider processing or cost has occurred. If it fails before transmission, or the service's settlement rules classify a provider/validation failure as refundable, the reservation is refunded. Retries are attempts under the same frozen route and do not silently switch to another provider."]
   }, {
     heading: "Providers, Routing, and Policy Changes",
-    body: ["The current legal bundle lists the official DeepSeek Open Platform, official MiMo API and Google Gemini API through AI Studio. Inclusion in an annex does not mean that a profile is active; the actual recipient is the route disclosed before the request and frozen by the server.", "Each third party processes received content under its own terms and policies, which we do not control. Do not send sensitive, confidential, or other information that you do not want the actual recipient to process.", "If we add a recipient, upstream, or processing region, or materially change caching, retention, training, or improvement policies, we will update the annexes and version and require renewed acceptance where needed. Acceptance of an old version cannot authorize a route that requires a new legal bundle."]
+    body: ["Available services are configured by the operator. The actual recipient, endpoint and model must match the disclosure presented for the selected configuration and frozen for the request. A compatible request format does not establish the same recipient or data-processing terms.", "Each third party processes received content under its own terms and policies, which we do not control. Do not send sensitive, confidential, or other information that you do not want the actual recipient to process.", "If we add a recipient, upstream, or processing region, or materially change caching, retention, training, or improvement policies, we will update the applicable disclosure and require acceptance of its current content before a new request. An earlier acceptance does not authorize another recipient or processing scope."]
   }, {
     heading: "AI Output Requires Your Review",
     body: ["AI-generated suggestions may be inaccurate, incomplete, biased, or unsuitable, and may alter meaning or emphasis in unintended ways. They are provided as drafting suggestions only.", "Polished text is never applied automatically. You must review each suggestion and explicitly accept or reject it. You are solely responsible for the final content of your resume."]
   }, {
     heading: "Encryption and AI Polish",
     body: ["End-to-end encryption, where available, protects only your cloud-saved resume data at rest. It does not apply to AI polish.", "When you use AI polish on an encrypted resume, the selected plaintext leaves your device and is sent through our server to the AI provider. The rest of your encrypted resume remains protected as described in the Privacy Policy."]
-  }, providerAnnexSection("Official DeepSeek Open Platform", deepseekLegalManifest), providerAnnexSection("Official MiMo API (mainland-China profile)", mimoLegalManifest), providerAnnexSection("Google Gemini API (AI Studio)", geminiLegalManifest), {
+  }, {
     heading: "Changes",
     body: ["We may update these AI Service Terms from time to time. If changes are material, we will update the effective date and require you to accept the new version before using AI polish again."]
   }, {

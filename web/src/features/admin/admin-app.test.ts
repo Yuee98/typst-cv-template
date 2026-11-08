@@ -1,30 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { localizedAdminValue, buildAdminQuery } from "./admin-app";
-import { adminMessages } from "./messages";
-import { adminMutationRequestSchema, externalIdSchema } from "@/lib/admin/contract";
-describe("current admin contract", () => {
-  it("preserves bigint revisions without numeric rounding", () => {
+import { adminMutationRequestSchema, entityIdSchema } from "@/lib/admin/contract";
+import { formatPrice, parsePrice } from "./admin-entity-dialog";
+describe("current aggregate contract", () => {
+  it("preserves bigint revisions and rejects former external identities", () => {
     const parsed = adminMutationRequestSchema.parse({
       operation: "admin_ai_disable",
-      contract_code: "cv_app_db_1",
+      contract_code: "cv_app_db_2",
       database_instance_id: "00000000-0000-4000-8000-000000000001",
       operation_key: "00000000-0000-4000-8000-000000000002",
-      reason: "emergency",
+      reason: "Emergency disable AI",
       expected_revision: "9007199254740993"
     });
     expect("expected_revision" in parsed && parsed.expected_revision).toBe("9007199254740993");
+    expect(entityIdSchema.safeParse("9007199254740993").success).toBe(true);
+    expect(entityIdSchema.safeParse("pfv_0123456789AB").success).toBe(false);
   });
-  it("rejects UUIDs and invalid Crockford suffixes as business IDs", () => {
-    expect(externalIdSchema.safeParse("prv_0123456789AB").success).toBe(true);
-    expect(externalIdSchema.safeParse("prv_0123456789AI").success).toBe(false);
-    expect(externalIdSchema.safeParse("00000000-0000-4000-8000-000000000001").success).toBe(false);
+  it("formats and parses prices without floating-point rounding", () => {
+    expect(formatPrice("9007199254740993")).toBe("9007199.254740993");
+    expect(parsePrice("9007199.254740993")).toBe("9007199254740993");
+    expect(() => parsePrice("1.1234567891")).toThrow();
+    expect(() => parsePrice("-1")).toThrow();
   });
-  it("uses only current pagination and renders explicit scalar values", () => {
-    expect(buildAdminQuery({
-      after: "op_0123456789AB",
-      limit: 50
-    })).toBe("?after=op_0123456789AB&limit=50");
-    expect(localizedAdminValue(true, "en", adminMessages.en)).toBe("Yes");
-    expect(localizedAdminValue(null, "en", adminMessages.en)).toBe("—");
-  });
+
 });

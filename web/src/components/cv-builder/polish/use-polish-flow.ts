@@ -127,7 +127,7 @@ export interface PolishFlow {
   /** Current DB-authoritative options and the user-selected execution target. */
   availabilityCandidate: PolishAvailabilityCandidate | null;
   availabilityStatus: PolishAvailabilityStatus;
-  selectOption: (optionId: string) => void;
+  selectConfiguration: (configId: string) => void;
   terms: {
     status: AiTermsGateState["status"];
     serverRejected: boolean;
@@ -189,16 +189,16 @@ interface RefreshAvailabilityOptions {
 function sameExpectedRoute(left: PolishExpectedRoute, right: PolishExpectedRoute): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
-function selectedOption(candidate: PolishAvailabilityCandidate) {
-  return candidate.options.find(option => option.optionId === candidate.selectedOptionId) ?? null;
+function selectedConfiguration(candidate: PolishAvailabilityCandidate) {
+  return candidate.configurations.find(option => option.configId === candidate.selectedConfigId) ?? null;
 }
 function sameAvailabilityAuthority(left: PolishAvailabilityCandidate, right: PolishAvailabilityCandidate): boolean {
-  const l = polishExpectedRouteFromAvailability(left, left.selectedOptionId),
-    r = polishExpectedRouteFromAvailability(right, right.selectedOptionId);
-  return l !== null && r !== null && sameExpectedRoute(l, r) && JSON.stringify(selectedOption(left)?.legalDisplay) === JSON.stringify(selectedOption(right)?.legalDisplay);
+  const l = polishExpectedRouteFromAvailability(left, left.selectedConfigId),
+    r = polishExpectedRouteFromAvailability(right, right.selectedConfigId);
+  return l !== null && r !== null && sameExpectedRoute(l, r) && JSON.stringify(selectedConfiguration(left)?.legalDisplay) === JSON.stringify(selectedConfiguration(right)?.legalDisplay);
 }
 function assertSupportedAvailabilityCandidate(candidate: PolishAvailabilityCandidate): LegalDisplay {
-  const option = selectedOption(candidate);
+  const option = selectedConfiguration(candidate);
   if (!option || option.status === "UNAVAILABLE") throw new Error("Select an available option");
   return option.legalDisplay;
 }
@@ -250,7 +250,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
   const termsGenerationRef = useRef(0);
   const quotaGenerationRef = useRef(0);
   const availabilityGenerationRef = useRef(0);
-  const selectedOptionRef = useRef<string | null>(null);
+  const selectedConfigurationRef = useRef<string | null>(null);
   const selectionInitializedRef = useRef(false);
   // Generation of the cancellation settle-point quota read; only reads with
   // generation >= this value may lift settlementPending.
@@ -388,7 +388,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     // terms gate and quota are user-scoped and the snapshot is tied to its
     // document + language, so everything derived from the previous identity is invalidated —
     // in-flight work aborts, the dialog closes and the next open re-reads
-    // availability (including exact-bundle terms state) + quota for the NEW
+    // availability (including exact-document consent state) + quota for the NEW
     // identity.
     const operation = activeOperationRef.current;
     if (operation?.controller) {
@@ -585,20 +585,20 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       if (availabilityGenerationRef.current !== read.generation) return;
       if (response.availability.enabled) {
         const available = response.availability;
-        const selected = selectionInitializedRef.current ? selectedOptionRef.current : available.defaultOptionId;
+        const selected = selectionInitializedRef.current ? selectedConfigurationRef.current : available.defaultConfigId;
         selectionInitializedRef.current = true;
-        selectedOptionRef.current = available.options.some(option => option.optionId === selected && option.status !== "UNAVAILABLE") ? selected : null;
+        selectedConfigurationRef.current = available.configurations.some(option => option.configId === selected && option.status !== "UNAVAILABLE") ? selected : null;
         const candidate: PolishAvailabilityCandidate = {
           ...available,
-          selectedOptionId: selectedOptionRef.current
+          selectedConfigId: selectedConfigurationRef.current
         };
-        const expectedRoute = polishExpectedRouteFromAvailability(candidate, candidate.selectedOptionId);
+        const expectedRoute = polishExpectedRouteFromAvailability(candidate, candidate.selectedConfigId);
         setAvailabilityCandidate(candidate);
         setAvailabilityPublicationGeneration(generation);
         setAvailabilityStatus("ready");
         dispatchTerms({
           type: "QUERY_RESOLVE",
-          accepted: selectedOption(candidate)?.status === "READY"
+          accepted: selectedConfiguration(candidate)?.status === "READY"
         });
         if (refreshOptions?.serverRejectedTerms) {
           dispatchTerms({
@@ -633,18 +633,18 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       }
     }
   }, [client, invalidateActiveOperation, invalidateAvailabilityRead, isOpen, resetTermsGate, session]);
-  const selectOption = useCallback((optionId: string) => {
+  const selectConfiguration = useCallback((configId: string) => {
     if (!availabilityCandidate) return;
-    const option = availabilityCandidate.options.find(option => option.optionId === optionId);
+    const option = availabilityCandidate.configurations.find(option => option.configId === configId);
     if (!option || option.status === "UNAVAILABLE") return;
     invalidateActiveOperation();
     invalidateAvailabilityRead();
     resetTermsGate();
-    selectedOptionRef.current = optionId;
+    selectedConfigurationRef.current = configId;
     selectionInitializedRef.current = true;
     setAvailabilityCandidate({
       ...availabilityCandidate,
-      selectedOptionId: optionId
+      selectedConfigId: configId
     });
     setAvailabilityPublicationGeneration(++availabilityGenerationRef.current);
     setAvailabilityStatus("ready");
@@ -662,19 +662,18 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       if (document.visibilityState === "visible") void refreshAvailability();
     };
     document.addEventListener("visibilitychange", visible);
-    const boundary = availabilityCandidate?.nextChangeAt;
-    const timer = boundary ? setTimeout(() => void refreshAvailability(), Math.max(1, Math.min(2147483647, Date.parse(boundary) - Date.now() + 50))) : null;
+    const timer = setInterval(() => void refreshAvailability(), 30000);
     return () => {
       document.removeEventListener("visibilitychange", visible);
-      if (timer !== null) clearTimeout(timer);
+      clearInterval(timer);
     };
-  }, [isOpen, state.phase, availabilityCandidate?.nextChangeAt, refreshAvailability]);
+  }, [isOpen, state.phase, refreshAvailability]);
 
   /**
    * A successful acceptance write is not route authority. Re-read the exact
    * availability candidate before minting a request id or sending content.
    * The reviewed candidate may continue only when every route/disclosure key
-   * is unchanged and the server now confirms that exact bundle is accepted.
+   * is unchanged and the server now confirms that exact documents are accepted.
    */
   const revalidateAvailabilityAfterAcceptance = useCallback(async (operation: ActivePolishOperation, reviewedCandidate: PolishAvailabilityCandidate): Promise<boolean> => {
     if (!mountedRef.current || activeOperationRef.current !== operation || sessionUserIdRef.current !== operation.userId || documentIdRef.current !== operation.documentId || languageRef.current !== operation.language) {
@@ -719,10 +718,10 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       }
       const candidate: PolishAvailabilityCandidate = {
         ...response.availability,
-        selectedOptionId: reviewedCandidate.selectedOptionId
+        selectedConfigId: reviewedCandidate.selectedConfigId
       };
       assertSupportedAvailabilityCandidate(candidate);
-      const freshExpectedRoute = polishExpectedRouteFromAvailability(candidate, candidate.selectedOptionId);
+      const freshExpectedRoute = polishExpectedRouteFromAvailability(candidate, candidate.selectedConfigId);
       if (!freshExpectedRoute) {
         throw new Error("enabled availability has no expected route");
       }
@@ -732,9 +731,9 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       setAvailabilityStatus("ready");
       dispatchTerms({
         type: "QUERY_RESOLVE",
-        accepted: selectedOption(candidate)?.status === "READY"
+        accepted: selectedConfiguration(candidate)?.status === "READY"
       });
-      if (!authorityUnchanged || selectedOption(candidate)?.status !== "READY") {
+      if (!authorityUnchanged || selectedConfiguration(candidate)?.status !== "READY") {
         clearOperationIfOwned(operation);
         if (!authorityUnchanged) setRouteChangedHint(true);
         return false;
@@ -765,7 +764,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
 
   const open = useCallback((nextScope: PolishScope) => {
     if (!documentId) return;
-    selectedOptionRef.current = null;
+    selectedConfigurationRef.current = null;
     selectionInitializedRef.current = false;
     invalidateActiveOperation();
     baselineRef.current = null;
@@ -886,7 +885,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     if (publication === null || publication.candidate !== availabilityCandidate || publication.generation !== availabilityPublicationGeneration) {
       return;
     }
-    const expectedRoute = polishExpectedRouteFromAvailability(availabilityCandidate, availabilityCandidate.selectedOptionId);
+    const expectedRoute = polishExpectedRouteFromAvailability(availabilityCandidate, availabilityCandidate.selectedConfigId);
     if (!expectedRoute) return;
     let legalDisplay: LegalDisplay;
     try {
@@ -984,7 +983,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
       if (documentIdRef.current !== operation.documentId) return;
       if (languageRef.current !== operation.language) return;
       const currentPublication = availabilityPublicationRef.current;
-      const currentExpectedRoute = currentPublication ? polishExpectedRouteFromAvailability(currentPublication.candidate, currentPublication.candidate.selectedOptionId) : null;
+      const currentExpectedRoute = currentPublication ? polishExpectedRouteFromAvailability(currentPublication.candidate, currentPublication.candidate.selectedConfigId) : null;
       if (currentPublication === null || currentPublication !== publication || currentPublication.generation !== operation.availabilityGeneration || currentExpectedRoute === null || !sameExpectedRoute(currentExpectedRoute, operation.expectedRoute)) {
         clearOperationIfOwned(operation);
         return;
@@ -1078,7 +1077,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
         });
       },
       onTermsRequired: () => {
-        // Refresh the exact route/legal bundle before showing consent again.
+        // Refresh the exact configuration/legal documents before showing consent again.
         // There is no blind resend; the user must review and reconfirm.
         dispatch({
           type: "ABORT"
@@ -1297,7 +1296,7 @@ export function usePolishFlow(options: UsePolishFlowOptions): PolishFlow {
     quotaStatus,
     availabilityCandidate,
     availabilityStatus,
-    selectOption,
+    selectConfiguration,
     terms: {
       status: termsState.status,
       serverRejected: termsState.serverRejected,

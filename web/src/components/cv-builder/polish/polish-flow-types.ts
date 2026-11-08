@@ -40,7 +40,7 @@ export interface ActiveAvailabilityRead {
   controller: AbortController;
 }
 export type PolishAvailabilityCandidate = PolishAvailability & {
-  selectedOptionId: string | null;
+  selectedConfigId: string | null;
 };
 export type PolishAvailabilityStatus = "idle" | "loading" | "ready" | "disabled" | "error";
 export interface PublishedAvailabilityCandidate {

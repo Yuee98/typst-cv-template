@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
-export const DATABASE_CONTRACT = "cv_app_db_1" as const;
+export const DATABASE_CONTRACT = "cv_app_db_2" as const;
 const contextSchema = z.object({
   ready: z.boolean(),
   contract_code: z.literal(DATABASE_CONTRACT),

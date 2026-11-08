@@ -238,7 +238,7 @@ describe("createPolishHttpClient", () => {
     ...ENABLED_AVAILABILITY_BODY,
     availability: {
       ...ENABLED_AVAILABILITY_BODY.availability,
-      policyVersionId: undefined
+      controlRevision: undefined
     }
   }], ["malformed runtime ID", {
     ...ENABLED_AVAILABILITY_BODY,
