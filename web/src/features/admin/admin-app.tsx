@@ -3,9 +3,8 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { getSupabaseBrowserClient, getSupabaseConfig } from "@/lib/supabase/client";
-import { type AdminRecord, type AdminSection, ADMIN_SECTIONS } from "@/lib/admin/contract";
+import { type AdminRecord, type AdminSection } from "@/lib/admin/contract";
 import { useAdminSession } from "./admin-session";
 import { useAdminRead, type AdminRead } from "./admin-read";
 import { adminMessages, type AdminMessages } from "./messages";
@@ -13,6 +12,8 @@ import { adminNavigationPath, adminOAuthRedirectUrl } from "./navigation";
 import { AdminSecuritySettings } from "./security-settings";
 import { AdminRecordActions } from "./record-actions";
 import { AdminRuntimeControls } from "./runtime-controls";
+import { AdminShell } from "./admin-shell";
+import { AdminAuthPanel } from "./admin-auth-panel";
 export function localizedAdminValue(value: unknown, locale: string, t: AdminMessages) {
   if (typeof value === "boolean") return value ? t.yes : t.no;
   if (value === null || value === undefined) return "—";
@@ -110,37 +111,67 @@ export default function AdminApp({
     if (error) setSignInError(error.message);
     setAuthBusy(false);
   }
-  if (!client) return <main className="space-y-4 p-8"><a href={`/${locale}`} referrerPolicy="no-referrer" className="underline">{t.backToEditor}</a><p>{t.noConfiguration}</p></main>;
-  if (!actor.ready) return <main className="space-y-4 p-8"><a href={`/${locale}`} referrerPolicy="no-referrer" className="underline">{t.backToEditor}</a><p>{locale === "zh" ? "正在加载…" : "Loading…"}</p></main>;
-  if (!session) return <main className="mx-auto max-w-md space-y-4 p-8"><a href={`/${locale}`} referrerPolicy="no-referrer" className="underline">{t.backToEditor}</a><h1 className="text-xl font-semibold">{t.loginTitle}</h1><Input aria-label={t.email} type="email" value={credentials.email} onChange={e => setCredentials({
-      ...credentials,
-      email: e.target.value
-    })} /><Input aria-label={t.password} type="password" value={credentials.password} onChange={e => setCredentials({
-      ...credentials,
-      password: e.target.value
-    })} /><Button disabled={busy} onClick={() => void signIn()}>{t.signIn}</Button><Button variant="secondary" onClick={() => void client.auth.signInWithOAuth({
-      provider: "github",
-      options: {
-        redirectTo: adminOAuthRedirectUrl(window.location.origin, locale)
-      }
-    })}>{t.github}</Button>{error && <p role="alert">{error}</p>}</main>;
+  if (!client) return <AdminShell locale={locale} t={t}><p role="status" className="rounded-xl border border-border bg-surface p-6">{t.noConfiguration}</p></AdminShell>;
+  if (!actor.ready) return <AdminShell locale={locale} t={t}><p role="status" className="rounded-xl border border-border bg-surface p-6">{locale === "zh" ? "正在加载…" : "Loading…"}</p></AdminShell>;
+  if (!session) return <AdminShell locale={locale} t={t}>
+    <AdminAuthPanel t={t} email={credentials.email} password={credentials.password} busy={busy} error={error}
+      onEmailChange={email => setCredentials(current => ({ ...current, email }))}
+      onPasswordChange={password => setCredentials(current => ({ ...current, password }))}
+      onSubmit={() => void signIn()}
+      onGithubSignIn={() => void client.auth.signInWithOAuth({ provider: "github", options: { redirectTo: adminOAuthRedirectUrl(window.location.origin, locale) } })} />
+  </AdminShell>;
   const selected = recordId ? records[0] : null;
-  return <main className="min-h-screen space-y-5 bg-background p-4 text-foreground md:p-8"><header className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-xl font-semibold">{t.brand}</h1><div className="flex gap-3"><a href={`/${locale}`} referrerPolicy="no-referrer" className="underline">{t.backToEditor}</a><Button variant="secondary" onClick={() => void client.auth.signOut()}>{t.signOut}</Button></div></header><nav className="flex flex-wrap gap-3">{ADMIN_SECTIONS.map(item => <Link key={item} href={adminNavigationPath(locale, item)!} aria-current={section === item ? "page" : undefined} className={section === item ? "font-semibold underline" : "text-foreground-muted"}>{t[item]}</Link>)}</nav><Button variant="secondary" disabled={busy} onClick={read.refreshRead}>{locale === "zh" ? "刷新" : "Refresh"}</Button>{error && <p role="alert">{error}</p>}
- {context && <section key={`${viewOwner}:${context.database_instance_id}`} hidden={!viewReady} aria-busy={!viewReady}><fieldset disabled={!viewReady} className="space-y-5"><p className="text-sm text-foreground-muted">{t.environment}: {context.environment} · {context.database_instance_id} · {context.member_id}</p>
- {section === "overview" && <><dl className="grid gap-3 sm:grid-cols-2">{Object.entries(context.control).map(([key, value]) => <div key={key}><dt className="text-sm capitalize text-foreground-muted">{key.replaceAll("_", " ")}</dt><dd>{localizedAdminValue(value, locale, t)}</dd></div>)}</dl><AdminSecuritySettings client={client} t={t} /></>}
- {section === "controls" && <AdminRuntimeControls context={context} accessToken={session.access_token} locale={locale} onCommitted={read.refreshAfterMutation} />}
- {section === "analytics" && analytics && <dl className="space-y-4">{Object.entries(analytics).map(([key, value]) => <div key={key}><dt className="font-medium capitalize">{key.replaceAll("_", " ")}</dt><dd className="whitespace-pre-wrap break-all text-sm">{localizedAdminValue(value, locale, t)}</dd></div>)}</dl>}
- {!["overview", "controls", "analytics"].includes(section) && <>{["profiles", "policies", "users"].includes(section) && !recordId && <select aria-label="Record kind" className="rounded border p-2" value={recordKind} onChange={event => {
-            setSelection({
-              section,
-              kind: event.target.value,
-              cursor: null
-            });
-          }}>{section === "users" ? <><option value="accounts">{locale === "zh" ? "账户" : "Accounts"}</option><option value="members">{locale === "zh" ? "管理员资格" : "Administrators"}</option></> : <><option value="versions">{locale === "zh" ? "配置版本" : "Versions"}</option><option value="identities">{locale === "zh" ? "配置身份" : "Identities"}</option></>}</select>}<div className="space-y-3">{records.map((record, index) => <article key={String(record.external_id ?? record.id ?? index)} className="rounded border border-border p-4"><dl className="grid gap-3 md:grid-cols-2">{Object.entries(record).map(([key, value]) => <div key={key}><dt className="text-xs capitalize text-foreground-muted">{key.replaceAll("_", " ")}</dt><dd className="whitespace-pre-wrap break-all text-sm">{localizedAdminValue(value, locale, t)}</dd></div>)}</dl>{!recordId && typeof record.external_id === "string" && <Link className="mt-2 block underline" href={`${adminNavigationPath(locale, section)}/${encodeURIComponent(record.external_id)}`}>{locale === "zh" ? "查看详情" : "Details"}</Link>}</article>)}</div>{nextCursor && <Button variant="secondary" onClick={() => setSelection({
-            section,
-            kind: recordKind,
-            cursor: nextCursor
-          })}>{locale === "zh" ? "下一页" : "Next page"}</Button>}<AdminRecordActions key={`${session.user.id}:${context.database_instance_id}:${section}:${recordId ?? "list"}`} section={section} context={context} record={selected} accessToken={session.access_token} locale={locale} onCommitted={read.refreshAfterMutation} /></>}
- </fieldset></section>}
- </main>;
+  return <AdminShell locale={locale} t={t} section={section} environment={context?.environment} onSignOut={() => void client.auth.signOut()}>
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+      <h2 className="text-lg font-semibold">{t[section]}</h2>
+      <Button variant="secondary" disabled={busy} onClick={read.refreshRead}>{locale === "zh" ? "刷新" : "Refresh"}</Button>
+    </div>
+    {busy && <p role="status" className="text-sm text-foreground-muted">{locale === "zh" ? "正在加载…" : "Loading…"}</p>}
+    {error && <p role="alert" className="rounded-lg border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger-foreground">{error}</p>}
+    {context && <section key={`${viewOwner}:${context.database_instance_id}`} hidden={!viewReady} aria-busy={!viewReady} className="min-w-0">
+      <fieldset disabled={!viewReady} className="min-w-0 space-y-5">
+        <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 rounded-lg border border-border bg-surface px-4 py-3 text-xs text-foreground-muted">
+          <span>{t.environment}: {context.environment}</span>
+          <span className="min-w-0 break-all">{context.database_instance_id}</span>
+          <span className="min-w-0 break-all">{context.member_id}</span>
+        </div>
+        {section === "overview" && <>
+          <dl className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {Object.entries(context.control).map(([key, value]) => <div key={key} className="min-w-0 rounded-xl border border-border bg-surface p-4 shadow-sm">
+              <dt className="text-sm capitalize text-foreground-muted">{key.replaceAll("_", " ")}</dt>
+              <dd className="mt-2 break-all font-medium">{localizedAdminValue(value, locale, t)}</dd>
+            </div>)}
+          </dl>
+          <AdminSecuritySettings client={client} t={t} />
+        </>}
+        {section === "controls" && <AdminRuntimeControls context={context} accessToken={session.access_token} locale={locale} onCommitted={read.refreshAfterMutation} />}
+        {section === "analytics" && analytics && <dl className="min-w-0 space-y-4 rounded-xl border border-border bg-surface p-4 sm:p-6">
+          {Object.entries(analytics).map(([key, value]) => <div key={key} className="min-w-0">
+            <dt className="font-medium capitalize">{key.replaceAll("_", " ")}</dt>
+            <dd className="mt-1 whitespace-pre-wrap break-all text-sm">{localizedAdminValue(value, locale, t)}</dd>
+          </div>)}
+        </dl>}
+        {!["overview", "controls", "analytics"].includes(section) && <>
+          {["profiles", "policies", "users"].includes(section) && !recordId && <select aria-label="Record kind" className="max-w-full rounded-md border border-border bg-surface p-2 text-base sm:text-sm" value={recordKind} onChange={event => {
+            setSelection({ section, kind: event.target.value, cursor: null });
+          }}>
+            {section === "users" ? <><option value="accounts">{locale === "zh" ? "账户" : "Accounts"}</option><option value="members">{locale === "zh" ? "管理员资格" : "Administrators"}</option></> : <><option value="versions">{locale === "zh" ? "配置版本" : "Versions"}</option><option value="identities">{locale === "zh" ? "配置身份" : "Identities"}</option></>}
+          </select>}
+          <div className="min-w-0 space-y-4">
+            {records.map((record, index) => <article key={String(record.external_id ?? record.id ?? index)} className="min-w-0 rounded-xl border border-border bg-surface p-4 shadow-sm sm:p-6">
+              <dl className="grid min-w-0 gap-4 md:grid-cols-2">
+                {Object.entries(record).map(([key, value]) => <div key={key} className="min-w-0">
+                  <dt className="text-xs capitalize text-foreground-muted">{key.replaceAll("_", " ")}</dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-all text-sm">{localizedAdminValue(value, locale, t)}</dd>
+                </div>)}
+              </dl>
+              {!recordId && typeof record.external_id === "string" && <Link className="mt-4 inline-flex min-h-9 items-center font-medium text-accent-soft-foreground underline underline-offset-4" href={`${adminNavigationPath(locale, section)}/${encodeURIComponent(record.external_id)}`}>{locale === "zh" ? "查看详情" : "Details"}</Link>}
+            </article>)}
+          </div>
+          {nextCursor && <Button variant="secondary" onClick={() => setSelection({ section, kind: recordKind, cursor: nextCursor })}>{locale === "zh" ? "下一页" : "Next page"}</Button>}
+          <AdminRecordActions key={`${session.user.id}:${context.database_instance_id}:${section}:${recordId ?? "list"}`} section={section} context={context} record={selected} accessToken={session.access_token} locale={locale} onCommitted={read.refreshAfterMutation} />
+        </>}
+      </fieldset>
+    </section>}
+  </AdminShell>;
 }

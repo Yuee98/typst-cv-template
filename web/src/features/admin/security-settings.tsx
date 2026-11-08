@@ -144,47 +144,47 @@ export function AdminSecuritySettings({
       setBusy(false);
     }
   }
-  return <section className="space-y-4 rounded-lg border border-border bg-surface p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="font-semibold">{t.securityTitle}</h2>
-          <p className="text-sm text-foreground-muted">{t.securityHint}</p>
+  return <section className="min-w-0 space-y-4 rounded-lg border border-border bg-surface p-4">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <h2 className="break-words font-semibold">{t.securityTitle}</h2>
+          <p className="break-words text-sm text-foreground-muted">{t.securityHint}</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={busy}>
+        <Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" variant="secondary" size="sm" onClick={() => void refresh()} disabled={busy}>
           {t.refreshSecurity}
         </Button>
       </div>
-      <p className="text-sm">{t.assurance}: {aal ?? "—"}</p>
-      {factors.length > 0 ? <ul className="space-y-2 text-sm">
-          {factors.map(factor => <li key={factor.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border p-3">
-              <span>{factor.friendly_name || t.totp} · {factor.status}</span>
-              <Button variant="ghost" size="sm" onClick={() => void unenroll(factor.id)} disabled={busy}>
+      <p className="break-words text-sm">{t.assurance}: {aal ?? "—"}</p>
+      {factors.length > 0 ? <ul className="min-w-0 space-y-2 text-sm">
+          {factors.map(factor => <li key={factor.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded border border-border p-3">
+              <span className="min-w-0 break-words">{factor.friendly_name || t.totp} · {factor.status}</span>
+              <Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" variant="ghost" size="sm" onClick={() => void unenroll(factor.id)} disabled={busy}>
                 {t.unenroll}
               </Button>
             </li>)}
-        </ul> : <p className="text-sm text-foreground-muted">{t.noFactors}</p>}
-      {!enrollment && <Button variant="secondary" onClick={() => void enroll()} disabled={busy}>
+        </ul> : <p className="break-words text-sm text-foreground-muted">{t.noFactors}</p>}
+      {!enrollment && <Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" variant="secondary" onClick={() => void enroll()} disabled={busy}>
           {t.enrollTotp}
         </Button>}
-      {enrollment && <div className="space-y-3 rounded border border-border p-3">
-          <p className="text-sm">{t.scanQr}</p>
-          <Image src={enrollment.qrCode} alt={t.qrCode} width={160} height={160} unoptimized className="size-40 rounded bg-white p-2" />
-          <p className="break-all text-xs text-foreground-muted">{t.secret}: {enrollment.secret}</p>
-          <p className="break-all text-xs text-foreground-muted">{t.manualUri}: {enrollment.uri}</p>
-          <div className="flex gap-2">
-            <Input inputMode="numeric" autoComplete="one-time-code" aria-label={t.totpCode} maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
-            <Button onClick={() => void verify()} disabled={busy || code.length !== 6}>
+      {enrollment && <div className="min-w-0 space-y-3 rounded border border-border p-3">
+          <p className="break-words text-sm">{t.scanQr}</p>
+          <Image src={enrollment.qrCode} alt={t.qrCode} width={160} height={160} unoptimized className="h-auto w-40 max-w-full rounded bg-white p-2" />
+          <p className="min-w-0 break-all text-xs text-foreground-muted">{t.secret}: {enrollment.secret}</p>
+          <p className="min-w-0 break-all text-xs text-foreground-muted">{t.manualUri}: {enrollment.uri}</p>
+          <div className="flex min-w-0 flex-wrap items-start gap-2">
+            <Input className="min-w-0 max-w-full flex-[1_1_10rem]" inputMode="numeric" autoComplete="one-time-code" aria-label={t.totpCode} maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
+            <Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" onClick={() => void verify()} disabled={busy || code.length !== 6}>
               {t.verifyTotp}
             </Button>
           </div>
         </div>}
-      {!enrollment && factors.some(factor => factor.factor_type === "totp" && factor.status === "verified") && <div className="flex flex-wrap gap-2">
-          <select aria-label={t.totp} value={selectedFactor || factors.find(factor => factor.factor_type === "totp" && factor.status === "verified")?.id} onChange={event => setSelectedFactor(event.target.value)} className="rounded border border-border p-2">
+      {!enrollment && factors.some(factor => factor.factor_type === "totp" && factor.status === "verified") && <div className="flex min-w-0 flex-wrap items-start gap-2">
+          <select aria-label={t.totp} value={selectedFactor || factors.find(factor => factor.factor_type === "totp" && factor.status === "verified")?.id} onChange={event => setSelectedFactor(event.target.value)} className="min-w-0 max-w-full flex-[1_1_10rem] rounded border border-border bg-bg p-2">
             {factors.filter(factor => factor.factor_type === "totp" && factor.status === "verified").map(factor => <option key={factor.id} value={factor.id}>{factor.friendly_name || t.totp}</option>)}
           </select>
-          <Input inputMode="numeric" autoComplete="one-time-code" aria-label={t.totpCode} maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
-          <Button onClick={() => void verify()} disabled={busy || code.length !== 6}>{t.verifyTotp}</Button>
+          <Input className="min-w-0 max-w-full flex-[1_1_10rem]" inputMode="numeric" autoComplete="one-time-code" aria-label={t.totpCode} maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} />
+          <Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" onClick={() => void verify()} disabled={busy || code.length !== 6}>{t.verifyTotp}</Button>
         </div>}
-      {message && <p className="text-sm text-foreground-muted" role="status">{message}</p>}
+      {message && <p className="break-words text-sm text-foreground-muted" role="status">{message}</p>}
     </section>;
 }

@@ -410,21 +410,21 @@ export function AdminRecordActions({
       setBusy(false);
     }
   }
-  return <section className="space-y-3 rounded border border-border p-4"><h2 className="font-semibold">{locale === "zh" ? "配置操作" : "Configuration actions"}</h2>
- <select aria-label={locale === "zh" ? "操作" : "Action"} className="w-full rounded border p-2" disabled={busy || uncertain} value={selected} onChange={event => {
+  return <section className="min-w-0 space-y-3 rounded border border-border p-4"><h2 className="font-semibold">{locale === "zh" ? "配置操作" : "Configuration actions"}</h2>
+ <select aria-label={locale === "zh" ? "操作" : "Action"} className="w-full min-w-0 max-w-full rounded border border-border bg-bg p-2" disabled={busy || uncertain} value={selected} onChange={event => {
       setSelected(event.target.value);
       setValues({});
       setMessage("");
     }}>{actions.map(a => <option key={a.operation} value={a.operation}>{locale === "zh" ? a.zh : a.label}</option>)}</select>
- <fieldset disabled={busy || uncertain} className="grid gap-3 md:grid-cols-2">{action.fields.map(field => <label key={field.name} className={field.kind === "json" ? "md:col-span-2" : ""}><span className="mb-1 block text-sm capitalize">{fieldTitle(field.name)}</span>{field.kind === "json" ? <textarea className="w-full rounded border border-border bg-background p-2 font-mono text-xs" rows={6} value={values[field.name] ?? initial[field.name]} onChange={event => setValues({
+ <fieldset disabled={busy || uncertain} className="grid min-w-0 gap-3 md:grid-cols-2">{action.fields.map(field => <label key={field.name} className={field.kind === "json" ? "min-w-0 md:col-span-2" : "min-w-0"}><span className="mb-1 block break-words text-sm capitalize">{fieldTitle(field.name)}</span>{field.kind === "json" ? <textarea className="w-full min-w-0 max-w-full resize-y overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-bg p-2 font-mono text-xs" rows={6} value={values[field.name] ?? initial[field.name]} onChange={event => setValues({
           ...values,
           [field.name]: event.target.value
-        })} /> : field.kind === "boolean" ? <select className="rounded border p-2" value={values[field.name] ?? initial[field.name]} onChange={event => setValues({
+        })} /> : field.kind === "boolean" ? <select className="min-w-0 max-w-full rounded border border-border bg-bg p-2" value={values[field.name] ?? initial[field.name]} onChange={event => setValues({
           ...values,
           [field.name]: event.target.value
-        })}><option value="true">{locale === "zh" ? "是" : "Yes"}</option><option value="false">{locale === "zh" ? "否" : "No"}</option></select> : <Input type={field.kind === "number" ? "number" : "text"} placeholder={field.kind === "datetime" ? "2026-11-07T00:00:00Z" : undefined} value={values[field.name] ?? initial[field.name]} onChange={event => setValues({
+        })}><option value="true">{locale === "zh" ? "是" : "Yes"}</option><option value="false">{locale === "zh" ? "否" : "No"}</option></select> : <Input className="min-w-0 max-w-full" type={field.kind === "number" ? "number" : "text"} placeholder={field.kind === "datetime" ? "2026-11-07T00:00:00Z" : undefined} value={values[field.name] ?? initial[field.name]} onChange={event => setValues({
           ...values,
           [field.name]: event.target.value
-        })} />}</label>)}<label className="md:col-span-2"><span className="block text-sm">{locale === "zh" ? "操作原因" : "Reason"}</span><Input value={reason} maxLength={500} onChange={e => setReason(e.target.value)} /></label></fieldset>
- <Button disabled={busy || reason.trim().length < 3} onClick={() => void submit()}>{locale === "zh" ? uncertain ? "重试同一操作" : "提交操作" : uncertain ? "Retry same operation" : "Submit"}</Button>{message && <p role="status" className="break-all text-sm">{message}</p>}{committedResult && <dl className="space-y-1 rounded border p-3 text-sm">{Object.entries(committedResult).map(([key, value]) => <div key={key}><dt className="capitalize text-foreground-muted">{fieldTitle(key)}</dt><dd className="whitespace-pre-wrap break-all">{typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "—")}</dd></div>)}</dl>}</section>;
+        })} />}</label>)}<label className="min-w-0 md:col-span-2"><span className="block break-words text-sm">{locale === "zh" ? "操作原因" : "Reason"}</span><Input className="min-w-0 max-w-full" value={reason} maxLength={500} onChange={e => setReason(e.target.value)} /></label></fieldset>
+ <Button className="h-auto min-h-9 max-w-full whitespace-normal py-2" disabled={busy || reason.trim().length < 3} onClick={() => void submit()}>{locale === "zh" ? uncertain ? "重试同一操作" : "提交操作" : uncertain ? "Retry same operation" : "Submit"}</Button>{message && <p role="status" className="min-w-0 break-all text-sm">{message}</p>}{committedResult && <dl className="min-w-0 space-y-1 rounded border border-border p-3 text-sm">{Object.entries(committedResult).map(([key, value]) => <div key={key} className="min-w-0"><dt className="break-words capitalize text-foreground-muted">{fieldTitle(key)}</dt><dd className="max-h-80 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-all">{typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "—")}</dd></div>)}</dl>}</section>;
 }
