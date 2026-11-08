@@ -48,13 +48,16 @@ function composeEventHandlers<T extends { defaultPrevented: boolean }>(
 
 export function DropdownMenu({
   children,
+  modal = false,
   ...props
 }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Root>) {
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const ctx = React.useMemo(() => ({ triggerRef }), []);
   return (
     <DropdownMenuFocusContext.Provider value={ctx}>
-      <DropdownMenuPrimitive.Root {...props}>{children}</DropdownMenuPrimitive.Root>
+      {/* Action menus keep the page's scroll owner unchanged, so sticky
+          toolbars remain in place. Dialogs manage their own modal locking. */}
+      <DropdownMenuPrimitive.Root modal={modal} {...props}>{children}</DropdownMenuPrimitive.Root>
     </DropdownMenuFocusContext.Provider>
   );
 }

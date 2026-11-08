@@ -131,6 +131,229 @@ body {
   width: 100%;
 }
 
+/* One workspace and form tree: content flows on narrow/tall viewports; enough
+   horizontal space lets the same flex items share a bounded workspace. */
+html:has(.cv-app-shell),
+body:has(.cv-app-shell) {
+  height: auto;
+  min-height: 100%;
+}
+
+html:has(.cv-app-shell) {
+  overflow-x: clip;
+  overflow-y: auto;
+}
+
+body:has(.cv-app-shell) {
+  overflow: visible;
+}
+
+.cv-app-shell,
+.cv-app-shell-inner {
+  min-height: 100dvh;
+}
+
+.cv-app-shell-inner {
+  padding-inline: 0.75rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+.workspace {
+  flex: none;
+}
+
+.workspace-panes > .editor-column,
+.workspace-panes > .preview-column {
+  flex: 1 1 100%;
+  scroll-margin-top: 5rem;
+}
+
+.library-column[data-docked="false"] {
+  display: none;
+}
+
+.library-drawer .library-sidebar {
+  width: 100%;
+}
+
+.cv-toolbar {
+  position: sticky;
+  top: calc(-1 * var(--toolbar-scroll-offset, 0px));
+  z-index: 30;
+  flex: none;
+}
+
+.cv-toolbar.glass-panel {
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(145%);
+  backdrop-filter: blur(12px) saturate(145%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 55%), 0 4px 16px rgb(15 23 42 / 7%);
+}
+
+.dark .cv-toolbar.glass-panel {
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+  border-color: rgb(255 255 255 / 14%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 4px 16px rgb(0 0 0 / 22%);
+}
+
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .cv-toolbar.glass-panel,
+  .dark .cv-toolbar.glass-panel {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+.cv-toolbar .toolbar-brand {
+  order: 1;
+  flex: 1;
+}
+
+.cv-toolbar .toolbar-brand h1,
+.cv-toolbar .toolbar-brand p {
+  width: max-content;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cv-toolbar-controls {
+  display: contents;
+}
+
+.cv-toolbar .library-trigger {
+  order: 0;
+  flex-shrink: 0;
+}
+
+.cv-toolbar[data-wrapped="true"] .toolbar-brand {
+  flex-basis: 100%;
+}
+
+.cv-toolbar[data-wrapped="true"] .cv-toolbar-controls {
+  display: flex;
+  order: 2;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+.cv-toolbar .toolbar-actions {
+  order: 2;
+  margin-left: auto;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.editor-pane,
+.editor-pane .editor-tabs {
+  height: auto;
+  overflow: visible;
+}
+
+.editor-pane .editor-scroll {
+  overflow: visible;
+}
+
+.editor-pane input:not([type="checkbox"]):not([type="radio"]),
+.editor-pane textarea,
+.editor-pane select {
+  font-size: 1rem;
+}
+
+.preview-pane {
+  height: auto;
+  max-height: min(70dvh, 48rem);
+  min-height: 0;
+}
+
+@media (min-width: 960px) and (min-height: 500px) {
+  html:has(.cv-app-shell),
+  body:has(.cv-app-shell) {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .cv-app-shell {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .cv-app-shell-inner {
+    height: 100%;
+    overflow: hidden;
+    padding-inline: 1rem;
+  }
+
+  .workspace,
+  .workspace-panes {
+    min-height: 0;
+    flex: 1;
+  }
+
+  .workspace-panes {
+    flex-wrap: nowrap;
+  }
+
+  .workspace-panes > .editor-column {
+    flex: 0.92 1 28rem;
+    min-height: 0;
+  }
+
+  .workspace-panes > .preview-column {
+    flex: 1.08 1 32rem;
+    min-height: 0;
+  }
+
+  .cv-toolbar {
+    position: relative;
+    top: auto;
+  }
+
+  .editor-pane,
+  .preview-pane {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .preview-pane {
+    max-height: none;
+  }
+
+  .editor-pane .editor-tabs {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .editor-pane .editor-scroll,
+  .preview-scroll {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+  }
+
+}
+
+@media (min-width: 960px) and (min-height: 500px) and (pointer: fine) {
+  .editor-pane input:not([type="checkbox"]):not([type="radio"]),
+  .editor-pane textarea,
+  .editor-pane select {
+    font-size: 0.875rem;
+  }
+}
+
+/* Keep this condition aligned with LIBRARY_DOCK_QUERY in responsive-library. */
+@media (min-width: 1440px) and (min-aspect-ratio: 4/3) and (min-height: 500px) {
+  .cv-toolbar .library-trigger {
+    display: none;
+  }
+}
+
 .accordion-content[data-state="open"] {
   animation: accordion-down 160ms ease-out;
 }
@@ -275,10 +498,13 @@ body {
 
 @media print {
   html,
-  body {
+  body,
+  html:has(.cv-app-shell),
+  body:has(.cv-app-shell) {
     background: white;
-    height: auto;
+    height: auto !important;
     min-height: 0;
+    overflow: visible !important;
   }
 
   body {
@@ -287,6 +513,7 @@ body {
   }
 
   header,
+  .cv-app-shell > [aria-hidden="true"],
   .library-column,
   .editor-column,
   .preview-pane > div:first-child,
@@ -297,6 +524,7 @@ body {
   main,
   main > div,
   .workspace,
+  .workspace-panes,
   .preview-column,
   .preview-pane,
   .preview-scroll,
@@ -304,6 +532,7 @@ body {
     display: block !important;
     height: auto !important;
     min-height: 0 !important;
+    max-height: none !important;
     max-width: none !important;
     width: 210mm !important;
     overflow: visible !important;
@@ -316,6 +545,7 @@ body {
   }
 
   .typst-page-shell {
+    display: block !important;
     filter: none !important;
     height: 297mm !important;
     box-shadow: none !important;

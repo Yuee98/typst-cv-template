@@ -15,28 +15,32 @@ export type PreviewStatus = LoadStage;
 function StatusBadge({ status, label, percent }: { status: PreviewStatus; label: string; percent: number | null }) {
   const isActive = status === "loading-assets" || status === "compiling";
   const Icon = isActive ? Loader2 : status === "error" ? AlertTriangle : CheckCircle2;
+  const accessibleLabel = percent == null ? label : `${label} (${percent}%)`;
 
   return (
     <span
+      role="status"
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
       className={cn(
-        "inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-medium",
+        "preview-status inline-flex h-8 min-w-0 max-w-full shrink-0 items-center gap-2 rounded-md border px-2.5 text-xs font-medium",
         status === "error"
           ? "border-danger-border bg-danger-soft text-danger-foreground"
           : "border-success-border bg-success-soft text-success-foreground",
       )}
     >
-      <Icon className={cn("size-4", isActive && "animate-spin")} />
-      {label}
+      <Icon aria-hidden className={cn("size-4 shrink-0", isActive && "animate-spin")} />
+      <span aria-hidden className="min-w-0 truncate">{label}</span>
       {percent != null && (
-        <span className="inline-flex w-20 items-center gap-1.5">
-          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-success/30">
+        <>
+          <span aria-hidden className="h-1.5 w-12 overflow-hidden rounded-full bg-success/30">
             <span
               className="block h-full rounded-full bg-success transition-[width] duration-300"
               style={{ width: `${percent}%` }}
             />
           </span>
-          <span className="tabular-nums">{percent}%</span>
-        </span>
+          <span aria-hidden className="shrink-0 tabular-nums">{percent}%</span>
+        </>
       )}
     </span>
   );
@@ -72,7 +76,7 @@ export function PreviewPane({
     <Panel
       title={t("title")}
       actions={
-        <div className="flex items-center gap-2">
+        <div className="preview-actions flex min-w-0 flex-wrap items-center justify-end gap-2">
           <StatusBadge status={status} label={statusLabels[status]} percent={percent} />
           {actions}
         </div>
@@ -84,13 +88,15 @@ export function PreviewPane({
           {error}
         </div>
       )}
-      <div className="preview-scroll flex-1 overflow-auto p-5">
+      <div className="preview-scroll min-h-0 flex-1 overflow-auto p-5">
         <div className="mx-auto flex w-full max-w-[210mm] flex-col gap-5">
           {pages.length > 0 ? (
             pages.map((page, index) => (
               <div
                 key={index}
                 className={PAGE_CLASS}
+                role="group"
+                aria-label={t("pagePosition", { page: index + 1, total: pages.length })}
                 dangerouslySetInnerHTML={{ __html: page }}
               />
             ))

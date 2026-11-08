@@ -98,11 +98,11 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
   }
 
   return (
-    <Panel title={t("title")} actions={actions} className="editor-pane h-full overflow-hidden">
+    <Panel title={t("title")} actions={actions} className="editor-pane flex h-full min-h-0 flex-col overflow-hidden">
       <Tabs
         value={activeTab}
         onValueChange={(value) => setActiveTab(value as EditorTabId)}
-        className="flex h-full min-h-0 flex-col"
+        className="editor-tabs flex min-h-0 flex-1 flex-col"
       >
         <TabsList>
           <TabsTrigger value="header">{t("tabs.header")}</TabsTrigger>
@@ -126,7 +126,7 @@ export function CvEditor({ actions }: { actions?: ReactNode }) {
           </DndContext>
           <TabsTrigger value="settings">{t("tabs.settings")}</TabsTrigger>
         </TabsList>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="editor-scroll min-h-0 flex-1 overflow-auto">
           <TabsContent value="header">
             <HeaderEditor />
           </TabsContent>

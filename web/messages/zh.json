@@ -23,6 +23,7 @@
     "en": "English"
   },
   "CvToolbar": {
+    "openLibrary": "打开简历库",
     "termsRequired": "需接受条款",
     "syncing": "同步中",
     "cloudIssue": "云端异常",
@@ -190,6 +191,7 @@
     "required": "使用 AI 润色前请先同意 AI 服务条款。"
   },
   "PreviewPane": {
+    "pagePosition": "第 {page} 页，共 {total} 页",
     "title": "预览",
     "status": {
       "waiting": "等待中",

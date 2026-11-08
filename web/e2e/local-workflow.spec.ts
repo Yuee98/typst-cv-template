@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 test.describe("local server-mode CV workflow", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1536, height: 960 });
+  });
   test("leaves no Admin referrer or query in a public pageview", async ({
     page
   }) => {

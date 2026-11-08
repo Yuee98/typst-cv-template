@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardEvent } from "react";
@@ -25,25 +25,25 @@ import {
 afterEach(() => {
   cleanup();
   sortableMock.useSortable.mockReset();
+  vi.unstubAllGlobals();
 });
 
 function renderSortableTab(keyboardDragActive = true) {
+  const listeners = { onKeyDown: vi.fn(), onPointerDown: vi.fn() };
   sortableMock.useSortable.mockReturnValue({
     attributes: {
       "aria-describedby": "dnd-description",
       "aria-roledescription": "sortable tab",
     },
     isDragging: true,
-    listeners: {
-      onKeyDown: vi.fn(),
-    },
+    listeners,
     setActivatorNodeRef: vi.fn(),
     setNodeRef: vi.fn(),
     transform: { x: 12, y: 8 },
     transition: "transform 200ms ease",
   });
 
-  return render(
+  const view = render(
     <NextIntlClientProvider locale="en" messages={messages}>
       <Tabs defaultValue="skills">
         <TabsList>
@@ -56,6 +56,7 @@ function renderSortableTab(keyboardDragActive = true) {
       </Tabs>
     </NextIntlClientProvider>,
   );
+  return { ...view, listeners };
 }
 
 describe("sortable section tab interaction helpers", () => {
@@ -102,5 +103,23 @@ describe("sortable section tab interaction helpers", () => {
     expect(tab.getAttribute("aria-describedby")).toBe("dnd-description");
     expect(tab.getAttribute("aria-roledescription")).toBe("sortable tab");
     expect(tab.style.transform).toBe("translate3d(12px, 0, 0)");
+  });
+
+  it.each([
+    { pointerType: "touch", coarse: false, drag: false },
+    { pointerType: "mouse", coarse: true, drag: false },
+    { pointerType: "mouse", coarse: false, drag: true },
+  ])("preserves tab scrolling for $pointerType/coarse=$coarse without disabling keyboard sorting", ({ pointerType, coarse, drag }) => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: coarse })));
+    const { listeners } = renderSortableTab(false);
+    const tab = screen.getByRole("tab");
+    const pointer = new MouseEvent("pointerdown", { bubbles: true, button: 0 });
+    Object.defineProperty(pointer, "pointerType", { value: pointerType });
+    fireEvent(tab, pointer);
+    expect(listeners.onPointerDown).toHaveBeenCalledTimes(drag ? 1 : 0);
+    expect(tab.className).toContain("touch-auto");
+    expect(tab.className).not.toContain("touch-none");
+    fireEvent.keyDown(tab, { key: " " });
+    expect(listeners.onKeyDown).toHaveBeenCalledOnce();
   });
 });

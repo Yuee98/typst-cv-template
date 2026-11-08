@@ -2,6 +2,7 @@ import {
   useCallback,
   type CSSProperties,
   type KeyboardEvent,
+  type PointerEvent,
 } from "react";
 import { useTranslations } from "next-intl";
 import { useSortable } from "@dnd-kit/sortable";
@@ -66,7 +67,7 @@ export function SortableSectionTab({
     transform,
     transition,
   } = useSortable({ id });
-  const { onKeyDown, ...dragListeners } = listeners ?? {};
+  const { onKeyDown, onPointerDown, ...dragListeners } = listeners ?? {};
   const dragKeyDown = onKeyDown as
     | ((event: KeyboardEvent<HTMLButtonElement>) => void)
     | undefined;
@@ -88,6 +89,12 @@ export function SortableSectionTab({
     },
     [dragKeyDown, keyboardDragActive],
   );
+  const handlePointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    // Touch owns horizontal tab scrolling. Keyboard reordering remains
+    // available, including on coarse-pointer devices with a keyboard.
+    if (event.pointerType !== "mouse" || (typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches)) return;
+    onPointerDown?.(event);
+  }, [onPointerDown]);
 
   return (
     <TabsTrigger
@@ -95,13 +102,14 @@ export function SortableSectionTab({
       value={id}
       style={style}
       className={cn(
-        "touch-none cursor-grab active:cursor-grabbing",
+        "touch-auto cursor-grab active:cursor-grabbing",
         isDragging && "opacity-70",
       )}
       title={t("dragTitle")}
       {...dragAttributes}
       aria-label={t("aria.dragSection", { label })}
       {...dragListeners}
+      onPointerDown={handlePointerDown}
       onKeyDown={handleKeyDown}
     >
       {label}

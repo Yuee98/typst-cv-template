@@ -1,10 +1,11 @@
 "use client";
 
-import { Circle, FilePlus2, FileText, Loader2, RotateCcw, Save } from "lucide-react";
+import { Circle, FilePlus2, FileText, Loader2, RotateCcw, Save, X } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { FormProvider } from "react-hook-form";
 import { AppShell, Workspace } from "@/components/layout/app-shell";
+import { ResponsiveLibrary } from "@/components/layout/responsive-library";
 import { Button } from "@/components/ui/button";
 import { CvEditor } from "@/components/cv-builder/editors";
 import { ExportMenu } from "@/components/cv-builder/export-menu";
@@ -39,13 +40,22 @@ function PolishBoundary({
 }
 export function CvBuilder() {
   const t = useTranslations("CvBuilder");
+  const tLibrary = useTranslations("CvLibrary");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const libraryTriggerRef = useRef<HTMLButtonElement | null>(null);
   const deleteRestoreFocusRef = useRef<HTMLElement | null>(null);
   const h = useCvBuilder();
   return <FormProvider {...h.form}>
       <PolishBoundary form={h.form} documentId={h.activeDocumentId} encrypted={h.activeDocument?.storageKind === "encrypted"} session={h.session} supabase={h.supabase} onRequestSignIn={() => h.authModal.openModal("signIn")}>
         <AppShell>
-        <CvToolbar session={h.session} cloudStatus={h.cloudStatus} termsStatus={h.termsGate.status} supabaseConfigured={h.supabaseConfigured} onOpenAuthModal={h.authModal.openModal} onSyncCloud={() => void h.refreshCloudDocuments()} onSignOut={() => void h.signOut()} />
-        <Workspace library={<CvLibrarySidebar documents={h.documents} activeDocumentId={h.activeDocumentId} collapsed={h.libraryCollapsed} cloudActionsEnabled={h.cloudActionsEnabled} error={h.libraryError} onToggleCollapsed={h.toggleLibraryCollapsed} onCreateEmpty={() => void h.createEmptyDocument()} onCreateSample={() => void h.createSampleDocument()} onImportFile={file => void h.importJson(file)} onSelect={id => void h.selectDocument(id)} onRename={id => void h.openRenameDialog(id)} onDuplicate={id => void h.openDuplicateDialog(id)} onReorder={h.reorderDocuments} onDelete={id => void h.openDeleteDialog(id)} onMoveToCloud={id => void h.moveToCloud(id)} onEnableEncryption={id => void h.openEnableEncryptionModal(id)} onDismissError={() => h.setLibraryError(null)} restoreFocusRef={deleteRestoreFocusRef} />} editor={h.activeDocumentId ? <CvEditor actions={h.activeDocument?.storageKind !== "local" && <div className="flex items-center gap-1">
+        <CvToolbar session={h.session} cloudStatus={h.cloudStatus} termsStatus={h.termsGate.status} supabaseConfigured={h.supabaseConfigured} onOpenAuthModal={h.authModal.openModal} onSyncCloud={() => void h.refreshCloudDocuments()} onSignOut={() => void h.signOut()} libraryOpen={libraryOpen} onOpenLibrary={() => setLibraryOpen(true)} libraryTriggerRef={libraryTriggerRef} />
+        {h.libraryError && !libraryOpen && <div role="alert" className="flex shrink-0 items-start justify-between gap-3 rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger-foreground print:hidden">
+          <p>{h.libraryError}</p>
+          <Button type="button" variant="ghost" size="icon" aria-label={tLibrary("dismiss")} onClick={() => h.setLibraryError(null)}><X /></Button>
+        </div>}
+        <Workspace library={<ResponsiveLibrary open={libraryOpen} onOpenChange={setLibraryOpen} triggerRef={libraryTriggerRef} title={tLibrary("title")}>
+          {docked => <CvLibrarySidebar documents={h.documents} activeDocumentId={h.activeDocumentId} collapsed={docked ? h.libraryCollapsed : false} cloudActionsEnabled={h.cloudActionsEnabled} error={libraryOpen ? h.libraryError : null} onToggleCollapsed={docked ? h.toggleLibraryCollapsed : () => setLibraryOpen(false)} onCreateEmpty={() => { setLibraryOpen(false); void h.createEmptyDocument(); }} onCreateSample={() => { setLibraryOpen(false); void h.createSampleDocument(); }} onImportFile={file => { setLibraryOpen(false); void h.importJson(file); }} onSelect={id => { setLibraryOpen(false); void h.selectDocument(id); }} onRename={id => void h.openRenameDialog(id)} onDuplicate={id => void h.openDuplicateDialog(id)} onReorder={h.reorderDocuments} onDelete={id => void h.openDeleteDialog(id)} onMoveToCloud={id => void h.moveToCloud(id)} onEnableEncryption={id => void h.openEnableEncryptionModal(id)} onDismissError={() => h.setLibraryError(null)} restoreFocusRef={deleteRestoreFocusRef} />}
+        </ResponsiveLibrary>} editor={h.activeDocumentId ? <CvEditor actions={h.activeDocument?.storageKind !== "local" && <div className="flex items-center gap-1">
                       {h.isDirty && <Button type="button" variant="ghost" size="icon" onClick={() => void h.discardChanges()} title={t("discardChanges")}>
                           <RotateCcw />
                         </Button>}

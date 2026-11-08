@@ -23,6 +23,7 @@
     "en": "English"
   },
   "CvToolbar": {
+    "openLibrary": "Open CV library",
     "termsRequired": "Terms required",
     "syncing": "Syncing",
     "cloudIssue": "Cloud issue",
@@ -190,6 +191,7 @@
     "required": "Accept the AI Service Terms before using AI polish."
   },
   "PreviewPane": {
+    "pagePosition": "Page {page} of {total}",
     "title": "Preview",
     "status": {
       "waiting": "Waiting",
