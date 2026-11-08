@@ -1,26 +1,10 @@
--- Explicit file transaction also protects CLI versions that execute statements separately.
 begin;
--- Empty-business-database baseline. Never apply over the retired schema.
+set local search_path = '';
+-- Sole cv_app_db_2 baseline. Apply only after an explicitly authorized application reset.
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 create extension if not exists btree_gist with schema extensions;
--- pg_cron owns its platform-defined catalog/schema; do not relocate it.
 create extension if not exists pg_cron;
-do $$
-begin
-  if exists (
-    select
-      1
-    from
-      pg_catalog.pg_extension e
-      join pg_catalog.pg_namespace n on n.oid = e.extnamespace
-    where
-      e.extname in ('pgcrypto', 'btree_gist')
-      and n.nspname <> 'extensions') then
-  raise exception 'pgcrypto and btree_gist must be installed in the verified extensions schema';
-end if;
-end
-$$;
 do $$
 begin
   if not exists (
@@ -31,53 +15,20 @@ begin
     where
       rolname = 'app_api_owner') then
   create role app_api_owner nologin noinherit nobypassrls;
-elsif exists (
-    select
-      1
-    from
-      pg_catalog.pg_roles
-    where
-      rolname = 'app_api_owner'
-      and (rolcanlogin
-        or rolinherit
-        or rolbypassrls
-        or rolsuper
-        or rolcreaterole
-        or rolcreatedb))
-  or exists (
-    select
-      1
-    from
-      pg_catalog.pg_auth_members m
-      join pg_catalog.pg_roles r on r.oid = m.roleid
-    where
-      r.rolname = 'app_api_owner'
-      and m.member <> (
-        select
-          oid
-        from
-          pg_catalog.pg_roles
-        where
-          rolname = current_user)) then
-    raise exception 'Unsafe existing app_api_owner role';
 end if;
-  execute pg_catalog.format('grant app_api_owner to %I with set true, inherit false', current_user);
+  execute format('grant app_api_owner to %I with set true, inherit false', current_user);
 end
 $$;
 create schema common;
-create schema cv;
+create schema admin;
 create schema ai;
 create schema legal;
-create schema admin;
+create schema cv;
 create schema audit;
 revoke create on schema public from public, anon, authenticated, service_role;
-revoke all on schema common, cv, ai, legal, admin, audit from public, anon, authenticated, service_role;
+revoke all on schema common, admin, ai, legal, cv, audit from public, anon, authenticated, service_role;
 alter default privileges revoke execute on functions from public;
-alter default privileges in schema common, cv, ai, legal, admin, audit, public revoke all on tables from public, anon, authenticated, service_role;
--- 外部 ID 生成与校验函数；在项目迁移事务内适配使用。
--- 前置条件：common schema 已存在；pgcrypto 已安装在 extensions schema。
--- 用 pg_extension/pg_namespace 核实扩展位置，按实际位置调整限定名，保持 search_path 为空。
--- 更新已有函数前，核对签名、调用者、存量数据、CHECK 依赖及 EXECUTE 授权。
+alter default privileges in schema common, admin, ai, legal, cv, audit, public revoke all on tables from public, anon, authenticated, service_role;
 create or replace function common.generate_external_id (p_prefix TEXT, p_suffix_length INTEGER default 12)
   returns TEXT
   language plpgsql
@@ -90,7 +41,6 @@ declare
   v_alphabet CONSTANT TEXT := '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
   v_bytes BYTEA;
   v_suffix TEXT := '';
-  v_index INTEGER;
 begin
   if p_prefix is null or p_prefix collate pg_catalog."C" !~ '^[a-z][a-z0-9]*_$' then
     raise exception
@@ -140,10 +90,12 @@ revoke all on function common.generate_external_id (TEXT, INTEGER) from PUBLIC;
 revoke all on function common.is_valid_external_id (TEXT, TEXT, INTEGER) from PUBLIC;
 -- 按项目调用路径授予必要的 schema USAGE / 函数 EXECUTE；不批量授权 anon/authenticated。
 -- 由普通角色执行 DEFAULT 或 CHECK 时，也要验证该路径所需的函数权限。
+-- STABLE keeps intentional errors at execution time; IMMUTABLE would permit
+-- planner constant-folding of an untaken validation branch.
 create function common.fail (p_code text, p_reason text default null)
   returns void
   language plpgsql
-  volatile
+  stable
   security invoker
   set search_path = ''
   as $$
@@ -166,7 +118,7 @@ $$;
 create function common.required (p_input jsonb, p_fields text[])
   returns void
   language plpgsql
-  immutable
+  stable
   security invoker
   set search_path = ''
   as $$
@@ -186,56 +138,65 @@ begin
   end loop;
 end
 $$;
-create function common.touch ()
-  returns trigger
+create function common.assert_api_owner_safe ()
+  returns void
   language plpgsql
-  volatile
+  stable
   security invoker
   set search_path = ''
   as $$
-  #variable_conflict use_variable
-  begin
-    if new.id <> old.id or (pg_catalog.to_jsonb (old) ? 'external_id' and pg_catalog.to_jsonb (new) ->> 'external_id' is distinct from pg_catalog.to_jsonb (old) ->> 'external_id') then
-      perform
-        common.fail ('INVALID_REQUEST', 'IMMUTABLE_ID');
-    end if;
-    new.time_updated = pg_catalog.clock_timestamp();
-    new.revision = old.revision + 1;
-    return new;
-  end
-$$;
-create function common.immutable ()
-  returns trigger
-  language plpgsql
-  volatile
-  security invoker
-  set search_path = ''
-  as $$
-  #variable_conflict use_variable
 declare
-  v_old jsonb;
-  v_new jsonb;
+  v_owner oid;
+  v_migration_owner oid;
 begin
-  v_old = pg_catalog.to_jsonb (old) - array['status', 'time_published', 'time_retired', 'time_closed', 'time_sealed', 'user_published', 'user_retired'];
-  v_new = pg_catalog.to_jsonb (new) - array['status', 'time_published', 'time_retired', 'time_closed', 'time_sealed', 'user_published', 'user_retired'];
-  if v_old is distinct from v_new then
-    perform
-      common.fail ('INVALID_REQUEST', 'IMMUTABLE_VERSION');
+  select
+    oid
+  into
+    v_owner
+  from
+    pg_catalog.pg_roles
+  where
+    rolname = 'app_api_owner';
+  select
+    oid
+  into
+    v_migration_owner
+  from
+    pg_catalog.pg_roles
+  where
+    rolname = current_user;
+  if v_owner is null or exists (
+    select
+      1
+    from
+      pg_catalog.pg_roles
+    where
+      oid = v_owner and (rolcanlogin or rolinherit or rolbypassrls or rolsuper or rolcreaterole or rolcreatedb or rolreplication)) or exists (
+select
+  1
+from
+  pg_catalog.pg_auth_members
+where
+  member = v_owner) or exists (
+select
+  1
+from
+  pg_catalog.pg_auth_members
+where
+  roleid = v_owner and member <> v_migration_owner) or exists (
+select
+  1
+from
+  pg_catalog.pg_class c
+  join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+where
+  n.nspname in ('auth', 'storage') and c.relkind in ('r', 'p', 'v', 'm', 'f') and (pg_catalog.has_table_privilege(v_owner, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') or pg_catalog.has_any_column_privilege(v_owner, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES'))) then
+    raise exception 'Unsafe existing app_api_owner role'
+      using errcode = '42501';
   end if;
-  if pg_catalog.to_jsonb (old) ? 'status' and (pg_catalog.to_jsonb (old) ->> 'status' = 'RETIRED' or (pg_catalog.to_jsonb (old) ->> 'status' = 'PUBLISHED' and pg_catalog.to_jsonb (new) ->> 'status' not in ('PUBLISHED', 'RETIRED'))) then
-    perform
-      common.fail ('CONFLICT', 'INVALID_LIFECYCLE');
-  end if;
-  if (pg_catalog.to_jsonb (old) ->> 'time_closed') is not null and (pg_catalog.to_jsonb (new) ->> 'time_closed') is distinct from (pg_catalog.to_jsonb (old) ->> 'time_closed') then
-    perform
-      common.fail ('INVALID_REQUEST', 'IMMUTABLE_CLOSE');
-  end if;
-  if pg_catalog.to_jsonb (old) ->> 'time_sealed' is not null and pg_catalog.to_jsonb (new) ->> 'time_sealed' is distinct from pg_catalog.to_jsonb (old) ->> 'time_sealed' then
-    perform
-      common.fail ('INVALID_REQUEST', 'IMMUTABLE_SEAL');
-  end if;
-  return new;
-end
+end;
 $$;
-revoke all on all functions in schema common from public, anon, authenticated, service_role;
+revoke all on function common.assert_api_owner_safe () from public, anon, authenticated, service_role, app_api_owner;
+select
+  common.assert_api_owner_safe ();
 commit;

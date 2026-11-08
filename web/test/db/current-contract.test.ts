@@ -59,8 +59,8 @@ async function acceptTerms(client: SupabaseClient) {
     p_input: {
       ...guard,
       expected_auth_user_id: identity.data.user!.id,
-      document_version_id: data.terms.external_id,
-      content_digest: data.terms.content_digest
+      document_id: data.documents.find((document: { kind: string }) => document.kind === 'TERMS').document_id,
+      document_audit_id: data.documents.find((document: { kind: string }) => document.kind === 'TERMS').document_audit_id
     }
   });
   if (result.error) throw result.error;
@@ -75,10 +75,8 @@ beforeAll(async () => {
   } = await a.rpc("app_context");
   if (error) throw error;
   if (!data.ready) {
-    const identity = await a.auth.getUser();
-    const id = identity.data.user!.id;
     execFileSync("docker", ["exec", "-i", "supabase_db_typst-cv-template", "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], {
-      input: `select admin.initialize('LOCAL','${id}'::uuid);`,
+      input: "insert into auth.users(id,email,email_confirmed_at) values('00000000-0000-4000-8000-000000000092','db-bootstrap@example.invalid',clock_timestamp()) on conflict(id) do nothing;select admin.initialize('LOCAL','00000000-0000-4000-8000-000000000092'::uuid);",
       stdio: ["pipe", "pipe", "pipe"]
     });
     const initialized = await a.rpc("app_context");
@@ -93,15 +91,6 @@ beforeAll(async () => {
   await acceptTerms(b);
 });
 afterAll(async () => {
-  // This owner-only fixture teardown precedes Auth deletion; production callers
-  // must revoke an active membership through the authorized Admin transaction.
-  if (createdUsers.length) {
-    const ids = createdUsers.map(id => {
-      if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid fixture user ID");
-      return `'${id}'::uuid`;
-    }).join(",");
-    execFileSync("docker", ["exec", "-i", "supabase_db_typst-cv-template", "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], { input: `update admin.members set time_revoked=clock_timestamp(),user_updated=null where auth_user_id in (${ids}) and time_revoked is null;`, stdio: ["pipe", "pipe", "pipe"] });
-  }
   for (const id of createdUsers) {
     const { error } = await admin.auth.admin.deleteUser(id);
     if (error) throw error;
@@ -109,6 +98,18 @@ afterAll(async () => {
 });
 
 describe("current database through real Auth and Data API", () => {
+  it("exposes boolean keepalive and exact legal history to anonymous users while hiding other users' acceptances", async () => {
+    const anon = createClient(url, pub, { auth: { persistSession: false } });
+    expect(await anon.rpc("keep_project_active")).toMatchObject({ data: true, error: null });
+    const catalog = await anon.rpc("legal_current");
+    expect(catalog.error).toBeNull();
+    const target = catalog.data.documents.find((document: { kind: string }) => document.kind === "TERMS");
+    const exact = await anon.rpc("legal_document_read", { p_input: { external_id: target.external_id, document_audit_id: target.document_audit_id, content_digest: target.content_digest } });
+    expect(exact.error).toBeNull();expect(exact.data).toEqual(target);
+    const own = await a.from("legal_my_acceptances").select("*");
+    expect(own.error).toBeNull();expect(own.data).toContainEqual({ document_id: target.document_id, document_audit_id: target.document_audit_id, content_digest: target.content_digest });
+    expect((await anon.from("legal_my_acceptances").select("*")).error).not.toBeNull();
+  });
   it("requires the current terms before storing cloud content", async () => {
     const client = await user();
     const expectedUserId = (await client.auth.getUser()).data.user!.id;

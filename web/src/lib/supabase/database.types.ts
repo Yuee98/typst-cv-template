@@ -80,50 +80,24 @@ export type Database = {
       }
       legal_my_acceptances: {
         Row: {
-          accepted_content_digest: string | null
-          disclosure_id: string | null
-          document_version_id: string | null
-          time_accepted: string | null
+          content_digest: string | null
+          document_audit_id: string | null
+          document_id: string | null
         }
         Relationships: []
       }
     }
     Functions: {
       admin_ai_disable: { Args: { p_input: Json }; Returns: Json }
-      admin_ai_reopen: { Args: { p_input: Json }; Returns: Json }
-      admin_ai_set_allowed_user: { Args: { p_input: Json }; Returns: Json }
-      admin_ai_set_audience: { Args: { p_input: Json }; Returns: Json }
-      admin_ai_set_policy: { Args: { p_input: Json }; Returns: Json }
-      admin_ai_update_limits: { Args: { p_input: Json }; Returns: Json }
-      admin_analytics: { Args: { p_days?: number }; Returns: Json }
+      admin_ai_update: { Args: { p_input: Json }; Returns: Json }
+      admin_allowed_user_set: { Args: { p_input: Json }; Returns: Json }
+      admin_configuration_save: { Args: { p_input: Json }; Returns: Json }
       admin_context: { Args: never; Returns: Json }
+      admin_legal_document_save: { Args: { p_input: Json }; Returns: Json }
       admin_member_grant: { Args: { p_input: Json }; Returns: Json }
       admin_member_revoke: { Args: { p_input: Json }; Returns: Json }
-      admin_policy_create: { Args: { p_input: Json }; Returns: Json }
-      admin_policy_retire: { Args: { p_input: Json }; Returns: Json }
-      admin_policy_version_create: { Args: { p_input: Json }; Returns: Json }
-      admin_policy_version_publish: { Args: { p_input: Json }; Returns: Json }
-      admin_policy_version_retire: { Args: { p_input: Json }; Returns: Json }
-      admin_price_version_close: { Args: { p_input: Json }; Returns: Json }
-      admin_price_version_create: { Args: { p_input: Json }; Returns: Json }
-      admin_price_version_publish: { Args: { p_input: Json }; Returns: Json }
-      admin_price_version_replace: { Args: { p_input: Json }; Returns: Json }
-      admin_price_version_retire: { Args: { p_input: Json }; Returns: Json }
-      admin_profile_create: { Args: { p_input: Json }; Returns: Json }
-      admin_profile_retire: { Args: { p_input: Json }; Returns: Json }
-      admin_profile_version_create: { Args: { p_input: Json }; Returns: Json }
-      admin_profile_version_publish: { Args: { p_input: Json }; Returns: Json }
-      admin_profile_version_retire: { Args: { p_input: Json }; Returns: Json }
-      admin_provider_update: { Args: { p_input: Json }; Returns: Json }
       admin_read: { Args: { p_input: Json }; Returns: Json }
-      admin_record: {
-        Args: { p_external_id: string; p_kind: string }
-        Returns: Json
-      }
-      admin_records: {
-        Args: { p_after?: string; p_kind: string; p_limit?: number }
-        Returns: Json
-      }
+      admin_rule_save: { Args: { p_input: Json }; Returns: Json }
       ai_attempt_complete: { Args: { p_input: Json }; Returns: Json }
       ai_attempt_start: { Args: { p_input: Json }; Returns: Json }
       ai_availability: { Args: { p_input: Json }; Returns: Json }
@@ -133,19 +107,16 @@ export type Database = {
       ai_quota: { Args: { p_input: Json }; Returns: Json }
       ai_reserve: { Args: { p_input: Json }; Returns: Json }
       app_context: { Args: never; Returns: Json }
-      config_validation_candidate: { Args: { p_input: Json }; Returns: Json }
-      config_validation_record: { Args: { p_input: Json }; Returns: Json }
       cv_document_convert: { Args: { p_input: Json }; Returns: Json }
       cv_document_create: { Args: { p_input: Json }; Returns: Json }
       cv_document_delete: { Args: { p_input: Json }; Returns: Json }
       cv_document_rename: { Args: { p_input: Json }; Returns: Json }
       cv_document_update: { Args: { p_input: Json }; Returns: Json }
       keep_project_active: { Args: never; Returns: boolean }
-      legal_accept_disclosure: { Args: { p_input: Json }; Returns: Json }
+      legal_accept_ai: { Args: { p_input: Json }; Returns: Json }
       legal_accept_document: { Args: { p_input: Json }; Returns: Json }
       legal_current: { Args: never; Returns: Json }
-      runtime_readback_candidate: { Args: { p_input: Json }; Returns: Json }
-      runtime_readback_record: { Args: { p_input: Json }; Returns: Json }
+      legal_document_read: { Args: { p_input: Json }; Returns: Json }
     }
     Enums: {
       [_ in never]: never
