@@ -256,11 +256,13 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
     if (latestScope && latestScope.instanceId !== scope.instanceId) return;
     // Six bounded section counters per instance, scoped to this actor epoch.
     // Retain them until owner cleanup so parallel readers cannot consume them.
-    queryClient.setQueryData<CommitEpochs>(commitEpochKey(project, latestActor, scope.instanceId), previous => {
-      const next = { ...previous };
-      for (const affected of related[section]) next[affected] = (previous?.[affected] ?? 0) + 1;
-      return next;
+    const counter = queryClient.getQueryCache().build<CommitEpochs>(queryClient, {
+      queryKey: commitEpochKey(project, latestActor, scope.instanceId),
+      gcTime: Infinity
     });
+    const previous = counter.state.data, next = { ...previous };
+    for (const affected of related[section]) next[affected] = (previous?.[affected] ?? 0) + 1;
+    counter.setData(next, { manual: true });
     if (!latestScope) return;
     invalidateAdminReads(queryClient, project, latestActor, section);
     if (latestActor === actor) refreshRead();

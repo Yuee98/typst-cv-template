@@ -587,4 +587,24 @@ describe("Admin read lifetime and cache isolation", () => {
     expect(readsA).toBe(3); expect(readsB).toBe(3);
   });
 
+  it("keeps commit boundaries after ordinary cache GC and removes them on owner cleanup", async () => {
+    const shared = auth(), writer = harness({}, shared); await done(writer);
+    const commit = writer.result.current.read.refreshAfterMutation, actor = writer.result.current.actor;
+    writer.unmount();
+    vi.useFakeTimers();
+    try {
+      act(() => commit());
+      const reader = harness({ section: "rules", kind: "rules" }, shared, writer.queryClient);
+      await vi.waitFor(() => { expect(reader.result.current.read.loading).toBe(false); expect(reader.result.current.read.result).toBeTruthy(); });
+      reader.unmount();
+      const key = adminReadKey(project, actor, instance1, { section: "rules", kind: "rules", cursor: null });
+      expect(writer.queryClient.getQueryData(key)).toBeTruthy();
+      await act(() => vi.advanceTimersByTimeAsync(301_000));
+      expect(writer.queryClient.getQueryData(key)).toBeUndefined();
+      expect(writer.queryClient.getQueryCache().getAll().some(query => query.queryKey[4] === "commit-epochs")).toBe(true);
+      act(() => shared.emit(null, "SIGNED_OUT"));
+      expect(writer.queryClient.getQueryCache().getAll().some(query => query.queryKey[4] === "commit-epochs")).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
 });
