@@ -1,14 +1,167 @@
 begin;
 set local search_path = '';
+-- This lexical contract is shared with web/src/lib/legal/markdown.ts and the
+-- legal-markdown-corpus.json fixture. It validates stored reader input, not URLs
+-- used for server-side requests, and does not perform DNS or network access.
+create function legal.utf16_length (p_value text)
+  returns integer
+  language sql
+  immutable
+  strict
+  security invoker
+  set search_path = ''
+  as $$
+  select length(p_value) + length(regexp_replace(p_value collate pg_catalog."C", U&'[^\+010000-\+10FFFF]', '', 'g'))
+$$;
+create function legal.href_valid (p_value text)
+  returns boolean
+  language plpgsql
+  immutable
+  security invoker
+  set search_path = ''
+  as $$
+declare
+  v_space constant text := E' \t\n\v\f\r' || U&'\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF';
+  v_authority text;
+  v_host text;
+  v_port text;
+  v_parts text[];
+  v_ipv4_parts text[];
+  v_part text;
+  v_address inet;
+  v_trailing_dot boolean := false;
+begin
+  if p_value is null or p_value = '' or position(E'\\' in p_value) > 0 or p_value collate pg_catalog."C" ~ '[\x01-\x20\x7f]' or p_value collate pg_catalog."C" ~ ('[' || v_space || ']') then
+    return false;
+  end if;
+  if left(p_value, 1) = '/' then
+    return left(p_value, 2) <> '//';
+  end if;
+  if lower(left(p_value, 8)) <> 'https://' then
+    return false;
+  end if;
+  v_authority = split_part(split_part(split_part(substr(p_value, 9), '/', 1), '?', 1), '#', 1);
+  if left(v_authority, 1) = '[' then
+    v_parts = regexp_match(v_authority collate pg_catalog."C", '^\[([0-9A-Fa-f:.]+)\](:([0-9]{1,5}))?$');
+    if v_parts is null then
+      return false;
+    end if;
+    v_host = v_parts[1];
+    v_port = v_parts[3];
+    if position('.' in v_host) > 0 then
+      -- inet accepts some noncanonical IPv4 forms that a browser URL rejects.
+      v_ipv4_parts = string_to_array(regexp_replace(v_host, '^.*:', ''), '.');
+      if array_length(v_ipv4_parts, 1) <> 4 then
+        return false;
+      end if;
+      foreach v_part in array v_ipv4_parts loop
+        if v_part collate pg_catalog."C" !~ '^(0|[1-9][0-9]{0,2})$' then
+          return false;
+        end if;
+        if v_part::integer > 255 then
+          return false;
+        end if;
+      end loop;
+    end if;
+    begin
+      v_address = v_host::inet;
+    exception when invalid_text_representation then
+      return false;
+    end;
+    if family(v_address) <> 6 then
+      return false;
+    end if;
+  else
+    v_parts = regexp_match(v_authority collate pg_catalog."C", '^([A-Za-z0-9.-]+)(:([0-9]{1,5}))?$');
+    if v_parts is null then
+      return false;
+    end if;
+    v_host = v_parts[1];
+    v_port = v_parts[3];
+    if length(v_host) > 253 then
+      return false;
+    end if;
+    if right(v_host, 1) = '.' then
+      v_trailing_dot = true;
+      v_host = left(v_host, length(v_host) - 1);
+    end if;
+    if v_host collate pg_catalog."C" !~ '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$' then
+      return false;
+    end if;
+    v_parts = string_to_array(v_host, '.');
+    if v_parts[array_length(v_parts, 1)] collate pg_catalog."C" ~ '^([0-9]+|0[xX][0-9A-Fa-f]+)$' then
+      if v_trailing_dot or array_length(v_parts, 1) <> 4 then
+        return false;
+      end if;
+      foreach v_part in array v_parts loop
+        if v_part collate pg_catalog."C" !~ '^(0|[1-9][0-9]{0,2})$' then
+          return false;
+        end if;
+        if v_part::integer > 255 then
+          return false;
+        end if;
+      end loop;
+    end if;
+  end if;
+  return v_port is null or v_port::integer between 1 and 65535;
+end
+$$;
+create function legal.markdown_valid (p_body text)
+  returns boolean
+  language plpgsql
+  immutable
+  security invoker
+  set search_path = ''
+  as $$
+declare
+  -- ECMAScript WhiteSpace + LineTerminator, exactly matching String.trim/\s.
+  v_space constant text := E' \t\n\v\f\r' || U&'\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF';
+  v_match text[];
+  v_line text;
+begin
+  if p_body is null or btrim(p_body, v_space) = '' or legal.utf16_length(p_body) > 65536
+    or position('<' in p_body) > 0 or position('>' in p_body) > 0
+    or position('![' in p_body) > 0 or position('```' in p_body) > 0 then
+    return false;
+  end if;
+  for v_match in select regexp_matches(p_body collate pg_catalog."C", '\[([^\]' || chr(10) || ']+)\]\(([^)' || v_space || ']+)\)', 'g') loop
+    if not legal.href_valid(v_match[2]) then
+      return false;
+    end if;
+  end loop;
+  foreach v_line in array string_to_array(replace(replace(p_body, E'\r\n', E'\n'), E'\r', E'\n'), E'\n') loop
+    if btrim(v_line, v_space) = '' or left(v_line, 3) = '## ' or left(v_line, 2) = '- ' then
+      continue;
+    end if;
+    if v_line collate pg_catalog."C" ~ ('^[' || v_space || ']*#|^[' || v_space || ']*[-*+][' || v_space || ']|^[' || v_space || ']*[0-9]+\.[' || v_space || ']') then
+      return false;
+    end if;
+  end loop;
+  return true;
+end
+$$;
+revoke all on function legal.utf16_length (text), legal.href_valid (text), legal.markdown_valid (text) from public, anon, authenticated, service_role;
+grant execute on function legal.utf16_length (text), legal.href_valid (text), legal.markdown_valid (text) to app_api_owner;
+comment on function legal.markdown_valid (text) is 'Pure restricted-Markdown write guard matching the strict public legal reader and the shared parity corpus; no HTML, images, fences, unsupported headings/lists or unsafe links.';
+comment on function legal.href_valid (text) is 'Canonical HTTPS authority or single-slash site path for legal links. ASCII DNS/canonical IP literals, bounded port, no credentials/control/backslash. Does not normalize implicit browser URL repair forms.';
 create function legal.prepare_document ()
   returns trigger
   language plpgsql
   set search_path = ''
   as $$
+declare
+  v_space constant text := E' \t\n\v\f\r' || U&'\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF';
 begin
-  if length(btrim(new.zh_title)) = 0 or length(btrim(new.en_title)) = 0 or length(btrim(new.zh_body)) = 0 or length(btrim(new.en_body)) = 0 or length(new.zh_body) > 65536 or length(new.en_body) > 65536 or octet_length(new.zh_body) > 262144 or octet_length(new.en_body) > 262144 then
+  if not legal.markdown_valid(new.zh_body) or not legal.markdown_valid(new.en_body) then
     perform
       common.fail ('INVALID_REQUEST', 'INVALID_LEGAL_BODY');
+  end if;
+  if new.zh_title is null or new.en_title is null or length(btrim(new.zh_title, v_space)) = 0 or length(btrim(new.en_title, v_space)) = 0
+    or legal.utf16_length(new.zh_title) > 500 or legal.utf16_length(new.en_title) > 500
+    or (new.recipient_name is not null and (length(btrim(new.recipient_name, v_space)) = 0 or legal.utf16_length(new.recipient_name) > 500))
+    or new.effective_date is null or new.effective_date < date '0001-01-01' or new.effective_date > date '9999-12-31' then
+    perform
+      common.fail ('INVALID_REQUEST', 'INVALID_LEGAL_DOCUMENT_METADATA');
   end if;
   new.content_digest = common.digest(jsonb_build_array(new.kind, new.zh_title, new.en_title, new.zh_body, new.en_body, new.effective_date, new.recipient_name));
   return new;

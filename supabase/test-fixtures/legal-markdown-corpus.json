@@ -1,0 +1,1257 @@
+{
+  "format": "legal_markdown_conformance_1",
+  "hrefs": [
+    {
+      "id": "root",
+      "value": "/",
+      "valid": true
+    },
+    {
+      "id": "internal-path",
+      "value": "/zh/ai-terms",
+      "valid": true
+    },
+    {
+      "id": "internal-query-fragment",
+      "value": "/privacy?from=ai&x=%2F#数据",
+      "valid": true
+    },
+    {
+      "id": "internal-brackets",
+      "value": "/help/[source]?q[]=résumé",
+      "valid": true
+    },
+    {
+      "id": "https",
+      "value": "https://example.com",
+      "valid": true
+    },
+    {
+      "id": "https-case",
+      "value": "HTTPS://EXAMPLE.COM/policy",
+      "valid": true
+    },
+    {
+      "id": "dns-trailing-dot",
+      "value": "https://example.com./policy",
+      "valid": true
+    },
+    {
+      "id": "punycode",
+      "value": "https://xn--bcher-kva.example/policy",
+      "valid": true
+    },
+    {
+      "id": "single-label-dns",
+      "value": "https://localhost/policy",
+      "valid": true
+    },
+    {
+      "id": "ipv4",
+      "value": "https://192.0.2.1/policy",
+      "valid": true
+    },
+    {
+      "id": "port-one",
+      "value": "https://example.com:1/",
+      "valid": true
+    },
+    {
+      "id": "port-max",
+      "value": "https://example.com:65535/",
+      "valid": true
+    },
+    {
+      "id": "port-padded",
+      "value": "https://example.com:00443/",
+      "valid": true
+    },
+    {
+      "id": "ipv6",
+      "value": "https://[2001:db8::1]/policy",
+      "valid": true
+    },
+    {
+      "id": "ipv6-loopback",
+      "value": "https://[::1]:443/policy",
+      "valid": true
+    },
+    {
+      "id": "ipv6-embedded-ipv4",
+      "value": "https://[::ffff:192.0.2.1]/policy",
+      "valid": true
+    },
+    {
+      "id": "url-query-fragment",
+      "value": "https://example.com/policy?region=cn&lang=en#retention",
+      "valid": true
+    },
+    {
+      "id": "unicode-path",
+      "value": "https://example.com/隐私?q=résumé#条款",
+      "valid": true
+    },
+    {
+      "id": "percent-path",
+      "value": "https://example.com/a%20b?x=%28%29#%E6%9D%A1",
+      "valid": true
+    },
+    {
+      "id": "url-brackets",
+      "value": "https://example.com/sources[1]?q[]=x#sources[2]",
+      "valid": true
+    },
+    {
+      "id": "url-parentheses",
+      "value": "https://example.com/policy(v1)",
+      "valid": true
+    },
+    {
+      "id": "literal-percent",
+      "value": "https://example.com/100%/policy",
+      "valid": true
+    },
+    {
+      "id": "at-in-path",
+      "value": "https://example.com/@recipient",
+      "valid": true
+    },
+    {
+      "id": "empty",
+      "value": "",
+      "valid": false
+    },
+    {
+      "id": "relative",
+      "value": "privacy",
+      "valid": false
+    },
+    {
+      "id": "dot-relative",
+      "value": "../privacy",
+      "valid": false
+    },
+    {
+      "id": "fragment-only",
+      "value": "#terms",
+      "valid": false
+    },
+    {
+      "id": "protocol-relative",
+      "value": "//example.com",
+      "valid": false
+    },
+    {
+      "id": "http",
+      "value": "http://example.com",
+      "valid": false
+    },
+    {
+      "id": "javascript",
+      "value": "javascript:alert(1)",
+      "valid": false
+    },
+    {
+      "id": "data",
+      "value": "data:text/html,payload",
+      "valid": false
+    },
+    {
+      "id": "mailto",
+      "value": "mailto:user@example.com",
+      "valid": false
+    },
+    {
+      "id": "file",
+      "value": "file:///etc/passwd",
+      "valid": false
+    },
+    {
+      "id": "implicit-authority",
+      "value": "https:example.com",
+      "valid": false
+    },
+    {
+      "id": "single-slash",
+      "value": "https:/example.com",
+      "valid": false
+    },
+    {
+      "id": "triple-slash",
+      "value": "https:///example.com",
+      "valid": false
+    },
+    {
+      "id": "missing-host",
+      "value": "https://",
+      "valid": false
+    },
+    {
+      "id": "empty-credentials",
+      "value": "https://@example.com",
+      "valid": false
+    },
+    {
+      "id": "credentials",
+      "value": "https://user:pass@example.com",
+      "valid": false
+    },
+    {
+      "id": "username",
+      "value": "https://user@example.com",
+      "valid": false
+    },
+    {
+      "id": "backslash-path",
+      "value": "https://example.com/a\\b",
+      "valid": false
+    },
+    {
+      "id": "backslash-host",
+      "value": "https://example.com\\@evil.test",
+      "valid": false
+    },
+    {
+      "id": "space",
+      "value": "https://example.com/a b",
+      "valid": false
+    },
+    {
+      "id": "tab",
+      "value": "https://example.com/a\tb",
+      "valid": false
+    },
+    {
+      "id": "control",
+      "value": "https://example.com/a\u0001b",
+      "valid": false
+    },
+    {
+      "id": "delete-control",
+      "value": "https://example.com/ab",
+      "valid": false
+    },
+    {
+      "id": "nbsp",
+      "value": "https://example.com/a b",
+      "valid": false
+    },
+    {
+      "id": "bom",
+      "value": "https://example.com/a﻿b",
+      "valid": false
+    },
+    {
+      "id": "unicode-host",
+      "value": "https://bücher.example",
+      "valid": false
+    },
+    {
+      "id": "percent-host",
+      "value": "https://%65xample.com",
+      "valid": false
+    },
+    {
+      "id": "empty-label",
+      "value": "https://example..com",
+      "valid": false
+    },
+    {
+      "id": "hyphen-leading",
+      "value": "https://-example.com",
+      "valid": false
+    },
+    {
+      "id": "hyphen-trailing",
+      "value": "https://example-.com",
+      "valid": false
+    },
+    {
+      "id": "underscore",
+      "value": "https://under_score.example",
+      "valid": false
+    },
+    {
+      "id": "long-label",
+      "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "valid": false
+    },
+    {
+      "id": "long-host",
+      "value": "https://ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.com",
+      "valid": false
+    },
+    {
+      "id": "ipv4-integer",
+      "value": "https://2130706433",
+      "valid": false
+    },
+    {
+      "id": "ipv4-short",
+      "value": "https://127.1",
+      "valid": false
+    },
+    {
+      "id": "ipv4-hex",
+      "value": "https://0x7f000001",
+      "valid": false
+    },
+    {
+      "id": "ipv4-octal",
+      "value": "https://0177.0.0.1",
+      "valid": false
+    },
+    {
+      "id": "ipv4-leading-zero",
+      "value": "https://192.000.2.1",
+      "valid": false
+    },
+    {
+      "id": "ipv4-range",
+      "value": "https://256.0.0.1",
+      "valid": false
+    },
+    {
+      "id": "ipv4-trailing-dot",
+      "value": "https://192.0.2.1.",
+      "valid": false
+    },
+    {
+      "id": "numeric-tld",
+      "value": "https://example.123",
+      "valid": false
+    },
+    {
+      "id": "hex-numeric-tld",
+      "value": "https://example.0xabc",
+      "valid": false
+    },
+    {
+      "id": "empty-port",
+      "value": "https://example.com:",
+      "valid": false
+    },
+    {
+      "id": "zero-port",
+      "value": "https://example.com:0",
+      "valid": false
+    },
+    {
+      "id": "port-overflow",
+      "value": "https://example.com:65536",
+      "valid": false
+    },
+    {
+      "id": "negative-port",
+      "value": "https://example.com:-1",
+      "valid": false
+    },
+    {
+      "id": "port-nondigit",
+      "value": "https://example.com:abc",
+      "valid": false
+    },
+    {
+      "id": "port-too-long",
+      "value": "https://example.com:000443",
+      "valid": false
+    },
+    {
+      "id": "empty-ipv6",
+      "value": "https://[]",
+      "valid": false
+    },
+    {
+      "id": "bad-ipv6",
+      "value": "https://[2001::db8::1]",
+      "valid": false
+    },
+    {
+      "id": "ipv6-zone",
+      "value": "https://[fe80::1%25en0]",
+      "valid": false
+    },
+    {
+      "id": "ipv6-cidr",
+      "value": "https://[2001:db8::/32]",
+      "valid": false
+    },
+    {
+      "id": "ipv6-embedded-leading-zero",
+      "value": "https://[::ffff:192.000.2.1]",
+      "valid": false
+    },
+    {
+      "id": "ipv6-embedded-range",
+      "value": "https://[::ffff:256.0.0.1]",
+      "valid": false
+    },
+    {
+      "id": "seed-source-001",
+      "value": "https://ai.google.dev/gemini-api/docs/logs-policy",
+      "valid": true
+    },
+    {
+      "id": "seed-source-002",
+      "value": "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
+      "valid": true
+    },
+    {
+      "id": "seed-source-003",
+      "value": "https://ai.google.dev/gemini-api/docs/zdr",
+      "valid": true
+    },
+    {
+      "id": "seed-source-004",
+      "value": "https://ai.google.dev/gemini-api/terms",
+      "valid": true
+    },
+    {
+      "id": "seed-source-005",
+      "value": "https://aistudio.google.com/api-reference/interactions-api/create-interaction?api-version=v1",
+      "valid": true
+    },
+    {
+      "id": "seed-source-006",
+      "value": "https://api-docs.deepseek.com/api/create-response/",
+      "valid": true
+    },
+    {
+      "id": "seed-source-007",
+      "value": "https://api-docs.deepseek.com/guides/kv_cache/",
+      "valid": true
+    },
+    {
+      "id": "seed-source-008",
+      "value": "https://api-docs.deepseek.com/guides/responses_api/",
+      "valid": true
+    },
+    {
+      "id": "seed-source-009",
+      "value": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "valid": true
+    },
+    {
+      "id": "seed-source-010",
+      "value": "https://api-docs.deepseek.com/quick_start/rate_limit/",
+      "valid": true
+    },
+    {
+      "id": "seed-source-011",
+      "value": "https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html",
+      "valid": true
+    },
+    {
+      "id": "seed-source-012",
+      "value": "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html",
+      "valid": true
+    },
+    {
+      "id": "seed-source-013",
+      "value": "https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html",
+      "valid": true
+    },
+    {
+      "id": "seed-source-014",
+      "value": "https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html",
+      "valid": true
+    },
+    {
+      "id": "seed-source-015",
+      "value": "https://mimo.mi.com/docs/en-US/api/chat/responses",
+      "valid": true
+    },
+    {
+      "id": "seed-source-016",
+      "value": "https://mimo.mi.com/docs/en-US/api/guidance/error-codes",
+      "valid": true
+    },
+    {
+      "id": "seed-source-017",
+      "value": "https://mimo.mi.com/docs/en-US/api/guidance/rate-limit",
+      "valid": true
+    },
+    {
+      "id": "seed-source-018",
+      "value": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+      "valid": true
+    },
+    {
+      "id": "seed-source-019",
+      "value": "https://mimo.mi.com/docs/en-US/terms/privacy-policy",
+      "valid": true
+    },
+    {
+      "id": "seed-source-020",
+      "value": "https://mimo.mi.com/docs/quick-start/terms/user-agreement",
+      "valid": true
+    }
+  ],
+  "bodies": [
+    {
+      "id": "paragraph",
+      "value": "Plain paragraph.",
+      "valid": true
+    },
+    {
+      "id": "chinese",
+      "value": "数据处理说明。",
+      "valid": true
+    },
+    {
+      "id": "structure",
+      "value": "## Heading\n\nParagraph one.\nParagraph two.\n\n- First\n- Second",
+      "valid": true
+    },
+    {
+      "id": "crlf",
+      "value": "## Heading\r\n\r\n- First\r\n- Second",
+      "valid": true
+    },
+    {
+      "id": "bare-cr",
+      "value": "First\r\rSecond",
+      "valid": true
+    },
+    {
+      "id": "empty-heading-preserved",
+      "value": "## ",
+      "valid": true
+    },
+    {
+      "id": "empty-list-preserved",
+      "value": "- ",
+      "valid": true
+    },
+    {
+      "id": "literal-citations",
+      "value": "See [1], [2] and [unfinished.",
+      "valid": true
+    },
+    {
+      "id": "unmatched-link-literal",
+      "value": "[unfinished](javascript:alert",
+      "valid": true
+    },
+    {
+      "id": "space-target-literal",
+      "value": "[not a link](bad target)",
+      "valid": true
+    },
+    {
+      "id": "empty-target-literal",
+      "value": "[empty]()",
+      "valid": true
+    },
+    {
+      "id": "literal-tilde",
+      "value": "~~~\nPlain text.\n~~~",
+      "valid": true
+    },
+    {
+      "id": "empty",
+      "value": "",
+      "valid": false
+    },
+    {
+      "id": "whitespace",
+      "value": " \t\r\n",
+      "valid": false
+    },
+    {
+      "id": "unicode-whitespace",
+      "value": " ﻿　",
+      "valid": false
+    },
+    {
+      "id": "html",
+      "value": "<script>alert(1)</script>",
+      "valid": false
+    },
+    {
+      "id": "angle-brackets",
+      "value": "A < B",
+      "valid": false
+    },
+    {
+      "id": "image",
+      "value": "![tracker](https://example.com/pixel)",
+      "valid": false
+    },
+    {
+      "id": "fence",
+      "value": "```\ncode\n```",
+      "valid": false
+    },
+    {
+      "id": "heading-one",
+      "value": "# Heading",
+      "valid": false
+    },
+    {
+      "id": "heading-three",
+      "value": "### Heading",
+      "valid": false
+    },
+    {
+      "id": "heading-no-space",
+      "value": "##Heading",
+      "valid": false
+    },
+    {
+      "id": "heading-indent",
+      "value": " ## Heading",
+      "valid": false
+    },
+    {
+      "id": "heading-unicode-indent",
+      "value": " ## Heading",
+      "valid": false
+    },
+    {
+      "id": "star-list",
+      "value": "* Item",
+      "valid": false
+    },
+    {
+      "id": "plus-list",
+      "value": "+ Item",
+      "valid": false
+    },
+    {
+      "id": "numbered-list",
+      "value": "1. Item",
+      "valid": false
+    },
+    {
+      "id": "list-indent",
+      "value": "\t- Item",
+      "valid": false
+    },
+    {
+      "id": "tab-after-bullet",
+      "value": "-\tItem",
+      "valid": false
+    },
+    {
+      "id": "ascii-max",
+      "value": "a",
+      "repeat": 65536,
+      "valid": true
+    },
+    {
+      "id": "ascii-over",
+      "value": "a",
+      "repeat": 65537,
+      "valid": false
+    },
+    {
+      "id": "chinese-max",
+      "value": "中",
+      "repeat": 65536,
+      "valid": true
+    },
+    {
+      "id": "astral-max",
+      "value": "🚀",
+      "repeat": 32768,
+      "valid": true
+    },
+    {
+      "id": "astral-over",
+      "value": "🚀",
+      "repeat": 32769,
+      "valid": false
+    },
+    {
+      "id": "link-root",
+      "value": "[Source](/)",
+      "valid": true
+    },
+    {
+      "id": "link-internal-path",
+      "value": "[Source](/zh/ai-terms)",
+      "valid": true
+    },
+    {
+      "id": "link-internal-query-fragment",
+      "value": "[Source](/privacy?from=ai&x=%2F#数据)",
+      "valid": true
+    },
+    {
+      "id": "link-internal-brackets",
+      "value": "[Source](/help/[source]?q[]=résumé)",
+      "valid": true
+    },
+    {
+      "id": "link-https",
+      "value": "[Source](https://example.com)",
+      "valid": true
+    },
+    {
+      "id": "link-https-case",
+      "value": "[Source](HTTPS://EXAMPLE.COM/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-dns-trailing-dot",
+      "value": "[Source](https://example.com./policy)",
+      "valid": true
+    },
+    {
+      "id": "link-punycode",
+      "value": "[Source](https://xn--bcher-kva.example/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-single-label-dns",
+      "value": "[Source](https://localhost/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-ipv4",
+      "value": "[Source](https://192.0.2.1/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-port-one",
+      "value": "[Source](https://example.com:1/)",
+      "valid": true
+    },
+    {
+      "id": "link-port-max",
+      "value": "[Source](https://example.com:65535/)",
+      "valid": true
+    },
+    {
+      "id": "link-port-padded",
+      "value": "[Source](https://example.com:00443/)",
+      "valid": true
+    },
+    {
+      "id": "link-ipv6",
+      "value": "[Source](https://[2001:db8::1]/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-ipv6-loopback",
+      "value": "[Source](https://[::1]:443/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-ipv6-embedded-ipv4",
+      "value": "[Source](https://[::ffff:192.0.2.1]/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-url-query-fragment",
+      "value": "[Source](https://example.com/policy?region=cn&lang=en#retention)",
+      "valid": true
+    },
+    {
+      "id": "link-unicode-path",
+      "value": "[Source](https://example.com/隐私?q=résumé#条款)",
+      "valid": true
+    },
+    {
+      "id": "link-percent-path",
+      "value": "[Source](https://example.com/a%20b?x=%28%29#%E6%9D%A1)",
+      "valid": true
+    },
+    {
+      "id": "link-url-brackets",
+      "value": "[Source](https://example.com/sources[1]?q[]=x#sources[2])",
+      "valid": true
+    },
+    {
+      "id": "link-literal-percent",
+      "value": "[Source](https://example.com/100%/policy)",
+      "valid": true
+    },
+    {
+      "id": "link-at-in-path",
+      "value": "[Source](https://example.com/@recipient)",
+      "valid": true
+    },
+    {
+      "id": "link-empty",
+      "value": "[Source]()",
+      "valid": true
+    },
+    {
+      "id": "link-relative",
+      "value": "[Source](privacy)",
+      "valid": false
+    },
+    {
+      "id": "link-dot-relative",
+      "value": "[Source](../privacy)",
+      "valid": false
+    },
+    {
+      "id": "link-fragment-only",
+      "value": "[Source](#terms)",
+      "valid": false
+    },
+    {
+      "id": "link-protocol-relative",
+      "value": "[Source](//example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-http",
+      "value": "[Source](http://example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-javascript",
+      "value": "[Source](javascript:alert(1))",
+      "valid": false
+    },
+    {
+      "id": "link-data",
+      "value": "[Source](data:text/html,payload)",
+      "valid": false
+    },
+    {
+      "id": "link-mailto",
+      "value": "[Source](mailto:user@example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-file",
+      "value": "[Source](file:///etc/passwd)",
+      "valid": false
+    },
+    {
+      "id": "link-implicit-authority",
+      "value": "[Source](https:example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-single-slash",
+      "value": "[Source](https:/example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-triple-slash",
+      "value": "[Source](https:///example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-missing-host",
+      "value": "[Source](https://)",
+      "valid": false
+    },
+    {
+      "id": "link-empty-credentials",
+      "value": "[Source](https://@example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-credentials",
+      "value": "[Source](https://user:pass@example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-username",
+      "value": "[Source](https://user@example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-backslash-path",
+      "value": "[Source](https://example.com/a\\b)",
+      "valid": false
+    },
+    {
+      "id": "link-backslash-host",
+      "value": "[Source](https://example.com\\@evil.test)",
+      "valid": false
+    },
+    {
+      "id": "link-control",
+      "value": "[Source](https://example.com/a\u0001b)",
+      "valid": false
+    },
+    {
+      "id": "link-delete-control",
+      "value": "[Source](https://example.com/ab)",
+      "valid": false
+    },
+    {
+      "id": "link-unicode-host",
+      "value": "[Source](https://bücher.example)",
+      "valid": false
+    },
+    {
+      "id": "link-percent-host",
+      "value": "[Source](https://%65xample.com)",
+      "valid": false
+    },
+    {
+      "id": "link-empty-label",
+      "value": "[Source](https://example..com)",
+      "valid": false
+    },
+    {
+      "id": "link-hyphen-leading",
+      "value": "[Source](https://-example.com)",
+      "valid": false
+    },
+    {
+      "id": "link-hyphen-trailing",
+      "value": "[Source](https://example-.com)",
+      "valid": false
+    },
+    {
+      "id": "link-underscore",
+      "value": "[Source](https://under_score.example)",
+      "valid": false
+    },
+    {
+      "id": "link-long-label",
+      "value": "[Source](https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example)",
+      "valid": false
+    },
+    {
+      "id": "link-long-host",
+      "value": "[Source](https://ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.ab.com)",
+      "valid": false
+    },
+    {
+      "id": "link-ipv4-integer",
+      "value": "[Source](https://2130706433)",
+      "valid": false
+    },
+    {
+      "id": "link-ipv4-short",
+      "value": "[Source](https://127.1)",
+      "valid": false
+    },
+    {
+      "id": "link-ipv4-hex",
+      "value": "[Source](https://0x7f000001)",
+      "valid": false
+    },
+    {
+      "id": "link-ipv4-octal",
+      "value": "[Source](https://0177.0.0.1)",
+      "valid": false
+    },
+    {
+      "id": "link-ipv4-leading-zero",
+      "value": "[Source](https://192.000.2.1)",
+      "valid": false
+    },
+    {
+      "id": "link-ipv4-range",
+      "value": "[Source](https://256.0.0.1)",
+      "valid": false
+    },
+    {
+      "id": "link-ipv4-trailing-dot",
+      "value": "[Source](https://192.0.2.1.)",
+      "valid": false
+    },
+    {
+      "id": "link-numeric-tld",
+      "value": "[Source](https://example.123)",
+      "valid": false
+    },
+    {
+      "id": "link-hex-numeric-tld",
+      "value": "[Source](https://example.0xabc)",
+      "valid": false
+    },
+    {
+      "id": "link-empty-port",
+      "value": "[Source](https://example.com:)",
+      "valid": false
+    },
+    {
+      "id": "link-zero-port",
+      "value": "[Source](https://example.com:0)",
+      "valid": false
+    },
+    {
+      "id": "link-port-overflow",
+      "value": "[Source](https://example.com:65536)",
+      "valid": false
+    },
+    {
+      "id": "link-negative-port",
+      "value": "[Source](https://example.com:-1)",
+      "valid": false
+    },
+    {
+      "id": "link-port-nondigit",
+      "value": "[Source](https://example.com:abc)",
+      "valid": false
+    },
+    {
+      "id": "link-port-too-long",
+      "value": "[Source](https://example.com:000443)",
+      "valid": false
+    },
+    {
+      "id": "link-empty-ipv6",
+      "value": "[Source](https://[])",
+      "valid": false
+    },
+    {
+      "id": "link-bad-ipv6",
+      "value": "[Source](https://[2001::db8::1])",
+      "valid": false
+    },
+    {
+      "id": "link-ipv6-zone",
+      "value": "[Source](https://[fe80::1%25en0])",
+      "valid": false
+    },
+    {
+      "id": "link-ipv6-cidr",
+      "value": "[Source](https://[2001:db8::/32])",
+      "valid": false
+    },
+    {
+      "id": "link-ipv6-embedded-leading-zero",
+      "value": "[Source](https://[::ffff:192.000.2.1])",
+      "valid": false
+    },
+    {
+      "id": "link-ipv6-embedded-range",
+      "value": "[Source](https://[::ffff:256.0.0.1])",
+      "valid": false
+    },
+    {
+      "id": "link-seed-source-001",
+      "value": "[Source](https://ai.google.dev/gemini-api/docs/logs-policy)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-002",
+      "value": "[Source](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-003",
+      "value": "[Source](https://ai.google.dev/gemini-api/docs/zdr)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-004",
+      "value": "[Source](https://ai.google.dev/gemini-api/terms)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-005",
+      "value": "[Source](https://aistudio.google.com/api-reference/interactions-api/create-interaction?api-version=v1)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-006",
+      "value": "[Source](https://api-docs.deepseek.com/api/create-response/)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-007",
+      "value": "[Source](https://api-docs.deepseek.com/guides/kv_cache/)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-008",
+      "value": "[Source](https://api-docs.deepseek.com/guides/responses_api/)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-009",
+      "value": "[Source](https://api-docs.deepseek.com/quick_start/pricing/)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-010",
+      "value": "[Source](https://api-docs.deepseek.com/quick_start/rate_limit/)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-011",
+      "value": "[Source](https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-012",
+      "value": "[Source](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-013",
+      "value": "[Source](https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-014",
+      "value": "[Source](https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-015",
+      "value": "[Source](https://mimo.mi.com/docs/en-US/api/chat/responses)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-016",
+      "value": "[Source](https://mimo.mi.com/docs/en-US/api/guidance/error-codes)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-017",
+      "value": "[Source](https://mimo.mi.com/docs/en-US/api/guidance/rate-limit)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-018",
+      "value": "[Source](https://mimo.mi.com/docs/en-US/price/pay-as-you-go)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-019",
+      "value": "[Source](https://mimo.mi.com/docs/en-US/terms/privacy-policy)",
+      "valid": true
+    },
+    {
+      "id": "link-seed-source-020",
+      "value": "[Source](https://mimo.mi.com/docs/quick-start/terms/user-agreement)",
+      "valid": true
+    }
+  ],
+  "metadata": [
+    {
+      "id": "title-padding-preserved",
+      "field": "en_title",
+      "value": "  A precise title  ",
+      "valid": true
+    },
+    {
+      "id": "title-max",
+      "field": "zh_title",
+      "value": "中",
+      "repeat": 500,
+      "valid": true
+    },
+    {
+      "id": "title-over",
+      "field": "en_title",
+      "value": "a",
+      "repeat": 501,
+      "valid": false
+    },
+    {
+      "id": "title-astral-max",
+      "field": "en_title",
+      "value": "🚀",
+      "repeat": 250,
+      "valid": true
+    },
+    {
+      "id": "title-astral-over",
+      "field": "en_title",
+      "value": "🚀",
+      "repeat": 251,
+      "valid": false
+    },
+    {
+      "id": "title-blank",
+      "field": "zh_title",
+      "value": " ﻿",
+      "valid": false
+    },
+    {
+      "id": "recipient-padding-preserved",
+      "field": "recipient_name",
+      "value": "  Reviewed recipient  ",
+      "valid": true
+    },
+    {
+      "id": "recipient-max",
+      "field": "recipient_name",
+      "value": "中",
+      "repeat": 500,
+      "valid": true
+    },
+    {
+      "id": "recipient-over",
+      "field": "recipient_name",
+      "value": "a",
+      "repeat": 501,
+      "valid": false
+    },
+    {
+      "id": "recipient-astral-max",
+      "field": "recipient_name",
+      "value": "🚀",
+      "repeat": 250,
+      "valid": true
+    },
+    {
+      "id": "recipient-astral-over",
+      "field": "recipient_name",
+      "value": "🚀",
+      "repeat": 251,
+      "valid": false
+    },
+    {
+      "id": "recipient-blank",
+      "field": "recipient_name",
+      "value": "﻿　",
+      "valid": false
+    },
+    {
+      "id": "date-min",
+      "field": "effective_date",
+      "value": "0001-01-01",
+      "valid": true
+    },
+    {
+      "id": "date-max",
+      "field": "effective_date",
+      "value": "9999-12-31",
+      "valid": true
+    },
+    {
+      "id": "date-leap",
+      "field": "effective_date",
+      "value": "2024-02-29",
+      "valid": true
+    },
+    {
+      "id": "date-not-leap",
+      "field": "effective_date",
+      "value": "2026-02-29",
+      "valid": false
+    },
+    {
+      "id": "date-month",
+      "field": "effective_date",
+      "value": "2026-13-01",
+      "valid": false
+    },
+    {
+      "id": "date-zero-year",
+      "field": "effective_date",
+      "value": "0000-01-01",
+      "valid": false
+    },
+    {
+      "id": "date-five-digit-year",
+      "field": "effective_date",
+      "value": "10000-01-01",
+      "valid": false
+    },
+    {
+      "id": "date-bc",
+      "field": "effective_date",
+      "value": "0001-01-01 BC",
+      "valid": false
+    }
+  ]
+}
