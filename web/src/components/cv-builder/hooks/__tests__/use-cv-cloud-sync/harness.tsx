@@ -2,69 +2,67 @@ import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { cleanup, renderHook } from "@testing-library/react";
 import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, vi } from "vitest";
-
 import { useCvCloudActiveDocumentQuery } from "@/components/cv-builder/hooks/use-cv-cloud-document-query";
 import { useCvCloudSync } from "@/components/cv-builder/hooks/use-cv-cloud-sync";
 import type { CloudCvDocument } from "@/lib/cv/cloud-storage";
 import { loadTrustDevice } from "@/lib/cv/encryption-storage";
 import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
-
 vi.mock("@/components/cv-builder/hooks/use-cv-cloud-document-query", () => ({
-  useCvCloudActiveDocumentQuery: vi.fn(),
+  useCvCloudActiveDocumentQuery: vi.fn()
 }));
-
 vi.mock("@/lib/cv/encryption-storage", () => ({
-  loadTrustDevice: vi.fn(),
+  loadTrustDevice: vi.fn()
 }));
-
 export const loadTrustDeviceMock = vi.mocked(loadTrustDevice);
-
 afterEach(() => {
   cleanup();
 });
-
 beforeEach(() => {
   vi.clearAllMocks();
-  mockActiveDocumentQuery({ data: undefined, error: null });
+  mockActiveDocumentQuery({
+    data: undefined,
+    error: null
+  });
   loadTrustDeviceMock.mockReturnValue(false);
 });
-
-export const session = { user: { id: "user-1" } } as Session;
-export const sessionB = { user: { id: "user-2" } } as Session;
+export const session = {
+  user: {
+    id: "user-1"
+  }
+} as Session;
+export const sessionB = {
+  user: {
+    id: "user-2"
+  }
+} as Session;
 export const supabase = {} as SupabaseClient;
-
-export function cloudSummary(
-  id: string,
-): Omit<CloudCvDocument, "data"> {
+export function cloudSummary(id: string): Omit<CloudCvDocument, "data"> {
   return {
     id,
     title: `${id} title`,
     storageKind: "cloud",
+    revision: "1",
     createdAt: "2026-08-01T00:00:00.000Z",
-    updatedAt: "2026-08-02T00:00:00.000Z",
+    updatedAt: "2026-08-02T00:00:00.000Z"
   };
 }
-
-export function mockActiveDocumentQuery(
-  value: Partial<ReturnType<typeof useCvCloudActiveDocumentQuery>>,
-) {
-  vi.mocked(useCvCloudActiveDocumentQuery).mockReturnValue(
-    value as ReturnType<typeof useCvCloudActiveDocumentQuery>,
-  );
+export function mockActiveDocumentQuery(value: Partial<ReturnType<typeof useCvCloudActiveDocumentQuery>>) {
+  vi.mocked(useCvCloudActiveDocumentQuery).mockReturnValue(value as ReturnType<typeof useCvCloudActiveDocumentQuery>);
 }
-
 export function renderCloudSync({
   activeDocumentId = null as string | null,
+  loadedDocumentId = null as string | null,
   documentsData = undefined as CvDocumentSummary[] | undefined,
   draft = null as CvData | null,
   refetchError = null as Error | null,
   sessionInitialized = true,
   sessionValue = session as Session | null,
   supabaseValue = supabase as SupabaseClient | null,
-  termsRefresh = true as boolean | Promise<boolean>,
+  termsRefresh = true as boolean | Promise<boolean>
 }: {
   activeDocumentId?: string | null;
+  loadedDocumentId?: string | null;
   documentsData?: CvDocumentSummary[];
   draft?: CvData | null;
   refetchError?: Error | null;
@@ -74,12 +72,13 @@ export function renderCloudSync({
   termsRefresh?: boolean | Promise<boolean>;
 } = {}) {
   const clearDraft = vi.fn();
-  const loadDataIntoForm = vi.fn();
+  let adoptedDocumentId = loadedDocumentId;
+  const loadDataIntoForm = vi.fn((id: string) => {
+    adoptedDocumentId = id;
+  });
   const loadDraft = vi.fn().mockReturnValue(draft);
   const onError = vi.fn();
-  const refetchDocuments = refetchError
-    ? vi.fn().mockRejectedValue(refetchError)
-    : vi.fn().mockResolvedValue(undefined);
+  const refetchDocuments = refetchError ? vi.fn().mockRejectedValue(refetchError) : vi.fn().mockResolvedValue(undefined);
   const removeCloudSummaries = vi.fn();
   const replaceCloudSummaries = vi.fn();
   const setCloudStatus = vi.fn();
@@ -89,17 +88,21 @@ export function renderCloudSync({
     ensure: vi.fn().mockResolvedValue(true),
     refresh: vi.fn().mockReturnValue(Promise.resolve(termsRefresh)),
     reset: vi.fn(),
-    status: "accepted" as const,
+    status: "accepted" as const
   };
   const upsertDocumentSummary = vi.fn();
   const layoutBoundaryObservations: number[] = [];
-
-  const hook = renderHook(({ currentSession }: { currentSession: Session | null }) => {
+  const hook = renderHook(({
+    currentSession
+  }: {
+    currentSession: Session | null;
+  }) => {
     const cloudSync = useCvCloudSync({
       locale: "en",
       activeDocumentId,
       clearDraft,
       documentsData,
+      getLoadedDocumentId: () => adoptedDocumentId,
       loadDataIntoForm,
       loadDraft,
       onError,
@@ -113,14 +116,17 @@ export function renderCloudSync({
       setTrustDevice,
       supabase: supabaseValue,
       termsGate,
-      upsertDocumentSummary,
+      upsertDocumentSummary
     });
     useLayoutEffect(() => {
       layoutBoundaryObservations.push(removeCloudSummaries.mock.calls.length);
     }, [currentSession]);
     return cloudSync;
-  }, { initialProps: { currentSession: sessionValue } });
-
+  }, {
+    initialProps: {
+      currentSession: sessionValue
+    }
+  });
   return {
     clearDraft,
     hook,
@@ -130,7 +136,9 @@ export function renderCloudSync({
     onError,
     refetchDocuments,
     rerenderSession(currentSession: Session | null) {
-      hook.rerender({ currentSession });
+      hook.rerender({
+        currentSession
+      });
     },
     removeCloudSummaries,
     replaceCloudSummaries,
@@ -138,6 +146,6 @@ export function renderCloudSync({
     setTermsAccepted,
     setTrustDevice,
     termsGate,
-    upsertDocumentSummary,
+    upsertDocumentSummary
   };
 }

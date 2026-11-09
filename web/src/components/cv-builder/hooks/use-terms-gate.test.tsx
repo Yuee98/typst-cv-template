@@ -1,338 +1,74 @@
 // @vitest-environment jsdom
-
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { NextIntlClientProvider, useTranslations } from "next-intl";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
-import { acceptCurrentTerms, hasAcceptedCurrentTerms } from "@/lib/legal/terms-acceptance";
-
-import messages from "../../../../messages/en.json";
-
-vi.mock("@/lib/legal/terms-acceptance", () => ({
-  acceptCurrentTerms: vi.fn(),
-  hasAcceptedCurrentTerms: vi.fn(),
+import { act, renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({
+  getCurrentLegal: vi.fn(),
+  hasAcceptedTerms: vi.fn(),
+  acceptCurrentTerms: vi.fn()
 }));
+vi.mock("@/lib/legal/terms-acceptance", () => mocks);
+import { useTermsGate } from "./use-terms-gate";
+import { legalDocumentFixture } from "@/lib/legal/test-fixtures";
+const terms = legalDocumentFixture();
 
-afterEach(() => {
-  cleanup();
-  vi.resetAllMocks();
-});
-
-beforeEach(() => {
-  window.sessionStorage.clear();
-  window.history.replaceState({}, "", "/en");
-});
-
-const fakeSupabase = {} as SupabaseClient;
-
-function renderTerms({ userId = "user-a" as string | null } = {}) {
-  const onError = vi.fn();
-  const hook = renderHook(
-    ({ currentUserId }: { currentUserId: string | null }) => {
-      const tTermsGate = useTranslations("TermsGate");
-      return useTermsGate({
-        tTermsGate,
-        userId: currentUserId,
-        onError,
-        supabase: fakeSupabase,
-      });
-    },
-    {
-      wrapper: ({ children }) => (
-        <NextIntlClientProvider locale="en" messages={messages}>
-          {children}
-        </NextIntlClientProvider>
-      ),
-      initialProps: { currentUserId: userId },
-    },
-  );
-  return { ...hook, onError };
+function args(userId: string | null) {
+  return {
+    userId,
+    supabase: {} as never,
+    tTermsGate: ((key: string) => key) as never,
+    onError: vi.fn()
+  };
 }
-
-describe("useTermsGate direct behavior", () => {
-  it("does not query without a signed-in session/client", async () => {
-    const h = renderTerms({ userId: null });
-
-    let accepted = true;
-    await act(async () => {
-      accepted = await h.result.current.ensure();
+describe("current terms gate", () => {
+  it("displays a target before accepting its exact version", async () => {
+    mocks.getCurrentLegal.mockResolvedValue({
+      documents: [terms]
     });
-
-    expect(accepted).toBe(false);
-    expect(hasAcceptedCurrentTerms).not.toHaveBeenCalled();
-    expect(h.result.current.status).toBe("unknown");
+    mocks.hasAcceptedTerms.mockResolvedValue(false);
+    mocks.acceptCurrentTerms.mockResolvedValue(undefined);
+    const {
+      result
+    } = renderHook(() => useTermsGate(args("A")));
+    await act(() => result.current.refresh({} as never));
+    expect(result.current.modalOpen).toBe(true);
+    expect(result.current.terms).toEqual(terms);
+    await act(() => result.current.accept());
+    expect(mocks.acceptCurrentTerms).not.toHaveBeenCalled();
+    act(() => result.current.setModalChecked(true));
+    await act(() => result.current.accept());
+    expect(mocks.acceptCurrentTerms).toHaveBeenCalledWith({}, terms, "A");
+    expect(result.current.status).toBe("accepted");
   });
-
-  it("opens the acceptance modal when current terms are not accepted", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
-    const h = renderTerms();
-
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase);
+  it("never paints an old account's asynchronous result", async () => {
+    let resolve!: (value: unknown) => void;
+    mocks.getCurrentLegal.mockImplementationOnce(() => new Promise(done => {
+      resolve = done;
+    }));
+    mocks.hasAcceptedTerms.mockResolvedValue(false);
+    const {
+      result,
+      rerender
+    } = renderHook(({
+      user
+    }) => useTermsGate(args(user)), {
+      initialProps: {
+        user: "A"
+      }
     });
-
-    expect(h.result.current.status).toBe("required");
-    expect(h.result.current.modalOpen).toBe(true);
-    expect(h.result.current.modalChecked).toBe(false);
-  });
-
-  it("accepts current terms only after the checkbox is checked", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
-    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
-    const h = renderTerms();
-
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase);
-    });
-
-    let accepted = true;
-    await act(async () => {
-      accepted = await h.result.current.accept();
-    });
-    expect(accepted).toBe(false);
-    expect(acceptCurrentTerms).not.toHaveBeenCalled();
-    expect(h.result.current.modalError).toContain("Check");
-
+    let pending!: Promise<boolean>;
     act(() => {
-      h.result.current.setModalChecked(true);
+      pending = result.current.refresh({} as never);
+    });
+    rerender({
+      user: "B"
     });
     await act(async () => {
-      accepted = await h.result.current.accept();
+      resolve({
+        documents: [terms]
+      });
+      await pending;
     });
-
-    expect(accepted).toBe(true);
-    expect(acceptCurrentTerms).toHaveBeenCalledWith(fakeSupabase);
-    expect(h.result.current.status).toBe("accepted");
-    expect(h.result.current.modalOpen).toBe(false);
-  });
-
-  it("consumes a pending acceptance after a successful record", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
-    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
-    const h = renderTerms();
-
-    await act(async () => {
-      await h.result.current.markPendingAcceptance({ userId: "user-a" });
-    });
-    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).not.toContain("user-a");
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase, { showModal: false });
-    });
-
-    expect(acceptCurrentTerms).toHaveBeenCalledWith(fakeSupabase);
-    expect(h.result.current.status).toBe("accepted");
-    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).toBeNull();
-  });
-
-  it("reports refresh failures while leaving the gate unknown", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockRejectedValueOnce(new Error("terms unavailable"));
-    const h = renderTerms();
-
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase);
-    });
-
-    expect(h.result.current.status).toBe("unknown");
-    expect(h.onError).toHaveBeenCalledWith("terms unavailable");
-  });
-
-  it("makes an accepted status unknown immediately when the account changes", async () => {
-    vi.mocked(hasAcceptedCurrentTerms)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
-    const h = renderTerms();
-
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase);
-    });
-    expect(h.result.current.status).toBe("accepted");
-
-    h.rerender({ currentUserId: "user-b" });
-    expect(h.result.current.status).toBe("unknown");
-
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase, { showModal: false });
-    });
-    expect(h.result.current.status).toBe("required");
-  });
-
-  it("ignores a terms result that settles after the account changes", async () => {
-    let resolveAccepted!: (accepted: boolean) => void;
-    vi.mocked(hasAcceptedCurrentTerms).mockReturnValueOnce(
-      new Promise<boolean>((resolve) => {
-        resolveAccepted = resolve;
-      }),
-    );
-    const h = renderTerms();
-    let refreshPromise!: Promise<boolean>;
-
-    act(() => {
-      refreshPromise = h.result.current.refresh(fakeSupabase);
-    });
-    h.rerender({ currentUserId: "user-b" });
-    expect(h.result.current.status).toBe("unknown");
-
-    await act(async () => {
-      resolveAccepted(true);
-      await refreshPromise;
-    });
-
-    expect(h.result.current.status).toBe("unknown");
-    expect(h.onError).not.toHaveBeenCalled();
-  });
-
-  it("does not let another account consume a pending password acceptance", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
-    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
-    const h = renderTerms();
-
-    await act(async () => {
-      await h.result.current.markPendingAcceptance({ userId: "user-a" });
-    });
-    h.rerender({ currentUserId: "user-b" });
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase, { showModal: false });
-    });
-
-    expect(h.result.current.status).toBe("required");
-    expect(acceptCurrentTerms).not.toHaveBeenCalled();
-  });
-
-  it("requires the matching OAuth flow before consuming pending acceptance", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
-    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
-    const h = renderTerms();
-
-    await act(async () => {
-      await h.result.current.markPendingAcceptance({ oauthFlowId: "signup-flow-a" });
-    });
-    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).not.toContain(
-      "signup-flow-a",
-    );
-    window.history.replaceState({}, "", "/en?terms_acceptance_flow=signin-flow-b");
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase, { showModal: false });
-    });
-
-    expect(h.result.current.status).toBe("required");
-    expect(acceptCurrentTerms).not.toHaveBeenCalled();
-  });
-
-  it("clears a matching OAuth intent when the callback account already accepted", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(true);
-    const h = renderTerms();
-    window.history.replaceState({}, "", "/en?terms_acceptance_flow=signup-flow-a");
-    await act(async () => {
-      await h.result.current.markPendingAcceptance({ oauthFlowId: "signup-flow-a" });
-      await h.result.current.refresh(fakeSupabase, { showModal: false });
-    });
-
-    expect(h.result.current.status).toBe("accepted");
-    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).toBeNull();
-    expect(acceptCurrentTerms).not.toHaveBeenCalled();
-  });
-
-  it("lets the first callback account claim OAuth intent before its terms query settles", async () => {
-    let resolveAccountA!: (accepted: boolean) => void;
-    vi.mocked(hasAcceptedCurrentTerms)
-      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
-        resolveAccountA = resolve;
-      }))
-      .mockResolvedValueOnce(false);
-    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
-    const h = renderTerms();
-    window.history.replaceState({}, "", "/en?terms_acceptance_flow=shared-flow");
-    await act(async () => {
-      await h.result.current.markPendingAcceptance({ oauthFlowId: "shared-flow" });
-    });
-    let accountARefresh!: Promise<boolean>;
-    act(() => {
-      accountARefresh = h.result.current.refresh(fakeSupabase, { showModal: false });
-    });
-    await waitFor(() => expect(hasAcceptedCurrentTerms).toHaveBeenCalledTimes(1));
-    expect(window.sessionStorage.getItem("typst-cv-builder:pending-terms-acceptance")).toBeNull();
-
-    h.rerender({ currentUserId: "user-b" });
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase, { showModal: false });
-    });
-    expect(h.result.current.status).toBe("required");
-
-    await act(async () => {
-      resolveAccountA(false);
-      await accountARefresh;
-    });
-    expect(h.result.current.status).toBe("required");
-    expect(acceptCurrentTerms).not.toHaveBeenCalled();
-  });
-
-  it("keeps a newer recorded acceptance when an older refresh settles last", async () => {
-    let resolveRefresh!: (accepted: boolean) => void;
-    vi.mocked(hasAcceptedCurrentTerms).mockReturnValueOnce(
-      new Promise<boolean>((resolve) => {
-        resolveRefresh = resolve;
-      }),
-    );
-    vi.mocked(acceptCurrentTerms).mockResolvedValue(undefined);
-    const h = renderTerms();
-    let oldRefresh!: Promise<boolean>;
-
-    act(() => {
-      oldRefresh = h.result.current.refresh(fakeSupabase);
-    });
-    await act(async () => {
-      await h.result.current.recordAccepted(fakeSupabase, "user-a");
-    });
-    expect(h.result.current.status).toBe("accepted");
-
-    await act(async () => {
-      resolveRefresh(false);
-      await oldRefresh;
-    });
-
-    expect(h.result.current.status).toBe("accepted");
-    expect(h.result.current.modalOpen).toBe(false);
-  });
-
-  it("does not let an older acceptance clear a newer acceptance's busy state", async () => {
-    vi.mocked(hasAcceptedCurrentTerms).mockResolvedValueOnce(false);
-    let resolveFirst!: () => void;
-    let resolveSecond!: () => void;
-    vi.mocked(acceptCurrentTerms)
-      .mockReturnValueOnce(new Promise<void>((resolve) => {
-        resolveFirst = resolve;
-      }))
-      .mockReturnValueOnce(new Promise<void>((resolve) => {
-        resolveSecond = resolve;
-      }));
-    const h = renderTerms();
-    await act(async () => {
-      await h.result.current.refresh(fakeSupabase);
-    });
-    act(() => h.result.current.setModalChecked(true));
-
-    let firstAcceptance!: Promise<boolean>;
-    let secondAcceptance!: Promise<boolean>;
-    act(() => {
-      firstAcceptance = h.result.current.accept();
-    });
-    act(() => {
-      secondAcceptance = h.result.current.accept();
-    });
-
-    await act(async () => {
-      resolveFirst();
-      await firstAcceptance;
-    });
-    expect(h.result.current.accepting).toBe(true);
-
-    await act(async () => {
-      resolveSecond();
-      await secondAcceptance;
-    });
-    expect(h.result.current.accepting).toBe(false);
-    expect(h.result.current.status).toBe("accepted");
+    expect(result.current.terms).toBeNull();
+    expect(result.current.status).toBe("unknown");
   });
 });

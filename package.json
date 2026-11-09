@@ -1,23 +1,24 @@
 {
   "name": "typst-cv-template-workspace",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
     "build:server": "pnpm --filter web build:server",
     "build:static": "pnpm --filter web build:static",
-    "test": "pnpm --filter web test",
+    "test": "pnpm --filter web test && node --test scripts/*.test.ts",
     "test:integration": "pnpm --filter web test:integration",
     "metrics:ai": "pnpm --filter web metrics:ai",
     "lint": "pnpm --filter web lint",
-    "typecheck": "pnpm --filter web typecheck",
+    "typecheck": "pnpm --filter web typecheck && pnpm --filter web exec tsc -p ../scripts/tsconfig.json",
     "sync:typst-assets": "pnpm --filter web sync:typst-assets",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
-    "supabase:reset": "supabase db reset"
+    "supabase:reset": "supabase db reset --local --no-seed"
   },
   "devDependencies": {
-    "supabase": "^2.109.0"
+    "supabase": "2.109.0"
   }
 }

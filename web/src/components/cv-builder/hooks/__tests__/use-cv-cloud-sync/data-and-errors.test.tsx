@@ -2,16 +2,9 @@
 
 import { act } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-
 import { cloneCvData } from "@/lib/cv/cv-utils";
 import { sampleCvDataEn } from "@/lib/cv/sample-data";
-
-import {
-  cloudSummary,
-  mockActiveDocumentQuery,
-  renderCloudSync,
-} from "./harness";
-
+import { cloudSummary, mockActiveDocumentQuery, renderCloudSync } from "./harness";
 describe("useCvCloudSync data and error handling", () => {
   it("lets the newest same-user refresh win when requests settle in reverse order", async () => {
     let rejectFirst!: (error: Error) => void;
@@ -19,29 +12,30 @@ describe("useCvCloudSync data and error handling", () => {
     const first = new Promise<void>((_resolve, reject) => {
       rejectFirst = reject;
     });
-    const second = new Promise<void>((resolve) => {
+    const second = new Promise<void>(resolve => {
       resolveSecond = resolve;
     });
-    const h = renderCloudSync({ sessionInitialized: false });
-    h.refetchDocuments
-      .mockReturnValueOnce(first)
-      .mockReturnValueOnce(second);
+    const h = renderCloudSync({
+      sessionInitialized: false
+    });
+    h.refetchDocuments.mockReturnValueOnce(first).mockReturnValueOnce(second);
     let firstRefresh!: Promise<void>;
     let secondRefresh!: Promise<void>;
-
     act(() => {
-      firstRefresh = h.hook.result.current.refreshCloudDocuments({ skipTermsCheck: true });
+      firstRefresh = h.hook.result.current.refreshCloudDocuments({
+        skipTermsCheck: true
+      });
     });
     act(() => {
-      secondRefresh = h.hook.result.current.refreshCloudDocuments({ skipTermsCheck: true });
+      secondRefresh = h.hook.result.current.refreshCloudDocuments({
+        skipTermsCheck: true
+      });
     });
-
     await act(async () => {
       resolveSecond();
       await secondRefresh;
     });
     expect(h.setCloudStatus).toHaveBeenLastCalledWith("ready");
-
     await act(async () => {
       rejectFirst(new Error("older refresh failed"));
       await firstRefresh;
@@ -49,36 +43,116 @@ describe("useCvCloudSync data and error handling", () => {
     expect(h.setCloudStatus).toHaveBeenLastCalledWith("ready");
     expect(h.onError).not.toHaveBeenCalled();
   });
-
   it("loads a restored draft while retaining server data as the baseline", () => {
     const serverData = cloneCvData(sampleCvDataEn);
     const draft = cloneCvData(sampleCvDataEn);
     draft.header.name = "Unsaved draft";
-    mockActiveDocumentQuery({ data: { ...cloudSummary("cloud-1"), data: serverData }, error: null });
-    const restored = renderCloudSync({ documentsData: [cloudSummary("cloud-1")], draft });
-
-    expect(restored.upsertDocumentSummary).toHaveBeenCalledWith(expect.objectContaining({ id: "cloud-1" }));
-    expect(restored.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", draft, { baselineData: serverData });
+    mockActiveDocumentQuery({
+      data: {
+        ...cloudSummary("cloud-1"),
+        data: serverData
+      },
+      error: null
+    });
+    const restored = renderCloudSync({
+      documentsData: [cloudSummary("cloud-1")],
+      draft
+    });
+    expect(restored.upsertDocumentSummary).toHaveBeenCalledWith(expect.objectContaining({
+      id: "cloud-1"
+    }));
+    expect(restored.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", draft, {
+      baselineData: serverData,
+      cloudRevision: "1"
+    });
     expect(restored.clearDraft).not.toHaveBeenCalled();
   });
-
   it("drops a draft that is identical to the server document", () => {
     const serverData = cloneCvData(sampleCvDataEn);
-    mockActiveDocumentQuery({ data: { ...cloudSummary("cloud-1"), data: serverData }, error: null });
-    const h = renderCloudSync({ documentsData: [cloudSummary("cloud-1")], draft: serverData });
-
+    mockActiveDocumentQuery({
+      data: {
+        ...cloudSummary("cloud-1"),
+        data: serverData
+      },
+      error: null
+    });
+    const h = renderCloudSync({
+      documentsData: [cloudSummary("cloud-1")],
+      draft: serverData
+    });
     expect(h.clearDraft).toHaveBeenCalledWith("cloud-1");
-    expect(h.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", serverData, { baselineData: serverData });
+    expect(h.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", serverData, {
+      baselineData: serverData,
+      cloudRevision: "1"
+    });
   });
-
   it("reports active-query and explicit refresh failures", async () => {
-    mockActiveDocumentQuery({ data: undefined, error: new Error("query failed") });
-    const h = renderCloudSync({ sessionInitialized: false, refetchError: new Error("refresh failed") });
-
+    mockActiveDocumentQuery({
+      data: undefined,
+      error: new Error("query failed")
+    });
+    const h = renderCloudSync({
+      sessionInitialized: false,
+      refetchError: new Error("refresh failed")
+    });
     expect(h.onError).toHaveBeenCalledWith("query failed");
     await act(async () => h.hook.result.current.refreshCloudDocuments());
-
     expect(h.setCloudStatus).toHaveBeenCalledWith("error");
     expect(h.onError).toHaveBeenCalledWith("refresh failed");
+  });
+  it("adopts the selected cloud body after startup restores only its active ID", () => {
+    const serverData = cloneCvData(sampleCvDataEn);
+    serverData.header.name = "Saved cloud CV";
+    mockActiveDocumentQuery({
+      data: {
+        ...cloudSummary("cloud-1"),
+        data: serverData
+      },
+      error: null
+    });
+    const h = renderCloudSync({
+      activeDocumentId: "cloud-1",
+      loadedDocumentId: null,
+      documentsData: [cloudSummary("cloud-1")],
+      sessionInitialized: false
+    });
+    expect(h.loadDataIntoForm).toHaveBeenCalledWith("cloud-1", serverData, {
+      baselineData: serverData,
+      cloudRevision: "1"
+    });
+  });
+  it("preserves an already adopted form when a background refetch changes its body", () => {
+    const serverData = cloneCvData(sampleCvDataEn);
+    mockActiveDocumentQuery({
+      data: {
+        ...cloudSummary("cloud-1"),
+        data: serverData
+      },
+      error: null
+    });
+    const h = renderCloudSync({
+      activeDocumentId: "cloud-1",
+      loadedDocumentId: "cloud-1",
+      documentsData: [cloudSummary("cloud-1")],
+      sessionInitialized: false
+    });
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.loadDraft).not.toHaveBeenCalled();
+  });
+  it("does not adopt stale query data after another document was selected", () => {
+    mockActiveDocumentQuery({
+      data: {
+        ...cloudSummary("cloud-1"),
+        data: cloneCvData(sampleCvDataEn)
+      },
+      error: null
+    });
+    const h = renderCloudSync({
+      activeDocumentId: "cloud-2",
+      loadedDocumentId: null,
+      documentsData: [cloudSummary("cloud-1"), cloudSummary("cloud-2")],
+      sessionInitialized: false
+    });
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
   });
 });

@@ -1,193 +1,93 @@
+import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
-
-import {
-  AI_LEGAL_BUNDLE_VERSION,
-  AI_TERMS_VERSION,
-  TERMS_VERSION,
-} from "@/content/legal";
-import {
-  parseLegalDisplayV2,
-  type LegalDisplayV2,
-} from "./legal-display-v2";
-
-export type LegalDocumentKey = "terms" | "ai_terms";
-
-/**
- * Explicit bundle-to-document mapping for versions this build can display
- * and ask the user to accept. Historical AI terms are intentionally absent:
- * the multi-provider bundle is a material change and requires exact consent.
- */
-export const AI_LEGAL_BUNDLE_TERMS_VERSION_MAP = Object.freeze({
-  [AI_LEGAL_BUNDLE_VERSION]: AI_TERMS_VERSION,
-} as const);
-
-export type KnownAiLegalBundleVersion =
-  keyof typeof AI_LEGAL_BUNDLE_TERMS_VERSION_MAP;
-
-export function parseKnownAiLegalBundleVersion(
-  value: unknown,
-): KnownAiLegalBundleVersion {
-  if (
-    typeof value !== "string" ||
-    !Object.hasOwn(AI_LEGAL_BUNDLE_TERMS_VERSION_MAP, value) ||
-    AI_LEGAL_BUNDLE_TERMS_VERSION_MAP[
-      value as KnownAiLegalBundleVersion
-    ] !== value
-  ) {
-    throw new Error("Unknown AI legal bundle version.");
-  }
-  return value as KnownAiLegalBundleVersion;
+import { bindSupabaseUser } from "@/lib/supabase/user-client";
+import { clientWriteContext, requireAppContext } from "@/lib/supabase/app-context";
+import { legalDisplaySchema, legalDocumentSchema, legalIdSchema, type LegalDisplay, type LegalDocument } from "./legal-display";
+export { legalDocumentSchema } from "./legal-display";
+export const legalCurrentSchema = z.strictObject({
+  documents: z.array(legalDocumentSchema)
+});
+export type CurrentLegal = z.infer<typeof legalCurrentSchema>;
+export type CurrentTerms = LegalDocument;
+export async function getCurrentLegal(supabase: SupabaseClient): Promise<CurrentLegal> {
+  await requireAppContext(supabase);
+  const {
+    data,
+    error
+  } = await supabase.rpc("legal_current");
+  if (error) throw error;
+  return legalCurrentSchema.parse(data);
 }
-
-const acceptanceColumns = "accepted_at,version";
-
-export async function hasAcceptedLegalDocument(
-  supabase: SupabaseClient,
-  documentKey: LegalDocumentKey,
-  version: string,
-) {
-  const { data, error } = await supabase
-    .from("user_terms_acceptances")
-    .select(acceptanceColumns)
-    .eq("document_key", documentKey)
-    .eq("version", version)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
+export async function getLegalDocument(supabase: SupabaseClient, target: Pick<LegalDocument, "external_id" | "document_audit_id" | "content_digest">): Promise<LegalDocument> {
+  await requireAppContext(supabase);
+  const {
+    data,
+    error
+  } = await supabase.rpc("legal_document_read", {
+    p_input: target
+  });
+  if (error) throw error;
+  const document = legalDocumentSchema.parse(data);
+  if (document.external_id !== target.external_id || document.document_audit_id !== target.document_audit_id || document.content_digest !== target.content_digest) throw new Error("Invalid legal target");
+  return document;
+}
+export async function hasAcceptedTerms(supabase: SupabaseClient, target: CurrentTerms, expectedUserId?: string) {
+  const userId = expectedUserId ?? (await supabase.auth.getSession()).data.session?.user.id;
+  if (!userId) throw new Error("UNAUTHORIZED");
+  const bound = await bindSupabaseUser(supabase, userId);
+  const {
+    data,
+    error
+  } = await bound.from("legal_my_acceptances").select("document_id,document_audit_id,content_digest").eq("document_id", target.document_id).eq("content_digest", target.content_digest).maybeSingle();
+  if (error) throw error;
   return Boolean(data);
 }
-
-export async function acceptLegalDocument(
-  supabase: SupabaseClient,
-  documentKey: LegalDocumentKey,
-  version: string,
-) {
-  const { error } = await supabase
-    .from("user_terms_acceptances")
-    .upsert(
-      {
-        document_key: documentKey,
-        version,
-      },
-      { ignoreDuplicates: true, onConflict: "user_id,document_key,version" },
-    );
-
-  if (error) {
-    throw error;
-  }
-}
-
-export function hasAcceptedCurrentTerms(supabase: SupabaseClient) {
-  return hasAcceptedLegalDocument(supabase, "terms", TERMS_VERSION);
-}
-
-export function acceptCurrentTerms(supabase: SupabaseClient) {
-  return acceptLegalDocument(supabase, "terms", TERMS_VERSION);
-}
-
-export function hasAcceptedCurrentAiTerms(supabase: SupabaseClient) {
-  return hasAcceptedAiLegalBundle(supabase, AI_TERMS_VERSION);
-}
-
-export function acceptCurrentAiTerms(
-  supabase: SupabaseClient,
-  expectedUserId: string,
-) {
-  return acceptAiLegalBundle(supabase, AI_TERMS_VERSION, expectedUserId);
-}
-
-export async function hasAcceptedAiLegalBundle(
-  supabase: SupabaseClient,
-  legalBundleVersion: unknown,
-) {
-  return hasAcceptedLegalDocument(
-    supabase,
-    "ai_terms",
-    parseKnownAiLegalBundleVersion(legalBundleVersion),
-  );
-}
-
-export async function acceptAiLegalBundle(
-  supabase: SupabaseClient,
-  legalBundleVersion: unknown,
-  expectedUserId: string,
-) {
-  const version = parseKnownAiLegalBundleVersion(legalBundleVersion);
-  if (expectedUserId.length === 0) {
-    throw new Error("AI terms acceptance requires an expected user ID.");
-  }
-
-  // Capture and verify the authenticated principal immediately before the
-  // write. The explicit user_id plus RLS closes a later account-switch race:
-  // B cannot write A's row, and A's operation never writes B's row.
-  const { data, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) throw sessionError;
-  if (data.session?.user.id !== expectedUserId) {
-    throw new Error("Authenticated user changed before AI terms acceptance.");
-  }
-
-  const { error } = await supabase
-    .from("user_terms_acceptances")
-    .upsert(
-      {
-        user_id: expectedUserId,
-        document_key: "ai_terms",
-        version,
-      },
-      { ignoreDuplicates: true, onConflict: "user_id,document_key,version" },
-    );
-
+export async function acceptCurrentTerms(supabase: SupabaseClient, target?: CurrentTerms, expectedUserId?: string) {
+  if (!target || target.kind !== "TERMS") throw new Error("Terms must be displayed before acceptance");
+  if (!expectedUserId) throw new Error("Expected acceptance account is required");
+  const bound = await bindSupabaseUser(supabase, expectedUserId);
+  const context = await clientWriteContext(supabase);
+  const {
+    data,
+    error
+  } = await bound.rpc("legal_accept_document", {
+    p_input: {
+      ...context,
+      document_id: target.document_id,
+      document_audit_id: target.document_audit_id
+    }
+  });
   if (error) throw error;
+  z.strictObject({
+    accepted: z.literal(true),
+    acceptance_audit_id: legalIdSchema
+  }).parse(data);
 }
-
-/**
- * Successor consent writes the exact sealed disclosure identity through an
- * authenticated RPC. The DB rechecks the current bundle, user, display key
- * and content digest and also enforces the same tuple at request insertion.
- */
-export async function acceptAiLegalDisclosureV2(
-  supabase: SupabaseClient,
-  input: {
-    expectedUserId: string;
-    legalDisplay: LegalDisplayV2;
-  },
-): Promise<void> {
-  if (input.expectedUserId.length === 0) {
-    throw new Error("AI terms acceptance requires an expected user ID.");
-  }
-  const legalDisplay = parseLegalDisplayV2(input.legalDisplay);
-  const { data: sessionData, error: sessionError } =
-    await supabase.auth.getSession();
-  if (sessionError) throw sessionError;
-  if (sessionData.session?.user.id !== input.expectedUserId) {
-    throw new Error("Authenticated user changed before AI terms acceptance.");
-  }
-
-  const { data, error } = await supabase.rpc(
-    "accept_ai_legal_disclosure_v2",
-    {
-      p_expected_user_id: input.expectedUserId,
-      p_legal_bundle_version: legalDisplay.legalBundleVersion,
-      p_display_disclosure_key: legalDisplay.displayDisclosureKey,
-      p_content_sha256: legalDisplay.contentSha256,
-    },
-  );
+export async function acceptAiLegalDisclosure(supabase: SupabaseClient, input: {
+  expectedUserId: string;
+  legalDisplay: LegalDisplay;
+}): Promise<void> {
+  const display = legalDisplaySchema.parse(input.legalDisplay);
+  const bound = await bindSupabaseUser(supabase, input.expectedUserId);
+  const context = await clientWriteContext(supabase);
+  const target = (doc: LegalDocument) => ({
+    document_id: doc.document_id,
+    document_audit_id: doc.document_audit_id
+  });
+  const {
+    data,
+    error
+  } = await bound.rpc("legal_accept_ai", {
+    p_input: {
+      ...context,
+      common: target(display.common),
+      provider: target(display.provider)
+    }
+  });
   if (error) throw error;
-  if (
-    typeof data !== "object" ||
-    data === null ||
-    Array.isArray(data) ||
-    Object.keys(data).sort().join(",") !==
-      "accepted,contentSha256,displayDisclosureKey,legalBundleVersion,schemaVersion" ||
-    data.schemaVersion !== "ai_legal_acceptance_v2" ||
-    data.accepted !== true ||
-    data.legalBundleVersion !== legalDisplay.legalBundleVersion ||
-    data.displayDisclosureKey !== legalDisplay.displayDisclosureKey ||
-    data.contentSha256 !== legalDisplay.contentSha256
-  ) {
-    throw new Error("Invalid AI legal acceptance receipt.");
-  }
+  z.strictObject({
+    accepted: z.literal(true),
+    common_acceptance_audit_id: legalIdSchema,
+    provider_acceptance_audit_id: legalIdSchema
+  }).parse(data);
 }

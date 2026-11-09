@@ -1,0 +1,97 @@
+{
+  "date": "2026-11-09",
+  "source_sha": "1f39b854f0c3f5729591c39fdb9fa5fb193cdfda",
+  "prior_reviewed_head": "f5994d09a2eb8119ca3f31414b6755a7a01ea822",
+  "contract_code": "cv_app_db_2",
+  "baseline_files": 15,
+  "baseline_digest": "74138cc9c03c706e41a2d4c75968c71bff2ba4a10dd14e2758964d853adde1ad",
+  "migration_manifest_digest": "74138cc9c03c706e41a2d4c75968c71bff2ba4a10dd14e2758964d853adde1ad",
+  "findings": [
+    {
+      "id": "AI-DEFAULT-FALLBACK-01",
+      "correction": "Unavailable declared default stays null across SQL, BFF and fake runtime; other candidates require explicit selection.",
+      "regression": "Old SQL 12 pass/2 fail; corrected SQL 14 pass. Actual availability-to-hook initial selection changes from implicit nondefault to null."
+    },
+    {
+      "id": "LEGAL-MARKDOWN-RPC-01",
+      "correction": "Private immutable invoker validators enforce the strict reader contract in the existing insert/update trigger, including both bodies, Unicode whitespace, UTF-16 bounds, title/recipient and date metadata.",
+      "regression": "Old direct authenticated-role RPC accepts malformed bodies and two integration cases fail; corrected SQL30 and both integration cases pass, including atomic rejection and exact strict DTO roundtrip."
+    }
+  ],
+  "validation": {
+    "web_unit": {
+      "files": 90,
+      "tests": 1520,
+      "passed": true
+    },
+    "tool_unit": {
+      "tests": 36,
+      "passed": true
+    },
+    "sql": {
+      "method": "isolated_fresh_postgres_platform_metadata_clone",
+      "files": 8,
+      "assertions": 173,
+      "complete_15_migration_chain_applied": true,
+      "source_commands_read_only": true,
+      "cleanup_passed": true,
+      "passed": true
+    },
+    "auth_api_suite": {
+      "files": 6,
+      "tests": 21,
+      "passed": true,
+      "new_role_rpc_cases": 2,
+      "new_role_rpc_session": "Explicit synthetic valid Auth sessions and actual authenticated SQL role/public RPC; not GoTrue sign-in evidence."
+    },
+    "shared_corpus": {
+      "hrefs": 97,
+      "bodies": 126,
+      "metadata": 20,
+      "sql_reader_mismatches": 0
+    },
+    "typecheck": "PASS",
+    "eslint": "PASS",
+    "diff_check": "PASS"
+  },
+  "local_preview": {
+    "reset": false,
+    "functions_synchronized": 5,
+    "business_rows_history_rpc_trigger_metadata_and_schema_acl_unchanged": true,
+    "account_and_configuration_preserved": true,
+    "ai_enabled_preserved": true
+  },
+  "current_candidate_ci": "Not yet executed at this snapshot; previous-head CI/build/browser/G3 evidence is not relabelled.",
+  "scope": {
+    "hosted_changes": false,
+    "paid_provider_calls": 0,
+    "merged": false,
+    "released": false
+  },
+  "files": [
+    {
+      "path": "supabase/migrations/20261108123100_legal_functions.sql",
+      "sha256": "f3c762e5287be585f955da7999f9e6f7b6e26e714d46f0e1205e212e9cae51fc"
+    },
+    {
+      "path": "supabase/migrations/20261108123105_ai_functions.sql",
+      "sha256": "9beb3cd8731c2d0c1c0021a0b72e5d2f8914383265875dc04cfcb761eee099a4"
+    },
+    {
+      "path": "web/src/lib/legal/markdown.ts",
+      "sha256": "6ba34155d06bb0a122b81dab270cbb1bfd037e38f65b4520cdc2d11968d3cd5e"
+    },
+    {
+      "path": "web/src/lib/legal/legal-display.ts",
+      "sha256": "3d52de37d8244321ad9e7662d658b896ebb0c1caabb292d0e24dcc6b8be4f256"
+    },
+    {
+      "path": "web/src/server/ai/availability.ts",
+      "sha256": "1a8b356fecdc17f05f44503f8dc8580443704c9eb54324978e59684d33293dee"
+    },
+    {
+      "path": "supabase/test-fixtures/legal-markdown-corpus.json",
+      "sha256": "d72a7f38081a9bcd59dcfba75ab183fa919da3c79d43cdacfc51ed60244c77aa"
+    }
+  ]
+}

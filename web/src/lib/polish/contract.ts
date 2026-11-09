@@ -1,10 +1,8 @@
 /**
  * Shared API contract for the /api/polish route family.
  *
- * Source of truth: tmp/ai-polish-roadmap.md —「架构决策：API 契约」and
- * 「架构决策：润色粒度与能力矩阵」. Imported by BOTH the client (scope
- * builder / dialog) and the server (route handler); keep it free of
- * Node/DOM-specific APIs. Frozen after checkpoint CP1.
+ * Imported by both client scope/dialog code and server route handlers;
+ * keep it free of Node/DOM-specific APIs.
  *
  * Every wire object uses z.strictObject: unknown keys are REJECTED, never
  * silently stripped, so local-only fields (RHF `path`, header PII, …) can
@@ -13,7 +11,7 @@
 
 import { z } from "zod";
 import { ORDERED_SECTION_IDS, type CvSectionId } from "@/lib/cv/schema";
-import { legalDisplayV2Schema } from "@/lib/legal/legal-display-v2";
+import { legalDisplaySchema } from "@/lib/legal/legal-display";
 
 // ---------------------------------------------------------------------------
 // Polishable sections, field kinds, and the capability matrix
@@ -22,17 +20,9 @@ import { legalDisplayV2Schema } from "@/lib/legal/legal-display-v2";
 export const POLISH_GRANULARITIES = ["item", "entry", "group", "section"] as const;
 export type PolishGranularity = (typeof POLISH_GRANULARITIES)[number];
 
-/** Free-text field kinds that v1 is allowed to polish (whitelist). */
-export const POLISHABLE_FIELD_KINDS = [
-  "profile",
-  "skill_body",
-  "experience_bullet",
-  "education_bullet",
-  "research_bullet",
-  "additional_body",
-] as const;
+/** Free-text field kinds accepted by the current polish contract. */
+export const POLISHABLE_FIELD_KINDS = ["profile", "skill_body", "experience_bullet", "education_bullet", "research_bullet", "additional_body"] as const;
 export type PolishableFieldKind = (typeof POLISHABLE_FIELD_KINDS)[number];
-
 export interface PolishSectionCapability {
   /** The only field kind this section's polishable items may have. */
   readonly kind: PolishableFieldKind;
@@ -41,7 +31,7 @@ export interface PolishSectionCapability {
 }
 
 /**
- * Editing-scope capability per section (roadmap capability matrix):
+ * Editing-scope capability per section:
  *
  * - profile: item + entry (section-level is identical to entry-level, so the
  *   UI only offers two levels)
@@ -52,25 +42,34 @@ export interface PolishSectionCapability {
  * - publications: absent on purpose — bibliographic facts, never polishable
  */
 export const POLISH_CAPABILITY_MATRIX = {
-  profile: { kind: "profile", granularities: ["item", "entry"] },
-  skills: { kind: "skill_body", granularities: ["item", "section"] },
+  profile: {
+    kind: "profile",
+    granularities: ["item", "entry"]
+  },
+  skills: {
+    kind: "skill_body",
+    granularities: ["item", "section"]
+  },
   experience: {
     kind: "experience_bullet",
-    granularities: ["item", "entry", "group", "section"],
+    granularities: ["item", "entry", "group", "section"]
   },
-  education: { kind: "education_bullet", granularities: ["item", "entry", "section"] },
-  research: { kind: "research_bullet", granularities: ["item", "entry", "section"] },
-  additional: { kind: "additional_body", granularities: ["item", "section"] },
+  education: {
+    kind: "education_bullet",
+    granularities: ["item", "entry", "section"]
+  },
+  research: {
+    kind: "research_bullet",
+    granularities: ["item", "entry", "section"]
+  },
+  additional: {
+    kind: "additional_body",
+    granularities: ["item", "section"]
+  }
 } as const satisfies Partial<Record<CvSectionId, PolishSectionCapability>>;
-
 export type PolishableSectionId = keyof typeof POLISH_CAPABILITY_MATRIX;
-
-export function getSectionCapability(
-  sectionId: CvSectionId,
-): PolishSectionCapability | undefined {
-  return (POLISH_CAPABILITY_MATRIX as Partial<Record<CvSectionId, PolishSectionCapability>>)[
-    sectionId
-  ];
+export function getSectionCapability(sectionId: CvSectionId): PolishSectionCapability | undefined {
+  return (POLISH_CAPABILITY_MATRIX as Partial<Record<CvSectionId, PolishSectionCapability>>)[sectionId];
 }
 
 // ---------------------------------------------------------------------------
@@ -94,14 +93,14 @@ export const MAX_STYLE_INSTRUCTION_CHARS = 200;
 export const ITEM_ID_PATTERN = /^[a-zA-Z0-9_-]{1,32}$/;
 
 /**
- * Output budget math (roadmap「总输出预算」). The AGGREGATE cap is
+ * Output budget math. The aggregate cap is
  * authoritative; per-item caps are sanity bounds:
  *
  * - Input: sum(items.text) ≤ MAX_TARGET_CHARS.
  * - Per result: polished.length ≤ min(MAX_POLISHED_ITEM_CHARS,
  *   ceil(original × 1.5) + PER_ITEM_POLISHED_SLACK_CHARS). The request-aware
  *   part (×1.5 + slack against the original text) is enforced by the
- *   orchestrator validator (unit 2.2); the absolute cap
+ *   request-aware output validator; the absolute cap
  *   MAX_POLISHED_ITEM_CHARS is enforced by polishSuccessResponseSchema.
  * - Aggregate (authoritative): sum(polished.length) ≤
  *   MAX_TOTAL_POLISHED_CHARS = MAX_TARGET_CHARS × 1.5, enforced by
@@ -116,17 +115,17 @@ export const ITEM_ID_PATTERN = /^[a-zA-Z0-9_-]{1,32}$/;
  *   model tokens. POLISH_MAX_OUTPUT_TOKENS covers the valid worst case at
  *   ≈1 token per CJK character with real headroom; a pathological response
  *   that still overflows surfaces as finishReason "length" and is handled as
- *   ordinary invalid output / retry (unit 2.2), never as an impossible state.
+ *   ordinary invalid output eligible for retry.
  *   max_tokens per request is computed dynamically by
- *   computePolishMaxOutputTokens (single source for units 2.1/2.2), so
+ *   computePolishMaxOutputTokens, shared by request preparation and validation, so
  *   oversized requests can neither truncate valid output nor blow up cost.
  */
 export const MAX_TARGET_CHARS = 5000;
 export const MAX_REFERENCE_CHARS = 10000;
 export const MAX_TOTAL_POLISHED_CHARS = 7500;
-/** Absolute per-result cap on polished length (roadmap: min(2400, …)). */
+/** Absolute per-result cap on polished length. */
 export const MAX_POLISHED_ITEM_CHARS = 2400;
-/** Per-result slack on top of the ×1.5 polish factor (roadmap: +40). */
+/** Per-result slack on top of the ×1.5 polish factor. */
 export const PER_ITEM_POLISHED_SLACK_CHARS = 40;
 /**
  * Worst-case JSON structure of the model's raw response
@@ -144,25 +143,20 @@ export const POLISH_MAX_OUTPUT_TOKENS = 10240;
  * same formula against the actual original text).
  */
 export function maxPolishedCharsForItem(originalChars: number): number {
-  return Math.min(
-    MAX_POLISHED_ITEM_CHARS,
-    Math.ceil(originalChars * 1.5) + PER_ITEM_POLISHED_SLACK_CHARS,
-  );
+  return Math.min(MAX_POLISHED_ITEM_CHARS, Math.ceil(originalChars * 1.5) + PER_ITEM_POLISHED_SLACK_CHARS);
 }
 
 /**
- * Dynamic max_tokens for a request — the single source of truth so units
- * 2.1/2.2 cannot reinterpret the formula independently:
+ * Dynamic output-token budget shared by request preparation and validation:
  *
  *   sum of per-item valid ceilings (slack INCLUDED — many short items make
  *   the +40 dominate the ×1.5 factor) → clamped to the aggregate cap →
  *   plus the response envelope → clamped to POLISH_MAX_OUTPUT_TOKENS.
  */
-export function computePolishMaxOutputTokens(items: ReadonlyArray<{ text: string }>): number {
-  const maxContentChars = Math.min(
-    MAX_TOTAL_POLISHED_CHARS,
-    items.reduce((sum, item) => sum + maxPolishedCharsForItem(item.text.length), 0),
-  );
+export function computePolishMaxOutputTokens(items: ReadonlyArray<{
+  text: string;
+}>): number {
+  const maxContentChars = Math.min(MAX_TOTAL_POLISHED_CHARS, items.reduce((sum, item) => sum + maxPolishedCharsForItem(item.text.length), 0));
   return Math.min(POLISH_MAX_OUTPUT_TOKENS, maxContentChars + POLISH_RESPONSE_ENVELOPE_CHARS);
 }
 
@@ -179,308 +173,219 @@ const itemIdSchema = z.string().regex(ITEM_ID_PATTERN);
  * and a real model would have nothing to polish. The UI's stricter <10
  * chars rule stays a UX policy on top of this wire floor.
  */
-const nonBlankText = (max: number) =>
-  z
-    .string()
-    .max(max)
-    .refine((value) => value.trim().length > 0, { message: "text must not be blank" });
-
+const nonBlankText = (max: number) => z.string().max(max).refine(value => value.trim().length > 0, {
+  message: "text must not be blank"
+});
 export const polishItemSchema = z.strictObject({
   id: itemIdSchema,
   kind: z.enum(POLISHABLE_FIELD_KINDS),
-  text: nonBlankText(MAX_ITEM_CHARS),
+  text: nonBlankText(MAX_ITEM_CHARS)
 });
-
 export const POLISH_REFERENCE_ROLES = ["scope_metadata", "sibling", "profile", "skill"] as const;
 export type PolishReferenceRole = (typeof POLISH_REFERENCE_ROLES)[number];
-
 export const polishReferenceSchema = z.strictObject({
   role: z.enum(POLISH_REFERENCE_ROLES),
   label: z.string().max(MAX_REFERENCE_LABEL_CHARS).optional(),
-  text: nonBlankText(MAX_REFERENCE_ITEM_CHARS),
+  text: nonBlankText(MAX_REFERENCE_ITEM_CHARS)
 });
-
 export const POLISH_CONTEXT_LEVELS = [0, 1, 2] as const;
-
 export const polishContextSchema = z.strictObject({
   level: z.union([z.literal(0), z.literal(1), z.literal(2)]),
-  references: z.array(polishReferenceSchema).max(MAX_REFERENCES),
+  references: z.array(polishReferenceSchema).max(MAX_REFERENCES)
 });
-
-export const POLISH_STYLE_PRESETS = [
-  "professional",
-  "concise",
-  "quantified",
-  "management",
-] as const;
+export const POLISH_STYLE_PRESETS = ["professional", "concise", "quantified", "management"] as const;
 export type PolishStylePreset = (typeof POLISH_STYLE_PRESETS)[number];
+export const polishRequestSchema = z.strictObject({
+  /** Dedup key generated per "confirm polish"; never sent to the provider. */
+  clientRequestId: z.uuid(),
+  granularity: z.enum(POLISH_GRANULARITIES),
+  sectionId: z.enum(ORDERED_SECTION_IDS),
+  language: z.enum(["zh", "en"]),
+  items: z.array(polishItemSchema).min(1).max(MAX_ITEMS),
+  context: polishContextSchema,
+  stylePreset: z.enum(POLISH_STYLE_PRESETS).optional(),
+  styleInstruction: z.string().max(MAX_STYLE_INSTRUCTION_CHARS).optional()
+}).superRefine((request, ctx) => {
+  const capability = getSectionCapability(request.sectionId);
+  if (!capability) {
+    // publications (and any future non-polishable section) is always rejected.
+    ctx.addIssue({
+      code: "custom",
+      path: ["sectionId"],
+      message: `section "${request.sectionId}" is not polishable`
+    });
+    return;
+  }
+  if (!capability.granularities.includes(request.granularity)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["granularity"],
+      message: `granularity "${request.granularity}" is not supported for section "${request.sectionId}"`
+    });
+  }
 
-export const polishRequestSchema = z
-  .strictObject({
-    /** Dedup key generated per "confirm polish"; never sent to the provider. */
-    clientRequestId: z.uuid(),
-    granularity: z.enum(POLISH_GRANULARITIES),
-    sectionId: z.enum(ORDERED_SECTION_IDS),
-    language: z.enum(["zh", "en"]),
-    items: z.array(polishItemSchema).min(1).max(MAX_ITEMS),
-    context: polishContextSchema,
-    stylePreset: z.enum(POLISH_STYLE_PRESETS).optional(),
-    styleInstruction: z.string().max(MAX_STYLE_INSTRUCTION_CHARS).optional(),
-  })
-  .superRefine((request, ctx) => {
-    const capability = getSectionCapability(request.sectionId);
-    if (!capability) {
-      // publications (and any future non-polishable section) is always rejected.
+  // "item" granularity targets exactly one item; entry/group/section stay
+  // variable-length because the wire format deliberately does not encode
+  // project/entry grouping.
+  if (request.granularity === "item" && request.items.length !== 1) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["items"],
+      message: "item granularity requires exactly one target item"
+    });
+  }
+  const seenIds = new Set<string>();
+  for (const [index, item] of request.items.entries()) {
+    if (item.kind !== capability.kind) {
       ctx.addIssue({
         code: "custom",
-        path: ["sectionId"],
-        message: `section "${request.sectionId}" is not polishable`,
+        path: ["items", index, "kind"],
+        message: `kind "${item.kind}" does not match section "${request.sectionId}" ("${capability.kind}" expected)`
       });
-      return;
     }
-
-    if (!capability.granularities.includes(request.granularity)) {
+    if (seenIds.has(item.id)) {
       ctx.addIssue({
         code: "custom",
-        path: ["granularity"],
-        message: `granularity "${request.granularity}" is not supported for section "${request.sectionId}"`,
+        path: ["items", index, "id"],
+        message: `duplicate item id "${item.id}"`
       });
     }
+    seenIds.add(item.id);
+  }
+  if (request.context.level === 0 && request.context.references.length > 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["context", "references"],
+      message: "references must be empty at context level 0"
+    });
+  }
+  const totalTargetChars = request.items.reduce((sum, item) => sum + item.text.length, 0);
+  if (totalTargetChars > MAX_TARGET_CHARS) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["items"],
+      message: `total target characters ${totalTargetChars} exceeds MAX_TARGET_CHARS (${MAX_TARGET_CHARS})`
+    });
+  }
 
-    // "item" granularity targets exactly one item; entry/group/section stay
-    // variable-length because the wire format deliberately does not encode
-    // project/entry grouping.
-    if (request.granularity === "item" && request.items.length !== 1) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["items"],
-        message: "item granularity requires exactly one target item",
-      });
-    }
-
-    const seenIds = new Set<string>();
-    for (const [index, item] of request.items.entries()) {
-      if (item.kind !== capability.kind) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["items", index, "kind"],
-          message: `kind "${item.kind}" does not match section "${request.sectionId}" ("${capability.kind}" expected)`,
-        });
-      }
-      if (seenIds.has(item.id)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["items", index, "id"],
-          message: `duplicate item id "${item.id}"`,
-        });
-      }
-      seenIds.add(item.id);
-    }
-
-    if (request.context.level === 0 && request.context.references.length > 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["context", "references"],
-        message: "references must be empty at context level 0",
-      });
-    }
-
-    const totalTargetChars = request.items.reduce((sum, item) => sum + item.text.length, 0);
-    if (totalTargetChars > MAX_TARGET_CHARS) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["items"],
-        message: `total target characters ${totalTargetChars} exceeds MAX_TARGET_CHARS (${MAX_TARGET_CHARS})`,
-      });
-    }
-
-    // Labels count toward the aggregate: they are prompt content too.
-    const totalReferenceChars = request.context.references.reduce(
-      (sum, reference) => sum + reference.text.length + (reference.label?.length ?? 0),
-      0,
-    );
-    if (totalReferenceChars > MAX_REFERENCE_CHARS) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["context", "references"],
-        message: `total reference characters ${totalReferenceChars} exceeds MAX_REFERENCE_CHARS (${MAX_REFERENCE_CHARS})`,
-      });
-    }
-  });
+  // Labels count toward the aggregate: they are prompt content too.
+  const totalReferenceChars = request.context.references.reduce((sum, reference) => sum + reference.text.length + (reference.label?.length ?? 0), 0);
+  if (totalReferenceChars > MAX_REFERENCE_CHARS) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["context", "references"],
+      message: `total reference characters ${totalReferenceChars} exceeds MAX_REFERENCE_CHARS (${MAX_REFERENCE_CHARS})`
+    });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Response schemas
 // ---------------------------------------------------------------------------
 
-/** Canonical non-negative PostgreSQL bigint text used by route generations. */
-export const polishConfigGenerationSchema = z
-  .string()
-  .regex(/^(0|[1-9][0-9]{0,18})$/)
-  .refine((value) => value.length < 19 || value <= "9223372036854775807", {
-    message: "config generation exceeds PostgreSQL bigint",
-  });
-
-/** Bounded ASCII identifier shared by legal/runtime/disclosure registries. */
-export const polishRouteIdentifierSchema = z
-  .string()
-  .regex(/^[a-z0-9][a-z0-9._-]{0,199}$/);
-
-/** Canonical lowercase UUID text used by every V2 route identity. */
-export const polishCanonicalUuidSchema = z
-  .string()
-  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-
-/**
- * Client assertion copied from one enabled availability snapshot. Selection
- * remains server-owned: price, policy, provider, model and endpoint are
- * deliberately absent and unknown keys are rejected.
- */
+/** Canonical positive PostgreSQL bigint IDs and CAS revisions. */
+export const polishDatabaseIdSchema = z.string().regex(/^[1-9][0-9]{0,18}$/).refine(value => BigInt(value) <= BigInt("9223372036854775807"));
 export const polishExpectedRouteSchema = z.strictObject({
-  schemaVersion: z.literal("expected_route_v1"),
-  configGeneration: polishConfigGenerationSchema,
-  profileVersionId: polishCanonicalUuidSchema,
-  legalBundleVersion: polishRouteIdentifierSchema,
-  runtimeContractId: polishRouteIdentifierSchema,
+  contract: z.literal("cv_app_db_2"),
+  databaseInstanceId: z.uuid(),
+  controlRevision: polishDatabaseIdSchema,
+  configId: polishDatabaseIdSchema,
+  configRevision: polishDatabaseIdSchema,
+  commonDocumentAuditId: polishDatabaseIdSchema,
+  providerDocumentAuditId: polishDatabaseIdSchema
 });
-
-/** Exact POST /api/polish wire body for the DB-authoritative V2 lifecycle. */
-export const polishPostRequestSchema = polishRequestSchema.safeExtend({
-  clientRequestId: polishCanonicalUuidSchema,
-  expectedRoute: polishExpectedRouteSchema,
+export const polishPostRequestSchema = polishRequestSchema.safeExtend({ expectedRoute: polishExpectedRouteSchema });
+export const polishAvailabilityConfigurationSchema = z.strictObject({
+  configId: polishDatabaseIdSchema,
+  configRevision: polishDatabaseIdSchema,
+  displayName: z.string().trim().min(1).max(200),
+  status: z.enum(["READY", "CONSENT_REQUIRED", "UNAVAILABLE"]),
+  reason: z.string().nullable(),
+  legalDisplay: legalDisplaySchema
 });
-
-export const polishAvailabilityLegacyDisplayDisclosureSchema = z.strictObject({
-  key: polishRouteIdentifierSchema,
-  providerName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
-  modelName: z.string().min(1).max(200).refine((value) => value.trim().length > 0),
+export const polishAvailabilitySchema = z.strictObject({
+  enabled: z.boolean(),
+  contract: z.literal("cv_app_db_2"),
+  databaseInstanceId: z.uuid(),
+  controlRevision: polishDatabaseIdSchema,
+  configurations: z.array(polishAvailabilityConfigurationSchema),
+  defaultConfigId: polishDatabaseIdSchema.nullable(),
+  reason: z.string().nullable()
 });
-
-/**
- * V1 candidates retain their code-owned label projection. V2 candidates
- * carry the exact sealed, text-only DB disclosure that the user can accept.
- */
-export const polishAvailabilityDisplayDisclosureSchema = z.union([
-  polishAvailabilityLegacyDisplayDisclosureSchema,
-  polishAvailabilityLegacyDisplayDisclosureSchema.extend({
-    legalDisplay: legalDisplayV2Schema,
-  }),
-]);
-
-const polishAvailabilityEnabledSchema = z.strictObject({
-  enabled: z.literal(true),
-  configGeneration: polishConfigGenerationSchema,
-  routingPolicyVersionId: polishCanonicalUuidSchema,
-  profileVersionId: polishCanonicalUuidSchema,
-  legalBundleVersion: polishRouteIdentifierSchema,
-  runtimeContractId: polishRouteIdentifierSchema,
-  displayDisclosure: polishAvailabilityDisplayDisclosureSchema,
-  termsAccepted: z.boolean(),
-});
-
-const polishAvailabilityDisabledSchema = z.strictObject({
-  enabled: z.literal(false),
-  configGeneration: z.null(),
-  routingPolicyVersionId: z.null(),
-  profileVersionId: z.null(),
-  legalBundleVersion: z.null(),
-  runtimeContractId: z.null(),
-  displayDisclosure: z.null(),
-  termsAccepted: z.literal(false),
-});
-
-/** Frozen public candidate snapshot returned by GET /api/polish/availability. */
-export const polishAvailabilitySchema = z.discriminatedUnion("enabled", [
-  polishAvailabilityEnabledSchema,
-  polishAvailabilityDisabledSchema,
-]);
-
-/**
- * Convert an enabled candidate into its assertion-only POST shape. Disclosure
- * and routing-policy identity remain display/diagnostic facts, never client
- * selectors. Disabled candidates cannot produce a route assertion.
- */
-export function polishExpectedRouteFromAvailability(
-  availability: z.infer<typeof polishAvailabilitySchema>,
-): z.infer<typeof polishExpectedRouteSchema> | null {
-  if (!availability.enabled) return null;
+export function polishExpectedRouteFromAvailability(availability: z.infer<typeof polishAvailabilitySchema>, configId: string | null = availability.defaultConfigId): z.infer<typeof polishExpectedRouteSchema> | null {
+  const configuration = availability.configurations.find(configuration => configuration.configId === configId);
+  if (!availability.enabled || !configuration || configuration.status === "UNAVAILABLE") return null;
   return polishExpectedRouteSchema.parse({
-    schemaVersion: "expected_route_v1",
-    configGeneration: availability.configGeneration,
-    profileVersionId: availability.profileVersionId,
-    legalBundleVersion: availability.legalBundleVersion,
-    runtimeContractId: availability.runtimeContractId,
+    contract: availability.contract,
+    databaseInstanceId: availability.databaseInstanceId,
+    controlRevision: availability.controlRevision,
+    configId: configuration.configId,
+    configRevision: configuration.configRevision,
+    commonDocumentAuditId: configuration.legalDisplay.common.document_audit_id,
+    providerDocumentAuditId: configuration.legalDisplay.provider.document_audit_id
   });
 }
-
 export const polishAvailabilityResponseSchema = z.strictObject({
-  /** Server-generated; also echoed in the X-Request-Id header. */
   requestId: z.string().min(1),
-  availability: polishAvailabilitySchema,
+  availability: polishAvailabilitySchema
 });
-
-export const polishQuotaSchema = z
-  .strictObject({
-    limit: z.number().int().nonnegative(),
-    remaining: z.number().int().nonnegative(),
-    /** DB time, ISO UTC. */
-    resetAt: z.iso.datetime(),
-  })
-  .superRefine((quota, ctx) => {
-    if (quota.remaining > quota.limit) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["remaining"],
-        message: `remaining (${quota.remaining}) exceeds limit (${quota.limit})`,
-      });
-    }
-  });
-
+export const polishQuotaSchema = z.strictObject({
+  limit: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative(),
+  /** DB time, ISO UTC. */
+  resetAt: z.iso.datetime()
+}).superRefine((quota, ctx) => {
+  if (quota.remaining > quota.limit) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["remaining"],
+      message: `remaining (${quota.remaining}) exceeds limit (${quota.limit})`
+    });
+  }
+});
 const polishResultItemSchema = z.strictObject({
   id: itemIdSchema,
-  polished: z.string().min(1).max(MAX_POLISHED_ITEM_CHARS),
+  polished: z.string().min(1).max(MAX_POLISHED_ITEM_CHARS)
 });
-
-export const polishSuccessResponseSchema = z
-  .strictObject({
-    /** Server-generated; also echoed in the X-Request-Id header. */
-    requestId: z.string().min(1),
-    items: z.array(polishResultItemSchema).min(1).max(MAX_ITEMS),
-    quota: polishQuotaSchema,
-  })
-  .superRefine((response, ctx) => {
-    const seenIds = new Set<string>();
-    let totalPolishedChars = 0;
-    for (const [index, item] of response.items.entries()) {
-      if (seenIds.has(item.id)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["items", index, "id"],
-          message: `duplicate result id "${item.id}"`,
-        });
-      }
-      seenIds.add(item.id);
-      // Whitespace-only output is rejected, but the stored value is NOT
-      // trimmed — validation only, no transformation.
-      if (item.polished.trim().length === 0) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["items", index, "polished"],
-          message: "polished text must not be blank",
-        });
-      }
-      totalPolishedChars += item.polished.length;
-    }
-    // Aggregate output cap — the authoritative output budget. Exact equality
-    // against the request's id set stays with the request-aware validator
-    // (unit 2.2); the standalone wire schema cannot know the request.
-    if (totalPolishedChars > MAX_TOTAL_POLISHED_CHARS) {
+export const polishSuccessResponseSchema = z.strictObject({
+  /** Server-generated; also echoed in the X-Request-Id header. */
+  requestId: z.string().min(1),
+  items: z.array(polishResultItemSchema).min(1).max(MAX_ITEMS),
+  quota: polishQuotaSchema
+}).superRefine((response, ctx) => {
+  const seenIds = new Set<string>();
+  let totalPolishedChars = 0;
+  for (const [index, item] of response.items.entries()) {
+    if (seenIds.has(item.id)) {
       ctx.addIssue({
         code: "custom",
-        path: ["items"],
-        message: `total polished characters ${totalPolishedChars} exceeds MAX_TOTAL_POLISHED_CHARS (${MAX_TOTAL_POLISHED_CHARS})`,
+        path: ["items", index, "id"],
+        message: `duplicate result id "${item.id}"`
       });
     }
-  });
+    seenIds.add(item.id);
+    // Whitespace-only output is rejected, but the stored value is NOT
+    // trimmed — validation only, no transformation.
+    if (item.polished.trim().length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items", index, "polished"],
+        message: "polished text must not be blank"
+      });
+    }
+    totalPolishedChars += item.polished.length;
+  }
+  // Aggregate output cap — the authoritative output budget. Exact equality
+  // against the request's id set stays with the request-aware validator
+  // because the standalone wire schema cannot know the request.
+  if (totalPolishedChars > MAX_TOTAL_POLISHED_CHARS) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["items"],
+      message: `total polished characters ${totalPolishedChars} exceeds MAX_TOTAL_POLISHED_CHARS (${MAX_TOTAL_POLISHED_CHARS})`
+    });
+  }
+});
 
 /**
  * Frozen success envelope of GET /api/polish/quota:
@@ -492,55 +397,32 @@ export const polishSuccessResponseSchema = z
 export const polishQuotaResponseSchema = z.strictObject({
   /** Server-generated; also echoed in the X-Request-Id header. */
   requestId: z.string().min(1),
-  quota: polishQuotaSchema,
+  quota: polishQuotaSchema
 });
-
-export const POLISH_ERROR_CODES = [
-  "INVALID_REQUEST",
-  "UNAUTHORIZED",
-  "AI_TERMS_REQUIRED",
-  "REQUEST_IN_PROGRESS",
-  "DUPLICATE_REQUEST",
-  "AI_ROUTE_CHANGED",
-  "PAYLOAD_TOO_LARGE",
-  "QUOTA_EXCEEDED",
-  "RATE_LIMITED",
-  "INTERNAL_ERROR",
-  "UPSTREAM_ERROR",
-  "INVALID_MODEL_OUTPUT",
-  "AI_DISABLED",
-  "SERVICE_UNAVAILABLE",
-  "UPSTREAM_TIMEOUT",
-] as const;
+export const POLISH_ERROR_CODES = ["UNAUTHORIZED", "FORBIDDEN", "CONFLICT", "NOT_FOUND", "INVALID_REQUEST", "NOT_READY", "UNAVAILABLE", "RATE_LIMITED", "QUOTA_EXCEEDED", "INTERNAL_ERROR", "CLIENT_UPDATE_REQUIRED"] as const;
 export type PolishErrorCode = (typeof POLISH_ERROR_CODES)[number];
-
-/** Error code ↔ HTTP status mapping (roadmap error table). */
 export const POLISH_ERROR_HTTP_STATUS = {
-  INVALID_REQUEST: 400,
   UNAUTHORIZED: 401,
-  AI_TERMS_REQUIRED: 403,
-  REQUEST_IN_PROGRESS: 409,
-  DUPLICATE_REQUEST: 409,
-  AI_ROUTE_CHANGED: 409,
-  PAYLOAD_TOO_LARGE: 413,
-  QUOTA_EXCEEDED: 429,
+  FORBIDDEN: 403,
+  CONFLICT: 409,
+  NOT_FOUND: 404,
+  INVALID_REQUEST: 400,
+  NOT_READY: 503,
+  UNAVAILABLE: 503,
   RATE_LIMITED: 429,
+  QUOTA_EXCEEDED: 429,
   INTERNAL_ERROR: 500,
-  UPSTREAM_ERROR: 502,
-  INVALID_MODEL_OUTPUT: 502,
-  AI_DISABLED: 503,
-  SERVICE_UNAVAILABLE: 503,
-  UPSTREAM_TIMEOUT: 504,
+  CLIENT_UPDATE_REQUIRED: 409
 } as const satisfies Record<PolishErrorCode, number>;
-
 export const polishErrorResponseSchema = z.strictObject({
   requestId: z.string().min(1),
   error: z.strictObject({
     code: z.enum(POLISH_ERROR_CODES),
+    reason: z.string().optional(),
     message: z.string(),
     resetAt: z.iso.datetime().optional(),
-    retryAfterSeconds: z.number().int().nonnegative().optional(),
-  }),
+    retryAfterSeconds: z.number().int().nonnegative().optional()
+  })
 });
 
 // ---------------------------------------------------------------------------
@@ -556,9 +438,7 @@ export type PolishExpectedRoute = z.infer<typeof polishExpectedRouteSchema>;
 export type PolishPostRequest = z.infer<typeof polishPostRequestSchema>;
 export type PolishAvailability = z.infer<typeof polishAvailabilitySchema>;
 export type PolishAvailabilityResponse = z.infer<typeof polishAvailabilityResponseSchema>;
-export type PolishAvailabilityDisplayDisclosure = z.infer<
-  typeof polishAvailabilityDisplayDisclosureSchema
->;
+export type PolishAvailabilityConfiguration = z.infer<typeof polishAvailabilityConfigurationSchema>;
 export type PolishQuota = z.infer<typeof polishQuotaSchema>;
 export type PolishSuccessResponse = z.infer<typeof polishSuccessResponseSchema>;
 export type PolishQuotaResponse = z.infer<typeof polishQuotaResponseSchema>;

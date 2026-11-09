@@ -11,9 +11,9 @@ const invocationRoot = process.cwd();
 const repoRoot = basename(invocationRoot) === "web"
   ? resolve(invocationRoot, "..")
   : invocationRoot;
-const status = spawnSync("pnpm", ["exec", "supabase", "status", "-o", "env"], {
+const status = spawnSync(process.execPath, [resolve(repoRoot, "node_modules/supabase/dist/supabase.js"), "status", "-o", "env"], {
   cwd: repoRoot,
-  shell: process.platform === "win32",
+  env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1" },
   encoding: "utf8",
   timeout: 120_000,
 });

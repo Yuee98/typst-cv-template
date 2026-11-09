@@ -23,6 +23,7 @@
     "en": "English"
   },
   "CvToolbar": {
+    "openLibrary": "Open CV library",
     "termsRequired": "Terms required",
     "syncing": "Syncing",
     "cloudIssue": "Cloud issue",
@@ -168,11 +169,10 @@
   },
   "TermsAcceptanceModal": {
     "title": "Terms and Privacy Notice",
-    "description": "Accept the current terms before using cloud storage.",
+    "description": "Before using cloud storage, read the Terms of Use and Privacy Policy. Links open in a new tab.",
     "cancel": "Cancel",
     "saving": "Saving",
     "accept": "Accept",
-    "version": "Version {version}",
     "terms": {
       "agreeTo": "I agree to the",
       "termsOfUse": "Terms of Use",
@@ -191,6 +191,7 @@
     "required": "Accept the AI Service Terms before using AI polish."
   },
   "PreviewPane": {
+    "pagePosition": "Page {page} of {total}",
     "title": "Preview",
     "status": {
       "waiting": "Waiting",
@@ -362,7 +363,6 @@
     "e2eeWarning": "Polished text leaves your device in plaintext and is forwarded by our server to a third-party AI service. End-to-end encryption only protects cloud storage.",
     "availability": {
       "heading": "Candidate AI service recipient",
-      "selected": "{provider} · {model}. This candidate is determined by server routing; it is not a user choice.",
       "annex": "View this provider annex",
       "reviewedDisclosure": "Reviewed provider disclosure",
       "loading": "Confirming the processing service…",
@@ -399,7 +399,7 @@
     },
     "terms": {
       "agreePrefix": "I have read and agree to the",
-      "aiTerms": "AI Service Terms",
+      "aiTerms": "AI Service Terms and {provider} Data Processing Details",
       "required": "Please accept the AI terms first.",
       "checking": "Checking terms status…",
       "accepting": "Recording…",
@@ -441,7 +441,10 @@
     "errors": {
       "quota_exhausted": "Today's quota is exhausted.",
       "rate_limited": "Too many requests. Please try again later.",
-      "duplicate": "An identical request is already being processed. Please wait.",
+      "duplicate": "This request is processing or has already completed. Its content will not be sent again.",
+      "held": "The request outcome is unconfirmed and its quota remains reserved. Check your quota later; this request will not be resent automatically.",
+      "forbidden": "AI polish is unavailable for this account.",
+      "client_update": "The app version or database instance changed. Refresh the page and review your selection again.",
       "route_changed": "The AI service route changed. Go back, review it, and confirm again.",
       "too_large": "The content exceeds the size limit; narrow the scope and try again.",
       "timeout": "The AI service timed out. Please try again.",

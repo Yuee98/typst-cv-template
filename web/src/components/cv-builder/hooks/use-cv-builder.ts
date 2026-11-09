@@ -1,8 +1,9 @@
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { activateCloudDocument, captureExistingCloudWrite, editingCloudRevision, cloudDocumentOwner } from "@/lib/cv/cloud-storage";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale, useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
-
 import { useAuthModal } from "@/components/cv-builder/hooks/use-auth-modal";
 import { useCloudSession } from "@/components/cv-builder/hooks/use-cloud-session";
 import { useCvAuthActions } from "@/components/cv-builder/hooks/use-cv-auth-actions";
@@ -22,24 +23,14 @@ import { handleCvStorageDeferredError } from "@/components/cv-builder/hooks/stor
 import { useTermsGate } from "@/components/cv-builder/hooks/use-terms-gate";
 import { parseImportedCvFile } from "@/components/cv-builder/hooks/import-cv";
 import type { Locale } from "@/i18n/routing";
-import {
-  baselineOnFormLoad,
-  baselineOnPersisted,
-  createCvBaseline,
-  type CvBaseline,
-} from "@/lib/cv/baseline";
+import { baselineOnFormLoad, baselineOnPersisted, createCvBaseline, type CvBaseline } from "@/lib/cv/baseline";
 import { cloneCvData, errorMessage, titleFromImportedData } from "@/lib/cv/cv-utils";
 import { clearCvDraft, loadCvDraft, saveCvDraft } from "@/lib/cv/draft-storage";
 import { loadEncryptionPassword } from "@/lib/cv/encryption-storage";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import { getSampleCvData } from "@/lib/cv/sample-data";
-import {
-  type CvCloudAccessAction,
-  createCvStorageAdapters,
-  TermsNotAcceptedError,
-} from "@/lib/cv/storage-adapters";
+import { type CvCloudAccessAction, createCvStorageAdapters, TermsNotAcceptedError } from "@/lib/cv/storage-adapters";
 import { saveActiveCvDocumentId } from "@/lib/cv/storage";
-
 export function useCvBuilder() {
   const locale = useLocale() as Locale;
   const tActions = useTranslations("CvDocumentActions");
@@ -54,7 +45,8 @@ export function useCvBuilder() {
   // Kept in sync by useCvDocuments before state updates so async save
   // completions never observe a removed account-owned document as active.
   const activeDocumentIdRef = useRef<string | null>(null);
-
+  const actorRef = useRef<string | null>(null);
+  const clientRef = useRef<ReturnType<typeof getSupabaseBrowserClient>>(null);
   const {
     activeDocument,
     activeDocumentId,
@@ -68,64 +60,114 @@ export function useCvBuilder() {
     setActiveDocumentId: setActiveDocumentIdState,
     setOrderedDocuments,
     toggleLibraryCollapsed,
-    upsertDocumentSummary,
-  } = useCvDocuments({ activeDocumentIdRef, initializedRef });
-
-  const { cloudStatus, session, sessionInitialized, setCloudStatus, supabase } = useCloudSession({
-    onError: setLibraryError,
+    upsertDocumentSummary
+  } = useCvDocuments({
+    activeDocumentIdRef,
+    initializedRef,
+    canAdoptCloudDocument: id => Boolean(clientRef.current && actorRef.current && cloudDocumentOwner(clientRef.current, id) === actorRef.current)
   });
-
+  const {
+    cloudStatus,
+    session,
+    sessionInitialized,
+    setCloudStatus,
+    supabase
+  } = useCloudSession({
+    onError: setLibraryError
+  });
+  useLayoutEffect(() => {
+    actorRef.current = session?.user.id ?? null;
+    clientRef.current = supabase;
+  }, [session?.user.id, supabase]);
   const authModal = useAuthModal();
-
   const termsGate = useTermsGate({
     tTermsGate,
     userId: session?.user.id ?? null,
     onError: setLibraryError,
-    supabase,
+    supabase
   });
-
   const encryptionModal = useEncryptionModal(tEncryption);
   const [isDirty, setIsDirty] = useState(false);
   // Dirty state is derived by comparing the form data against the persisted
   // baseline of the same document (see lib/cv/baseline.ts).
   const baselineRef = useRef<CvBaseline | null>(null);
-
+  const pendingDraftRevisions = useRef(new Map<string, string>());
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
     defaultValues: cloneCvData(getSampleCvData(locale)),
-    mode: "onChange",
+    mode: "onChange"
   });
-
-  const watchedData = useWatch({ control: form.control });
+  const watchedData = useWatch({
+    control: form.control
+  });
   const supabaseConfigured = Boolean(supabase);
   const cloudActionsEnabled = Boolean(supabase && session);
-  const { data: documentsData, refetch: refetchDocuments } = useCvCloudDocumentListQuery({
+  const {
+    data: documentsData,
+    refetch: refetchDocuments
+  } = useCvCloudDocumentListQuery({
     enabled: termsGate.status === "accepted",
     session,
-    supabase,
+    supabase
   });
-  const { fetchCloudDocument } = useCvCloudDocumentQuery({ session });
-  const cloudMutations = useCvCloudMutations({ userId: session?.user.id, locale });
-
+  const {
+    fetchCloudDocument
+  } = useCvCloudDocumentQuery({
+    session
+  });
+  const cloudMutations = useCvCloudMutations({
+    userId: session?.user.id,
+    locale
+  });
+  function cloudWriteActor() {
+    const userId = session?.user.id;
+    if (!userId) throw new Error("Sign in before changing a cloud CV.");
+    return userId;
+  }
+  function captureExistingWrite(id: string) {
+    if (!supabase) throw new Error("Sign in before changing a cloud CV.");
+    return captureExistingCloudWrite(supabase, id, cloudWriteActor());
+  }
   const storageAdapters = createCvStorageAdapters({
     locale,
+    captureExistingWrite,
     cloudStorage: {
-      deleteCloudDocument: async (client, id) => {
-        await cloudMutations.deleteCloudDocument.mutateAsync({ client, id });
+      deleteCloudDocument: async (client, id, writeToken) => {
+        await cloudMutations.deleteCloudDocument.mutateAsync({
+          client,
+          id,
+          writeToken,
+          expectedUserId: cloudWriteActor()
+        });
       },
       loadCloudDocument: (client, id) => fetchCloudDocument(client, id, locale),
-      renameCloudDocument: (client, id, title) =>
-        cloudMutations.renameCloudDocument.mutateAsync({ client, id, title }),
-      updateCloudDocumentData: (client, id, data) =>
-        cloudMutations.updateCloudDocumentData.mutateAsync({ client, data, id }),
-      updateEncryptedCloudDocumentData: (client, id, update) =>
-        cloudMutations.updateEncryptedCloudDocumentData.mutateAsync({ client, id, ...update }),
+      renameCloudDocument: (client, id, title, writeToken) => cloudMutations.renameCloudDocument.mutateAsync({
+        client,
+        id,
+        title,
+        writeToken,
+        expectedUserId: cloudWriteActor()
+      }),
+      updateCloudDocumentData: (client, id, data, _locale, writeToken) => cloudMutations.updateCloudDocumentData.mutateAsync({
+        client,
+        data,
+        id,
+        writeToken,
+        expectedUserId: cloudWriteActor()
+      }),
+      updateEncryptedCloudDocumentData: (client, id, update, _locale, writeToken) => cloudMutations.updateEncryptedCloudDocumentData.mutateAsync({
+        client,
+        id,
+        ...update,
+        writeToken,
+        expectedUserId: cloudWriteActor()
+      })
     },
     getEncryptionPassphrase: getKnownEncryptionPassphrase,
-    requireCloudAccess,
+    requireCloudAccess
   });
-
   const persistence = useCvPersistence({
+    userId: session?.user.id ?? null,
     tPersistence,
     activeDocument,
     activeDocumentId,
@@ -136,9 +178,8 @@ export function useCvBuilder() {
     onPersisted: markDocumentPersisted,
     onError: setLibraryError,
     storageAdapters,
-    upsertDocumentSummary,
+    upsertDocumentSummary
   });
-
   const preview = useCvPreview({
     tImportExport,
     locale,
@@ -151,19 +192,18 @@ export function useCvBuilder() {
     onDirtyChange: setIsDirty,
     saveCurrentDocument: persistence.saveCurrentDocument,
     saveDraft,
-    watchedData,
+    watchedData
   });
-
   const cvExport = useCvExport({
     canExport: () => Boolean(activeDocumentId && activeDocument),
     locale,
     getCurrentData: getCurrentCvData,
     getDownloadTitle: currentDownloadTitle,
     onImportExportError: setImportExportError,
-    onPreviewError: preview.setError,
+    onPreviewError: preview.setError
   });
-
   const documentActions = useCvDocumentActions({
+    userId: session?.user.id ?? null,
     activeDocument,
     activeDocumentId,
     clearDraft,
@@ -179,10 +219,10 @@ export function useCvBuilder() {
     setActiveDocumentId,
     setOrderedDocuments,
     storageAdapters,
-    upsertDocumentSummary,
+    upsertDocumentSummary
   });
-
   const cloudSync = useCvCloudSync({
+    getLoadedDocumentId: () => baselineRef.current?.documentId ?? null,
     locale,
     activeDocumentId,
     clearDraft,
@@ -200,10 +240,10 @@ export function useCvBuilder() {
     setTrustDevice: encryptionModal.setTrustDevice,
     supabase,
     termsGate,
-    upsertDocumentSummary,
+    upsertDocumentSummary
   });
-
   const cloudDocumentActions = useCvCloudDocumentActions({
+    captureExistingWrite,
     locale,
     tCloudActions,
     activeDocumentId,
@@ -216,16 +256,15 @@ export function useCvBuilder() {
     fetchCloudDocument: fetchCloudDocument,
     loadDataIntoForm,
     onError: setLibraryError,
-    openEnableEncryptionModal: (documentId) => encryptionModal.openModal("enable", documentId),
+    openEnableEncryptionModal: documentId => encryptionModal.openModal("enable", documentId),
     saveCurrentDocument: persistence.saveCurrentDocument,
     session,
     setCloudStatus,
     setOrderedDocuments,
     supabase,
     termsGate,
-    upsertDocumentSummary,
+    upsertDocumentSummary
   });
-  
   const authActions = useCvAuthActions({
     activeDocument,
     authModal,
@@ -235,10 +274,10 @@ export function useCvBuilder() {
     loadDataIntoForm,
     session,
     setOrderedDocuments,
-    supabase,
-    termsGate,
+    supabase
   });
   useCvLibraryBootstrap({
+    onError: setLibraryError,
     form,
     initialData: cloneCvData(getSampleCvData(locale)),
     initializedRef,
@@ -246,7 +285,7 @@ export function useCvBuilder() {
     localFallbackTitle: tActions("localTitle"),
     setActiveDocumentId,
     setPersistedBaseline,
-    setOrderedDocuments,
+    setOrderedDocuments
   });
 
   // ── helpers ──────────────────────────────────────────────────────
@@ -255,19 +294,15 @@ export function useCvBuilder() {
     const userId = session?.user.id;
     return userId ? await loadEncryptionPassword(userId, id) : null;
   }
-
   async function requireCloudAccess(action: CvCloudAccessAction) {
     if (!supabase || !session) {
       throw new Error(tCloudActions(action));
     }
-
     if (!(await termsGate.ensure())) {
       throw new TermsNotAcceptedError(locale);
     }
-
     return supabase;
   }
-
   function handleStorageDeferredError(error: unknown, mode: "unlock" | "duplicate") {
     return handleCvStorageDeferredError(error, mode, encryptionModal.openModal);
   }
@@ -279,12 +314,24 @@ export function useCvBuilder() {
     activeDocumentIdRef.current = id;
     setActiveDocumentIdState(id);
   }
-
-  function loadDataIntoForm(id: string, data: CvData, options?: { baselineData?: CvData }) {
+  function loadDataIntoForm(id: string, data: CvData, options?: {
+    baselineData?: CvData;
+    cloudRevision?: string;
+  }) {
+    if (id.startsWith("cv_")) {
+      if (!clientRef.current || cloudDocumentOwner(clientRef.current, id) !== actorRef.current) return;
+      const revision = pendingDraftRevisions.current.get(id) ?? options?.cloudRevision;
+      if (!revision) throw new Error("CONFLICT: Cloud document body revision is required.");
+      activateCloudDocument(clientRef.current, id, revision);
+    }
+    pendingDraftRevisions.current.delete(id);
     // The baseline must track what is persisted, which is not always what goes
     // into the form: when a local draft is recovered, the form gets the draft
     // while the baseline stays at the server data (so the doc reads dirty).
-    const { baseline, dirty } = baselineOnFormLoad(id, data, options?.baselineData);
+    const {
+      baseline,
+      dirty
+    } = baselineOnFormLoad(id, data, options?.baselineData);
     baselineRef.current = baseline;
     setActiveDocumentId(id);
     saveActiveCvDocumentId(id);
@@ -293,15 +340,12 @@ export function useCvBuilder() {
     setLibraryError(null);
     setIsDirty(dirty);
   }
-
   function setPersistedBaseline(id: string, data: CvData) {
     baselineRef.current = createCvBaseline(id, data);
   }
-
   function getDirtyBaseline() {
     return baselineRef.current;
   }
-
   function markDocumentPersisted(id: string, data: CvData) {
     // A save that completes after the user switched documents must not rebase
     // the newly active document; dirty is re-derived from the live form data
@@ -313,38 +357,42 @@ export function useCvBuilder() {
       activeDocumentId: activeDocumentIdRef.current,
       savedDocumentId: id,
       savedData: data,
-      currentData: current.success ? current.data : null,
+      currentData: current.success ? current.data : null
     });
     if (!result) {
       return;
     }
-
     baselineRef.current = result.baseline;
     setIsDirty(result.dirty);
+    if (activeDocument?.storageKind === "cloud" && current.success) {
+      if (result.dirty) saveDraft(id, current.data);
+      else clearDraft(id);
+    }
   }
-
   function saveDraft(cvId: string, data: CvData) {
-    saveCvDraft(session?.user.id, cvId, data);
+    const revision = supabase ? editingCloudRevision(supabase, cvId) : null;
+    if (revision) saveCvDraft(session?.user.id, cvId, data, revision);
   }
-
   function loadDraft(cvId: string): CvData | null {
-    return loadCvDraft(session?.user.id, cvId);
+    const draft = loadCvDraft(session?.user.id, cvId);
+    if (draft) pendingDraftRevisions.current.set(cvId, draft.baseRevision);
+    return draft?.data ?? null;
   }
-
   function clearDraft(cvId: string) {
+    pendingDraftRevisions.current.delete(cvId);
     clearCvDraft(session?.user.id, cvId);
   }
-
   function resetActiveDocument() {
     preview.reset();
     setLibraryError(null);
     baselineRef.current = null;
     setIsDirty(false);
   }
-
   async function acceptTerms() {
     if (await termsGate.accept()) {
-      await cloudSync.refreshCloudDocuments({ skipTermsCheck: true });
+      await cloudSync.refreshCloudDocuments({
+        skipTermsCheck: true
+      });
     }
   }
 
@@ -355,14 +403,11 @@ export function useCvBuilder() {
     if (!parsed.success) {
       throw new Error(tImportExport("currentSchemaError"));
     }
-
     return parsed.data;
   }
-
   function currentDownloadTitle(data: CvData) {
     return activeDocument?.title || titleFromImportedData(data, tImportExport("importFallbackTitle"));
   }
-
   async function importJson(file: File | undefined) {
     try {
       const parsed = await parseImportedCvFile(file, tImportExport("importFallbackTitle"));
@@ -372,7 +417,6 @@ export function useCvBuilder() {
         }
         return;
       }
-
       await documentActions.createDocumentFromData(parsed.data, parsed.title);
     } catch (importError) {
       setImportExportError(errorMessage(importError));
@@ -405,11 +449,9 @@ export function useCvBuilder() {
     termsGate,
     encryptionModal,
     form,
-
     // setters
     setLibraryError,
     setImportExportError,
-
     // dialogs
     renameDialog: documentActions.renameDialog,
     duplicateDialog: documentActions.duplicateDialog,
@@ -423,7 +465,6 @@ export function useCvBuilder() {
     openDeleteDialog: documentActions.openDeleteDialog,
     closeDeleteDialog: documentActions.closeDeleteDialog,
     confirmDeleteDialog: documentActions.confirmDeleteDialog,
-
     // actions
     signIn: authActions.signIn,
     signUp: authActions.signUp,
@@ -448,6 +489,6 @@ export function useCvBuilder() {
     downloadPdf: cvExport.downloadPdf,
     exportTypstPackage: cvExport.exportTypstPackage,
     exportTypstSource: cvExport.exportTypstSource,
-    exportDocument: cvExport.exportDocument,
+    exportDocument: cvExport.exportDocument
   };
 }

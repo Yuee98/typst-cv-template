@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "admin-control-plane.spec.ts",
+  testIgnore: ["admin-control-plane.spec.ts", "provider-choice.spec.ts"],
   outputDir: "test-results",
   timeout: 60_000,
   expect: {

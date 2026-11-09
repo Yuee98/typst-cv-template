@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const providerSecretName = /^(?:AI_PROVIDER_KEY_[A-Z0-9_]+|DEEPSEEK_API_KEY|MIMO_API_KEY|OPENROUTER_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY)$/u;
+const providerSecretName = /^AI_PROVIDER_KEY_[A-Z0-9_]+$/u;
 const env = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !providerSecretName.test(name)),
 );
@@ -18,19 +18,9 @@ Object.assign(env, {
   NEXT_TELEMETRY_DISABLED: "1",
   STATIC_EXPORT: "false",
   ADMIN_ENVIRONMENT: "local",
-  NEXT_PUBLIC_AI_POLISH_ENABLED: "false",
   AI_POLISH_ENABLED: "false",
-  POLISH_FAKE_LLM: "",
-  POLISH_FAKE_BACKEND: "",
+  NEXT_PUBLIC_AI_POLISH_ENABLED: "false",
   AI_USER_ID_HMAC_SECRET: "",
-  DEEPSEEK_API_KEY: "",
-  MIMO_API_KEY: "",
-  OPENROUTER_API_KEY: "",
-  OPENAI_API_KEY: "",
-  ANTHROPIC_API_KEY: "",
-  DEEPSEEK_BASE_URL: "",
-  MIMO_BASE_URL: "",
-  OPENROUTER_BASE_URL: "",
   PORT: "4173",
   HOSTNAME: "127.0.0.1",
 });
@@ -46,6 +36,8 @@ try {
   // A local env file is optional.
 }
 
+env.AI_PROVIDER_KEY_ADMIN_E2E = "synthetic-local-admin-e2e-never-transmitted";
+
 if (
   !env.NEXT_PUBLIC_SUPABASE_URL ||
   !env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
@@ -53,6 +45,8 @@ if (
 ) {
   throw new Error("Admin E2E server requires local Supabase credentials");
 }
+
+if (env.NEXT_PUBLIC_SUPABASE_URL !== "http://127.0.0.1:54321") throw new Error("Admin E2E refuses non-local Supabase");
 
 function run(file, args) {
   return new Promise((resolve, reject) => {

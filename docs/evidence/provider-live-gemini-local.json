@@ -1,0 +1,135 @@
+{
+  "scope": "SYNTHETIC_TEXT_LOCAL_DATABASE_REAL_PROVIDER",
+  "timestamp": "2026-11-07T13:42:28.904Z",
+  "hosted_database_used": false,
+  "pricing": "SYNTHETIC_FIXTURE_RATES_NOT_PROVIDER_INVOICE",
+  "generation_request_limit_per_provider": 2,
+  "output_token_limit_per_request": 2048,
+  "required_wire_protocols": {
+    "GEMINI": "GEMINI_INTERACTIONS"
+  },
+  "model_discovery": [
+    {
+      "provider": "GEMINI",
+      "status": 200,
+      "model": "gemini-3.8-flash",
+      "available": true
+    }
+  ],
+  "providers": {
+    "GEMINI": {
+      "requested_model": "gemini-3.8-flash",
+      "selected_option": "opt_57MAHPDYMWS5",
+      "nondefault_selection": false,
+      "transmissions": [
+        {
+          "max_output_tokens": 1804,
+          "endpoint": "https://generativelanguage.googleapis.com/v1/interactions",
+          "wire_protocol": "GEMINI_INTERACTIONS",
+          "legacy_chat_fields_absent": true,
+          "subject_field": null,
+          "store_parameter_sent": true,
+          "status": 200,
+          "elapsed_ms": 1619,
+          "reported_model_matches": true,
+          "observed_model": "gemini-3.8-flash",
+          "response_object_matches_protocol": true,
+          "interaction_status_completed": true,
+          "raw_usage": {
+            "total_tokens": 589,
+            "total_input_tokens": 569,
+            "total_output_tokens": 20,
+            "total_thought_tokens": 0,
+            "total_cached_tokens": 0,
+            "total_tool_use_tokens": 0
+          }
+        }
+      ],
+      "passed": true,
+      "finish_reason": "stop",
+      "normalized_usage": {
+        "schemaVersion": "normalized_usage",
+        "inputTotalTokens": 569,
+        "inputCacheReadTokens": 0,
+        "inputCacheWriteTokens": null,
+        "inputStandardTokens": 569,
+        "outputTokens": 20,
+        "reasoningTokens": 0,
+        "cacheUsageReporting": "unavailable",
+        "usageComplete": true
+      },
+      "validation": "PASSED",
+      "replay_sent_no_request": true,
+      "quota_remaining": 19,
+      "durable_settlement_verified": true
+    }
+  },
+  "cleanup_passed": true,
+  "configuration": {
+    "database": "cv_provider_live_fixture",
+    "database_instance_id": "ee8beb65-c37f-4a96-94fe-83b3f846d899",
+    "option_ids": {
+      "GEMINI": "opt_57MAHPDYMWS5"
+    },
+    "model_ids": {
+      "GEMINI": "gemini-3.8-flash"
+    },
+    "synthetic_pricing": true
+  },
+  "ledger": {
+    "quota": [
+      {
+        "day": "2026-11-07",
+        "charged": "1",
+        "reserved": "0",
+        "incompleteUsageCount": "0",
+        "inputTokensKnownLowerBound": "569",
+        "outputTokensKnownLowerBound": "20"
+      }
+    ],
+    "requests": [
+      {
+        "state": "FINALIZED",
+        "usage": {
+          "output": "20",
+          "reasoning": "0",
+          "cache_read": "0",
+          "cache_write": null,
+          "input_total": "569",
+          "input_standard": "569"
+        },
+        "charged": true,
+        "modelId": "gemini-3.8-flash",
+        "outcome": "SUCCEEDED",
+        "attempts": [
+          {
+            "state": "SUCCEEDED",
+            "usage": {
+              "output": "20",
+              "reasoning": "0",
+              "cache_read": "0",
+              "cache_write": null,
+              "input_total": "569",
+              "input_standard": "569"
+            },
+            "attemptId": "att_6JPJWVB80WTC",
+            "attemptNo": 1,
+            "transmitted": true,
+            "providerBillable": true,
+            "incompleteReasons": [],
+            "estimatedCostNanos": "609",
+            "knownEstimatedCostNanos": "609"
+          }
+        ],
+        "currency": "CNY",
+        "requestId": "req_JC861V9553GP",
+        "providerCode": "GEMINI",
+        "incompleteReasons": [],
+        "estimatedCostNanos": "609",
+        "knownEstimatedCostNanos": "609",
+        "providerReportedCostNanos": null
+      }
+    ],
+    "syntheticPricing": true
+  }
+}

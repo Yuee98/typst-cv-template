@@ -1,20 +1,21 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
 import { isAiPolishUiEnabled } from "@/lib/polish/feature-flags";
+import { cn } from "@/lib/utils";
 
-export function Toolbar({ children }: { children: ReactNode }) {
+export function Toolbar({ children, className, ...props }: ComponentProps<"header">) {
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 rounded-b-xl border border-border glass-panel px-4 py-3 shadow-sm print:hidden">
+    <header className={cn("flex flex-wrap items-center justify-between gap-3 rounded-b-xl border border-border glass-panel px-4 py-3 shadow-sm print:hidden", className)} {...props}>
       {children}
     </header>
   );
 }
 
 export function ToolbarGroup({ children }: { children: ReactNode }) {
-  return <div className="flex flex-wrap items-center gap-2">{children}</div>;
+  return <div className="toolbar-actions flex flex-wrap items-center gap-2">{children}</div>;
 }
 
 export function ToolbarSeparator() {
@@ -26,7 +27,7 @@ export function ToolbarTitle() {
   const aiPolishEnabled = isAiPolishUiEnabled();
 
   return (
-    <div className="flex min-w-0 items-center gap-2.5">
+    <div className="toolbar-brand flex min-w-0 items-center gap-2.5">
       {/* The SVG is tiny and already served directly as the app icon. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img

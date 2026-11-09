@@ -1,16 +1,6 @@
-/**
- * Unit tests for the smoke's pure safety predicates (CP4 round-1 P0-1 /
- * P0-2.3): the guards that keep the real-key smoke off hosted projects and
- * on the official DeepSeek origin must themselves be proven.
- */
-
 import { describe, expect, it } from "vitest";
 
-import {
-  checkLocalSupabaseUrl,
-  isOfficialDeepSeekBaseUrl,
-  OFFICIAL_DEEPSEEK_ORIGIN,
-} from "./local-safety.mjs";
+import { checkLocalSupabaseUrl } from "./local-safety.mjs";
 
 describe("checkLocalSupabaseUrl", () => {
   it("rejects a hosted Supabase project URL", () => {
@@ -47,27 +37,6 @@ describe("checkLocalSupabaseUrl", () => {
       "http://[::1]:54321",
     ]) {
       expect(checkLocalSupabaseUrl(url).ok).toBe(true);
-    }
-  });
-});
-
-describe("isOfficialDeepSeekBaseUrl", () => {
-  it("accepts the official origin (with trailing slash or sub-path)", () => {
-    expect(isOfficialDeepSeekBaseUrl(OFFICIAL_DEEPSEEK_ORIGIN)).toBe(true);
-    expect(isOfficialDeepSeekBaseUrl("https://api.deepseek.com/")).toBe(true);
-    expect(isOfficialDeepSeekBaseUrl("https://api.deepseek.com/v1")).toBe(true);
-  });
-
-  it("rejects proxies, mocks, and lookalike hosts", () => {
-    for (const url of [
-      "http://localhost:9999",
-      "http://127.0.0.1:8080",
-      "https://api.deepseek.com.evil.example",
-      "http://api.deepseek.com", // plain http is not the official origin
-      "https://deepseek-proxy.internal",
-      "not-a-url",
-    ]) {
-      expect(isOfficialDeepSeekBaseUrl(url)).toBe(false);
     }
   });
 });

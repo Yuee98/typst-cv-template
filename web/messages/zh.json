@@ -23,6 +23,7 @@
     "en": "English"
   },
   "CvToolbar": {
+    "openLibrary": "打开简历库",
     "termsRequired": "需接受条款",
     "syncing": "同步中",
     "cloudIssue": "云端异常",
@@ -168,11 +169,10 @@
   },
   "TermsAcceptanceModal": {
     "title": "条款与隐私通知",
-    "description": "使用云端存储前，请先接受当前条款。",
+    "description": "使用云端存储前，请阅读使用条款和隐私政策。链接会在新标签页打开。",
     "cancel": "取消",
     "saving": "保存中",
     "accept": "接受",
-    "version": "版本 {version}",
     "terms": {
       "agreeTo": "我同意",
       "termsOfUse": "使用条款",
@@ -191,6 +191,7 @@
     "required": "使用 AI 润色前请先同意 AI 服务条款。"
   },
   "PreviewPane": {
+    "pagePosition": "第 {page} 页，共 {total} 页",
     "title": "预览",
     "status": {
       "waiting": "等待中",
@@ -362,7 +363,6 @@
     "e2eeWarning": "润色文本将以明文离开你的设备，经我们的服务器转发至第三方 AI 服务处理。端到端加密只保护云端存储。",
     "availability": {
       "heading": "本次 AI 服务候选接收方",
-      "selected": "{provider} · {model}。该候选由服务端路由决定，不是可选项。",
       "annex": "查看该服务商附录",
       "reviewedDisclosure": "已审核的服务商披露",
       "loading": "正在确认本次处理服务…",
@@ -399,7 +399,7 @@
     },
     "terms": {
       "agreePrefix": "我已阅读并同意",
-      "aiTerms": "《AI 服务条款》",
+      "aiTerms": "《AI 服务条款与{provider}数据处理说明》",
       "required": "请先勾选同意 AI 功能条款。",
       "checking": "正在检查条款接受状态…",
       "accepting": "正在记录…",
@@ -441,7 +441,10 @@
     "errors": {
       "quota_exhausted": "今日配额已用完。",
       "rate_limited": "请求过于频繁，请稍后再试。",
-      "duplicate": "已有相同请求在处理，请稍候。",
+      "duplicate": "相同请求正在处理或已经处理完成，本次不会重复发送内容。",
+      "held": "请求状态尚未确认，额度暂时保留。请稍后查看额度，本次不会自动重发。",
+      "forbidden": "当前账户暂未获准使用 AI 润色。",
+      "client_update": "应用版本或数据库实例已更新，请刷新页面后重新确认。",
       "route_changed": "AI 服务路由已更新，请返回确认后再提交。",
       "too_large": "内容超出大小限制，请缩小范围后重试。",
       "timeout": "AI 服务响应超时，请重试。",

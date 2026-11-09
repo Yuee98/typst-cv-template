@@ -1,9 +1,12 @@
+import { checkLocalSupabaseUrl } from "./lib/local-safety.mjs";
 // Request-time smoke for the real server composition with AI_POLISH_ENABLED
 // disabled. Every route must stop before authentication or backend access.
 //
 //   node scripts/smoke-polish-disabled.mjs [baseUrl]
 
 const baseUrl = (process.argv[2] ?? "http://localhost:3000").replace(/\/+$/, "");
+
+if (!checkLocalSupabaseUrl(baseUrl).ok) throw new Error("Disabled smoke requires an explicit HTTP loopback target");
 
 const routes = [
   {
@@ -57,8 +60,8 @@ for (const route of routes) {
 
   check(`${route.label}: status 503`, response.status === 503, `got ${response.status}`);
   check(
-    `${route.label}: AI_DISABLED`,
-    body?.error?.code === "AI_DISABLED",
+    `${route.label}: UNAVAILABLE`,
+    body?.error?.code === "UNAVAILABLE",
     `got ${body?.error?.code}`,
   );
   check(
@@ -71,7 +74,7 @@ for (const route of routes) {
     `${route.label}: no-store`,
     (response.headers.get("cache-control") ?? "").includes("no-store"),
   );
-  check(`${route.label}: Retry-After`, response.headers.get("retry-after") === "300");
+  check(`${route.label}: no automatic retry hint`, !response.headers.has("retry-after") && body?.error?.retryAfterSeconds === undefined);
 }
 
 if (failures > 0) {

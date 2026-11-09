@@ -1,0 +1,236 @@
+{
+  "record_kind": "LOCAL_ADMIN_WITHOUT_TOTP_VERIFICATION",
+  "date": "2026-11-08",
+  "source_sha": "9dd1bb8753267dca83c6cd37757bfbedbfe0ec51",
+  "release_eligible": false,
+  "scope": {
+    "local_only": true,
+    "original_15_migrations_rewritten": true,
+    "additional_migrations": 0,
+    "local_test_database_rebuilt": true,
+    "hosted_changes": false,
+    "push": false,
+    "release": false,
+    "paid_provider_calls": 0
+  },
+  "database": {
+    "baseline_migrations": 15,
+    "baseline_digest": "3615590132917d8dfc69a585d7c620990731c34fe6d53670d0fbb178d9e7f8da",
+    "migration_manifest_digest": "3615590132917d8dfc69a585d7c620990731c34fe6d53670d0fbb178d9e7f8da",
+    "migration_files": {
+      "20261108123038_app_foundation.sql": "762ade2297ce2db8715164366be7646eb0072691f4568e7d3712c43f878d7b44",
+      "20261108123041_admin_tables.sql": "33433e2dbbadbef8cd47e36fdfe042574ad19813d6f2e7d91ce0a353da7f8efa",
+      "20261108123043_ai_tables.sql": "307478fca82914caa2c7ba818da1c2a048c9d8f956c7395b5d2f493ab47e2911",
+      "20261108123046_legal_tables.sql": "06f946b8df914baedb8624a822dedd69552f73e648431724a12ee52c80870465",
+      "20261108123048_cv_tables.sql": "6ba1e4ac809a118e97f8960251d45f9ca2cb139c8961a001674873b76535e041",
+      "20261108123051_audit_tables.sql": "2fa2752c0352bdab9620a18b5983799337800043bbca3fc19ba1d58cda74f046",
+      "20261108123054_cross_schema_constraints.sql": "b973c9bd81011bb255c213ca2aeb70b9753105d1f788e48c7d84172e6b3e614f",
+      "20261108123057_common_functions.sql": "8810253d4fb3b2da6e1373d4c2778ea21b064ac2bf41c06d530efd470d473de4",
+      "20261108123100_legal_functions.sql": "de81b8bbb8e27e6a2541ea2e5d27605d055001d74700e1ef5d553fa078e2f8e6",
+      "20261108123102_cv_functions.sql": "732aca2603f511ae35b272e9b3b04131f1f45d6e86312c32615a10a2a4c6efde",
+      "20261108123105_ai_functions.sql": "578fef83148969da6d27cc2aebdfe9841f9dc1f727f567ed3ed2b3794d0971ba",
+      "20261108123109_admin_functions.sql": "ade6d36a51791c9a34c5d1f9c3ec11a9115b9c779c7bc344b4d1e65cbb90e881",
+      "20261108123111_public_api.sql": "50e52c1794ead7515b987951abd43440939c3d1c5e186919b1d4fde94831360a",
+      "20261108123114_catalog_seed.sql": "6565b7a6a41f1ae555fdd2d9a0e340f49e657756ff4eaa3ae3ded4913d366925",
+      "20261108123117_jobs.sql": "02377dd4603cb9b50dd3a0f401a7c665073823c9bf29496417fead6b1d332640"
+    },
+    "sql_tests": 91,
+    "sql_files": 5,
+    "real_api_tests": 19,
+    "api_files": 5,
+    "db_lint": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "advisors": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "web_typecheck": "PASS",
+    "scoped_eslint": "PASS",
+    "paid_calls": 0,
+    "hosted_changes": false,
+    "main_context_before_human_restore": {
+      "rules": 0,
+      "prices": 0,
+      "context": {
+        "ready": true,
+        "environment": "LOCAL",
+        "capabilities": {
+          "cv_schema_version": 7,
+          "encrypted_envelope_version": 1
+        },
+        "contract_code": "cv_app_db_2",
+        "database_instance_id": "57c3f500-800b-4395-9363-b598731b1cf2"
+      },
+      "history": 15,
+      "ai_enabled": false,
+      "active_admins": 1,
+      "factor_helper": false,
+      "configurations": 0,
+      "old_admin_signature": false,
+      "old_operation_signature": false
+    },
+    "g3_stage": "VERIFIED",
+    "g3_proof_pending_final_sha": false,
+    "generated_public_types_diff": 0,
+    "new_runtime_signatures": [
+      "common.admin_id()",
+      "admin.begin_operation(text,jsonb)"
+    ],
+    "absent_runtime_objects": [
+      "common.admin_id(boolean)",
+      "admin.begin_operation(text,jsonb,boolean)",
+      "common.auth_has_totp(uuid)"
+    ],
+    "fresh_main_reset_applied_original_15": true,
+    "fresh_main_reset_log": "/tmp/cv-no-totp-reset.log",
+    "new_main_instance": "57c3f500-800b-4395-9363-b598731b1cf2",
+    "logs": {
+      "sql": "/tmp/cv-no-totp-sql.log",
+      "api": "/tmp/cv-no-totp-api.log",
+      "db_lint": "/tmp/cv-no-totp-db-lint.log",
+      "advisors": "/tmp/cv-no-totp-advisors.log",
+      "typescript": "/tmp/cv-no-totp-tsc.log",
+      "eslint": "/tmp/cv-no-totp-eslint.log"
+    },
+    "g3_preparation": "tmp/g3-no-totp-preparation.json",
+    "g3_new_baseline_executed": true
+  },
+  "checks": {
+    "web_unit": {
+      "files": 87,
+      "tests": 1220,
+      "passed": true,
+      "log": "tmp/admin-no-totp-final-unit.log"
+    },
+    "tool_unit": {
+      "tests": 35,
+      "passed": true,
+      "log": "tmp/admin-no-totp-final-script-tests.log"
+    },
+    "typecheck": "PASS",
+    "eslint": "PASS",
+    "real_admin_browser": {
+      "tests": 9,
+      "passed": true,
+      "log": "/tmp/cv-admin-without-mfa-e2e-complete.log"
+    },
+    "production_builds": {
+      "source_sha": "9dd1bb8753267dca83c6cd37757bfbedbfe0ec51",
+      "modes": [
+        "server",
+        "static",
+        "server"
+      ],
+      "passed": true,
+      "static_files_scanned": 139,
+      "log": "tmp/admin-no-totp-build-modes.log"
+    },
+    "metrics": {
+      "local_only": true,
+      "current_admin_read": true,
+      "ordinary_login": true,
+      "aggregate_fields": [
+        "day_basis",
+        "quota_day_basis",
+        "global_quota",
+        "configurations"
+      ],
+      "provider_calls": 0
+    },
+    "interactive_preview": {
+      "local_only": true,
+      "controls_http": true,
+      "ordinary_login_save_http": 200,
+      "unchanged_settings_saved": true,
+      "ai_remains_disabled": true,
+      "no_enrollment_ui": true,
+      "factor_requests": 0,
+      "provider_calls": 0,
+      "visual": {
+        "fully_loaded": true,
+        "no_enrollment_ui": true,
+        "width": 390,
+        "read_only": true
+      },
+      "screenshot": "tmp/admin-no-totp-controls-390-dark.png",
+      "manually_viewed": true
+    }
+  },
+  "rehearsal": {
+    "source_sha": "9dd1bb8753267dca83c6cd37757bfbedbfe0ec51",
+    "method": "application_allowlist",
+    "target_container_id": "332d962e43d11e95f92c1227fba6d5c954b01c3534208e2ceb55bd3499c6d24e",
+    "baseline_digest": "3615590132917d8dfc69a585d7c620990731c34fe6d53670d0fbb178d9e7f8da",
+    "migration_manifest_digest": "3615590132917d8dfc69a585d7c620990731c34fe6d53670d0fbb178d9e7f8da",
+    "old_history": 60,
+    "new_history": 15,
+    "database_instance_id": "b2a6262d-30ff-45fd-91f0-530ec3f4f69d",
+    "phase": "DB-ready",
+    "maintenance": true,
+    "platform_preservation_passed": true,
+    "platform_fingerprint_count": 12,
+    "platform_fingerprint_names": [
+      "mfa",
+      "role",
+      "user",
+      "bucket",
+      "object",
+      "session",
+      "identity",
+      "platform_acl",
+      "refresh_token",
+      "unrelated_cron",
+      "role_membership",
+      "platform_versions"
+    ],
+    "remote_mode_resume_passed": true,
+    "checkpoint_coverage": {
+      "real_stop_after_durable_migrations_resume": true,
+      "real_lost_checkpoint_recovery": false,
+      "missing_checkpoint_rebuild_refused": true,
+      "missing_history_and_checkpoint_rebuild_refused": true,
+      "constructed_reset_started_recovery": true,
+      "constructed_method": "TEST_CONSTRUCTED_STATE_ONLY_NO_REPEAT_RESET"
+    },
+    "no_application_totp_runtime": {
+      "factor_helper": false,
+      "new_admin_signature": true,
+      "old_admin_signature": false,
+      "new_operation_signature": true,
+      "old_operation_signature": false
+    },
+    "platform_mfa_sentinel_preserved": true,
+    "proof_file": "tmp/remote-rehearsal-proof.json",
+    "proof_sha256": "dadc0358777582208bc77e11691cd851011e42c584ac601b518061adc5ffdcc1",
+    "historical_3967_proof": "tmp/pre-no-totp-g3-3967ca5-20261108T233027/remote-rehearsal-proof.json",
+    "historical_3967_proof_sha256": "8e305d07f7da29bc6d7a18c19c08897bacd099b8758d6df904d2cc40be9bfe84",
+    "logs": [
+      "/tmp/cv-no-totp-g3-run.log",
+      "/tmp/cv-no-totp-g3-checkpoint-guards.log",
+      "/tmp/cv-no-totp-g3-verify.log"
+    ],
+    "platform_fingerprint_fields": [
+      "mfa",
+      "role",
+      "user",
+      "bucket",
+      "object",
+      "session",
+      "identity",
+      "platform_acl",
+      "refresh_token",
+      "unrelated_cron",
+      "role_membership",
+      "platform_versions"
+    ],
+    "actual_lost_checkpoint_recovery": false,
+    "constructed_recovery": true
+  },
+  "limitations": [
+    "The application MFA design is removed; vendor Auth tables and SDK code remain platform-owned.",
+    "The old 3967ca5 proof is historical and archived; the new proof binds this source and migration manifest.",
+    "This local result does not authorize or prove a hosted cutover, OAuth login, paid inference or deployment."
+  ]
+}

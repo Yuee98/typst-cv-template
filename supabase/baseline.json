@@ -1,0 +1,17 @@
+[
+  "20261108123038_app_foundation.sql",
+  "20261108123041_admin_tables.sql",
+  "20261108123043_ai_tables.sql",
+  "20261108123046_legal_tables.sql",
+  "20261108123048_cv_tables.sql",
+  "20261108123051_audit_tables.sql",
+  "20261108123054_cross_schema_constraints.sql",
+  "20261108123057_common_functions.sql",
+  "20261108123100_legal_functions.sql",
+  "20261108123102_cv_functions.sql",
+  "20261108123105_ai_functions.sql",
+  "20261108123109_admin_functions.sql",
+  "20261108123111_public_api.sql",
+  "20261108123114_catalog_seed.sql",
+  "20261108123117_jobs.sql"
+]

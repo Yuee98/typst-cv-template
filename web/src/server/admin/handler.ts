@@ -1,330 +1,255 @@
 import "server-only";
-import {
-  ADMIN_ERROR_STATUS,
-  adminContextSchema,
-  adminControlStateSchema,
-  adminAnalyticsSchema,
-  adminPageSchema,
-  adminRecordSectionSchema,
-  adminValidationReportSchema,
-  adminValidationRequestSchema,
-  adminRuntimeReadbackRequestSchema,
-  adminRuntimeReadbackSchema,
-  adminMutationRequestSchema,
-  adminCommittedOperationSchema,
-  type AdminErrorCode,
-  type AdminMutationRequest,
-} from "@/lib/admin/contract";
+import { z } from "zod";
+import { ADMIN_ERROR_CODES, ADMIN_ERROR_STATUS, adminContextSchema, adminReadResponseSchema, adminSectionSchema, adminAnalyticsSchema, adminPageSchema, adminRecordSchema, adminMutationRequestSchema, adminCommittedOperationSchema, entityIdSchema, adminConfigurationSchema, adminRuleSchema, adminAdapterSchema, adminDocumentSchema, adminRuntimeErrorReasonSchema, type AdminErrorCode, type AdminSection, type AdminConfiguration, type AdminConfigurationErrorReason, type AdminRuntimeErrorReason } from "@/lib/admin/contract";
 import { resolveAdminEnvironment, type AdminEnvironment } from "./environment";
 import { createAdminRequestClient } from "./request-client";
-import { produceAdminValidationReport } from "./validation-service";
-import { produceAdminRuntimeReadback } from "./readback-service";
-
+import { ADAPTERS, MissingProviderCredentialError, validateExecutionConfiguration } from "@/server/ai/provider";
+import { resolveEndpoint } from "@/server/ai/outbound";
 type Client = ReturnType<typeof createAdminRequestClient>;
 interface Dependencies {
   environment(): AdminEnvironment;
-  client(
-    environment: AdminEnvironment,
-    token: string,
-  ): Pick<Client, "auth" | "rpc">;
-  produceValidation?: typeof produceAdminValidationReport;
-  produceReadback?: typeof produceAdminRuntimeReadback;
+  client(environment: AdminEnvironment, token: string, signal?: AbortSignal): Pick<Client, "auth" | "rpc">;
+  validateConfiguration?(configuration: Pick<AdminConfiguration, "adapter_id" | "endpoint_url" | "credential_ref" | "model_id">, signal: AbortSignal): Promise<void>;
+}
+export class AdminConfigurationValidationError extends Error {
+  constructor(readonly reason: AdminConfigurationErrorReason) { super(reason); }
+}
+export async function validateAdminConfiguration(
+  configuration: Pick<AdminConfiguration, "adapter_id" | "endpoint_url" | "credential_ref" | "model_id">,
+  signal: AbortSignal,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  resolve: typeof resolveEndpoint = resolveEndpoint
+): Promise<void> {
+  try {
+    validateExecutionConfiguration({
+      adapter_id: configuration.adapter_id,
+      execution_contract: ADAPTERS[configuration.adapter_id].executionContract,
+      endpoint_url: configuration.endpoint_url,
+      credential_ref: configuration.credential_ref,
+      model_id: configuration.model_id
+    }, env);
+  } catch (error) {
+    throw new AdminConfigurationValidationError(error instanceof MissingProviderCredentialError ? "CREDENTIAL_UNAVAILABLE" : "ENDPOINT_INVALID");
+  }
+  try {
+    await resolve(configuration.endpoint_url, undefined, signal);
+  } catch {
+    throw new AdminConfigurationValidationError("ENDPOINT_UNREACHABLE");
+  }
 }
 const defaults: Dependencies = {
   environment: () => resolveAdminEnvironment(process.env),
   client: createAdminRequestClient,
-  produceValidation: produceAdminValidationReport,
-  produceReadback: produceAdminRuntimeReadback,
+  validateConfiguration: validateAdminConfiguration
 };
-const headers = { "Cache-Control": "private, no-store", Vary: "Authorization" };
-function fail(code: AdminErrorCode) {
-  return Response.json(
-    { error: { code } },
-    { status: ADMIN_ERROR_STATUS[code], headers },
-  );
+const headers = {
+  "Cache-Control": "private, no-store",
+  Vary: "Authorization"
+};
+function fail(code: AdminErrorCode, reason?: AdminConfigurationErrorReason | AdminRuntimeErrorReason) {
+  return Response.json({
+    error: {
+      code,
+      ...(reason ? { reason } : {})
+    }
+  }, {
+    status: ADMIN_ERROR_STATUS[code],
+    headers
+  });
 }
-function rpcError(error: { code?: string; message?: string }): AdminErrorCode {
-  // Only fixed protocol names; no upstream error prose leaves the server.
-  if (error.message === "ENVIRONMENT_MISMATCH") return "ENVIRONMENT_MISMATCH";
-  if (error.message === "STEP_UP_REQUIRED") return "STEP_UP_REQUIRED";
-  if (error.message === "IDEMPOTENCY_CONFLICT" || error.message === "CONFLICT" || error.code === "40001") return "CONFLICT";
-  if (error.message === "NOT_READY" || error.message?.endsWith("_NOT_READY") || error.message === "VALIDATION_REPORT_MISMATCH") return "NOT_READY";
+function rpcError(error: {
+  code?: string;
+  message?: string;
+}): AdminErrorCode {
+  const known = ADMIN_ERROR_CODES.find(code => code === error.message);
+  if (known) return known;
   if (error.code === "42501") return "FORBIDDEN";
-  if (error.code === "22023" || error.code === "22P02")
-    return "INVALID_REQUEST";
-  if (error.code === "P0002") return "NOT_FOUND";
+  if (["40001", "40P01", "23505"].includes(error.code ?? "")) return "CONFLICT";
+  if (["22023", "22P02", "23514", "23503"].includes(error.code ?? "")) return "INVALID_REQUEST";
   return "UNAVAILABLE";
 }
-
-const mutationRpc: Record<AdminMutationRequest["operation"], { rpc: string; kind: string }> = {
-  disable_ai: { rpc: "admin_disable_ai_v1", kind: "ai_disable" },
-  pointer_set: { rpc: "admin_set_ai_routing_pointer_v2", kind: "ai_pointer_set" },
-  pointer_clear: { rpc: "admin_clear_ai_routing_pointer_v2", kind: "ai_pointer_clear" },
-  reopen: { rpc: "admin_reopen_ai_v2", kind: "ai_reopen" },
-  membership_set: { rpc: "admin_set_membership_v1", kind: "admin_membership_set" },
-  provider_defaults_update: { rpc: "admin_update_provider_defaults_v1", kind: "provider_defaults_update" },
-  provider_profile_create: { rpc: "admin_create_provider_profile_v1", kind: "provider_profile_create" },
-  profile_version_create: { rpc: "admin_create_profile_version_v2", kind: "profile_version_create" },
-  price_version_create: { rpc: "admin_create_price_version_v1", kind: "price_version_create" },
-  global_daily_limit_set: { rpc: "admin_set_global_daily_limit_v1", kind: "global_daily_limit_set" },
-  price_seal: { rpc: "admin_seal_price_for_activation_v2", kind: "price_seal" },
-  profile_version_transition: { rpc: "admin_transition_profile_version_v2", kind: "profile_version_transition" },
-  routing_policy_draft_create: { rpc: "admin_create_routing_policy_draft_v1", kind: "routing_policy_draft_create" },
-  routing_policy_create: { rpc: "admin_create_routing_policy_v2", kind: "routing_policy_create" },
-  routing_policy_transition: { rpc: "admin_transition_routing_policy_v2", kind: "routing_policy_transition" },
-  price_close: { rpc: "admin_close_price_version_v2", kind: "price_close" },
-  profile_version_retire: { rpc: "admin_retire_profile_version_v2", kind: "profile_version_retire" },
-  provider_profile_retire: { rpc: "admin_retire_provider_profile_v2", kind: "provider_profile_retire" },
+export const sectionKinds: Record<AdminSection, readonly string[]> = {
+  configurations: ["configurations", "adapters", "legal_documents"],
+  disclosures: ["documents"],
+  rules: ["rules"],
+  controls: [],
+  usage: ["requests", "analytics"],
+  users: ["accounts", "members", "allowed_users"],
+  audit: ["configurations", "prices", "rules", "rule_members", "runtime_control", "allowed_users", "documents", "acceptances", "members"]
 };
-
-function mutationArgs(
-  request: AdminMutationRequest,
-  environment: AdminEnvironment,
-) {
-  // The legacy RPC argument is ignored; deployment URLs are not DB identity.
-  const base = { p_environment: environment.name, p_project_ref: null };
-  switch (request.operation) {
-    case "disable_ai": return { ...base, p_expected_control_revision: request.expectedControlRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "pointer_set": return { ...base, p_policy_version_id: request.policyVersionId, p_validation_report_ids: request.validationReportIds, p_expected_control_revision: request.expectedControlRevision, p_expected_policy_version_id: request.expectedPolicyVersionId, p_expected_config_generation: request.expectedConfigGeneration, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "pointer_clear": return { ...base, p_validation_report_ids: request.validationReportIds, p_expected_control_revision: request.expectedControlRevision, p_expected_policy_version_id: request.expectedPolicyVersionId, p_expected_config_generation: request.expectedConfigGeneration, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "reopen": return { ...base, p_readback_report_id: request.readbackReportId, p_expected_closing_cycle_id: request.expectedClosingCycleId, p_expected_control_revision: request.expectedControlRevision, p_expected_policy_version_id: request.expectedPolicyVersionId, p_expected_config_generation: request.expectedConfigGeneration, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "membership_set": return { ...base, p_target_user_id: request.targetUserId, p_enabled: request.enabled, p_expected_revision: request.expectedRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "provider_defaults_update": return { ...base, p_provider_id: request.providerId, p_display_name: request.displayName, p_default_adapter_id: request.defaultAdapterId, p_default_endpoint_url: request.defaultEndpointUrl, p_default_credential_env_name: request.defaultCredentialEnvName, p_default_model_id: request.defaultModelId, p_archived: request.archived, p_expected_revision: request.expectedRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "provider_profile_create": return { ...base, p_provider_id: request.providerId, p_profile_key: request.profileKey, p_display_name: request.displayName, p_model_vendor: request.modelVendor, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "profile_version_create": return { ...base, p_profile_id: request.profileId, p_expected_latest_version: request.expectedLatestVersion, p_adapter_id: request.adapterId, p_wire_api_kind: request.wireApiKind, p_endpoint_url: request.endpointUrl, p_credential_env_name: request.credentialEnvName, p_model_id: request.modelId, p_capability_contract_id: request.capabilityContractId, p_cache_policy_id: request.cachePolicyId, p_legal_manifest_id: request.legalManifestId, p_display_disclosure_key: request.displayDisclosureKey, p_config: request.config, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "price_version_create": return { ...base, p_profile_version_id: request.profileVersionId, p_pricing_lane: request.pricingLane, p_expected_latest_version: request.expectedLatestVersion, p_currency: request.currency, p_calculator_kind: request.calculatorKind, p_valid_from: request.validFrom, p_valid_to: request.validTo, p_provider_effective_from: request.providerEffectiveFrom, p_provider_effective_to: request.providerEffectiveTo, p_source_url: request.sourceUrl, p_source_checked_at: request.sourceCheckedAt, p_source_snapshot_sha256: request.sourceSnapshotSha256, p_parameters: request.parameters, p_components: request.components, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "global_daily_limit_set": return { ...base, p_global_daily_limit: request.globalDailyLimit, p_expected_global_daily_limit: request.expectedGlobalDailyLimit, p_expected_control_revision: request.expectedControlRevision, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "price_seal": return { ...base, p_price_version_id: request.priceVersionId, p_runtime_contract_id: request.runtimeContractId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "profile_version_transition": return { ...base, p_profile_version_id: request.profileVersionId, p_to_status: request.toStatus, p_validation_report_id: request.validationReportId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "routing_policy_draft_create": return { ...base, p_policy_key: request.policyKey, p_expected_latest_version: request.expectedLatestVersion, p_rules: request.rules, p_default_profile_version_id: request.defaultProfileVersionId, p_legal_bundle_version: request.legalBundleVersion, p_runtime_contract_id: request.runtimeContractId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "routing_policy_create": return { ...base, p_policy_key: request.policyKey, p_expected_latest_version: request.expectedLatestVersion, p_rules: request.rules, p_default_profile_version_id: request.defaultProfileVersionId, p_legal_bundle_version: request.legalBundleVersion, p_runtime_contract_id: request.runtimeContractId, p_validation_report_ids: request.validationReportIds, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "routing_policy_transition": return { ...base, p_policy_version_id: request.policyVersionId, p_to_status: request.toStatus, p_validation_report_ids: request.validationReportIds, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "price_close": return { ...base, p_price_version_id: request.priceVersionId, p_valid_to: request.validTo, p_successor_price_version_id: request.successorPriceVersionId, p_validation_report_id: request.validationReportId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "profile_version_retire": return { ...base, p_profile_version_id: request.profileVersionId, p_validation_report_id: request.validationReportId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-    case "provider_profile_retire": return { ...base, p_profile_id: request.profileId, p_validation_report_id: request.validationReportId, p_reason: request.reason, p_idempotency_key: request.idempotencyKey };
-  }
+async function authenticated(request: Request, deps: Dependencies) {
+  const bearer = /^Bearer ([^\s]+)$/i.exec(request.headers.get("authorization") ?? "");
+  if (!bearer || bearer[1].length > 16384) return null;
+  const environment = deps.environment();
+  const client = deps.client(environment, bearer[1], request.signal);
+  const {
+    data,
+    error
+  } = await client.auth.getUser(bearer[1]);
+  return error || !data.user || request.signal.aborted ? null : {
+    client,
+    environment
+  };
 }
-
-async function readBoundedUtf8Body(request: Request, maxBytes: number) {
-  const reader = request.body?.getReader();
-  if (!reader) return "";
+async function readBody(request: Request) {
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim() !== "application/json" || !request.body) return null;
+  const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
-  let byteLength = 0;
+  let size = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const {
+        done,
+        value
+      } = await reader.read();
       if (done) break;
-      byteLength += value.byteLength;
-      if (byteLength > maxBytes) {
+      size += value.byteLength;
+      if (size > 1024 * 1024) {
         await reader.cancel();
         return null;
       }
       chunks.push(value);
     }
-    const bytes = new Uint8Array(byteLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    try {
-      await reader.cancel();
-    } catch {
-      // The stream may already be errored or closed.
-    }
-    return null;
+  } finally {
+    reader.releaseLock();
   }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return JSON.parse(new TextDecoder("utf-8", {
+    fatal: true
+  }).decode(bytes)) as unknown;
 }
-
-export async function handleAdminGet(
-  request: Request,
-  deps: Dependencies = defaults,
-): Promise<Response> {
-  const bearer = /^Bearer ([^\s]+)$/i.exec(
-    request.headers.get("authorization") ?? "",
-  );
-  if (!bearer || bearer[1].length > 16_384) return fail("UNAUTHORIZED");
+export async function handleAdminGet(request: Request, deps: Dependencies = defaults): Promise<Response> {
   try {
-    const env = deps.environment();
-    const client = deps.client(env, bearer[1]);
-    const { data: auth, error: authError } = await client.auth.getUser(
-      bearer[1],
-    );
-    if (authError || !auth.user) return fail("UNAUTHORIZED");
+    const auth = await authenticated(request, deps);
+    if (!auth) return fail("UNAUTHORIZED");
     const query = new URL(request.url).searchParams;
-    const allowedKeys = ["section", "limit", "after", "search", "id", "days"];
-    if (
-      [...query.keys()].some(
-        (key) => !allowedKeys.includes(key) || query.getAll(key).length !== 1,
-      )
-    ) {
-      return fail("INVALID_REQUEST");
+    if (new Set(query.keys()).size !== [...query.keys()].length) return fail("INVALID_REQUEST");
+    const parsedSection = adminSectionSchema.safeParse(query.get("section") ?? "controls");
+    if (!parsedSection.success) return fail("INVALID_REQUEST");
+    const section = parsedSection.data;
+    const instance = query.get("database_instance_id");
+    if (instance !== null && !z.uuid().safeParse(instance).success) return fail("INVALID_REQUEST");
+    const input: Record<string, string | number> = {
+      section,
+      contract_code: "cv_app_db_2",
+      expected_environment: auth.environment.name.toUpperCase(),
+      ...(instance ? {
+        database_instance_id: instance
+      } : {})
+    };
+    const allowed = new Set(["section", "database_instance_id"]);
+    const kind = query.get("kind") ?? sectionKinds[section][0];
+    if (section !== "controls") {
+      allowed.add("kind");
+      if (!sectionKinds[section].includes(kind)) return fail("INVALID_REQUEST");
+      input.kind = kind;
+      const id = query.get("id");
+      allowed.add("id");
+      if (id !== null) {
+        if (!entityIdSchema.safeParse(id).success) return fail("INVALID_REQUEST");
+        input.id = id;
+      }
+      if (section === "usage" && kind === "analytics") {
+        allowed.add("days");
+        const days = query.get("days") ?? "7";
+        if (!/^(?:[1-9]|[1-8][0-9]|90)$/.test(days)) return fail("INVALID_REQUEST");
+        input.days = Number(days);
+      } else if (id === null) {
+        allowed.add("limit");
+        allowed.add("after");
+        const limit = query.get("limit") ?? "25",
+          after = query.get("after");
+        if (!/^[1-9][0-9]{0,2}$/.test(limit) || Number(limit) > 100 || after !== null && (!after || after.length > 500)) return fail("INVALID_REQUEST");
+        input.limit = Number(limit);
+        if (after !== null) input.after = after;
+      }
+      if (section === "audit") {
+        allowed.add("entity_id");
+        const entity = query.get("entity_id");
+        if (entity !== null) {
+          if (!entityIdSchema.safeParse(entity).success) return fail("INVALID_REQUEST");
+          input.entity_id = entity;
+        }
+      }
     }
-    const section = query.get("section") ?? "overview";
-    const base = { p_environment: env.name, p_project_ref: null };
-    if (section === "overview") {
-      if ([...query.keys()].some((key) => key !== "section"))
-        return fail("INVALID_REQUEST");
-      const { data, error } = await client.rpc("admin_get_context_v1", base);
-      if (error) return fail(rpcError(error));
-      return Response.json(adminContextSchema.parse(data), { headers });
-    }
-    if (section === "analytics") {
-      if ([...query.keys()].some((key) => !["section", "days"].includes(key)))
-        return fail("INVALID_REQUEST");
-      const daysText = query.get("days") ?? "7";
-      if (!/^(?:[1-9]|[12][0-9]|3[01])$/.test(daysText))
-        return fail("INVALID_REQUEST");
-      const to = new Date();
-      const from = new Date(to.getTime() - Number(daysText) * 86_400_000);
-      const { data, error } = await client.rpc("admin_get_ai_analytics_v1", {
-        p_environment: env.name,
-        p_project_ref: null,
-        p_from: from.toISOString(),
-        p_to: to.toISOString(),
-      });
-      if (error) return fail(rpcError(error));
-      return Response.json(adminAnalyticsSchema.parse(data), { headers });
-    }
-    if (section === "controls") {
-      if ([...query.keys()].some((key) => key !== "section"))
-        return fail("INVALID_REQUEST");
-      const { data, error } = await client.rpc(
-        "admin_get_ai_control_state_v1",
-        base,
-      );
-      if (error) return fail(rpcError(error));
-      return Response.json(adminControlStateSchema.parse(data), { headers });
-    }
-    if (!adminRecordSectionSchema.safeParse(section).success)
-      return fail("INVALID_REQUEST");
-    const id = query.get("id");
-    const uuid =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-    const limitText = query.get("limit") ?? "25";
-    const after = query.get("after");
-    const search = query.get("search");
-    if (
-      !/^[1-9][0-9]{0,2}$/.test(limitText) ||
-      Number(limitText) > 100 ||
-      (after !== null && !uuid.test(after)) ||
-      (search !== null && search.length > 100) ||
-      (id === null &&
-        [...query.keys()].some(
-          (key) => !["section", "limit", "after", "search"].includes(key),
-        )) ||
-      (id !== null &&
-        (!uuid.test(id) ||
-          [...query.keys()].some((key) => !["section", "id"].includes(key))))
-    ) {
-      return fail("INVALID_REQUEST");
-    }
-    const { data, error } = id
-      ? await client.rpc("admin_get_record_v1", {
-          ...base,
-          p_section: section,
-          p_id: id,
-        })
-      : await client.rpc("admin_list_records_v1", {
-          ...base,
-          p_section: section,
-          p_limit: Number(limitText),
-          p_after: after,
-          p_search: search,
-        });
+    if ([...query.keys()].some(key => !allowed.has(key))) return fail("INVALID_REQUEST");
+    const {
+      data,
+      error
+    } = await auth.client.rpc("admin_read", {
+      p_input: input
+    });
     if (error) return fail(rpcError(error));
-    const page = adminPageSchema.parse(data);
-    if (page.section !== section) return fail("UNAVAILABLE");
-    return Response.json(page, { headers });
+    const envelope = adminReadResponseSchema.parse(data);
+    if (envelope.context.environment.toLowerCase() !== auth.environment.name || instance !== null && envelope.context.database_instance_id !== instance) return fail("CLIENT_UPDATE_REQUIRED");
+    let payload: unknown;
+    if (section === "controls") payload = z.null().parse(envelope.data);else if (section === "usage" && kind === "analytics") payload = adminAnalyticsSchema.parse(envelope.data);else {
+      const recordSchema = section === "configurations" ? kind === "adapters" ? adminAdapterSchema : kind === "legal_documents" ? adminDocumentSchema : adminConfigurationSchema : section === "disclosures" ? adminDocumentSchema.refine(doc => doc.kind === "AI_PROVIDER") : section === "rules" ? adminRuleSchema : adminRecordSchema;
+      if (query.has("id")) payload = recordSchema.parse(envelope.data);else {
+        const page = adminPageSchema.parse(envelope.data);
+        payload = {
+          ...page,
+          records: page.records.map(record => recordSchema.parse(record))
+        };
+      }
+    }
+    return Response.json({
+      context: envelope.context,
+      data: payload
+    }, {
+      headers
+    });
   } catch {
     return fail("UNAVAILABLE");
   }
 }
-
-export const GET = (request: Request) => handleAdminGet(request);
-
-export async function handleAdminPost(
-  request: Request,
-  deps: Dependencies = defaults,
-): Promise<Response> {
-  const bearer = /^Bearer ([^\s]+)$/i.exec(
-    request.headers.get("authorization") ?? "",
-  );
-  if (!bearer || bearer[1].length > 16_384) return fail("UNAUTHORIZED");
-  if (new URL(request.url).search !== "") return fail("INVALID_REQUEST");
-  const contentLength = request.headers.get("content-length");
-  if (
-    request.headers.get("content-type")?.split(";", 1)[0].trim() !==
-      "application/json" ||
-    (contentLength !== null &&
-      (!/^[0-9]{1,7}$/.test(contentLength) || Number(contentLength) > 4_096))
-  ) {
-    return fail("INVALID_REQUEST");
-  }
+export async function handleAdminPost(request: Request, deps: Dependencies = defaults): Promise<Response> {
   try {
-    const env = deps.environment();
-    const client = deps.client(env, bearer[1]);
-    const { data: auth, error: authError } = await client.auth.getUser(
-      bearer[1],
-    );
-    if (authError || !auth.user) return fail("UNAUTHORIZED");
-    const body = await readBoundedUtf8Body(request, 4_096);
-    if (body === null) return fail("INVALID_REQUEST");
-    const raw: unknown = JSON.parse(body);
-    const mutation = adminMutationRequestSchema.safeParse(raw);
-    const validation = adminValidationRequestSchema.safeParse(raw);
-    const readback = adminRuntimeReadbackRequestSchema.safeParse(raw);
-    if (!mutation.success && !validation.success && !readback.success)
-      return fail("INVALID_REQUEST");
-    if (mutation.success) {
-      const descriptor = mutationRpc[mutation.data.operation];
-      const { data, error } = await client.rpc(
-        descriptor.rpc,
-        mutationArgs(mutation.data, env),
-      );
-      if (error) return fail(rpcError(error));
-      const result = adminCommittedOperationSchema.safeParse(data);
-      if (!result.success || result.data.operationKind !== descriptor.kind)
-        return fail("UNAVAILABLE");
-      return Response.json(result.data, { headers });
+    if (new URL(request.url).search) return fail("INVALID_REQUEST");
+    const auth = await authenticated(request, deps);
+    if (!auth) return fail("UNAUTHORIZED");
+    const mutation = adminMutationRequestSchema.safeParse(await readBody(request));
+    if (!mutation.success) return fail("INVALID_REQUEST");
+    const preflight = await auth.client.rpc("admin_context");
+    if (preflight.error) return fail(rpcError(preflight.error));
+    const current = adminContextSchema.parse(preflight.data);
+    if (current.environment.toLowerCase() !== auth.environment.name || current.database_instance_id !== mutation.data.database_instance_id) return fail("CLIENT_UPDATE_REQUIRED");
+    if (mutation.data.operation === "admin_configuration_save") {
+      try {
+        await (deps.validateConfiguration ?? defaults.validateConfiguration!)(mutation.data, request.signal);
+      } catch (error) {
+        return fail("INVALID_REQUEST", error instanceof AdminConfigurationValidationError ? error.reason : undefined);
+      }
     }
-    if (!validation.success && !readback.success) return fail("INVALID_REQUEST");
-    const { data: context, error: contextError } = await client.rpc(
-      "admin_get_context_v1",
-      { p_environment: env.name, p_project_ref: null },
-    );
-    if (contextError) return fail(rpcError(contextError));
-    adminContextSchema.parse(context);
-    if (readback.success) {
-      const report = await (deps.produceReadback ?? defaults.produceReadback!)({
-        policyVersionId: readback.data.policyVersionId,
-        validationReportIds: readback.data.validationReportIds,
-      });
-      return Response.json(adminRuntimeReadbackSchema.parse(report), {
-        headers,
-      });
-    }
-    if (!validation.success) return fail("INVALID_REQUEST");
+    if (request.signal.aborted) return fail("UNAUTHORIZED");
     const {
-      runtimeContractId,
-      runtimeTargetId,
-    } = validation.data;
-    const validationInput = {
-      runtimeContractId,
-      runtimeTargetId,
-    };
-    const report = await (deps.produceValidation ?? defaults.produceValidation!)(
-      validationInput,
-    );
-    return Response.json(adminValidationReportSchema.parse(report), {
-      headers,
+      operation,
+      ...p_input
+    } = mutation.data;
+    const {
+      data,
+      error
+    } = await auth.client.rpc(operation, {
+      p_input: z.json().parse(p_input)
+    });
+    if (error) {
+      const code = rpcError(error);
+      const reason = adminRuntimeErrorReasonSchema.safeParse(operation === "admin_ai_update" && code === "INVALID_REQUEST" ? error.details : undefined);
+      return fail(code, reason.success ? reason.data : undefined);
+    }
+    const receipt = adminCommittedOperationSchema.parse(data);
+    if (receipt.operation !== operation.slice("admin_".length)) return fail("UNAVAILABLE");
+    return Response.json(receipt, {
+      headers
     });
   } catch (error) {
-    if (error instanceof SyntaxError) return fail("INVALID_REQUEST");
-    return fail("UNAVAILABLE");
+    return fail(error instanceof SyntaxError ? "INVALID_REQUEST" : "UNAVAILABLE");
   }
 }
-
+export const GET = (request: Request) => handleAdminGet(request);
 export const POST = (request: Request) => handleAdminPost(request);

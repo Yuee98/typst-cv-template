@@ -124,70 +124,20 @@ pnpm typecheck
 
 （以上均为根目录对 `web/` 包脚本的透传。）
 
-`.github/workflows/ci.yml` 的 server-build job 会用仅限 CI 的 fake 鉴权/配额/provider 依赖启动构建产物，在不访问托管服务的情况下验证完整 API envelope。真实 DeepSeek + 本地 Supabase 的 release smoke 与 metrics 命令见 `web/README.md`；该 smoke 会产生费用并修改隔离的本地数据库，因此不会进入 CI。
+`.github/workflows/ci.yml` 的 server-build job 会用仅限 CI 的 fake 鉴权/配额/provider 依赖启动构建产物，在不访问托管服务的情况下验证完整 API envelope。本地数据库检查和只读 Admin metrics 命令见 `web/README.md`；普通测试不调用付费上游。
 
 在 dev 和 build 之前，Web 应用会先将根目录的 `style.typ` 同步到 `web/public/typst/style.typ`，因此根目录的 Typst 样式始终保持唯一数据源。
 
-### AI 润色（仅 server 部署）
+### AI 润色与数据库
 
-AI 润色已经覆盖受支持的自由文本字段，并通过三层相互独立的开关逐步开放：
+用户从当前时间段允许的 Provider/模型集合中选择本次目标。数据库发布的配置、价格和精确披露在占额时冻结；同一次请求最多两次尝试，保持同一选择。支持 DeepSeek、MiMo 和通过 AI Studio 使用的 Google Gemini；Google 使用原生 Interactions API 与 `gemini-3.8-flash`。
 
-| 开关 | 生效范围 | 用途 |
-|---|---|---|
-| `NEXT_PUBLIC_AI_POLISH_ENABLED` | 浏览器构建期 | 显示或移除 AI 入口，不是安全开关。`build:static` 会拒绝值为 `true` 的构建，因此 Pages 产物不可能包含 AI 入口。 |
-| `AI_POLISH_ENABLED` | Vercel deployment | 在鉴权、数据库访问和 provider 调用之前禁用全部三个 AI API 路由。值不是精确的 `true` 时返回 `503 AI_DISABLED`；修改 Vercel env 后需要重新部署。 |
-| `public.ai_feature_config.ai_polish_enabled` | Supabase 运行时 | 即时生效的运维 kill switch。reserve 和 provider-start RPC 还会在无需重新部署的情况下执行非空 canary allowlist 与全局日限。 |
+业务表位于私有 schema，客户端通过只读 view 和带实例/revision 校验的 RPC 操作。所有 CV 入口只接受 v7 和当前存储/加密格式；历史 JSON、旧本地键与旧 API 不再转换。
 
-AI API 路由（`POST /api/polish`、`GET /api/polish/quota`、`GET /api/polish/availability`）只存在于 **server 构建**；静态 Pages 导出不暴露其中任何路由，也不会获得任何 server-only secret。完整环境变量契约见 `web/.env.example`。
+配置与本地测试见 [web 开发说明](web/README.md)及 [数据库契约](docs/database-contract.md)。Provider 密钥仅使用 `AI_PROVIDER_KEY_DEEPSEEK_*` / `AI_PROVIDER_KEY_MIMO_*` / `AI_PROVIDER_KEY_GEMINI_*`，由 DB profile 引用，不保存到数据库或浏览器。
 
-#### 多 Provider 运行时权威与凭据
+### 部署
 
-provider/profile version、精确的 price version、routing policy、legal bundle 和不可重新解释的带版本 runtime contract ID 都是 **DB 权威快照**。服务端在传输前冻结该精确 route。对于 v2 profile，DB version 保存 endpoint、credential 环境变量名和 model ID；编译后的代码约束 adapter 与 destination policy，经过审核的 deployment manifest 则把每个 credential 名绑定到精确的 Provider、recipient 和 origin。环境变量只为这些 binding 提供凭据，不是 provider 或 model 选择器。不得把 `AI_PROVIDER`、`AI_MODEL` 或 `AI_BASE_URL` 加为应用路由变量：这会绕过 DB 验证、审计、canary 和 legal gate。
+测试 Supabase 监听 `main`，生产 Supabase 监听 `release`；Vercel Preview/Production 与 Pages 必须分别核验数据库项目映射。生产由 `Promote Release` 手动推进。完整重建流程见 [重置发布手册](docs/database-rebuild-runbook.md)。
 
-`DEEPSEEK_API_KEY` 与 `MIMO_API_KEY` 保留为 legacy v1 server-only alias。当前 seed 的 v2 binding 使用 `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` 和 `AI_PROVIDER_KEY_MIMO_PRIMARY`；v2 还要求 `AI_RUNTIME_BUILD_ID` 与非敏感的 `AI_PROVIDER_BINDING_MANIFEST` 精确匹配已审核 deployment。仅存在 key 不会启用初版 route；仍须有已批准且 active 的 DB profile 与 policy。`OPENROUTER_API_KEY` 仅是后续可选的 v1 alias，不属于初版 route；必须另行完成精确 upstream、profile、披露和 activation 审核。任何 provider key 都不得进入浏览器 bundle、数据库、应用日志、ledger 或 error payload。
-
-### 部署拓扑
-
-`main` 是 staging 线，`release` 是 production 线；生产 promotion 始终由人手动发起：
-
-| 交付面 | Git 来源 | 构建 | 数据库配置 | 触发方式 |
-|---|---|---|---|---|
-| Vercel Preview | `main` | Server | 独立测试 Supabase 项目 | push 或 merge 到 `main` |
-| Test Supabase | `main` | `supabase/` migrations | 独立项目；GitHub Integration working directory 为 `.` | push 或 merge 到 `main` |
-| Vercel Production | `release` | Server | 独立生产 Supabase 项目 | promotion 更新 `release` |
-| Production Supabase | `release` | `supabase/` migrations | 独立项目；GitHub Integration working directory 为 `.` | promotion 更新 `release` |
-| GitHub Pages | `Promote Release` 选定的 commit | 静态导出 | 仅使用公开 Supabase 变量；无 AI API 或 service-role key | 手动 promotion workflow |
-
-`Promote Release` workflow 会验证来自 `main` 的选定 commit、构建静态产物、以可选生产 tag 原子前移 `release`，并部署 Pages。随后 `release` push 会分别触发 Vercel Production 与 Production Supabase；这些下游部署互不等待，也不会等待 Pages。
-
-#### 一次性环境配置
-
-Vercel 项目设置为 **Root Directory** `web`、**Framework Preset** `Next.js`、**Build Command** `pnpm build:server`、不设置 **Output Directory** override，并将 **Production Branch** 设为 `release`。
-
-各环境使用独立配置，不要让 Preview 与 Production 共用生产数据库或 HMAC secret：
-
-| 变量 | Preview | Production | 说明 |
-|---|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 测试项目 | 生产项目 | 可公开的项目连接信息 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 测试项目 | 生产项目 | Sensitive；仅服务端 |
-| `AI_RUNTIME_BUILD_ID` | 已审核的 Preview build ID | 已审核的 Production build ID | 仅服务端的 v2 runtime identity；必须匹配已登记 deployment |
-| `AI_PROVIDER_BINDING_MANIFEST` | Preview 的 canonical 已审核 manifest JSON | Production 的 canonical 已审核 manifest JSON | 非敏感 v2 binding identity；只包含精确 Provider/recipient/origin binding |
-| `AI_PROVIDER_KEY_DEEPSEEK_PRIMARY` / `AI_PROVIDER_KEY_MIMO_PRIMARY` | 仅为已批准的 Preview v2 profile 配置非生产 key；否则留空 | 已批准的 Production v2 profile 使用独立生产 key | Sensitive server-only v2 binding；名称必须匹配 DB profile 与已审核 manifest |
-| `DEEPSEEK_API_KEY` / `MIMO_API_KEY` | 仅在已批准的 Preview v1 profile 仍可能运行时配置非生产 key；否则留空 | 已批准的 Production v1 profile 仍可能运行时使用独立生产 key | Sensitive legacy v1 alias；key 本身不启用路由 |
-| `OPENROUTER_API_KEY` | 初版 route 留空 | 初版 route 留空 | 后续可选 alias，不表示初版启用 |
-| `AI_USER_ID_HMAC_SECRET` | 独立随机 secret | 独立随机 secret | Sensitive；绝不使用 `NEXT_PUBLIC_` 前缀 |
-| `AI_POLISH_ENABLED` | 首次关闭态部署为 `false` | 第一次生产 promotion 前为 `false` | 部署级 API 总闸 |
-| `NEXT_PUBLIC_AI_POLISH_ENABLED` | 首次关闭态部署为 `false` | 第一次生产 promotion 前为 `false` | 构建期 UI 开关 |
-
-托管环境不要设置 `POLISH_FAKE_LLM`、`POLISH_FAKE_BACKEND` 或 `NEXT_PUBLIC_AI_POLISH_MOCK`。`AI_PROVIDER`、`AI_MODEL`、`AI_BASE_URL` 与 `AI_POLISH_GLOBAL_DAILY_LIMIT` 都不是应用路由变量：DB 选择经审核的 profile/price/policy/legal/runtime 快照，全局日限位于 `public.ai_feature_config`。
-
-无法使用数据库 branching 时采用两个独立 Supabase 项目：测试项目 watch `main`，生产项目 watch `release`。应用 migrations 前，先在 `pg_catalog` schema 启用 `pg_cron`；migration 会创建 `ai-polish-retention-cleanup` 和 `ai-polish-stale-reconciliation`。每个项目的 GitHub Integration 中，“production branch”只表示部署到该项目的 Git 分支，并不意味着测试项目是面向用户的生产数据库。
-
-#### 首次上线与后续发布
-
-1. 保持两个 Vercel 开关为 `false`，合并一个 commit 到 `main`。要求 GitHub CI、Test Supabase deployment 和 Vercel Preview deployment 全部成功；确认 Preview 首页为 `200`、AI UI 不存在、已登录与未登录的 AI API 请求均被部署级开关阻止、两个 cron job active，且没有 provider 请求。
-2. 配置非空测试账号 allowlist，开启测试数据库 runtime switch，将两个 **Preview** Vercel 开关改为 `true` 并重新部署。针对测试项目完成中英文浏览器、terms、E2EE 提醒、配额、取消、stale-write、删除、metrics 和真实 provider 验收。
-3. 仅在 Preview 验收通过后运行 `Promote Release`。生产 migrations 和首次 server deployment 完成期间，两个 **Production** Vercel 开关继续保持 `false`；先验证关闭状态，再设置非空生产 canary allowlist。
-4. 开启两个 Production Vercel 开关并重新部署，同时保持数据库 runtime switch 关闭。精确 deployment 验证通过后，仅为 allowlist canary 账号开启数据库开关；清空 allowlist、全局开放仍是独立人工决策。
-
-首次上线完成后，Vercel 开关可以持续保持 `true`。如果 migration 不向后兼容，应在 promotion 前关闭数据库 runtime switch，精确生产 deployment 验证后再开启；普通发布无需反复修改 Vercel env。
+当前重构仅在本地开发分支实施，尚未重置 test/prod，也未触发线上发布。新迁移链不能直接应用到仍有旧迁移历史的环境；线上切换须另行授权并按手册执行。

@@ -1,1 +1,1 @@
--- Local seed data can be added here when cloud CV flows need fixtures.
+-- Local fixtures belong in isolated tests. No users, accepted terms or enabled runtime are seeded.

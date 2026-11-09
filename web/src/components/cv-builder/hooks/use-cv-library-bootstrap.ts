@@ -1,31 +1,22 @@
 import { useEffect, type MutableRefObject } from "react";
 import type { UseFormReturn } from "react-hook-form";
-
 import { cloneCvData, summarizeLocalDocument } from "@/lib/cv/cv-utils";
 import type { CvData } from "@/lib/cv/schema";
-import {
-  createLocalCvDocument,
-  initializeCvDocumentLibrary,
-  loadCvDocument,
-  saveActiveCvDocumentId,
-  type CvDocumentSummary,
-} from "@/lib/cv/storage";
-
-type SetOrderedDocuments = (
-  documents: CvDocumentSummary[] | ((current: CvDocumentSummary[]) => CvDocumentSummary[]),
-) => void;
-
+import { createLocalCvDocument, initializeCvDocumentLibrary, loadCvDocument, saveActiveCvDocumentId, type CvDocumentSummary } from "@/lib/cv/storage";
+type SetOrderedDocuments = (documents: CvDocumentSummary[] | ((current: CvDocumentSummary[]) => CvDocumentSummary[])) => void;
 export function useCvLibraryBootstrap({
   form,
+  onError,
   initialData,
   initializedRef,
   loadCollapsedPreference,
   localFallbackTitle,
   setActiveDocumentId,
   setPersistedBaseline,
-  setOrderedDocuments,
+  setOrderedDocuments
 }: {
   form: UseFormReturn<CvData>;
+  onError?: (message: string) => void;
   initialData: CvData;
   initializedRef: MutableRefObject<boolean>;
   loadCollapsedPreference: () => void;
@@ -36,50 +27,47 @@ export function useCvLibraryBootstrap({
 }) {
   useEffect(() => {
     let cancelled = false;
-
     queueMicrotask(() => {
       if (cancelled) {
         return;
       }
+      try {
+        const library = initializeCvDocumentLibrary(cloneCvData(initialData), localFallbackTitle);
+        const activeSummary = library.documents.find(document => document.id === library.activeDocumentId);
+        const isCloudActive = activeSummary?.storageKind === "cloud" || activeSummary?.storageKind === "encrypted";
+        const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
+        if (!initialDocument && library.documents.length === 0) {
+          setOrderedDocuments([]);
+          setActiveDocumentId(null);
+          loadCollapsedPreference();
+          initializedRef.current = true;
+          return;
+        }
 
-      const library = initializeCvDocumentLibrary(cloneCvData(initialData), localFallbackTitle);
-      const activeSummary = library.documents.find((document) => document.id === library.activeDocumentId);
-      const isCloudActive = activeSummary?.storageKind === "cloud" || activeSummary?.storageKind === "encrypted";
-      const initialDocument = library.activeDocumentId ? loadCvDocument(library.activeDocumentId) : null;
-
-      if (!initialDocument && library.documents.length === 0) {
-        setOrderedDocuments([]);
-        setActiveDocumentId(null);
+        // Cloud/encrypted CVs keep their active ID; cloud sync loads them later.
+        if (!initialDocument && isCloudActive && library.activeDocumentId) {
+          setOrderedDocuments(library.documents);
+          setActiveDocumentId(library.activeDocumentId);
+          loadCollapsedPreference();
+          initializedRef.current = true;
+          return;
+        }
+        const documentToLoad = initialDocument ?? createLocalCvDocument(cloneCvData(initialData), localFallbackTitle);
+        const nextDocuments = initialDocument ? library.documents : [summarizeLocalDocument(documentToLoad), ...library.documents];
+        setOrderedDocuments(nextDocuments);
+        setActiveDocumentId(documentToLoad.id);
+        saveActiveCvDocumentId(documentToLoad.id);
         loadCollapsedPreference();
+        form.reset(documentToLoad.data);
+        // The freshly loaded local document is persisted by definition, so it
+        // becomes the dirty-check baseline (dirty=false) right away.
+        setPersistedBaseline(documentToLoad.id, documentToLoad.data);
         initializedRef.current = true;
-        return;
-      }
-
-      // Cloud/encrypted CVs keep their active ID; cloud sync loads them later.
-      if (!initialDocument && isCloudActive && library.activeDocumentId) {
-        setOrderedDocuments(library.documents);
-        setActiveDocumentId(library.activeDocumentId);
-        loadCollapsedPreference();
+      } catch (error) {
         initializedRef.current = true;
-        return;
+        onError?.(error instanceof Error ? error.message : "Unsupported document format");
       }
-
-      const documentToLoad = initialDocument ?? createLocalCvDocument(cloneCvData(initialData), localFallbackTitle);
-      const nextDocuments = initialDocument
-        ? library.documents
-        : [summarizeLocalDocument(documentToLoad), ...library.documents];
-
-      setOrderedDocuments(nextDocuments);
-      setActiveDocumentId(documentToLoad.id);
-      saveActiveCvDocumentId(documentToLoad.id);
-      loadCollapsedPreference();
-      form.reset(documentToLoad.data);
-      // The freshly loaded local document is persisted by definition, so it
-      // becomes the dirty-check baseline (dirty=false) right away.
-      setPersistedBaseline(documentToLoad.id, documentToLoad.data);
-      initializedRef.current = true;
     });
-
     return () => {
       cancelled = true;
     };

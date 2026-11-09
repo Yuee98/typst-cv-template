@@ -22,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: promote-release
+  group: database-prod
   cancel-in-progress: false
 
 jobs:
