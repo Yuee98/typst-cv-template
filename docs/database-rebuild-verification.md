@@ -109,3 +109,14 @@ legal.documents、对应 typed audit、摘要及 DTO 删除 adapter_id、model_i
 日志位于 `tmp/disclosure-refactor/` 与 `/tmp/display-legal-*.log`，具体路径见机器记录。本地预览账号沿用原邮箱/密码，恢复原有一份配置、时间规则、额度及启用状态；展示名初始使用原配置名称，可在 Admin 修改。旧本地接受记录未恢复，需重新登录及同意当前说明。
 
 旧 `9dd1bb8` 的 G3 proof 和摘要不重绑；未来 hosted 切换仍必须为实际候选提交和新迁移摘要生成证明。本轮未操作 test/prod、未 push、未发布，付费 Provider 调用为 0。
+
+## 评审修复候选的本地验收（2026-11-09）
+
+以下结果对应修复提交 `1f39b85`（含前一修复 `dc5ac77`）的代码与迁移，机器摘要见 [评审修复本地证据](evidence/pr43-review-corrections-local.json)，不回填为上述历史 SHA 的验收。记录时尚未形成新候选的 CI 或 G3 通过结论。
+
+- 全量 Web 测试为 90 文件 / 1,520 项通过，工具测试 36 项通过，完整类型检查和 lint 通过；日志位于 `tmp/relay-v2-final/round2-{web-unit,tools,typecheck,lint}.log`。
+- 隔离空库完整应用当前 15 条迁移，8 份 TAP 文件的 173 个断言全部通过。验收同步本地平台结构、角色及 ACL，不复制平台用户数据；来源主库只读，未执行原生 reset，临时容器已清理。最终记录为 `tmp/relay-v2-final/isolated-sql-summary.json`，其中保存被测迁移的逐文件 hash；此前因平台角色与空库默认值不同而失败的尝试不作为通过证据。
+- 法律写入触发器与严格 reader 共用 [格式用例](../supabase/test-fixtures/legal-markdown-corpus.json)：97 个链接、126 个正文和 20 个元数据样例。覆盖完整 HTTPS authority、IPv6、本站路径、现有来源链接及 Markdown 原有结构语义，同时校验 Unicode 空白、UTF-16 长度和真实四位正年日期。隔离库中的实际 authenticated 角色 RPC 提交验证合法内容逐次保存后可通过严格 DTO 且字段值原样回读，非法新建或更新不改变正文、审计、操作及运行状态账本；这里使用明确的合成有效会话，不冒充 GoTrue 密码登录。独立记录为 `tmp/relay-v2-final/legal-markdown/summary.json`。
+- 完整 DB/Auth/API 套件 6 文件 / 21 项通过；其中新增 2 项为隔离库中实际 authenticated 角色 RPC 的合成有效会话测试，其余现有 Auth/Data API 验收使用本地真实服务。日志为 `tmp/relay-v2-final/round2-db-api.log`。为保留当前本地预览，只在事务内同步固定的 5 个函数并验证所有业务数据、迁移记录、原 RPC/触发器元数据和 schema 权限前后一致；未重建主库，账号、配置和 AI 开关保留。全链空库证明来自上述独立容器。
+
+本轮未操作 test/prod，也未调用付费 Provider。先前浏览器、构建和 G3 记录保留各自原始提交边界；它们不自动证明本修正提交或未来推送的候选 SHA。后续 CI、生产构建、浏览器及实际候选 G3 结果须分别记录，不把尚未结束的门禁标为通过。
