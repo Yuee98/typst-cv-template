@@ -5,6 +5,47 @@ import { fixtureAvailability } from "@/lib/polish/fixtures";
 import { makeQuota, openAccepted, openRequiredAndConfirm, renderHarness, SCOPE } from "./harness";
 afterEach(cleanup);
 describe("explicit provider selection", () => {
+  it("requires an explicit choice on first open and reopen when the declared default is unavailable", async () => {
+    const response = fixtureAvailability([2]);
+    response.availability.defaultConfigId = null;
+    const h = renderHarness({}, { deferAvailability: true });
+    for (const index of [0, 1]) {
+      act(() => h.flow().open(SCOPE));
+      await act(async () => {
+        h.quotaCalls[index].resolve({ requestId: `q-${index}`, quota: makeQuota(20) });
+        h.availabilityCalls[index].deferred.resolve(response);
+      });
+      expect(h.flow().availabilityCandidate?.selectedConfigId).toBeNull();
+      expect(h.flow().canConfirm).toBe(false);
+      act(() => h.flow().confirm());
+      expect(h.polishCalls).toHaveLength(0);
+      expect(h.acceptCalls).toHaveLength(0);
+      act(() => h.flow().selectConfiguration("2"));
+      expect(h.flow().availabilityCandidate?.selectedConfigId).toBe("2");
+      expect(h.flow().canConfirm).toBe(true);
+      act(() => h.flow().close());
+    }
+  });
+  it("does not restore an expired selection when its declared default returns", async () => {
+    const h = renderHarness({}, { deferAvailability: true });
+    act(() => h.flow().open(SCOPE));
+    await act(async () => {
+      h.quotaCalls[0].resolve({ requestId: "q", quota: makeQuota(20) });
+      h.availabilityCalls[0].deferred.resolve(fixtureAvailability([1, 2]));
+    });
+    expect(h.flow().availabilityCandidate?.selectedConfigId).toBe("1");
+    const withoutDefault = fixtureAvailability([2]);
+    withoutDefault.availability.defaultConfigId = null;
+    act(() => h.flow().availabilityRetry());
+    await act(async () => h.availabilityCalls[1].deferred.resolve(withoutDefault));
+    expect(h.flow().availabilityCandidate?.selectedConfigId).toBeNull();
+    act(() => h.flow().availabilityRetry());
+    await act(async () => h.availabilityCalls[2].deferred.resolve(fixtureAvailability([1, 2])));
+    expect(h.flow().availabilityCandidate?.selectedConfigId).toBeNull();
+    expect(h.flow().canConfirm).toBe(false);
+    act(() => h.flow().confirm());
+    expect(h.polishCalls).toHaveLength(0);
+  });
   it("preselects the rule default and submits a different selected provider", async () => {
     const h = renderHarness();
     await openAccepted(h);

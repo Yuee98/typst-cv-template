@@ -40,7 +40,7 @@ export function createFakeRuntime(now: () => Date = () => new Date()) {
       if (name === "ai_quota") return quota(user);
       if (name === "ai_availability") return {
         enabled, control_revision: revision, configurations: configurations.filter(configuration => allowedIndices().includes(configuration.config_id)).map(configuration => structuredClone(configuration)),
-        default_config_id: enabled ? "1" : null, quota: quota(user), reason: enabled ? null : "DISABLED", database_instance_id: fixtureInstance, contract_code: "cv_app_db_2"
+        default_config_id: enabled && configurations[0].eligible && configurations[0].legal_display.common.enabled && configurations[0].legal_display.provider.enabled ? "1" : null, quota: quota(user), reason: enabled ? null : "DISABLED", database_instance_id: fixtureInstance, contract_code: "cv_app_db_2"
       };
       if (name === "ai_reserve") {
         const existing = [...requests.values()].find(request => request.user === user && request.key === input.client_request_key);

@@ -21,26 +21,29 @@ export async function readAvailability(db: AiDatabase, userId: string, instance:
   const raw = rawSchema.parse(await db.call("ai_availability", {
     contract_code: "cv_app_db_2", owner_auth_user_id: userId, database_instance_id: instance
   }));
+  const configurations = raw.configurations.map(configuration => {
+    let status: "READY" | "CONSENT_REQUIRED" | "UNAVAILABLE" = !configuration.eligible ? "UNAVAILABLE" : configuration.consent_required ? "CONSENT_REQUIRED" : "READY";
+    let reason = configuration.reason;
+    try {
+      if (checkProviders) validateExecutionConfiguration(Object.fromEntries(Object.keys(executionConfigurationSchema.shape).map(key => [key, configuration[key as keyof typeof configuration]])), env);
+      const legal = configuration.legal_display.provider;
+      if (!legal.enabled || !configuration.legal_display.common.enabled) throw new Error("Legal document is disabled");
+    } catch {
+      status = "UNAVAILABLE";
+      reason = "EXECUTION_CONFIG_UNAVAILABLE";
+    }
+    return {
+      configId: configuration.config_id, configRevision: configuration.revision,
+      displayName: configuration.display_name,
+      status, reason, legalDisplay: configuration.legal_display
+    };
+  });
   return polishAvailabilitySchema.parse({
     enabled: raw.enabled && raw.reason === null,
     contract: raw.contract_code, databaseInstanceId: raw.database_instance_id,
-    controlRevision: raw.control_revision, defaultConfigId: raw.default_config_id, reason: raw.reason,
-    configurations: raw.configurations.map(configuration => {
-      let status: "READY" | "CONSENT_REQUIRED" | "UNAVAILABLE" = !configuration.eligible ? "UNAVAILABLE" : configuration.consent_required ? "CONSENT_REQUIRED" : "READY";
-      let reason = configuration.reason;
-      try {
-        if (checkProviders) validateExecutionConfiguration(Object.fromEntries(Object.keys(executionConfigurationSchema.shape).map(key => [key, configuration[key as keyof typeof configuration]])), env);
-        const legal = configuration.legal_display.provider;
-        if (!legal.enabled || !configuration.legal_display.common.enabled) throw new Error("Legal document is disabled");
-      } catch {
-        status = "UNAVAILABLE";
-        reason = "EXECUTION_CONFIG_UNAVAILABLE";
-      }
-      return {
-        configId: configuration.config_id, configRevision: configuration.revision,
-        displayName: configuration.display_name,
-        status, reason, legalDisplay: configuration.legal_display
-      };
-    })
+    controlRevision: raw.control_revision,
+    defaultConfigId: configurations.some(configuration => configuration.configId === raw.default_config_id && configuration.status !== "UNAVAILABLE") ? raw.default_config_id : null,
+    reason: raw.reason,
+    configurations
   });
 }

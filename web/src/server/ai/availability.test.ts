@@ -6,6 +6,23 @@ const userId = "10000000-0000-4000-8000-000000000002";
 const fake = () => createFakeRuntime(() => new Date("2026-11-07T00:00:00Z"));
 
 describe("public configuration names and recipient disclosures", () => {
+  it("clears an unavailable declared fake default without promoting another candidate", async () => {
+    const runtime = fake();
+    runtime.fixture.configurations[0].eligible = false;
+    const raw = await runtime.db.call("ai_availability", { contract_code: "cv_app_db_2", owner_auth_user_id: userId, database_instance_id: fixtureInstance });
+    expect(raw).toMatchObject({ default_config_id: null });
+    const availability = await readAvailability(runtime.db, userId, fixtureInstance, {}, false);
+    expect(availability.defaultConfigId).toBeNull();
+    expect(availability.configurations.find(option => option.configId === "2")?.status).toBe("READY");
+  });
+
+  it("clears a default rejected by server execution validation without choosing another credential", async () => {
+    const runtime = fake();
+    const availability = await readAvailability(runtime.db, userId, fixtureInstance, { AI_PROVIDER_KEY_FIXTURE_2: "synthetic-test-value" });
+    expect(availability.configurations[0].status).toBe("UNAVAILABLE");
+    expect(availability.configurations[1].status).toBe("READY");
+    expect(availability.defaultConfigId).toBeNull();
+  });
   it("projects only the public display name without leaking execution configuration", async () => {
     const runtime = fake();
     runtime.fixture.configurations[0].display_name = "Fast writing";

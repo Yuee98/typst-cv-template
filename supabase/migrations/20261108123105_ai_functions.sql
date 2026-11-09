@@ -212,9 +212,6 @@ begin
         end if;
       end if;
     end loop;
-  if def is null and jsonb_array_length(items) > 0 then
-    def = (items #>> '{0,config_id}')::bigint;
-  end if;
   return common.api_json (jsonb_build_object('contract_code', 'cv_app_db_2', 'database_instance_id', (
         select
           database_instance_id
