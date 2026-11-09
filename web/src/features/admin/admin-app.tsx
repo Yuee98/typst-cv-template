@@ -135,8 +135,8 @@ export default function AdminApp({
     ...currentSelection,
     dialog: null
   });
-  return <AdminShell locale={locale} t={t} section={section} environment={context?.environment} onSignOut={() => void client.auth.signOut()}>
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">{t[section]}</h2><div className="flex gap-2"><Button variant="secondary" disabled={busy} onClick={read.refreshRead}>{l("Refresh", "刷新")}</Button>{mayCreate && context && <Button disabled={!ready} onClick={() => setSelection({
+  return <AdminShell locale={locale} t={t} section={section} environment={context?.environment} accountEmail={session.user.email} onSignOut={() => void client.auth.signOut()}>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-semibold">{t[section]}</h2><div className="flex gap-2"><Button variant="secondary" disabled={busy} onClick={read.refreshRead}>{l("Refresh", "刷新")}</Button>{mayCreate && context && <Button disabled={!ready} onClick={() => setSelection({
           ...currentSelection,
           dialog: {
             owner: dialogOwner,

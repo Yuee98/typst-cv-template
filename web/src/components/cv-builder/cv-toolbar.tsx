@@ -84,7 +84,7 @@ export function CvToolbar({
     };
   }, []);
   return (
-    <Toolbar ref={headerRef} className="cv-toolbar">
+    <Toolbar ref={headerRef} className="cv-toolbar app-toolbar-surface">
       <ToolbarTitle />
       <div ref={controlsRef} className="cv-toolbar-controls">
         <Button ref={libraryTriggerRef} type="button" variant="ghost" size="icon" className="library-trigger" aria-label={t("openLibrary")} title={t("openLibrary")} aria-haspopup="dialog" aria-expanded={libraryOpen} onClick={onOpenLibrary}>

@@ -24,7 +24,7 @@ async function login(page: Page, user: typeof users.admin) {
     name: "Sign in",
     exact: true
   }).click();
-  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
 }
 function isAdminRead(request: Request, section?: string) {
   const url = new URL(request.url());
@@ -118,23 +118,24 @@ test("soft navigation caches fresh lists and atomic configuration save refreshes
 });
 for (const code of ["UNAUTHORIZED", "FORBIDDEN"] as const) {
   test(`${code} clears cached records before returning to a list`, async ({ page }) => {
-    await login(page, users.admin); await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+    await login(page, users.admin); await expect(page.getByTitle("Environment: LOCAL", { exact: true })).toBeVisible();
     await openSection(page, "configurations");
     await page.route("**/api/admin?**", async route => { if (isAdminRead(route.request(), "rules")) await route.fulfill({ status: code === "UNAUTHORIZED" ? 401 : 403, json: { error: { code } } }); else await route.continue(); });
     const denied = page.waitForResponse(response => isAdminRead(response.request(), "rules"));
     await page.locator('nav a[href="/en/admin/rules"]').click();
     expect((await denied).status()).toBe(code === "UNAUTHORIZED" ? 401 : 403);
     await expect(page.getByRole("alert").filter({ hasText: code })).toHaveText(code);
-    await expect(page.getByText(/Environment: LOCAL/)).toHaveCount(0);
+    await expect(page.getByTitle("Environment: LOCAL", { exact: true })).toHaveCount(0);
     await page.unroute("**/api/admin?**");
     await openSection(page, "configurations");
     await expect(page.getByRole("button", { name: "New", exact: true })).toBeEnabled();
   });
 }
 test("signing out isolates cached administrator data from the next account", async ({ page }) => {
-  await login(page, users.admin); await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+  await login(page, users.admin); await expect(page.getByTitle("Environment: LOCAL", { exact: true })).toBeVisible();
   await openSection(page, "configurations");
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Email")).toBeVisible();
   await page.getByLabel("Email").fill(users.ordinary.email); await page.getByLabel("Password").fill(users.ordinary.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -142,7 +143,7 @@ test("signing out isolates cached administrator data from the next account", asy
   await expect(page.getByRole("button", { name: "New", exact: true })).toHaveCount(0);
 });
 test("an instance mismatch performs exactly one unbound bootstrap", async ({ page }) => {
-  await login(page, users.admin); await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+  await login(page, users.admin); await expect(page.getByTitle("Environment: LOCAL", { exact: true })).toBeVisible();
   const staleInstance = "10000000-0000-4000-8000-000000000099";
   let originalInstance: string | undefined;
   await page.route("**/api/admin?**", async route => { if (isAdminRead(route.request(), "configurations") && !originalInstance) { const response = await route.fetch(); const envelope = await response.json(); originalInstance = envelope.context.database_instance_id; envelope.context.database_instance_id = staleInstance; await route.fulfill({ response, json: envelope }); } else await route.continue(); });
@@ -275,7 +276,7 @@ test("current database terms and provider disclosures render in both languages",
 
 test("configuration and disclosure dialogs fit desktop and mobile viewports", async ({ page }) => {
   await login(page, users.admin);
-  await expect(page.getByText(/Environment: LOCAL/)).toBeVisible();
+  await expect(page.getByTitle("Environment: LOCAL", { exact: true })).toBeVisible();
   for (const viewport of [{ width: 1536, height: 1000 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await page.goto("/en/admin/configurations");

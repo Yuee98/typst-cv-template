@@ -9,6 +9,10 @@ const state = vi.hoisted(() => ({
   client: null as unknown,
   listener: null as null | ((event: string, session: unknown) => void)
 }));
+// Theme/locale controls are exercised in the browser; this suite isolates
+// administrator identity, draft ownership and query-cache transitions.
+vi.mock("@/components/layout/toolbar/theme-toggle", () => ({ ThemeToggle: () => null }));
+vi.mock("@/components/layout/toolbar/locale-switcher", () => ({ LocaleSwitcher: () => null }));
 vi.mock("@/lib/supabase/client", () => ({
   getSupabaseBrowserClient: () => state.client,
   getSupabaseConfig: () => ({

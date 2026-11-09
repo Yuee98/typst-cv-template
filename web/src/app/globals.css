@@ -183,25 +183,71 @@ body:has(.cv-app-shell) {
   flex: none;
 }
 
-.cv-toolbar.glass-panel {
+.app-toolbar-surface {
   background: color-mix(in srgb, var(--surface) 70%, transparent);
   -webkit-backdrop-filter: blur(12px) saturate(145%);
   backdrop-filter: blur(12px) saturate(145%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 55%), 0 4px 16px rgb(15 23 42 / 7%);
 }
 
-.dark .cv-toolbar.glass-panel {
+.dark .app-toolbar-surface {
   background: color-mix(in srgb, var(--surface) 50%, transparent);
   border-color: rgb(255 255 255 / 14%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), 0 4px 16px rgb(0 0 0 / 22%);
 }
 
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
-  .cv-toolbar.glass-panel,
-  .dark .cv-toolbar.glass-panel {
+  .app-toolbar-surface,
+  .dark .app-toolbar-surface {
     background: var(--surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+}
+
+.admin-shell-inner {
+  padding-inline: 0.75rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+.admin-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 0.75rem 0.75rem;
+}
+
+.admin-toolbar.glass-panel {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.admin-toolbar .toolbar-brand {
+  flex: 1 1 auto;
+}
+
+.admin-toolbar .toolbar-actions {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.admin-navigation {
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scroll-padding-inline: 0.75rem;
+}
+
+@media (min-width: 960px) {
+  .admin-shell-inner {
+    padding-inline: 1rem;
   }
 }
 

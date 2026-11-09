@@ -1,5 +1,6 @@
 export const adminMessages = {
   "en": {
+    "account": "Account",
     "audit": "Audit",
     "backToEditor": "Back to editor",
     "brand": "Administration",
@@ -25,6 +26,7 @@ export const adminMessages = {
     "yes": "Yes"
   },
   "zh": {
+    "account": "账户",
     "audit": "审计",
     "backToEditor": "返回编辑器",
     "brand": "管理后台",
