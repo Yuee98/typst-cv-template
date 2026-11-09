@@ -136,12 +136,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Enforce database maintenance gate
-        env:
-          GH_TOKEN: ${{ secrets.REBUILD_STATE_TOKEN }}
-          PROD_SUPABASE_PROJECT_REF: ${{ vars.PROD_SUPABASE_PROJECT_REF }}
-        run: node scripts/db-promotion-guard.ts --source-sha=${{ steps.resolve.outputs.source_commit }}
-
       - name: Lint
         run: pnpm lint
 
@@ -160,12 +154,6 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: web/out
-
-      - name: Recheck live database state before promotion
-        env:
-          GH_TOKEN: ${{ secrets.REBUILD_STATE_TOKEN }}
-          PROD_SUPABASE_PROJECT_REF: ${{ vars.PROD_SUPABASE_PROJECT_REF }}
-        run: node scripts/db-promotion-guard.ts --source-sha=${{ steps.resolve.outputs.source_commit }}
 
       - name: Promote release branch and tag
         env:

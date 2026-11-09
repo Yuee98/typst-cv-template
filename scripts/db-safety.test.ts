@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { hostedPostgresEnvironment, requireRehearsalEvidence, requireFreshApplicationState, requireRecoveryEvidence, validateDatabaseServer, requireAcceptedTest, migrationWithHistory, validateRehearsalIdentity, checkPromotion, cleanPostgresEnvironment, parseRebuildState, requireMaintenanceAuthorization, validateProjectIdentity, requireAppendOnlyManifest } from "./db-safety.ts";
+import { hostedPostgresEnvironment, requireRehearsalEvidence, requireFreshApplicationState, requireRecoveryEvidence, validateDatabaseServer, requireAcceptedTest, migrationWithHistory, validateRehearsalIdentity, cleanPostgresEnvironment, parseRebuildState, requireMaintenanceAuthorization, validateProjectIdentity, requireAppendOnlyManifest } from "./db-safety.ts";
 const manifest = {
   baseline_digest: "1".repeat(64),
   migration_manifest_digest: "2".repeat(64)
@@ -18,43 +18,9 @@ const state = {
   intent_time: "2026-11-07T00:00:00Z",
   maintenance: true
 };
-const env = {
-  PROD_SUPABASE_PROJECT_REF: "prod-ref",
-  NEXT_PUBLIC_SUPABASE_URL: "https://prod-ref.supabase.co",
-  DB_REBUILD_STATE_PROD: JSON.stringify(state)
-};
-test("maintenance cannot be bypassed with wrong source, manifest, phase or project", () => {
-  assert.doesNotThrow(() => checkPromotion(env, state.source_sha, manifest));
-  assert.throws(() => checkPromotion(env, "b".repeat(40), manifest));
-  assert.throws(() => checkPromotion(env, state.source_sha, {
-    ...manifest,
-    migration_manifest_digest: "3".repeat(64)
-  }));
-  assert.throws(() => checkPromotion({
-    ...env,
-    DB_REBUILD_STATE_PROD: JSON.stringify({
-      ...state,
-      phase: "reset_started"
-    })
-  }, state.source_sha, manifest));
-  assert.throws(() => checkPromotion({
-    ...env,
-    NEXT_PUBLIC_SUPABASE_URL: "https://test-ref.supabase.co"
-  }, state.source_sha, manifest));
-});
-test("daily promotions require correct Pages project and valid durable state", () => {
-  assert.doesNotThrow(() => checkPromotion({
-    ...env,
-    DB_REBUILD_STATE_PROD: ""
-  }, state.source_sha, manifest));
-  assert.throws(() => checkPromotion({
-    ...env,
-    PROD_SUPABASE_PROJECT_REF: ""
-  }, state.source_sha, manifest));
-  assert.throws(() => checkPromotion({
-    ...env,
-    DB_REBUILD_STATE_PROD: "{}"
-  }, state.source_sha, manifest));
+test("only accepted rebuild state may leave maintenance", () => {
+  assert.doesNotThrow(() => parseRebuildState(state));
+  assert.throws(() => parseRebuildState({}));
   assert.throws(() => parseRebuildState({
     ...state,
     maintenance: false
@@ -191,10 +157,10 @@ test("malformed or unterminated lexical states fail closed", () => {
   ]) assert.throws(() => migrationWithHistory(source, migrationVersion, migrationName), /exactly one explicit outer transaction/, source);
 });
 test("adversarial comment partitions and large trivia finish within a child-process deadline", { timeout: 10_000 }, () => {
-  const module = new URL("./db-safety.ts", import.meta.url).href;
+  const moduleUrl = new URL("./db-safety.ts", import.meta.url).href;
   const script = `
     import assert from 'node:assert/strict';
-    import { migrationWithHistory } from ${JSON.stringify(module)};
+    import { migrationWithHistory } from ${JSON.stringify(moduleUrl)};
     const apply = source => migrationWithHistory(source, '${migrationVersion}', '${migrationName}');
     // CQL-01: each *//* lets the old regex reconsider previous comment partitions.
     assert.throws(() => apply('/*' + '*//*'.repeat(200000)));

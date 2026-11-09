@@ -44,3 +44,7 @@
 审计历史不可随当前配置删除级联丢失。未结算请求与其依赖不提前清理；账户删除后的去身份化不能阻止迟到事实记录。
 
 本地验收前不更新 main/release。test/prod 重置发布仍是独立、尚未执行的流程。
+
+## 一次性环境重建的执行方式
+
+按用户最新决定，正式 test/prod 重建改由操作员电脑执行，使用本地私有检查点与脱敏日志，完成后把实录和证据归档。移除一次性重建 Action、GitHub 仓库状态变量及额外 token 的依赖；日常 Promote Release 保留原有发布检查，由操作者在维护窗口控制重建和部署顺序。保留明确目标、完整 SHA/清单核对、有效管理员预检、停写确认、重复清理拒绝及 prod 读取已 accepted test 检查点。具体命令与记录见 [发布手册](database-rebuild-runbook.md) 和 [test 执行记录](database-rebuild-test-execution.md)。当前仅修改工具与文档，不执行 hosted 重建、修改云端或发布。

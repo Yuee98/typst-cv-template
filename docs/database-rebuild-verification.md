@@ -120,3 +120,15 @@ legal.documents、对应 typed audit、摘要及 DTO 删除 adapter_id、model_i
 - 完整 DB/Auth/API 套件 6 文件 / 21 项通过；其中新增 2 项为隔离库中实际 authenticated 角色 RPC 的合成有效会话测试，其余现有 Auth/Data API 验收使用本地真实服务。日志为 `tmp/relay-v2-final/round2-db-api.log`。为保留当前本地预览，只在事务内同步固定的 5 个函数并验证所有业务数据、迁移记录、原 RPC/触发器元数据和 schema 权限前后一致；未重建主库，账号、配置和 AI 开关保留。全链空库证明来自上述独立容器。
 
 本轮未操作 test/prod，也未调用付费 Provider。先前浏览器、构建和 G3 记录保留各自原始提交边界；它们不自动证明本修正提交或未来推送的候选 SHA。后续 CI、生产构建、浏览器及实际候选 G3 结果须分别记录，不把尚未结束的门禁标为通过。
+
+## 一次性重建改为本地执行的验证（2026-11-09）
+
+本次验证未提交工作树中的执行工具改动，基于 `7499e8d2dbad75693cd2c5f16585ad487a4afae8`，具体源文件摘要与结果见 [本地执行工具证据](evidence/database-rebuild-local-execution.json)。移除 GitHub 重建 workflow、仓库状态 token/变量依赖及日常 promotion 的临时状态查询；改为操作员电脑保存私有 JSON 检查点、追加事件日志和本地项目锁。数据库迁移和应用运行代码未改动。
+
+- 全部工具测试 55/55 通过，脚本类型检查、scoped lint 与 diff 检查通过；lint 仅有从仓库根加载 Next 配置产生的 React/Pages 检测提示。
+- 9 项新增本地 I/O 测试实际执行私有文件读写、原子替换、跨进程锁争用和 SIGKILL 后锁保留，覆盖不安全权限/链接拒绝、日志脱敏及 GitHub Actions hosted 入口拒绝。
+- 8 项入口测试共执行 10 次真实脚本，使用本地 git/psql 桩模拟只读预检。不存在或已禁用的管理员在清理前拒绝；accepted 状态下 rebuild/resume 拒绝；resume/verify 对已记录实例错配或缺失拒绝，plan 仍能诊断、matching 实例仍到达后续检查；原检查点不变，没有 DDL、初始化或任务重注册。它们不作为真实 Auth 或 hosted 连接验收。
+- 提交前独立复核发现 LOCAL-INSTANCE-01：原脚本读到实际实例后未与检查点比较，resume 可能重绑旧操作。未修复入口的 4 项错配/缺失回归均失败，加入前置实例核对后全部通过；对应正向和只读诊断仍通过。此修复不新增远端状态服务。
+- 3 项 keepalive 测试执行 workflow 的实际 shell 块，仅替换 curl 为本地桩；布尔、旧时间字符串及其他 HTTP 2xx 返回均完成三次只读调用，重定向、HTTP 错误和传输失败拒绝。没有访问实际项目。
+
+本次未连接本地或 hosted 数据库、未生成新 G3、未调用 Provider，未 commit/push/合并或部署。旧 G3 不冒充新增文件持久化层的证明；正式切换仍须绑定最终实际候选 SHA 和清单，执行过程继续填写 [test 实录](database-rebuild-test-execution.md)。

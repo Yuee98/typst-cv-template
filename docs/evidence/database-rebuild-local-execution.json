@@ -1,0 +1,121 @@
+{
+  "recorded_at": "2026-11-09T13:04:13.772Z",
+  "base_commit": "7499e8d2dbad75693cd2c5f16585ad487a4afae8",
+  "validated_source": "Uncommitted working tree, identified by the file hashes below; not a deployment or same-SHA G3 proof.",
+  "implementation": {
+    "execution": "operator-local",
+    "checkpoint": "private per-target JSON with atomic replacement",
+    "journal": "private append-only event JSONL",
+    "concurrency": "local exclusive project lock",
+    "extra_github_token_required": false,
+    "github_rebuild_workflow": false,
+    "promotion_reads_rebuild_state": false
+  },
+  "validation": {
+    "tool_tests": {
+      "passed": 55,
+      "failed": 0,
+      "exit_code": 0,
+      "command": "node --test scripts/*.test.ts"
+    },
+    "script_typecheck": "PASS",
+    "scoped_script_eslint": {
+      "exit_code": 0,
+      "errors": 0,
+      "configuration_notices": [
+        "React version auto-detection from repository root",
+        "Next Pages directory lookup from repository root"
+      ]
+    },
+    "workflow_validation": "Agent verified keepalive actionlint and both edited workflows actionlint without shellcheck; existing promotion shellcheck diagnostics unchanged.",
+    "diff_check": "PASS",
+    "document_links": "PASS",
+    "new_io_tests": 9,
+    "entrypoint_tests": 8,
+    "entrypoint_invocations": 10,
+    "keepalive_tests": 3
+  },
+  "coverage": {
+    "real_private_file_io": true,
+    "real_competing_process_and_sigkill": true,
+    "entrypoint_runs_real_script": true,
+    "entrypoint_git_and_psql": "local stubs only; no database/network",
+    "sql_schema_or_application_runtime_changed": false,
+    "fresh_g3_generated": false
+  },
+  "migration_manifest": {
+    "files": 15,
+    "baseline_digest": "74138cc9c03c706e41a2d4c75968c71bff2ba4a10dd14e2758964d853adde1ad",
+    "migration_manifest_digest": "74138cc9c03c706e41a2d4c75968c71bff2ba4a10dd14e2758964d853adde1ad"
+  },
+  "scope": {
+    "hosted_database_queries": 0,
+    "hosted_settings_changed": false,
+    "paid_provider_calls": 0,
+    "committed": false,
+    "pushed": false,
+    "merged": false,
+    "deployed": false,
+    "test_cutover": "NOT_STARTED",
+    "prod_cutover": "NOT_STARTED"
+  },
+  "files": [
+    {
+      "path": "scripts/db-rebuild.ts",
+      "sha256": "319468e4d508e3e500cb563be27460ddaf87b6f1c7b14a8ae888c0423b586c93"
+    },
+    {
+      "path": "scripts/db-hosted-state.ts",
+      "sha256": "0e9b289b0c151d2c313fccd4b1b2ef04bf65af8f09279c5ed6567824f0e2718c"
+    },
+    {
+      "path": "scripts/db-hosted-state.test.ts",
+      "sha256": "257fdd664fe4bb9a7430ae155f3a32e24f668e7ea846cc69f1b8f8686c4ab1c3"
+    },
+    {
+      "path": "scripts/db-rebuild-entry.test.ts",
+      "sha256": "06aeb4c8220e84c910c694674a3da1362792850c5e6e6c2c540c6df0f2f6fa98"
+    },
+    {
+      "path": "scripts/db-initialize.ts",
+      "sha256": "7d40b2ac880d15104caac4c7908477e89fbc2e71d52de8fc8cbbe364ba16e933"
+    },
+    {
+      "path": "scripts/db-safety.ts",
+      "sha256": "ba22a70502ff2768f3ff3e171095cb4b54277547959b7cd881172148bcccb459"
+    },
+    {
+      "path": "scripts/db-safety.test.ts",
+      "sha256": "a7166acf710735e7498650341c2ed093dfb1295de7bd1aac31e91f90e1dfad4b"
+    },
+    {
+      "path": "scripts/supabase-keepalive.test.ts",
+      "sha256": "ed663174226fc98f460891d76d7f9e3aa00fb4457f42f1b4b19dde11b8528de0"
+    },
+    {
+      "path": ".github/workflows/promote-release.yml",
+      "sha256": "be85b6f6c505fd4a2191d7f2cefd95f681b2e33fa96d96c817d74740c8904b95"
+    },
+    {
+      "path": ".github/workflows/supabase-keepalive.yml",
+      "sha256": "6b607e2f4e6b81db077cd7e36b770f84f6d32c557b34dc856fe831359ef18e41"
+    },
+    {
+      "path": ".github/workflows/database-rebuild.yml",
+      "deleted": true
+    },
+    {
+      "path": "scripts/db-promotion-guard.ts",
+      "deleted": true
+    }
+  ],
+  "local_test_log_sha256": "e9e2b2137e1e9756da7d6f64468e58f93835bef931ad7f80f9daa7b66673b74e",
+  "regression": {
+    "id": "LOCAL-INSTANCE-01",
+    "before_file_sha256": "e5a32fe70a3401435c6c52341e247a4a55fb7f0c883f1109943f565e3c736fba",
+    "original_entry_tests": 8,
+    "original_instance_failures": 4,
+    "red_log_sha256": "be6cb46324029f52084835a17818bab451a42e335b3fb73e3dc8755cf40dfdf0",
+    "correction": "Refuse resume/verify when a recorded instance differs from the actual instance, including missing actual instance; plan remains diagnostic."
+  }
+}

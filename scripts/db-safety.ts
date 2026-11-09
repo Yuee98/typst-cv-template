@@ -64,20 +64,6 @@ export function hostedPostgresEnvironment(env: NodeJS.ProcessEnv, certificatePem
 export function requireMaintenanceAuthorization(env: NodeJS.ProcessEnv) {
   if (env.REBUILD_EXECUTION_AUTHORIZED !== "true" || env.REBUILD_MAINTENANCE_VERIFIED !== "true") throw new Error("Explicit authorization and verified API/integration maintenance are required for every mutating phase");
 }
-export function checkPromotion(env: NodeJS.ProcessEnv, sourceSha: string, manifest: {
-  baseline_digest: string;
-  migration_manifest_digest: string;
-}) {
-  const project = env.PROD_SUPABASE_PROJECT_REF;
-  if (!project) throw new Error("Production project mapping is required");
-  const api = new URL(env.NEXT_PUBLIC_SUPABASE_URL ?? "");
-  if (api.protocol !== "https:" || api.hostname !== `${project}.supabase.co` || api.port || api.username || api.password || api.search || api.hash) throw new Error("Pages production project mapping mismatch");
-  const raw = env.DB_REBUILD_STATE_PROD?.trim();
-  if (!raw) return;
-  const state = parseRebuildState(JSON.parse(raw));
-  if (state.target !== "prod" || state.project !== project) throw new Error("Production rebuild state identifies another environment");
-  if (state.maintenance && (!["DB-ready", "accepted"].includes(state.phase) || state.source_sha !== sourceSha || state.baseline_digest !== manifest.baseline_digest || state.migration_manifest_digest !== manifest.migration_manifest_digest)) throw new Error("Production maintenance gate: DB-ready SHA/digests/project do not match this promotion");
-}
 export function validateRehearsalIdentity(raw: string, inspected: {
   Name: string;
   NetworkSettings: {

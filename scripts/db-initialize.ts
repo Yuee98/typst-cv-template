@@ -1,6 +1,6 @@
 import { input, jsonQuery, quote, sql } from "./db-common.ts";
 const local = process.argv.includes("--local");
-if (!local) throw new Error("Hosted initialization must run through db-rebuild resume with durable state, target and maintenance guards");
+if (!local) throw new Error("Hosted initialization must run through local db-rebuild execution with its checkpoint, target and maintenance checks");
 const name = input("environment", local ? "LOCAL" : undefined);
 if (!["LOCAL", "PREVIEW", "PRODUCTION"].includes(name) || local && name !== "LOCAL") throw new Error("Invalid environment");
 const user = input("admin-user");
