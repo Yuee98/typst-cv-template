@@ -599,6 +599,74 @@ describe("Admin read lifetime and cache isolation", () => {
     expect(readsA).toBe(3); expect(readsB).toBe(3);
   });
 
+  it.each(["configurations", "disclosures", "rules"] as const)("refreshes a mounted %s page after ordinary cache GC during a long edit", async section => {
+    // The real browser gives unobserved queries five minutes. Start the fake
+    // clock before constructing the cache so both scope and read GC are real.
+    vi.useFakeTimers();
+    try {
+      vi.mocked(fetch).mockResolvedValueOnce(response("before commit")).mockResolvedValueOnce(response("after commit"));
+      const h = harness({ section, kind: section === "disclosures" ? "documents" : section });
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(h.result.current.read.result?.data).toEqual({ records: [{ label: "before commit" }], next_cursor: null });
+      });
+      const complete = h.result.current.read.refreshAfterMutation;
+      const key = adminReadKey(project, h.result.current.actor, instance1, { section, kind: section === "disclosures" ? "documents" : section, cursor: null });
+      await act(() => vi.advanceTimersByTimeAsync(301_000));
+      expect(h.queryClient.getQueryData(key)).toBeUndefined();
+      expect(h.result.current.read.result?.data).toEqual({ records: [{ label: "before commit" }], next_cursor: null });
+      act(() => complete());
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(h.result.current.read.result?.data).toEqual({ records: [{ label: "after commit" }], next_cursor: null });
+      });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["signout", "other-account", "returning-account"] as const)("removes retained scope and ignores a long edit's late commit after %s", async transition => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(h.result.current.read.result).toBeTruthy();
+      });
+      const complete = h.result.current.read.refreshAfterMutation;
+      const previousActor = h.result.current.actor;
+      await act(() => vi.advanceTimersByTimeAsync(301_000));
+      if (transition === "signout") {
+        act(() => h.auth.emit(null, "SIGNED_OUT"));
+        expect(h.queryClient.getQueryCache().getAll()).toHaveLength(0);
+      } else {
+        act(() => h.auth.emit(session("B")));
+        await vi.waitFor(async () => {
+          await act(async () => {});
+          expect(h.result.current.read.result).toBeTruthy();
+        });
+        if (transition === "returning-account") {
+          act(() => h.auth.emit(session("A", "new A visit")));
+          await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(h.result.current.read.result).toBeTruthy();
+          });
+        }
+      }
+      expect(h.queryClient.getQueryCache().getAll().some(query => query.queryKey[2] === previousActor.session!.user.id && query.queryKey[3] === previousActor.epoch)).toBe(false);
+      const calls = vi.mocked(fetch).mock.calls.length;
+      const keys = h.queryClient.getQueryCache().getAll().map(query => query.queryKey);
+      act(() => complete());
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(fetch).toHaveBeenCalledTimes(calls);
+      expect(h.queryClient.getQueryCache().getAll().map(query => query.queryKey)).toEqual(keys);
+      expect(h.queryClient.getQueryCache().getAll().some(query => query.queryKey[4] === "commit-epochs")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps commit boundaries after ordinary cache GC and removes them on owner cleanup", async () => {
     const shared = auth(), writer = harness({}, shared); await done(writer);
     const commit = writer.result.current.read.refreshAfterMutation, actor = writer.result.current.actor;
