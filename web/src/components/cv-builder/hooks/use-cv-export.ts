@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   downloadCvJson,
@@ -12,14 +12,14 @@ import { errorMessage } from "@/lib/cv/cv-utils";
 import { defaultLocale, type Locale } from "@/i18n/routing";
 
 export function useCvExport({
-  canExport,
+  captureExport,
   getCurrentData,
   getDownloadTitle,
   locale = defaultLocale,
   onImportExportError,
   onPreviewError,
 }: {
-  canExport: () => boolean;
+  captureExport: () => (() => boolean) | null;
   getCurrentData: () => CvData;
   getDownloadTitle: (data: CvData) => string;
   locale?: Locale;
@@ -27,65 +27,79 @@ export function useCvExport({
   onPreviewError: (error: string | null) => void;
 }) {
   const [exportingFormat, setExportingFormat] = useState<CvExportFormat | null>(null);
+  const operationRef = useRef<object | null>(null);
+  useEffect(() => () => { operationRef.current = null; }, []);
+
+  function beginExport(format: CvExportFormat) {
+    const ownsSource = captureExport();
+    if (!ownsSource?.()) return null;
+    const operation = {};
+    operationRef.current = operation;
+    setExportingFormat(format);
+    return {
+      isCurrent: () => operationRef.current === operation && ownsSource(),
+      finish() {
+        if (operationRef.current !== operation) return;
+        operationRef.current = null;
+        setExportingFormat(null);
+      },
+    };
+  }
 
   async function downloadPdf() {
-    if (!canExport()) return;
-
-    setExportingFormat("pdf");
+    const operation = beginExport("pdf");
+    if (!operation) return;
     onPreviewError(null);
 
     try {
       const data = getCurrentData();
-      await downloadCvPdf(data, getDownloadTitle(data), locale);
+      await downloadCvPdf(data, getDownloadTitle(data), locale, operation.isCurrent);
     } catch (pdfError) {
-      onPreviewError(errorMessage(pdfError));
+      if (operation.isCurrent()) onPreviewError(errorMessage(pdfError));
     } finally {
-      setExportingFormat(null);
+      operation.finish();
     }
   }
 
   async function exportDocument() {
-    if (!canExport()) return;
-
-    setExportingFormat("json");
+    const operation = beginExport("json");
+    if (!operation) return;
 
     try {
       const data = getCurrentData();
       downloadCvJson(data, getDownloadTitle(data), locale);
     } catch (exportError) {
-      onImportExportError(errorMessage(exportError));
+      if (operation.isCurrent()) onImportExportError(errorMessage(exportError));
     } finally {
-      setExportingFormat(null);
+      operation.finish();
     }
   }
 
   async function exportTypstSource() {
-    if (!canExport()) return;
-
-    setExportingFormat("typst-source");
+    const operation = beginExport("typst-source");
+    if (!operation) return;
 
     try {
       const data = getCurrentData();
       downloadTypstSource(data, getDownloadTitle(data), locale);
     } catch (exportError) {
-      onImportExportError(errorMessage(exportError));
+      if (operation.isCurrent()) onImportExportError(errorMessage(exportError));
     } finally {
-      setExportingFormat(null);
+      operation.finish();
     }
   }
 
   async function exportTypstPackage() {
-    if (!canExport()) return;
-
-    setExportingFormat("typst-package");
+    const operation = beginExport("typst-package");
+    if (!operation) return;
 
     try {
       const data = getCurrentData();
-      await downloadTypstPackage(data, getDownloadTitle(data), locale);
+      await downloadTypstPackage(data, getDownloadTitle(data), locale, operation.isCurrent);
     } catch (exportError) {
-      onImportExportError(errorMessage(exportError));
+      if (operation.isCurrent()) onImportExportError(errorMessage(exportError));
     } finally {
-      setExportingFormat(null);
+      operation.finish();
     }
   }
 

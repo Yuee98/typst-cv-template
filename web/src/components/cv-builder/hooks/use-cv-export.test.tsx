@@ -28,7 +28,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-function renderExport({ canExport = true }: { canExport?: boolean } = {}) {
+function renderExport({ canExport = true, ownsSource = () => true }: { canExport?: boolean; ownsSource?: () => boolean } = {}) {
   const data = cloneCvData(sampleCvDataEn);
   const getCurrentData = vi.fn(() => data);
   const getDownloadTitle = vi.fn(() => "Candidate");
@@ -36,7 +36,7 @@ function renderExport({ canExport = true }: { canExport?: boolean } = {}) {
   const onPreviewError = vi.fn();
   const hook = renderHook(() =>
     useCvExport({
-      canExport: vi.fn(() => canExport),
+      captureExport: vi.fn(() => canExport ? ownsSource : null),
       getCurrentData,
       getDownloadTitle,
       locale: "en",
@@ -92,7 +92,7 @@ describe("useCvExport", () => {
       await exportPromise;
     });
 
-    expect(downloadCvPdf).toHaveBeenCalledWith(h.data, "Candidate", "en");
+    expect(downloadCvPdf).toHaveBeenCalledWith(h.data, "Candidate", "en", expect.any(Function));
     expect(h.hook.result.current.exportingFormat).toBeNull();
   });
 
@@ -103,6 +103,20 @@ describe("useCvExport", () => {
     await act(async () => h.hook.result.current.downloadPdf());
 
     expect(h.onPreviewError).toHaveBeenCalledWith("PDF failed");
+    expect(h.onImportExportError).not.toHaveBeenCalled();
+    expect(h.hook.result.current.exportingFormat).toBeNull();
+  });
+
+  it("does not put a revoked export's late PDF error into the new editor", async () => {
+    let rejectPdf!: (error: Error) => void;
+    vi.mocked(downloadCvPdf).mockReturnValueOnce(new Promise<void>((_resolve, reject) => { rejectPdf = reject; }));
+    let current = true;
+    const h = renderExport({ ownsSource: () => current });
+    let task!: Promise<void>;
+    act(() => { task = h.hook.result.current.downloadPdf(); });
+    current = false;
+    await act(async () => { rejectPdf(new Error("old render failed")); await task; });
+    expect(h.onPreviewError.mock.calls).toEqual([[null]]);
     expect(h.onImportExportError).not.toHaveBeenCalled();
     expect(h.hook.result.current.exportingFormat).toBeNull();
   });
@@ -130,7 +144,7 @@ describe("useCvExport", () => {
 
     await act(async () => h.hook.result.current.exportTypstPackage());
 
-    expect(downloadTypstPackage).toHaveBeenCalledWith(h.data, "Candidate", "en");
+    expect(downloadTypstPackage).toHaveBeenCalledWith(h.data, "Candidate", "en", expect.any(Function));
     expect(h.onImportExportError).not.toHaveBeenCalled();
     expect(h.hook.result.current.exportingFormat).toBeNull();
   });

@@ -116,10 +116,12 @@ export function downloadCvJson(data: CvData, title: string, locale: Locale = def
   );
 }
 
-export async function downloadCvPdf(data: CvData, title: string, locale: Locale = defaultLocale) {
+export async function downloadCvPdf(data: CvData, title: string, locale: Locale = defaultLocale, canDownload: () => boolean = () => true) {
   await ensureLocalFontsForData(data);
+  if (!canDownload()) return;
   const document = buildTypstDocument(data);
   const pdf = await renderTypstPdf(document, undefined, locale);
+  if (!canDownload()) return;
   downloadBlob(new Blob([toArrayBuffer(pdf)], { type: "application/pdf" }), safeDownloadName(title, "pdf", locale));
 }
 
@@ -128,8 +130,9 @@ export function downloadTypstSource(data: CvData, title: string, locale: Locale 
   downloadBlob(new Blob([source], { type: "text/plain;charset=utf-8" }), safeDownloadName(title, "typ", locale));
 }
 
-export async function downloadTypstPackage(data: CvData, title: string, locale: Locale = defaultLocale) {
+export async function downloadTypstPackage(data: CvData, title: string, locale: Locale = defaultLocale, canDownload: () => boolean = () => true) {
   const styleSource = await fetchStyleSource(locale);
+  if (!canDownload()) return;
   const source = buildTypstDocument(data, { styleImportPath: "style.typ" });
   const m = getExportMessages(locale);
   const zip = createZip({
