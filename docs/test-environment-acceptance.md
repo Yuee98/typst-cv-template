@@ -1,13 +1,13 @@
 # Test 环境补充验收
 
-状态：`RESTORED_WITH_ACCEPTANCE_GAPS`。Gemini 唯一一次调用的 UI、30 项独立结算核对及 30 项最终恢复核对均 PASS；request 11 成功、单 attempt，完整应用 USD 估算为 0.00101325，reasoning 只计一次，旧 CNY 两桶精确不变、USD 独立成桶，不换汇或跨币种相加。2026-11-10 11:01:28 UTC 最终 DB 确认 OFF/ALLOWLIST、20/2000/3、revision 33、11 请求/7 attempt、reserved=0、charged=4、global admission=7，水位未再增长；域名 `main` fresh reload、两个默认 Preview flags=false。证据在 `output/gemini-acceptance-20261110/`。这是应用估算/结算通过，不是 Google 发票或账户 Paid tier 独立核查；其他验收缺口仍保留。旧快照及封存证据保持原时间，prod 不动。
+状态：`REQUESTED_THREE_PHASES_PASS`。本次按顺序完成的身份核心回归、真实四格式导出/JSON 回导和 Admin 性能采样均 PASS，最终 DB 31 项核对通过：13:50:17 UTC 为 OFF/ALLOWLIST、20/2000/3、revision 35，AI 仍 11 请求/7 attempt、reserved=0，没有新付费；四份云文档与各自基线的 hash/time 不变。test 域名已恢复 main，映射回原 Preview `7KV…` / `bc9d9ce`，并不包含本轮 PR 修复。Auth/Export 的 hosted 验收源为 `bfd461e`；显示错误修复 `bf44429` 及最终 93 文件/1612 项、TypeScript/lint 只按本地证据记，未声称新的 hosted 错误复验或已解决底层瞬时同步失败。最终 push 的 CI 终态见本轮证据目录的 `final-publication-status.json`。旧快照和封存证据保留，prod 不动；手机、真实取消/同 ID 重放及下一次自然保活等范围外缺口继续单列。
 
 ## 范围与现场基线
 
 - 目标为共享 test 域名 `https://cvmaker-preview.dyue.org` 及同一 test 项目的独立 Preview；Supabase test 项目 `uvitgcfqnciahvakqhnv`，实例 `842d36df-6969-4c86-abcc-6dc956dd6318`。
 - 本轮开始的 hosted 应用源为 `bc9d9ce827a8bd4727d866e930253452302c48e5`，数据库已完成重建。不得再次 rebuild/resume。
 - prod 数据库、Auth、环境变量、部署和 release promotion 不在范围。
-- 首轮独立证据目录为 ignored 的 `output/test-acceptance-20261110/`，授权重试另用 `output/test-provider-retry-20261110/`，当前版本本地对照及 HTTP 诊断另用 `output/mimo-diagnosis-20261110/`，Gemini 小额验收另用 `output/gemini-acceptance-20261110/`。私有凭据文件单独存放，文档不记录凭据内容；工具回显事件及本地扫描边界见对应轮次。
+- 首轮独立证据目录为 ignored 的 `output/test-acceptance-20261110/`，授权重试另用 `output/test-provider-retry-20261110/`，当前版本本地对照及 HTTP 诊断另用 `output/mimo-diagnosis-20261110/`，Gemini 小额验收另用 `output/gemini-acceptance-20261110/`，身份/导出/性能新阶段另用 `output/identity-export-performance-20261110/`。私有凭据文件单独存放，文档不记录凭据内容；工具回显事件及本地扫描边界见对应轮次。
 - 开始时 AI 总开关关闭，ALLOWLIST 为空，配置、规则、AI 请求和 attempt 均为 0；额度为每用户每日 20、全局每日 2000、每用户每分钟 3。后续仅将指定测试账号加入 AI 允许名单，没有追加管理员权限。
 - 首轮为小额验收临时开启 AI，使用 ALLOWLIST，并将每日限额暂设为用户 4、全局 4；门禁测试还短暂使用了 0 或 1 的限制。后续授权重试及诊断/修复窗口分别按各节记录，不沿用该首轮限制。恢复目标为 AI 关闭、每用户每日 20、全局每日 2000、每用户每分钟 3，且共享 test 域名重新跟踪 `main`。最终状态必须由相应轮次结束后的新回读证明，不能沿用调用前的关闭快照。
 
@@ -16,11 +16,12 @@
 | 检查 | 状态与已有结果 | 边界与后续 |
 | --- | --- | --- |
 | 本地补充回归 | **PASS**：17 个文件、196 项通过；覆盖导入导出、真实 WebCrypto、云写边界、身份隔离、Admin 缓存及响应式组件 | Node/jsdom 证据，不等于 hosted 浏览器全链路 |
+| 本阶段本地修复 | **PASS**：Auth 129 项、导出 25 项及各自 TypeScript/lint、独立审查通过；`bfd461e` 全套为 92 文件/1596 项。加入显示修复 `bf44429` 后，最终全套 93 文件/1612 项及 full TypeScript 通过，显示修复 25 项 scoped/lint 通过 | `readiness/joint/final-root-summary.json` 区分本地最终源码与 hosted 验收源；pnpm 入口在启动测试前因 SQLite 权限失败，改用已安装 Node binaries 成功，无安装。显示修复未称 hosted 复验通过 |
 | 当前版本本地 MiMo 付费对照 | **PASS（本地）**：`214d563` 基准的真实调用链、LOCAL `cv_app_db_2` 临时数据库、同一 15 字中文/Level 0/context 0，一次真实 POST 返回 HTTP 200、3810ms，input 569/output 24；夹具清理成功 | 不是 hosted 成功；live harness 仅增加预算上限和证据元数据，其余 11 个取证文件与 HEAD 匹配。617 nanos 是夹具合成费率的应用估算，不是供应商账单 |
 | 安全诊断日志及回归 | **PASS**：固定九个 primitive 字段，不含 key/ref、CV、请求/响应正文、headers、error.message。helper 32 项 + runtime 28 项共 60 项通过，TypeScript 及 scoped lint 通过 | 保留真实 RED。throwing logger 的 HTTP 401/403 用例证明日志失败不影响终态结算；模拟数据库测试不冒充 hosted 调用 |
 | Hosted 加密 CV | **PASS**：专用虚构文档由普通云文档启用加密，编辑后手动保存；新标签错误口令被拒绝，更正口令后读取准确的已保存内容；原标签刷新后重新选择也能读取 | 同浏览器独立新标签，不是跨物理设备；未勾记住设备 |
 | 加密文档解密派生 | **PASS**：正常“复制”操作产生准确内容的普通本地副本，随后正常移到云端 | 产品没有原地关闭加密按钮，不编造不存在的操作 |
-| Hosted 导出/导入 | **BLOCKED / NOT RUN**：首轮 JSON、PDF 已操作按钮，但下载事件未交付可验收文件；PDF 等待导致控制会话超时重置，JSON 导入也曾被扩展文件权限阻塞。新轮已开启 Allow file URLs，环境文件导入成功，但未重新验收 CV 文件路径 | CV 导出内容、Typst 包及 JSON 回环导入仍未验收；旧文件权限阻塞解除不等于 CV 导入已通过。当前格式接受、旧格式拒绝的本地校验均通过 |
+| Hosted 导出/导入 | **PASS（四格式 77/77 + 严格回导 20/20）**：真实 JSON、`.typ`、ZIP、PDF 已按 `bfd461e` 源验证；PDF 一页且中英文完整，ZIP 可独立编译且 PNG 与实际 PDF 相同。实际下载 JSON 正常回导后新增第二个同名本地 CV，重导 JSON 与首下载字节/hash 相同 | 真实回环与早先参考 JSON 导入分开记录，不把工具 1181.217/938 秒当网站速度。filechooser stale ID 是工具错误，未造成 mutation，正常系统 Open 已完成回导 |
 | Hosted 视口 | **BLOCKED**：请求 390×844 后，DOM 实际仍为 1454×1019；已立即 reset | 窄屏 override 无效；真实手机 Safari、软键盘及触摸滚动为 **NOT RUN** |
 | AI 配置与条款 | **PASS**：Gemini config 4/revision 1 的配置及价格 audit 7 精确匹配，common 2/provider 5、provider acceptance audit 5 有效；fallback 保留 DeepSeek 默认和 MiMo，追加 Gemini | 30 项独立调用核对包含冻结配置、价格及精确同意；不沿用 MiMo provider 4 同意，不把通过扩大为 Google 账户实际计费层级证明 |
 | Preview 构建与域名切换 | **PASS（Gemini 调用及恢复）**：仅文档变更源 `a2b7ce8` 的 `8MSDqms…` 于上海 18:50:37 Ready，部署 snapshot=true；两个项目默认 Preview flags=false，调用后域名 Save 及 fresh reload 确认 `Valid Configuration · main` | 项目默认变量不回填历史部署；恢复 main 域名不是重新部署 main。Production 未改，正式重新启用 test AI 前仍须确认 main 已采用新环境变量构建 |
@@ -31,12 +32,12 @@
 | 额度与分钟门禁 | **PASS**：用户额度为 0/已耗尽时 UI 禁用；全局额度拒绝及分钟限流由 UI 与 DB 联合核对。四条 `RELEASED` 请求没有 attempt，拒绝未产生额外发送 | 依据门禁阶段的水位隔离 MiMo/取消阶段；恢复 4/4/3 是测试窗口内部恢复，不是最终恢复 |
 | Hosted 同 ID 重放 | **NOT RUN**：正常 UI 每次确认或手动重试都会生成新 UUID，没有可用的同 ID 重放入口 | 不以重新点击确认冒充重放，不为重放额外发送付费请求；真实隔离 DB 与并发 CI 覆盖见下文 |
 | Gemini 凭据与调用 | **PASS（UI + 30 项调用/30 项恢复核对）**：request 11 成功、唯一一个 attempt；input 571 standard/cache 0，output 156=visible 21+reasoning 135，完整应用估算 1013250 USD nanos=0.00101325 USD；Admin 用量页及详情实际显示 USD 0.00101325、1 已结算/1 成功/1 attempt、input 571/output 156、不完整用量及成本均 0 | reasoning 仅计一次；CNY 分行且原十条/CNY 两桶精确不变，USD 独立完整成功桶，无 FX 或跨币种总和。未应用到 CV、未手动重试；不是 Google 发票或账户 Paid tier 核查 |
-| Hosted 身份与退出 | **NOT RUN**：实际管理员登录态下的配置、条款、AI 路径已验证；本轮未执行 hosted 退出修复及普通账号隔离验收 | 本地身份与退出测试单列，不据此声称 hosted 通过 |
-| Admin 性能 | **PASS（基线及区域观察）/ NOT RUN（正常 Admin 对比）**：旧部署 GET execution 1.09s / response 1.1s；POST 2.11s / 2.2s。函数 iad1、数据库东京，分别经过 Auth→RPC、Auth→context→save。独立 Preview 的 availability 401 日志已确认 hnd1/Tokyo，execution 587ms / response 901ms | 401 样本没有 Supabase 外调，不能与正常登录态 Admin 请求比较，不能据此宣称加速；旧部署两个样本也不是 p95、冷启动或慢网基准。外部 API 分项耗时受 Pro 功能限制，未升级套餐 |
+| Hosted 身份与退出 | **核心回归 PASS**：新源双页先解锁同一 fixture，logout 清 UI；A 正常重登后无 reload 重选，两页均空口令框、remember=false，13:08:27.670 UTC 闭环。双向云列表、B 的 Admin 拒绝及普通 fallback 均有实际证据 | peer 首次列表的 `[object Object]` 已在 `bf44429` 本地修正显示，尚无该补丁的 hosted 错误复验；底层瞬时失败原因仍未知，不把正常 Sync 恢复称为根因解决 |
+| Admin 性能 | **PASS（限定样本）**：每区域 3 次 GET、1 次 POST，均 HTTP 200；hnd1 GET execution 中位数 100ms（87–349），iad1 1370ms（950–1470）；response 中位数 259/1400ms。POST execution 285/1980ms，response 457/2000ms。13:40:58 缓存回访无 loading 且日志无匹配 API | 仅 8 个实际样本，不是 p95、整页/点击延迟或慢网基准；Hobby 无外部调用细分，不能断言 Auth/DB 谁慢。旧 401 和工具 938/1181 秒不用于比较 |
 | 时间规则边界 | **PASS（UI + DB）**：rule 2 在周二 Asia/Shanghai 16:05–16:06 仅允许 MiMo；窗口前显示 DeepSeek+MiMo，窗口内仅 MiMo，窗口后恢复 DeepSeek+MiMo。三次仅查询 availability，没有确认生成或模型调用 | 首轮最终 DB 回读确认临时规则 disabled、revision 2，水位仍为 7/3，没有因规则检查增加调用。后续独立尝试分别使水位增为 8/4、9/5，不回写旧快照 |
-| 环境恢复与凭据修复 | **PASS**：11:01:28 UTC 最终 DB 的 30 项核对通过：OFF/ALLOWLIST、20/2000/3、revision 33、11/7 全终态且无增长、reserved=0、charged=4、global admission=7；域名 `main` fresh reload、默认 flags=false | config 4/revision 1 及 fallback 1/revision 2 三成员保留，DeepSeek 默认、现有 Preview Secret 及精确同意保留；Production、main/release 未改。独立证据复核 NO_BLOCKERS |
+| 环境恢复与凭据修复 | **PASS（最终 31 项）**：13:50:17 UTC 为 OFF/35、20/2000/3、11/7、reserved=0；Auth 3/Admin 2，B 无 Admin/AI allowlist，云文档 A3/B1 各自 hash/time 不变；配置 3、价格 3、legal 5 未变，域名 main fresh reload | 两次测量 Save 使禁用 rule revision 2→4、control 33→35，business hash 不变；不是“数据库零写入”。main 映射原 `7KV…/bc9d9ce`，未采用 PR 修复；prod、env、main/release refs 未改 |
 | 自然保活 | **NOT RUN（等待自然调度）**：重建后尚无新 schedule run；最新成功自然 run 早于重建 | 下次配置时间为 2026-11-12 02:17 UTC，即上海 10:17；实际启动可能延迟。未手动 dispatch 共享 workflow |
-| 自动部署/CI | **PASS**：`214d563` 的既有检查保留；新 live harness `280eece`、诊断日志 `9054c0a` 分批提交并 push 同一草稿 PR #44，`9054c0a` 的 Web/工具、DB、CodeQL 全部 SUCCESS，新诊断 Preview Ready | main/release 未推进、PR 未合并；Supabase Preview check 仍为 SKIPPED，不冒充 Supabase main 同步或下一次 main push 已验证 |
+| 自动部署/CI | **PASS（已验收 `bfd461e`）**：db-tests、static/server、E2E、CodeQL 等实际运行检查 SUCCESS，Vercel `Fgm8bx…` SUCCESS/Ready，Supabase Preview SKIPPED | 显示修复 `bf44429` 与文档提交的最新 CI 以 `final-publication-status.json` 为准；文档提交不改变既有 hosted `bfd461e` 证据。main/release/env/prod 未改、PR #44 未合并 |
 
 首轮证据位于 `output/test-acceptance-20261110/`，以上首轮结果以 `hosted-long-edit-and-deepseek-ui.json`、`after-deepseek-live-summary.json`、`after-mimo-live-attempt-summary.json`、`after-cancel-live-summary.json`、`quota-gates-final-summary.json` 及 `branch-214d563-ci-final.json` 为准；首轮 DB 关闭状态以 `final-runtime-restore-summary.json` 为准，域名和环境变量恢复汇总在该目录的 `final-restoration.json`。这些快照的 7/3 水位按原观察时间保留，不改成后续的 8/4。新轮采用独立目录及文末证据，不能用首轮的 final 文件冒充第二轮回读。较早“尚无调用”“域名仍临时分支”“flags 仍为 true”或“等待验证”等状态均只是当时观察，不代表当前结论。
 
@@ -46,16 +47,19 @@
 
 1. Admin 已验证的 owner/instance scope 默认在五分钟后被普通 Query GC 回收。页面本地状态仍显示旧列表，而 mutation 完成回调因 scope 缺失跳过刷新。最小修复仅保留该 scope 至身份清理，普通读取缓存继续回收。原实现三类页面的长编辑回归失败；修复后 80 项相关测试与 TypeScript 检查通过。退出、换号、返回原账号后的旧回调隔离保留。
 2. CV 编辑器退出登录时，会把正在编辑的加密文档作为明文本地 fallback 保存。已修复：加密文档退出时清口令，切换已有本地文档或新空白文档，不复制加密标题、正文或未保存内容。并复现、修复了等待 Auth 期间从普通云文档切到加密文档的竞态：普通明文 fallback 在首次 await 前只捕获原数据，退出成功后才保存，失败不改存储。普通云文档的既有 fallback 行为保持。
+3. 新身份阶段复现：一个标签正常退出后，旧 peer 标签虽清除 A 的云端 UI，仍保留 remember=false 的 session 解密口令；A 正常重登再选该文档会自动解密。Auth `771a60f` 的 129 项定向、TypeScript/lint、独立审查及最终 `bfd461e` CI 通过。13:08:27.670 UTC 新部署复验中，A 重登后两页无 reload 重选均出现空口令框、remember=false，hosted 核心回归 PASS。旧场景没有观察到 B 获得 A 正文，不能表述为已发生跨账号正文泄漏。
+4. 本地真实 RED 确认导出 source-path 缺陷：远端 summary 恢复但对应 body 未 adopted 时，可下载默认表单；异步 PDF/ZIP 完成前若身份或采用的文档切换，也需要撤销旧下载。v2 已加入最小 ready/菜单门禁和下载前 owner/adoption guard；定向 25 项、TypeScript/lint 通过。审查捕获 baseline 对象引用会误取消同文档正常 autosave，两个真实 RED 后改为 adoption/reset epoch。修复源 `bfd461e` 的正常 hosted 四格式 77/77、实际 JSON 回导 20/20 通过；各异步竞争边界的细分覆盖来自定向本地测试，不扩大成所有竞争场景都已手工 hosted 复现。
+5. 新修复版 peer 首次云列表显示 `[object Object]`，正常账户 Sync 后恢复。最小两文件修复已提交 `bf44429`，plain Supabase 错误显示的 25 项 scoped、TypeScript/lint 及最终 93 文件/1612 项通过；保留原 native Error.message 语义，不宣称任意自定义 Error getter 无副作用。只读 peer dev.logs 的 20 条 warning 没有 error、可用 HTTP status 或已知 Supabase 请求路径，未定位底层瞬时失败；显示修复不代表根因解决，也未声称 hosted 补验通过。
 
-两处修复经独立审查，联合覆盖 5 个测试文件、93 项全部通过。最初联合命令误列一个不存在的测试文件名，Vitest 实际只运行 4 个文件、71 项；随后准确运行身份测试文件的 22 项通过，按实际输出合计 93，不把不存在的文件计入覆盖。
+第 1、2 处既有修复经独立审查，联合覆盖 5 个测试文件、93 项全部通过；该历史结果只覆盖第 1、2 项，第 3、4 项各自的新回归另列。最初联合命令误列一个不存在的测试文件名，Vitest 实际只运行 4 个文件、71 项；随后准确运行身份测试文件的 22 项通过，按实际输出合计 93，不把不存在的文件计入覆盖。
 
 修复分支为 `codex/test-acceptance-fixes`，草稿 [PR #44](https://github.com/Yuee98/typst-cv-template/pull/44)。前两轮源为 `214d5634964ca98af76447e73acceda77cb15f4e`，分批提交为 `aa56183`（Admin）、`0aaaf5c`（加密退出）、`214d563`（东京函数）；MiMo 诊断轮又提交并 push `280eece`（live harness）及 `9054c0a01b427e53db563678329e803dd2f0b604`（安全诊断日志）。后续 Gemini 采用仅文档变化的 `a2b7ce8`，部署边界见对应章节。同分支带入先前独立的数据库切换记录提交。PR 仍为草稿，未合并 main/release。
 
-前两轮的 Vercel 自动 Preview deployment 为 `Daz5hKYbHGQ2g7FRXhk8Jtdr7Mzq`，源/项目/Preview 属性均核对，地址为 `https://typst-cv-template-psuk1tv6f-yuee98s-projects.vercel.app/zh`。对应 `214d563` 的 Web CI `42769605166`、DB CI `42769605272` 及 CodeQL `42769601894` 均成功；后续 `9054c0a` 的新部署与 CI 见诊断轮。共享 test 域名临时切换后，实际登录态长编辑及部分真实 AI 路径已有上述结果；性能对比、退出等未完成项目继续单列，不能因 Ready 或 CI 成功一并记 PASS。
+前两轮的 Vercel 自动 Preview deployment 为 `Daz5hKYbHGQ2g7FRXhk8Jtdr7Mzq`，源/项目/Preview 属性均核对，地址为 `https://typst-cv-template-psuk1tv6f-yuee98s-projects.vercel.app/zh`。对应 `214d563` 的 Web CI `42769605166`、DB CI `42769605272` 及 CodeQL `42769601894` 均成功；后续 `9054c0a` 的新部署与 CI 见诊断轮。当时只完成登录态长编辑及部分真实 AI 路径；性能对比、身份退出及导出回导已由文末新阶段补齐，其他缺口继续单列，不能因 Ready 或 CI 成功一并记 PASS。
 
-这些修复尚未合入 `main`。共享 test 域名已恢复跟踪原 accepted `main`；本轮临时部署通过不等于两个修复已经成为共享 test 的正式版本，更不表示 prod 已发布。
+本 PR 的修复尚未合入 `main`。共享 test 域名已恢复跟踪原 accepted `main`；临时部署验收通过不等于这些修复已经成为共享 test 的正式版本，更不表示 prod 已发布。
 
-`web/vercel.json` 配置新部署的函数运行区域为 `hnd1`，官方配置 schema 的数据校验通过。项目 Root Directory 为 web，该文件生效；独立 Preview 的一次 availability 401 日志已观察到 hnd1/Tokyo，但正常登录态 Admin 的性能对比仍未完成。已有 prod 部署不会移动；以后若将含此配置的提交部署到 Production，也会使用东京，需在 prod 发布评审时明确核对。
+`web/vercel.json` 配置新部署的函数运行区域为 `hnd1`，官方配置 schema 的数据校验通过。项目 Root Directory 为 web，该文件生效；早先独立 Preview 的 availability 401 只证明运行区域，正常登录态 Admin 的八个可比样本另见文末新阶段。已有 prod 部署不会移动；以后若将含此配置的提交部署到 Production，也会使用东京，需在 prod 发布评审时明确核对。
 
 ## 计费验收约束
 
@@ -98,7 +102,7 @@
 
 **新轮恢复 PASS，验收仍有缺口。** 正常 UI 已重新保存域名 `main` 并 fresh reload，runtime 保存为关闭、20/2000/3；最终 DB 回读确认 revision 25、pending=0、charged=2、global admission=4，总请求/attempt 为 8/4。临时 rule 2 继续禁用。两个 Preview AI flags 保持 false，没有修改 Production、触发新部署、push 或合并 PR #44；原独立 Preview bundle 没有 rebuild。Gemini Secret 是本轮授权保留的新配置项，不应将它当作要恢复删除的临时数据。
 
-剩余缺口仍包括：MiMo 成功及未知上游原因、Gemini 调用与 hosted USD 结算、CV 导出文件内容及 JSON 回环导入、真实手机 Safari、hosted 退出与普通账号隔离、真正持久化取消、同 ID 重放、正常 Admin 性能对比，以及 11 月 12 日的重建后自然保活。扩展文件访问权限已解除，但这些功能未因环境文件导入成功而自动通过。
+该上传/重试轮结束时的缺口包括：MiMo 成功及未知上游原因、Gemini 调用与 hosted USD 结算、CV 导出文件内容及 JSON 回环导入、真实手机 Safari、hosted 退出与普通账号隔离、真正持久化取消、同 ID 重放、正常 Admin 性能对比，以及 11 月 12 日的重建后自然保活。当时扩展文件访问权限已解除，但这些功能不能因环境文件导入成功而自动通过；后续各轮结果另列。
 
 ## 当前版本本地付费对照与 hosted HTTP 诊断
 
@@ -160,7 +164,53 @@ MiMo 诊断轮结束时仍未通过的项目为：Gemini 调用及 hosted USD �
 
 独立 `independent-evidence-review.json` 结论为 NO_BLOCKERS。项目默认 flags=false 不回填 `8MSDqms…` 的 true 构建快照，域名恢复 main 也没有重新部署 main；正式重新开启 test AI 前须确认 main 已用新环境变量构建。本轮没有推进 main/release、合并 PR 或修改 Production；不为补全验收追加调用，旧快照和封存文件保持原样。
 
-**本轮证明范围与剩余缺口。** Gemini 真实调用、应用 USD 估算/结算及与 CNY 的隔离已通过；Google 账户是否属于 Paid tier、实际发票及历史失败的供应商费用没有独立核查，不能据此宣称实际支付金额。当前未完成项为 CV 导出文件内容及 JSON 回环导入、真实手机 Safari、hosted 退出和普通账号隔离、真正持久化取消、hosted 同 ID 重放、正常 Admin 性能对比，以及 11 月 12 日重建后的自然保活。Gemini 调用及应用 USD 结算已从当前待办移除，较早章节的未完成列表保留其当时边界。
+**Gemini 轮证明范围与当时缺口。** Gemini 真实调用、应用 USD 估算/结算及与 CNY 的隔离已通过；Google 账户是否属于 Paid tier、实际发票及历史失败的供应商费用没有独立核查，不能据此宣称实际支付金额。该轮结束时未完成项为 CV 导出文件内容及 JSON 回环导入、真实手机 Safari、hosted 退出和普通账号隔离、真正持久化取消、hosted 同 ID 重放、正常 Admin 性能对比，以及 11 月 12 日重建后的自然保活。后续身份/导出/性能结果在下节记录，不把这里的历史缺口误作当前全部待办。
+
+## 身份退出、导出回导与 Admin 性能
+
+本轮按用户指定顺序完成三个阶段，`completion-summary.json` 定义结果为 `REQUESTED_THREE_PHASES_PASS`，最终恢复及 DB 核对完成。证据目录为 `output/identity-export-performance-20261110/`；AI 全程 OFF，没有新 Provider 调用。基准源 `ea6aaf3`、修复后 hosted 验收源 `bfd461ed70e184c74d52965a090610348d9fcbda`、最终显示补丁 `bf44429e39983f352091fc99d8726778e6167d5e` 分开记录，旧封存文件不改写。
+
+**基线与普通账号准备。** `identity-baseline-summary.json` 的 2026-11-10 11:19:28 UTC 基线为 Auth 2/Admin 2、没有普通账号，两份 A 云文档（加密 revision 4、普通 revision 3）；runtime OFF/revision 33、20/2000/3，11 请求/7 attempt、reserved=0、charged=4、global admission=7。11:25:03 UTC 通过 Supabase Test Auth 的正常 Create User UI 新建虚构普通账号 B，未发送 Invitation 邮件，随机密码仅留 CUA 内存、不输出；独立 27 项确认 Auth 3/Admin 2，B 无 Admin、AI allowlist 或云文档，原权限/密码未改。
+
+为安全 reload，原普通 A 文档先正常 Save，revision 3→4、正文 hash 不变；这次有意保存不被误记成“原文档从未更新”。此前对未核实未保存内容的 reload 拒绝，通过先 Save 后 reload 解决，没有遗留批准阻塞。随后建立专用 `Identity encrypted fixture 20261110`，正常 local→cloud→encrypt；独立 26 项确认 revision 3、data=NULL、envelope 有效，原两份文档未变。
+
+**身份边界与真实 RED。** 新标签真实输入口令解锁已保存标记，修改为未保存加密标记后，于 11:37:24.800 UTC 退出。当前页回到既有本地“周林”，另一页为空，两页均无云端、加密 card 或标记；真实 `downloaded/after-encrypted-logout.json` 为 schema 7，全部加密 fixture 标记不存在。这是当前导出内容的边界证据，不声称扫描了全部浏览器存储。
+
+B 经用户操作时确认并正常接受产品 terms 后，云列表无 A 项，新配置页与旧 usage 页均 FORBIDDEN，无 A 数据或旧 modal。B 正常创建自有普通云 fixture，独立 26 项确认 owner B/revision 1/schema 7；仅修改未保存标记、不切文档，于 12:14:32.679 UTC 退出后得到明确本地副本，实际 `downloaded/after-ordinary-logout.json` 严格 schema 验证通过，保留 B 未保存标记、不含 A 加密标记。`after-ordinary-logout-summary.json` 的 27 项后验确认云端保存的正文/hash 不变。普通明文 fallback 属于既定行为，不视为云 ACL 泄漏。
+
+A 由原用户正常重登，恢复 A 的三份云文档；B 项只为设备本地副本、没有 B 云文档，双向云列表隔离通过。但修复前 caller 146 重选加密 fixture 出现空口令框，旧 peer 104 在 remember=false、退出后未再次输入口令的情况下，A 重登后却自动解密。该现场证明 peer 的外部 Auth sign-out 缓存清理缺失；B 期间 UI 没有显示 A 正文，不能称已发生 B 读取 A 正文。
+
+**修复、CI 与 hosted 回归。** Auth `771a60f` 覆盖 peer 同步清口令、异步 load/store、late select/duplicate/discard 的 owner/ABA 撤销，以及 Storage SecurityError 不阻断新 Auth 状态采纳；129 项定向、TypeScript/lint 及独立审查通过。导出 `bfd461e` 修复“远端 summary 恢复但 body 尚未采用时下载默认表单”，增加 ready/菜单和 PDF/ZIP 下载前 owner/adoption 门禁；25 项定向通过。root 审查另以两个真实 RED 捕获 baseline 对象变化会误取消同文档 autosave，v2 改为只比较 adoption/reset epoch。
+
+两个提交一次 push 原 PR #44；`readiness/joint/summary.json` 的 92 文件/1596 项及 full TypeScript 通过，取证文件匹配提交源，Auth/Export 独立审查均 NO_BLOCKERS。`bfd461e` 的实际运行 CI 检查全部 SUCCESS，Supabase Preview SKIPPED；Preview `Fgm8bxLaqBTViHrsgMhVaPkWTM8n` 于 12:49:14 UTC Ready。此前 v1 的 1594 只保留为旧检查边界。
+
+修复版两页先同时解锁同一 fixture，12:59:05.953 UTC initiator logout 后均 signed out、card 和三个标记 DOM absent。`after-patched-encrypted-logout-summary.json` 在 13:01:23 UTC 的 25 项检查确认四份云文档 revision/hash/time 与各自基线一致、AI OFF/33、11/7、reserved=0。A 在另一个标签正常重登，primary 的旧 login modal 取消关闭后显示 signed in；13:08:27.670 UTC，primary 与 peer **无 reload** 重选同一 fixture，均空 password modal、remember=false。`patched-identity-hosted-result.json` 记录核心回归 PASS；没有用 reload 清缓存制造假通过。
+
+peer 首次列表曾显示 `[object Object]`，正常账户 Sync 后恢复。显示修复 `bf44429` 只处理 plain Supabase 错误 message，保留 native Error.message 语义，不宣称任意自定义 Error getter 无副作用；25 项 scoped/TypeScript/lint 通过。`readiness/joint/final-root-summary.json` 记录加入该补丁后的 **93 文件/1612 项及 full TypeScript PASS**。pnpm 入口因本机 Store SQLite 权限在测试启动前失败，日志保留；改用已安装 Node vitest/tsc binaries 成功，没有安装依赖。该显示补丁未冒称已有 hosted 错误复验。只读 peer dev.logs 的 20 条 warning 无 error、可用 HTTP status 或已知 Supabase 请求路径，底层瞬时失败原因仍 UNKNOWN，不把显示格式修复称为根因解决。
+
+**真实四格式导出及回导 PASS。** 先通过正常 New→Import JSON 导入本地参考 `local-reference/data.json`，得到 Synthetic Export Acceptance。该步仅为当前格式导入；CUA filechooser 单调用墙钟 1181.217 秒、请求的 30 秒 timeout 未生效，不计为网站解析延迟。早先 download waiter 阻塞 938 秒也不作为性能样本；receipt 的 `export_command_started_at` 不称实际 click dispatch。
+
+随后取得真实 JSON、单独 `.typ`、Typst ZIP、PDF。`export-validation/hosted-four-formats-bfd461e-pinned/visual-qa-summary.json` 的 **77/77 PASS**：PDF 一页、无加密/JavaScript、中英文完整；ZIP 四 member 的 CRC/data/body/style 正确，Typst 0.15.1 可独立编译一页，两份渲染 PNG 均无裁切、重叠或中文缺字，PNG hash 相同。正常实际文件 Open 回导首下载 JSON 后，UI 新增第二个同名本地 CV；再次导出的 1352-byte JSON 与首下载字节及 SHA256 相同，副本为 `downloaded/reimported-export.json`。`export-validation/hosted-json-roundtrip-bfd461e/roundtrip-summary.json` 的 **20/20 strict deep roundtrip PASS**。stale chooser Unknown ID 未产生 mutation，经正常系统 Open 完成，不列为产品 bug；没有以参考 PDF 或参考 JSON 替代真实下载/回导。
+
+**Admin 性能采样 PASS，范围限定为八个请求。** `admin-performance-observed.json` 保存真实 UI 原始脱敏样本，`admin-performance-statistics.json` 给出描述统计；每区域三次 GET、一笔保持业务字段不变的禁用规则 Save，全部 HTTP 200。
+
+| 实际 Vercel 指标 | hnd1 Tokyo | iad1 Washington, D.C. |
+| --- | --- | --- |
+| GET execution，三样本 | 349、100、87ms；中位数 100ms，范围 87–349ms | 1470、950、1370ms；中位数 1370ms，范围 950–1470ms |
+| GET response finished | 513、259、244ms；中位数 259ms，范围 244–513ms | 1500、985、1400ms；中位数 1400ms，范围 985–1500ms |
+| POST execution / response，单样本 | 285 / 457ms | 1980 / 2000ms |
+
+两区域访问相同 test Supabase；GET 为 Auth→admin_read 两个外部调用，POST 为 Auth→context→rule_save 三个调用。指定 server/admin、lib/admin、migrations 的 Git diff 相同，区域配置变化为 `web/vercel.json` 的 hnd1；样本支持本次东京部署请求明显更快，不作精确因果分解。Hobby 没有外部调用细时，不能断言 Auth 或 DB 谁慢。这不是 p95、整页/点击延迟、慢网或完整冷/热启动基准。13:40:58 的一次正常缓存回访无 loading、日志没有匹配 `/api/admin` 请求；初次未等待路由完成的 attempt 已排除，不能推广为所有导航永远不请求。
+
+**最终恢复及 DB 31/31 PASS。** test 域名 Save/fresh reload 已为 `Valid Configuration · main`，映射回原 Preview `7KV…` / `bc9d9ce`，不是重新部署 main，也不表示 main 已采用本轮 PR 的 Auth/Export 修复或东京区域。两个默认 Preview flags=false，环境变量没有为本阶段改动，Prod/main/release refs 均未改，PR #44 未合并。
+
+`after-admin-performance-save-summary.json` 的 2026-11-10 13:50:17 UTC 回读确认：runtime OFF/ALLOWLIST、20/2000/3、revision 35，11 请求/7 attempt 全终态、reserved=0、charged=4、global admission=7；没有新 Provider 调用。两次测量 Save 使禁用 rule revision 2→4、control 33→35，business hash 和 membership 不变，属于已记录的有意审计写入，不是“整个阶段数据库零写入”。配置 3/价格 3/legal 文档 5 不变；四份云文档 A3/B1 的 hash/time 与各自确认后的基线精确相同。原普通 A 文档在基线准备时曾正常 Save 到 revision 4，另新增 A 加密/B 普通 fixture 均按创建后基线比较，不伪称从最初两文档状态起完全没变化。Auth 3/Admin 2、原管理员保留，B 无 Admin/AI allowlist，B 当前产品 terms 有效；新账号及两份新 fixture 保留。
+
+**源码、证据封存及范围外缺口。** 本轮 hosted 核心验收固定源为 `bfd461e`；显示补丁代码 commit `bf44429` 及后续文档提交的单次 push/CI 终态，以同目录 `final-publication-status.json` 为准，不沿用旧检查，也不把文档构建或本地 1612 项称为新的 hosted 错误注入复验。后续正式重新开启 test AI 前，仍须确认 main 已用新环境变量及目标代码重新部署；本轮不额外开启 AI、调用模型或部署 Production。
+
+本阶段采用选择性 curated 证据，文件为 `output/identity-export-performance-20261110/identity-export-performance-evidence-20261110.tar.gz`，相邻 `.sha256` 保存独立 seal，包内 `MANIFEST.json` 记录所选文件摘要；不将包摘要内嵌本文，以避免包包含文档时循环。包包含 77+20 验证、四格式真实文件/渲染 PNG、identity/最终 DB/performance/test 摘要，不含 raw SQL、连接串、Auth ID、keys；旧 archives 不动。
+
+本次要求的三个阶段已完成。仍未覆盖的范围为真实手机 Safari/软键盘/触摸、真正持久化取消、hosted 同 ID 重放（正常 UI 无同 ID 入口，已有真实本地 DB/并发 CI 覆盖）、11 月 12 日重建后的自然保活。供应商发票、Google 实际 Paid tier、前三条 MiMo 失败费用及旧 Secret 被拒绝的具体原因继续保持各自未知/未核查边界。
 
 ## 工具与现场异常
 
