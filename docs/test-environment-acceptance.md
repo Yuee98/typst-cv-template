@@ -59,7 +59,7 @@
 
 本 PR 的修复尚未合入 `main`。共享 test 域名已恢复跟踪原 accepted `main`；临时部署验收通过不等于这些修复已经成为共享 test 的正式版本，更不表示 prod 已发布。
 
-`web/vercel.json` 配置新部署的函数运行区域为 `hnd1`，官方配置 schema 的数据校验通过。项目 Root Directory 为 web，该文件生效；早先独立 Preview 的 availability 401 只证明运行区域，正常登录态 Admin 的八个可比样本另见文末新阶段。已有 prod 部署不会移动；以后若将含此配置的提交部署到 Production，也会使用东京，需在 prod 发布评审时明确核对。
+历史验收源 `214d563` 至 `bfd461e` 通过 `web/vercel.json` 的 `regions: ["hnd1"]` 指定东京，官方配置 schema 的数据校验通过；项目 Root Directory 为 web，当时该文件生效。早先独立 Preview 的 availability 401 只证明该部署的运行区域，正常登录态 Admin 的八个可比样本另见文末新阶段。后续区域维护已改由 Vercel 项目 Settings→Functions→Function Regions 管理，仓库移除区域覆盖；本次平台保存及新部署核验的独立记录见下文，不将旧样本归因到新的平台设置。现有部署不会因项目默认值变化而移动，prod 本轮不重部署。
 
 ## 计费验收约束
 
@@ -200,7 +200,7 @@ peer 首次列表曾显示 `[object Object]`，正常账户 Sync 后恢复。显
 | GET response finished | 513、259、244ms；中位数 259ms，范围 244–513ms | 1500、985、1400ms；中位数 1400ms，范围 985–1500ms |
 | POST execution / response，单样本 | 285 / 457ms | 1980 / 2000ms |
 
-两区域访问相同 test Supabase；GET 为 Auth→admin_read 两个外部调用，POST 为 Auth→context→rule_save 三个调用。指定 server/admin、lib/admin、migrations 的 Git diff 相同，区域配置变化为 `web/vercel.json` 的 hnd1；样本支持本次东京部署请求明显更快，不作精确因果分解。Hobby 没有外部调用细时，不能断言 Auth 或 DB 谁慢。这不是 p95、整页/点击延迟、慢网或完整冷/热启动基准。13:40:58 的一次正常缓存回访无 loading、日志没有匹配 `/api/admin` 请求；初次未等待路由完成的 attempt 已排除，不能推广为所有导航永远不请求。
+两区域访问相同 test Supabase；GET 为 Auth→admin_read 两个外部调用，POST 为 Auth→context→rule_save 三个调用。在上述 `bfd461e` 历史验收中，指定 server/admin、lib/admin、migrations 的 Git diff 相同，区域配置变化为 `web/vercel.json` 的 hnd1；样本支持当时东京部署请求明显更快，不作精确因果分解。Hobby 没有外部调用细时，不能断言 Auth 或 DB 谁慢。这不是 p95、整页/点击延迟、慢网或完整冷/热启动基准。13:40:58 的一次正常缓存回访无 loading、日志没有匹配 `/api/admin` 请求；初次未等待路由完成的 attempt 已排除，不能推广为所有导航永远不请求。
 
 **最终恢复及 DB 31/31 PASS。** test 域名 Save/fresh reload 已为 `Valid Configuration · main`，映射回原 Preview `7KV…` / `bc9d9ce`，不是重新部署 main，也不表示 main 已采用本轮 PR 的 Auth/Export 修复或东京区域。两个默认 Preview flags=false，环境变量没有为本阶段改动，Prod/main/release refs 均未改，PR #44 未合并。
 
@@ -211,6 +211,14 @@ peer 首次列表曾显示 `[object Object]`，正常账户 Sync 后恢复。显
 本阶段采用选择性 curated 证据，文件为 `output/identity-export-performance-20261110/identity-export-performance-evidence-20261110.tar.gz`，相邻 `.sha256` 保存独立 seal，包内 `MANIFEST.json` 记录所选文件摘要；不将包摘要内嵌本文，以避免包包含文档时循环。包包含 77+20 验证、四格式真实文件/渲染 PNG、identity/最终 DB/performance/test 摘要，不含 raw SQL、连接串、Auth ID、keys；旧 archives 不动。
 
 本次要求的三个阶段已完成。仍未覆盖的范围为真实手机 Safari/软键盘/触摸、真正持久化取消、hosted 同 ID 重放（正常 UI 无同 ID 入口，已有真实本地 DB/并发 CI 覆盖）、11 月 12 日重建后的自然保活。供应商发票、Google 实际 Paid tier、前三条 MiMo 失败费用及旧 Secret 被拒绝的具体原因继续保持各自未知/未核查边界。
+
+## 函数区域改为 Vercel 项目设置管理
+
+用户授权移除代码中的区域配置，改在 Vercel 管理页设置东京，不触发 prod 发布。2026-11-10 14:39:02.766 UTC，通过项目 Settings→Functions→Function Regions 取消 `iad1`、选中 `hnd1` 并 Save；fresh reload 确认 Asia Pacific `hnd1`、North America 无选中区域、Save disabled，平台保存 PASS。Hobby 保持单区域，既有 Fluid Compute Enabled 未改。
+
+仓库移除 `web/vercel.json` 的 `regions`，保留原 Git 分支部署排除；后续按 [部署指南](../web/README.md#vercel-function-region) 维护平台默认值，贴近对应 Supabase。本次配置提交、新 Preview 的实际函数区域及 CI 终态统一记录在 `output/vercel-region-dashboard-20261110/verification-summary.json`；不以旧部署的 hnd1 日志替代本次核验，不重新归档或改写旧封存性能证据。
+
+项目默认区域用于后续 Preview/Production 部署，不迁移现有部署。本轮不切换共享 test 域名、不重部署 prod、不修改数据库，也不推进 main/release；原 main 部署及已完成验收的历史边界保持原样。
 
 ## 工具与现场异常
 
