@@ -4,6 +4,8 @@
 
 test 的现场盘点、待办与后续逐步实录统一保存在 [test 重建执行记录](database-rebuild-test-execution.md)。本手册维护可复用流程；执行记录保存当次事实，不能用计划或本地演练结果代替线上完成结果。
 
+2026-11-11（Asia/Shanghai）已获授权准备 prod，当前仍不清理 prod、不推进 release、不部署 Production。PR #44已于2026-11-10T16:26:55Z squash合并为main `47b36cf287ec6add10614761acb1883750240031`；新准备工具尚待独立审查进入最终候选，未为过渡47b重复运行DB CI/G3。用户要求本轮准备到需要密码之前，prod连接为 `DEFERRED_USER_CREDENTIAL`，不继续索取密码、重置或连接。具体门禁和待执行步骤见 [prod 重建准备](database-rebuild-prod-preparation.md)，不得将准备表当作完成实录。test 后续已另获授权开启 AI（ALLOWLIST、revision 36）；原 test 切换及补充验收中的 OFF/revision 35 等快照保留各自观察时间，prod 准备不自动改变 test 现状。
+
 ## 目标与保留项
 
 继续使用已有 Supabase 项目。test 监听 main，prod 监听 release；两者应用同一份提交及新迁移清单。保留 GitHub 定时 keepalive Action 和 public.keep_project_active()、GitHub SSO/OAuth/回调/重定向、API 与 Git 集成配置。
@@ -23,6 +25,8 @@ test 的现场盘点、待办与后续逐步实录统一保存在 [test 重建�
 ## 执行记录与证据保管
 
 维护开始前建立当次记录，逐步追加时间、操作者、目标、准确命令、执行前后状态、退出结果和证据位置。时间使用带时区的 ISO 8601；维护窗口同时标注北京时间。统一使用 `NOT_STARTED`、`RUNNING`、`PASS`、`FAIL`、`BLOCKED`，只读盘点使用 `OBSERVED`，非必需而未执行的项目使用 `NOT_RUN` 并说明范围，不把“没看到报错”当作通过。
+
+准备阶段用户明确延期提供凭据时，单列 `DEFERRED_USER_CREDENTIAL`，如实记录尚未连接和未执行；不写成数据库执行失败或已通过。
 
 每次本地 plan/rebuild/resume/verify 保存调用时间、执行模式、实际 checkout SHA、目标项目、操作标识、检查点与结果。失败也留记录，包括不确定结果、检查方式、恢复证据和再次执行的理由。连接信息不写入命令参数或日志；授权与维护确认只是工具断言，不能代替真实的旧应用、Data API 写入口和任务已暂停/排空的证据。
 
@@ -52,7 +56,7 @@ scripts/db-rebuild.ts 提供 plan、rebuild、resume、verify。脚本在操作�
 
 目标映射通过本地进程环境 `REBUILD_PROJECT_REF`、`REBUILD_OTHER_PROJECT_REF`、`REBUILD_SUPABASE_URL` 显式提供，连接秘密使用 `REBUILD_DATABASE_URL`，CA 文件使用 `REBUILD_CA_CERT_FILE`。`REBUILD_EXECUTION_AUTHORIZED`、`REBUILD_MAINTENANCE_VERIFIED` 仅在实际授权、停写验证后对当次进程设为 true，不需要保存为 GitHub 变量。不要把数据库密码放入 shell history 或实录。
 
-只读 plan 可在干净的评审候选 checkout 上预检。实际 rebuild/resume 必须绑定完整 SHA、干净 checkout 和已进入 origin/main 的候选，核对演练证明及显式目标/清理确认；从本地执行不跳过这些检查。prod 另以 `--test-state` 指定本地已 accepted 的 test 检查点，核对另一项目、同 SHA 和同清单。网络断开后先 plan 和 catalog/history 检查，再决定 resume，不能因为结果不确定重复清空。
+只读 plan 可在干净的评审候选 checkout 上预检。实际 rebuild/resume 必须绑定完整 SHA、干净 checkout 和已进入 origin/main 的候选，核对演练证明及显式目标/清理确认；从本地执行不跳过这些检查。prod 另以 `--test-state` 指定本地已 accepted 的 test 检查点；同SHA直接核对另一项目及同清单，新源码但完整迁移/清理方法不变时，保留该原件并额外传 `--test-revalidation`，由下述受控只读流程证明最终候选已重新验收。网络断开后先 plan 和 catalog/history 检查，再决定 resume，不能因为结果不确定重复清空。
 
 检查点已记录实例时，resume/verify 要求实际实例完全一致；实际实例缺失或改变时停止，不能覆盖旧记录。plan 仍可只读展示两者，供查明是否使用了旧归档或错误的恢复材料。
 
@@ -82,7 +86,7 @@ node scripts/db-rebuild.ts \
   --rehearsal-evidence="$REBUILD_REHEARSAL_EVIDENCE"
 ```
 
-后续 verify 复用相同目标、SHA 与目录；需要恢复时将 mode 改为 resume，保留确认和证明参数，按实际情况增加 reset-recovery-evidence。验收完成后的最后一次 resume 增加 acceptance-evidence。prod 使用独立目标与凭据，另外传入 `--test-state="$REBUILD_STATE_DIR/test-uvitgcfqnciahvakqhnv.json"`。允许使用经摘要核对、字节一致且保持私有权限的归档副本；禁止手写成功状态或把 test 文件改绑为 prod。
+后续 verify 复用相同目标、SHA 与目录；需要恢复时将 mode 改为 resume，保留确认和证明参数，按实际情况增加 reset-recovery-evidence。验收完成后的最后一次 resume 增加 acceptance-evidence。prod 使用独立目标与凭据，另外传入 `--test-state="$TEST_ACCEPTED_CHECKPOINT"`，该变量指向原test检查点的私有绝对路径，不是新prod状态文件；跨SHA另加 `--test-revalidation="$TEST_REVALIDATION_OUTPUT"`。允许使用经摘要核对、字节一致且保持私有权限的归档副本；禁止手写成功状态或把 test 文件改绑为 prod。
 
 ## 发布前材料
 
@@ -96,7 +100,7 @@ node scripts/db-rebuild.ts \
 
 不通过 GitHub Action 执行 hosted 重建。普通 CI 继续在隔离环境验证迁移和恢复；一次性清理、迁移和初始化由本地命令完成。合并前可先只读预检，合并并冻结实际提交后再次核对 plan，不能用早期预检代替最终目标和清单确认。
 
-PR 的 synthetic merge SHA、PR head SHA、最终实际合并 SHA 分开记录。当前 DB CI 只有 pull_request/workflow_dispatch 触发器，合并后须手动运行实际 main SHA 的 DB CI，核对 run 的 head SHA 和新 G3 `source_sha` 均为该提交。即使迁移摘要相同，也不得给旧证明改绑 SHA。执行期间 main 如推进，继续锁定已核验 SHA；若更换候选，则重新核验其门禁。后续实录提交 SHA 单独记录，不能因为保存实录而把发布候选自动改成最新 main；prod 继续显式使用 test accepted 的 SHA。
+PR 的 synthetic merge SHA、PR head SHA、最终实际合并 SHA 分开记录。当前 DB CI 只有 pull_request/workflow_dispatch 触发器，合并后须手动运行实际 main SHA 的 DB CI，核对 run 的 head SHA 和新 G3 `source_sha` 均为该提交。即使迁移摘要相同，也不得给旧证明改绑 SHA。执行期间 main 如推进，继续锁定已核验 SHA；若更换候选，则重新核验其门禁。后续实录提交 SHA 单独记录，不能因为保存实录而把发布候选自动改成最新 main；prod 继续显式使用已经test接受或受控重新验收的冻结候选SHA。
 
 keepalive Action 继续对 test/prod 调用同一个只读 keep_project_active RPC，以 HTTP 成功判定调用完成，不再依赖无业务用途的返回类型。这样 test 升级、prod 保持旧库期间也继续防回收；切换后的两边分别核验，不为过渡升级 prod 函数。
 
@@ -126,9 +130,17 @@ accepted 检查点中的 maintenance=false 表示应用接受阶段已完成，�
 
 prod 只接受同 SHA、同基线/完整清单且已通过 test 的材料。重复上述维护、清理、初始化 PRODUCTION、应用部署与验收流程。prod 独立生成实例、用户授权和服务配置，不复制 test 的用户/接受/请求/管理员数据。
 
+本轮准备选择继续保留已有 Auth 用户、Storage、SSO/OAuth及平台配置，仅按 application allowlist重建应用对象。本地执行，不增加 GitHub状态token。先记录 prod专属凭据/CA、真实管理员、平台/备份基准与可验证停写方案；旧 test平台盘点、身份和成功状态不能移作prod证据。
+
 执行前从已完成的 test 实录创建独立 prod 记录，保留操作和经验，清空完成状态、run/operation/instance、授权、凭据及用户选择，并重新盘点 prod 现场。验收前为修复 test 问题更换候选时，prod 必须使用最后实际通过 test 的提交与材料。accepted 后如又需更换候选，暂停 prod 切换，重新准备和核验材料；不能用 resume 或手改文件给既有成功状态换绑 SHA。
 
+当前封存的 test accepted检查点绑定 `bc9d9ce…`，不覆盖后续PR修复源码。新 `scripts/db-test-revalidate.ts` 在完整迁移链、清理SQL/inventory不变时，为现有test实例生成独立 `test_release_revalidation_1` 材料，绑定原checkpoint字节摘要、最终实际main SHA、同实例、两类清单、CI/G3及真实应用接受证据。默认只校验本地材料、零DB/GitHub网络；只有增加 `--execute-read-only` 才使用已有gh身份核实际同SHA Web/DB run与artifact官方digest，并以强制只读连接核对test。参数、最小材料形状和使用顺序见 [准备文档](database-rebuild-prod-preparation.md#新候选的-test-只读重新验收)，没有mode/state-dir参数。
+
+该接口已完成本地67项/类型/lint及独立审查，尚待新工具PR和最终候选的实际G3、hosted应用材料及只读执行；模板不是真实接受。原accepted检查点保持终态，不能重建test、重新resume、手改原件或放宽绑定。prod跨SHA额外消费 `--test-revalidation` 的完整私有引用目录，离线核原ZIP/G3及摘要，不要求GitHub在线或新增token；创建时已核验且完整归档的证明不因线上artifact七天后过期自动失效。这是操作员私有材料信任边界，不是签名证明；catalog不是live函数body逐字节比较，也不要求关闭用户已授权的test AI。
+
 正常 Promote Release 不读取此次重建的本地检查点，也不依赖额外状态 token。prod 维护窗口由操作者控制，数据库尚未 DB-ready、与待发布 SHA/清单尚未核对时不触发 promotion。一次性重建的操作顺序与结果记录在实录中，不把临时重建状态变成日常发布的长期依赖。
+
+执行前分别暂停并核实Supabase release自动DDL、Vercel Production自动发布及旧应用写入口；Data API、外部writer、cron和在途请求须有独立停写/排空证据。Promote Release须在DB-ready后受控执行，`source_ref` 显式填写冻结的40位完整SHA，不省略或使用默认 `main`；记录 `create_tag` / `tag_name`，workflow原子推送release及可选tag，随后部署GitHub Pages，属于正式发布。核对Vercel同SHA的Production部署及新环境快照。首次AI保持客户端、服务端和数据库三层OFF；Preview Secrets不会自动成为Production变量，项目变量也不会回填旧deployment。accepted后再单独验收任务实跑、原计划恢复、集成/写入口、保活与平台保留，不能以一次resume成功结束窗口。
 
 不删除 release 分支、不强推 main，也不把清库塞进日常 Promote Release。prod 正常发布仍为 main/test 验收后 promotion 到 release；历史与监听分支同步后才恢复集成。
 
