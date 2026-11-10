@@ -128,7 +128,9 @@
 
 **最终恢复 PASS，保留其余验收缺口。** `key-correction-final-readonly-summary.json` 的 2026-11-10 10:18:21 UTC 回读及随后身份布尔核对共 26 项 PASS：runtime 关闭、ALLOWLIST、用户每日 20/全局每日 2000/每分钟 3、revision 29，10 请求/6 attempt 全部终结，reserved=0、charged=3、global admission=6，允许名单仍只有已授权账号，配置、规则、聚合及最后水位未再变化。正常 UI 已 Save 并 fresh reload 确认 test 域名恢复 `main`；默认 Preview flags=false，部署快照仍 true，已授权替换的 MiMo Secret 保留。没有修改 Production、推进 main/release 或合并 PR #44。
 
-**部署环境快照边界。** Vercel 项目默认 flags=false、Preview Secret 已更新，不会回填历史 deployment。`AvUcY9U…` 修复部署使用新 Secret，其 AI 构建快照仍为 true；当前 runtime OFF 和域名恢复 `main` 是本轮收尾状态。恢复域名不是重新部署 main，不能宣称 main 旧部署的环境快照也换用了新 key。今后的 main Preview 部署会继承已更新的 Secret；重新开启 test AI 前，须确认承载该域名的 main 已使用新环境变量重新部署。本轮不再额外部署、开启 AI 或调用模型。
+**部署环境快照边界。** Vercel 项目默认 flags=false、Preview Secret 已更新，不会回填历史 deployment。`AvUcY9U…` 修复部署使用新 Secret，其 AI 构建快照仍为 true；当前 runtime OFF 和域名恢复 `main` 是本轮收尾状态。恢复域名不是重新部署 main，不能宣称 main 旧部署的环境快照也换用了新 key。今后的 main Preview 部署会继承已更新的 Secret；重新开启 test AI 前，须确认承载该域名的 main 已使用新环境变量重新部署。本轮不再手动部署、开启 AI 或调用模型。
+
+**文档收尾。** 验收记录提交并 push 到原草稿 PR 后，会触发常规 CI 与该分支的自动 Preview 构建，采用已恢复的项目默认环境变量；不切换共享 test 域名，不推进 main/release，也不部署 Production。这些仅文档提交的构建不冒充 `9054c0a` 的付费复验证据。10:24 UTC 封存的 `mimo-diagnosis-evidence.tar.gz` 保留当时的文档副本及 19 项脱敏证据，后续文档收尾说明不回写旧封存文件。
 
 日志记录的认证拒绝、同 endpoint/model 的本地成功、仅替换 Preview 凭据并同源部署后的 hosted 成功，共同支持已解决 test 的凭据认证问题；它们不揭示旧 Secret 的具体内容或为何被拒绝。旧轮快照及封存文件保持原样，7/3、8/4、9/5、10/6 分别对应各自观察阶段，不回写历史。
 
