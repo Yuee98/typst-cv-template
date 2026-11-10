@@ -250,6 +250,50 @@ describe("lost admission responses", () => {
   });
 });
 describe("failed upstream billing evidence", () => {
+  it.each([401, 403])("settles an HTTP %s rejection even when its diagnostic logger throws", async upstreamStatus => {
+    const { deps, request, availability } = await setup();
+    const expectedRoute = polishExpectedRouteFromAvailability(availability, availability.configurations[1].configId);
+    if (!expectedRoute) throw new Error("The diagnostic regression requires the eligible MiMo fixture.");
+    const original = deps.db.call;
+    const calls: string[] = [];
+    const attemptFacts: Array<Record<string, unknown>> = [];
+    const finalResults: unknown[] = [];
+    deps.db.call = async (name, input) => {
+      calls.push(name);
+      if (name === "ai_attempt_complete") attemptFacts.push(input);
+      const result = await original(name, input);
+      if (name === "ai_finalize") finalResults.push(result);
+      return result;
+    };
+    const complete = vi.fn<InferenceProvider["complete"]>(async () => {
+      throw Object.assign(new Error("PRIVATE_UPSTREAM_MESSAGE"), { code: "UPSTREAM_ERROR", upstreamStatus, body: "PRIVATE_CV_BODY" });
+    });
+    deps.prepare = (_configuration, onTransmit) => ({ complete: async (...args) => {
+      onTransmit();
+      return complete(...args);
+    } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { throw new Error("PRIVATE_LOGGER_FAILURE"); });
+    try {
+      await expect(executePolish(deps, user, {
+        ...request,
+        expectedRoute
+      }, signal())).rejects.toMatchObject({ code: "UNAVAILABLE", reason: "FAILED_UPSTREAM" });
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(calls.filter(name => name === "ai_attempt_complete")).toHaveLength(1);
+      expect(calls.filter(name => name === "ai_finalize")).toHaveLength(1);
+      expect(attemptFacts).toEqual([expect.objectContaining({ state: "FAILED_UPSTREAM", attempt_no: 1, transmitted: true, provider_billable: null, retry_allowed: false, usage_complete: false })]);
+      expect(finalResults).toEqual([expect.objectContaining({ state: "FINALIZED", outcome: "FAILED_UPSTREAM", charged: false, quota: expect.objectContaining({ reserved: "0", charged: "0", remaining: "20" }) })]);
+      expect(await original("ai_quota", { contract_code: "cv_app_db_2", database_instance_id: fixtureInstance, owner_auth_user_id: user })).toMatchObject({ reserved: "0", charged: "0", remaining: "20" });
+      // This assertion is intentionally last: RED must show that settlement is
+      // already correct, but no production diagnostic was emitted yet.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(warn.mock.calls[0][0])).toEqual({ event: "provider_attempt_failure", config_id: availability.configurations[1].configId, adapter_id: 2, request_id: "req_000000000001", attempt_no: 1, transmitted: true, http_status: upstreamStatus, retryable: false, class: "HTTP_TERMINAL" });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE_");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("does not treat an HTTP error without usage as proof of zero provider cost", async () => {
     const {
       deps,
