@@ -1,6 +1,7 @@
 import { cloudCacheScope } from "@/lib/supabase/app-context";
 const ENCRYPTION_KEY_PREFIX = "typst-cv-builder:encryption:";
 const TRUST_DEVICE_KEY_PREFIX = "typst-cv-builder:encryption-trust-device:";
+const passwordOwners = new Map<string, object>();
 
 // Obfuscation salt stored alongside the application code. This is not secret;
 // it only ensures the derived key is domain-specific. The wrapping key is still
@@ -12,6 +13,15 @@ const OBFUSCATION_ITERATIONS = 100_000;
 function encryptionKey(userId: string, cvId: string) {
   return `${ENCRYPTION_KEY_PREFIX}${cloudCacheScope()}:${userId}:${cvId}`;
 }
+function passwordOwnerKey(userId: string) {
+  return `${ENCRYPTION_KEY_PREFIX}${cloudCacheScope()}:${userId}:`;
+}
+export function captureEncryptionPasswordOwner(userId: string) {
+  const key = passwordOwnerKey(userId);
+  const owner = passwordOwners.get(key) ?? {};
+  passwordOwners.set(key, owner);
+  return () => passwordOwners.get(key) === owner;
+}
 export async function loadEncryptionPassword(userId: string, cvId: string) {
   if (typeof window === "undefined") {
     return null;
@@ -20,24 +30,46 @@ export async function loadEncryptionPassword(userId: string, cvId: string) {
   if (!raw) {
     return null;
   }
-  return decryptStoredPassword(userId, raw);
+  const ownsPassword = captureEncryptionPasswordOwner(userId);
+  const password = await decryptStoredPassword(userId, raw);
+  return ownsPassword() ? password : null;
 }
 export async function storeEncryptionPassword(userId: string, cvId: string, passphrase: string, persist: boolean) {
   if (typeof window === "undefined") {
     return;
   }
+  const key = encryptionKey(userId, cvId);
+  const ownsPassword = captureEncryptionPasswordOwner(userId);
   const encrypted = await encryptStoredPassword(userId, passphrase);
-  window.sessionStorage.setItem(encryptionKey(userId, cvId), encrypted);
+  if (!ownsPassword()) return;
+  window.sessionStorage.setItem(key, encrypted);
   if (persist) {
-    window.localStorage.setItem(encryptionKey(userId, cvId), encrypted);
+    window.localStorage.setItem(key, encrypted);
   }
 }
 export function clearEncryptionPasswords(storage: Storage, userId: string) {
-  const prefix = `${ENCRYPTION_KEY_PREFIX}${cloudCacheScope()}:${userId}:`;
+  const prefix = passwordOwnerKey(userId);
+  // Revoke pending crypto work before clearing the tab's stored envelopes.
+  // A later sign-in by the same user receives a different owner token.
+  passwordOwners.delete(prefix);
   for (let index = storage.length - 1; index >= 0; index -= 1) {
     const key = storage.key(index);
     if (key?.startsWith(prefix)) {
       storage.removeItem(key);
+    }
+  }
+}
+export function clearUserEncryptionPasswords(userId: string) {
+  // Storage getters can throw before clearEncryptionPasswords is entered.
+  // Revoke async work first, then try both stores without blocking Auth.
+  passwordOwners.delete(passwordOwnerKey(userId));
+  if (typeof window === "undefined") return;
+  for (const name of ["sessionStorage", "localStorage"] as const) {
+    try {
+      clearEncryptionPasswords(window[name], userId);
+    } catch {
+      // Privacy restrictions can prevent deletion; they must not retain the
+      // departed account in the UI or stop cleanup of the other storage.
     }
   }
 }

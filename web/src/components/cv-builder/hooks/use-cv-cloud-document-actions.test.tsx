@@ -8,10 +8,11 @@ import { useCvCloudDocumentActions } from "@/components/cv-builder/hooks/use-cv-
 import { cloneCvData } from "@/lib/cv/cv-utils";
 import { sampleCvDataEn } from "@/lib/cv/sample-data";
 import { createLocalCvDocument, type CvDocumentSummary } from "@/lib/cv/storage";
-import { storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
+import { clearEncryptionPasswords, storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
 import * as cloudStorage from "@/lib/cv/cloud-storage";
 import messages from "../../../../messages/en.json";
-vi.mock("@/lib/cv/encryption-storage", () => ({
+vi.mock("@/lib/cv/encryption-storage", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/cv/encryption-storage")>(),
   storeEncryptionPassword: vi.fn().mockResolvedValue(undefined),
   storeTrustDevice: vi.fn()
 }));
@@ -273,6 +274,26 @@ describe("useCvCloudDocumentActions save gates", () => {
   });
 });
 describe("handleEncryptionSubmit path-specific modal behavior", () => {
+  it("does not resume an old unlock after a peer sign-out and same-user sign-in are batched", async () => {
+    let finishStorage!: () => void;
+    vi.mocked(storeEncryptionPassword).mockReturnValueOnce(new Promise<void>(resolve => { finishStorage = resolve; }));
+    const h = renderCloudActions({ session: fakeSession, supabase: fakeSupabase });
+    let pending!: Promise<unknown>;
+    act(() => { pending = h.result.current.handleEncryptionSubmit({ mode: "unlock", documentId: "active", password: "fixture-password", trustDevice: true }); });
+    act(() => {
+      // useCloudSession handles these SDK events synchronously, even if React
+      // coalesces the detached and reattached session into one render.
+      clearEncryptionPasswords(window.sessionStorage, "user-1");
+      clearEncryptionPasswords(window.localStorage, "user-1");
+      h.changeSession(null);
+      h.changeSession(fakeSession);
+    });
+    await act(async () => { finishStorage(); await pending; });
+    expect(storeTrustDevice).not.toHaveBeenCalled();
+    expect(h.termsGate.ensure).not.toHaveBeenCalled();
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.closeEncryptionModal).not.toHaveBeenCalled();
+  });
   it.each([false, true])("does not resume A's obsolete conversion after password storage finishes (return to A: %s)", async returnToA => {
     let finishStorage!: () => void;
     vi.mocked(storeEncryptionPassword).mockReturnValueOnce(new Promise<void>(resolve => { finishStorage = resolve; }));

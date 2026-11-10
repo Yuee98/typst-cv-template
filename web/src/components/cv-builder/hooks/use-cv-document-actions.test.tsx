@@ -13,15 +13,20 @@ import type { CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 import type { CvStorageAdapters } from "@/lib/cv/storage-adapters";
 import { MissingPassphraseError } from "@/lib/cv/storage-adapters";
+import { clearUserEncryptionPasswords } from "@/lib/cv/encryption-storage";
+import { pauseEncryptedLoad } from "./__tests__/encrypted-load-boundary";
 
 import messages from "../../../../messages/en.json";
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 function summary(id: string, storageKind: CvDocumentSummary["storageKind"] = "local"): CvDocumentSummary {
@@ -213,6 +218,29 @@ describe("useCvDocumentActions transition save gates", () => {
 });
 
 describe("useCvDocumentActions account-owned completions", () => {
+  it.each(["selectDocument", "duplicateDocument"] as const)("does not finish cached-password %s decryption after a batched sign-out and same-user return", async operation => {
+    const active = summary("active", "cloud");
+    const encrypted = summary("encrypted-a", "encrypted");
+    const h = renderActions({ activeDocument: active, documents: [active, encrypted], adoptForm: true });
+    h.rerenderAccount("user-a");
+    const paused = await pauseEncryptedLoad("user-a", encrypted);
+    h.adapters.encrypted.load.mockImplementationOnce(paused.load);
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.actions[operation](encrypted.id); });
+    await paused.entered;
+    act(() => {
+      clearUserEncryptionPasswords("user-a");
+      h.rerenderAccount(null);
+      h.rerenderAccount("user-a");
+    });
+    await act(async () => { paused.finish(); await pending; });
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.upsertDocumentSummary).not.toHaveBeenCalled();
+    expect(h.replaceLocalDocumentSummary).not.toHaveBeenCalled();
+    expect(h.result.current.form.getValues().header.subtitle).toBe(sampleCvDataEn.header.subtitle);
+    expect(window.localStorage.getItem("typst-cv-builder:documents:index")).toBeNull();
+    expect(h.onError).not.toHaveBeenCalled();
+  });
   it.each([false, true])("does not let A's late delete replace a later account visit's list or active form (return to A: %s)", async returnToA => {
     const a = summary("a", "cloud"), b = summary("b", "cloud");
     const h = renderActions({ activeDocument: a, documents: [a] });
