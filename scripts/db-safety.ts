@@ -1,6 +1,7 @@
 /** Pure guards shared by deployment tooling; this module performs no I/O. */
 import { createHash, X509Certificate } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { parseTestRevalidation, requireRevalidatedTest, type CleanupBinding, type TestRevalidation } from "./db-test-revalidation.ts";
 export const phases = ["intent", "reset_started", "migrations", "catalog_verified", "DB-ready", "accepted"] as const;
 export type RebuildState = {
   operation_id: string;
@@ -195,8 +196,11 @@ export function migrationWithHistory(source: string, version: string, name: stri
 export function requireAcceptedTest(state: RebuildState, project: string | undefined, sourceSha: string, manifest: {
   baseline_digest: string;
   migration_manifest_digest: string;
-}) {
-  if (state.target !== "test" || state.project !== project || state.phase !== "accepted" || state.source_sha !== sourceSha || state.baseline_digest !== manifest.baseline_digest || state.migration_manifest_digest !== manifest.migration_manifest_digest) throw new Error("Prod requires accepted test evidence for the other project at the same SHA and digests");
+}, revalidation?: { proof: TestRevalidation; acceptedDigest: string; cleanup: CleanupBinding; rehearsalDigest: string }) {
+  if (state.target !== "test" || state.project !== project || state.phase !== "accepted" || state.baseline_digest !== manifest.baseline_digest || state.migration_manifest_digest !== manifest.migration_manifest_digest) throw new Error("Prod requires accepted test evidence for the other project and exact migration digests");
+  if (state.source_sha === sourceSha) return;
+  if (!revalidation || !project) throw new Error("A changed candidate requires an explicit detached test revalidation and original accepted checkpoint");
+  requireRevalidatedTest(parseTestRevalidation(revalidation.proof), state, revalidation.acceptedDigest, sourceSha, project, manifest, revalidation.cleanup, revalidation.rehearsalDigest);
 }
 export function validateDatabaseServer(identity: {
   server_version_num: string;

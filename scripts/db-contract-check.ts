@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { cvSchema } from "../web/src/lib/cv/schema.ts";
 import { jsonQuery, migrationManifest } from "./db-common.ts";
-export function checkContract(local?: boolean) {
-  const result = jsonQuery(`select jsonb_build_object(
+export function checkContract(local?: boolean, query: typeof jsonQuery = jsonQuery) {
+  const result = query(`select jsonb_build_object(
     'tables',(select coalesce(jsonb_agg(n.nspname||'.'||c.relname order by n.nspname,c.relname),'[]') from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('cv','ai','legal','admin','audit') and c.relkind='r'),
     'unstructured_columns',(select coalesce(jsonb_agg(table_schema||'.'||table_name||'.'||column_name),'[]') from information_schema.columns where table_schema in ('ai','legal','audit') and data_type in ('json','jsonb')),
     'unprotected',(select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('cv','ai','legal','admin','audit') and c.relkind='r' and not c.relrowsecurity),

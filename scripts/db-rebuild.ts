@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { input, jsonQuery, migrationManifest, root, run, sql } from "./db-common.ts";
 import { checkContract } from "./db-contract-check.ts";
 import { openHostedState, readPrivateCheckpoint } from "./db-hosted-state.ts";
+import { loadTestRevalidation } from "./db-test-revalidate.ts";
 type State = RebuildState;
 const mode = input("mode", "plan");
 const target = input("target", process.argv.includes("--local") ? "local" : undefined);
@@ -118,12 +119,14 @@ if (mode === "plan") {
   if (!localState) {
     requireMaintenanceAuthorization(process.env);
     if (input("confirm-project") !== project || input("confirm-destruction") !== "DELETE_APPLICATION_DATA") throw new Error("Explicit destructive run inputs required");
-    const proof = JSON.parse(readFileSync(input("rehearsal-evidence"), "utf8"));
+    const rehearsalBytes = readFileSync(input("rehearsal-evidence"));
+    const proof = JSON.parse(rehearsalBytes.toString("utf8"));
     requireRehearsalEvidence(proof, sha, manifest, cleanup!);
     if (target === "prod") {
       const accepted = readPrivateCheckpoint(input("test-state"));
-      requireAcceptedTest(accepted.state, process.env.REBUILD_OTHER_PROJECT_REF, sha, manifest);
-      hosted?.record("accepted_test_checked", { test_state_digest: accepted.digest });
+      const detached = accepted.state.source_sha === sha ? null : loadTestRevalidation(input("test-revalidation"), accepted.state, accepted.digest, sha, process.env.REBUILD_OTHER_PROJECT_REF ?? "", manifest, cleanup!, createHash("sha256").update(rehearsalBytes).digest("hex"));
+      requireAcceptedTest(accepted.state, process.env.REBUILD_OTHER_PROJECT_REF, sha, manifest, detached ? { proof: detached.proof, acceptedDigest: accepted.digest, cleanup: cleanup!, rehearsalDigest: createHash("sha256").update(rehearsalBytes).digest("hex") } : undefined);
+      hosted?.record("accepted_test_checked", { test_state_digest: accepted.digest, ...(detached ? { test_revalidation_digest: detached.digest } : {}) });
     }
   }
   if (mode === "rebuild" && !old) requireFreshApplicationState(newApplication);

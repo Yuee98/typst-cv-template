@@ -25,16 +25,23 @@ export function run(command: string, args: string[], input?: string, env = proce
   }
   return result.stdout.trim();
 }
-export function sql(statement: string, local = process.argv.includes("--local")) {
-  if (local || process.argv.includes("--rehearsal")) return run("docker", ["exec", "-i", process.argv.includes("--rehearsal") ? "supabase_db_cv-remote-rehearsal" : "supabase_db_typst-cv-template", "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], statement);
+export const readOnlyPostgresOptions = "-c default_transaction_read_only=on -c statement_timeout=20000 -c lock_timeout=3000";
+export function sql(statement: string, local = process.argv.includes("--local"), readOnly = false) {
+  if (local || process.argv.includes("--rehearsal")) return run("docker", ["exec", "-i", ...(readOnly ? ["-e", `PGOPTIONS=${readOnlyPostgresOptions}`] : []), process.argv.includes("--rehearsal") ? "supabase_db_cv-remote-rehearsal" : "supabase_db_typst-cv-template", "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], statement);
   const raw = process.env.REBUILD_DATABASE_URL;
   if (!raw) throw new Error("REBUILD_DATABASE_URL is required; no developer .env or saved link is used.");
   const caFile = process.env.REBUILD_CA_CERT_FILE;
   if (!caFile || !isAbsolute(caFile)) throw new Error("REBUILD_CA_CERT_FILE must name an explicit absolute target CA file");
-  return run("psql", ["-XAt", "-v", "ON_ERROR_STOP=1"], statement, hostedPostgresEnvironment(process.env, readFileSync(caFile, "utf8")));
+  const env = hostedPostgresEnvironment(process.env, readFileSync(caFile, "utf8"));
+  if (readOnly) env.PGOPTIONS = readOnlyPostgresOptions;
+  return run("psql", ["-XAt", "-v", "ON_ERROR_STOP=1"], statement, env);
 }
 export function jsonQuery(statement: string, local?: boolean) {
   return JSON.parse(sql(statement, local));
+}
+/** Opt-in: SELECT syntax alone does not prevent a called function from writing. */
+export function jsonQueryReadOnly(statement: string, local?: boolean) {
+  return JSON.parse(sql(statement, local, true));
 }
 export function buildMigrationManifest(entries: { name: string; digest: string }[], baselineNames: string[]) {
   const validName = /^\d{14}_[a-z0-9_]+\.sql$/;
