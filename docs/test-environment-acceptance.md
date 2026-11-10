@@ -1,13 +1,13 @@
 # Test 环境补充验收
 
-状态：`RESTORED_WITH_ACCEPTANCE_GAPS`。HTTP 401 诊断后，仅 Preview 的 MiMo Secret 覆盖及同源 `9054c0a` 新部署已完成；2026-11-10 10:15:51.626 UTC 唯一一次复验生成成功，未应用到 CV，独立 DB 的 29 项调用核对及 26 项恢复核对全部 PASS。最终 10:18:21 UTC 回读确认 runtime 关闭、ALLOWLIST、20/2000/3、revision 29、10 请求/6 attempt、reserved=0、charged=3、global admission=6；域名已恢复 `main`，默认 Preview AI flags=false。MiMo 成功调用完整应用估算为 CNY 0.00011724，不是供应商发票；前三次失败费用仍未知。当前证据在 `output/mimo-diagnosis-20261110/`，前两轮独立目录及 7/3、8/4、诊断 9/5 快照按原时间保留。恢复及 MiMo 修复通过不代表剩余全部验收通过，prod 不动。
+状态：`RESTORED_WITH_ACCEPTANCE_GAPS`。Gemini 唯一一次调用的 UI、30 项独立结算核对及 30 项最终恢复核对均 PASS；request 11 成功、单 attempt，完整应用 USD 估算为 0.00101325，reasoning 只计一次，旧 CNY 两桶精确不变、USD 独立成桶，不换汇或跨币种相加。2026-11-10 11:01:28 UTC 最终 DB 确认 OFF/ALLOWLIST、20/2000/3、revision 33、11 请求/7 attempt、reserved=0、charged=4、global admission=7，水位未再增长；域名 `main` fresh reload、两个默认 Preview flags=false。证据在 `output/gemini-acceptance-20261110/`。这是应用估算/结算通过，不是 Google 发票或账户 Paid tier 独立核查；其他验收缺口仍保留。旧快照及封存证据保持原时间，prod 不动。
 
 ## 范围与现场基线
 
 - 目标为共享 test 域名 `https://cvmaker-preview.dyue.org` 及同一 test 项目的独立 Preview；Supabase test 项目 `uvitgcfqnciahvakqhnv`，实例 `842d36df-6969-4c86-abcc-6dc956dd6318`。
 - 本轮开始的 hosted 应用源为 `bc9d9ce827a8bd4727d866e930253452302c48e5`，数据库已完成重建。不得再次 rebuild/resume。
 - prod 数据库、Auth、环境变量、部署和 release promotion 不在范围。
-- 首轮独立证据目录为 ignored 的 `output/test-acceptance-20261110/`，授权重试另用 `output/test-provider-retry-20261110/`，当前版本本地对照及 HTTP 诊断另用 `output/mimo-diagnosis-20261110/`。私有凭据文件单独存放，文档不记录凭据内容；工具回显事件及本地扫描边界见对应轮次。
+- 首轮独立证据目录为 ignored 的 `output/test-acceptance-20261110/`，授权重试另用 `output/test-provider-retry-20261110/`，当前版本本地对照及 HTTP 诊断另用 `output/mimo-diagnosis-20261110/`，Gemini 小额验收另用 `output/gemini-acceptance-20261110/`。私有凭据文件单独存放，文档不记录凭据内容；工具回显事件及本地扫描边界见对应轮次。
 - 开始时 AI 总开关关闭，ALLOWLIST 为空，配置、规则、AI 请求和 attempt 均为 0；额度为每用户每日 20、全局每日 2000、每用户每分钟 3。后续仅将指定测试账号加入 AI 允许名单，没有追加管理员权限。
 - 首轮为小额验收临时开启 AI，使用 ALLOWLIST，并将每日限额暂设为用户 4、全局 4；门禁测试还短暂使用了 0 或 1 的限制。后续授权重试及诊断/修复窗口分别按各节记录，不沿用该首轮限制。恢复目标为 AI 关闭、每用户每日 20、全局每日 2000、每用户每分钟 3，且共享 test 域名重新跟踪 `main`。最终状态必须由相应轮次结束后的新回读证明，不能沿用调用前的关闭快照。
 
@@ -22,19 +22,19 @@
 | 加密文档解密派生 | **PASS**：正常“复制”操作产生准确内容的普通本地副本，随后正常移到云端 | 产品没有原地关闭加密按钮，不编造不存在的操作 |
 | Hosted 导出/导入 | **BLOCKED / NOT RUN**：首轮 JSON、PDF 已操作按钮，但下载事件未交付可验收文件；PDF 等待导致控制会话超时重置，JSON 导入也曾被扩展文件权限阻塞。新轮已开启 Allow file URLs，环境文件导入成功，但未重新验收 CV 文件路径 | CV 导出内容、Typst 包及 JSON 回环导入仍未验收；旧文件权限阻塞解除不等于 CV 导入已通过。当前格式接受、旧格式拒绝的本地校验均通过 |
 | Hosted 视口 | **BLOCKED**：请求 390×844 后，DOM 实际仍为 1454×1019；已立即 reset | 窄屏 override 无效；真实手机 Safari、软键盘及触摸滚动为 **NOT RUN** |
-| AI 配置与条款 | **PASS**：Admin 保存 DeepSeek、MiMo 专用验收配置及 enabled fallback，默认 DeepSeek；结构、冻结价格及指定账号 ALLOWLIST 核对通过。真实请求的当前通用及供应商同意记录精确匹配 | 配置/条款通过不表示每个供应商调用成功；最终运行开关恢复另列 |
-| Preview 构建与域名切换 | **PASS（新修复部署及恢复）**：凭据覆盖后的 `AvUcY9U…` 同源 `9054c0a`，Preview、latest Project Settings、build cache 未勾选，于上海 18:07:52 Ready；一次复验 UI 与独立 DB 均通过 | 默认 Preview flags=false，`AvUcY9U…` 构建快照仍 true；runtime 已关闭、域名恢复 `main`。域名恢复没有重新部署 main，不能声称其旧快照已采用新 Secret；Production 未改 |
+| AI 配置与条款 | **PASS**：Gemini config 4/revision 1 的配置及价格 audit 7 精确匹配，common 2/provider 5、provider acceptance audit 5 有效；fallback 保留 DeepSeek 默认和 MiMo，追加 Gemini | 30 项独立调用核对包含冻结配置、价格及精确同意；不沿用 MiMo provider 4 同意，不把通过扩大为 Google 账户实际计费层级证明 |
+| Preview 构建与域名切换 | **PASS（Gemini 调用及恢复）**：仅文档变更源 `a2b7ce8` 的 `8MSDqms…` 于上海 18:50:37 Ready，部署 snapshot=true；两个项目默认 Preview flags=false，调用后域名 Save 及 fresh reload 确认 `Valid Configuration · main` | 项目默认变量不回填历史部署；恢复 main 域名不是重新部署 main。Production 未改，正式重新启用 test AI 前仍须确认 main 已采用新环境变量构建 |
 | Hosted Admin 长编辑 | **PASS**：`214d563` 部署上，编辑框打开 524 秒后修改展示名称并保存，列表自动显示新值，没有手动刷新 | 仅确认实际执行的配置路径；三类页面及身份隔离的更广回归来自本地测试 |
 | DeepSeek 真实调用与写回 | **PASS**：request 1 成功、单 attempt；生成结果应用、撤销、再次应用及保存已操作，DB 精确回读确认保存内容；冻结配置、条款、额度、CNY 估算逐项核对通过 | 估算 CNY 0.00134，不等于供应商发票对账。未把 DB 回读写成浏览器刷新回读 |
 | MiMo hosted 调用 | **PASS（UI + DB）；前三次 FAILED 保留**：request 10 为唯一新增逻辑请求、单 attempt、`FINALIZED/SUCCEEDED`，input 569=57 standard+512 cache、output 25、reasoning 0；冻结配置/价格 audit 5、当前 common 2/provider 4 条款不变，29 项核对通过 | 成功完整估算 117240 CNY nanos=0.00011724 元，不是 invoice；未应用到 CV。旧 request 6、8、9 的未知费用仍未知，不能因新成功而改写；旧 Secret 被拒绝的具体原因不猜测 |
 | 取消观察 | **完成抢先，非取消 PASS**：request 7 为 `SUCCEEDED`、已扣额度、`time_canceled=null`，单 attempt，CNY 估算 0.00060336；UI 返回配置，未应用第二次结果 | 真正持久化 `CANCELED` 终态为 **NOT RUN**；未为了抢到取消而重复付费 |
 | 额度与分钟门禁 | **PASS**：用户额度为 0/已耗尽时 UI 禁用；全局额度拒绝及分钟限流由 UI 与 DB 联合核对。四条 `RELEASED` 请求没有 attempt，拒绝未产生额外发送 | 依据门禁阶段的水位隔离 MiMo/取消阶段；恢复 4/4/3 是测试窗口内部恢复，不是最终恢复 |
 | Hosted 同 ID 重放 | **NOT RUN**：正常 UI 每次确认或手动重试都会生成新 UUID，没有可用的同 ID 重放入口 | 不以重新点击确认冒充重放，不为重放额外发送付费请求；真实隔离 DB 与并发 CI 覆盖见下文 |
-| Gemini 凭据与调用 | **PASS（凭据）/ NOT RUN（调用）**：授权上传轮保存并回读唯一 `AI_PROVIDER_KEY_GEMINI_PRIMARY` 为 Secret / Preview，没有 Production 条目 | 上传轮未 Redeploy；后续已构建新的诊断 Preview，但没有执行 Gemini 调用，不据此宣称 Gemini 可用或 USD 结算通过。工具回读脱敏事件按旧轮记录，不在文档中记录密钥 |
+| Gemini 凭据与调用 | **PASS（UI + 30 项调用/30 项恢复核对）**：request 11 成功、唯一一个 attempt；input 571 standard/cache 0，output 156=visible 21+reasoning 135，完整应用估算 1013250 USD nanos=0.00101325 USD；Admin 用量页及详情实际显示 USD 0.00101325、1 已结算/1 成功/1 attempt、input 571/output 156、不完整用量及成本均 0 | reasoning 仅计一次；CNY 分行且原十条/CNY 两桶精确不变，USD 独立完整成功桶，无 FX 或跨币种总和。未应用到 CV、未手动重试；不是 Google 发票或账户 Paid tier 核查 |
 | Hosted 身份与退出 | **NOT RUN**：实际管理员登录态下的配置、条款、AI 路径已验证；本轮未执行 hosted 退出修复及普通账号隔离验收 | 本地身份与退出测试单列，不据此声称 hosted 通过 |
 | Admin 性能 | **PASS（基线及区域观察）/ NOT RUN（正常 Admin 对比）**：旧部署 GET execution 1.09s / response 1.1s；POST 2.11s / 2.2s。函数 iad1、数据库东京，分别经过 Auth→RPC、Auth→context→save。独立 Preview 的 availability 401 日志已确认 hnd1/Tokyo，execution 587ms / response 901ms | 401 样本没有 Supabase 外调，不能与正常登录态 Admin 请求比较，不能据此宣称加速；旧部署两个样本也不是 p95、冷启动或慢网基准。外部 API 分项耗时受 Pro 功能限制，未升级套餐 |
 | 时间规则边界 | **PASS（UI + DB）**：rule 2 在周二 Asia/Shanghai 16:05–16:06 仅允许 MiMo；窗口前显示 DeepSeek+MiMo，窗口内仅 MiMo，窗口后恢复 DeepSeek+MiMo。三次仅查询 availability，没有确认生成或模型调用 | 首轮最终 DB 回读确认临时规则 disabled、revision 2，水位仍为 7/3，没有因规则检查增加调用。后续独立尝试分别使水位增为 8/4、9/5，不回写旧快照 |
-| 环境恢复与凭据修复 | **PASS**：最终 10:18:21 UTC 独立回读 26 项通过：revision 29、runtime 关闭、ALLOWLIST、20/2000/3、10/6、reserved=0、charged=3、global admission=6、单一允许账号保留且水位未再增长；域名 `main` fresh reload、默认 flags=false | `RESTORED_WITH_ACCEPTANCE_GAPS`：经授权的 MiMo Preview Secret 保留，Production、main/release 未改，PR #44 未合并；其余功能缺口单列 |
+| 环境恢复与凭据修复 | **PASS**：11:01:28 UTC 最终 DB 的 30 项核对通过：OFF/ALLOWLIST、20/2000/3、revision 33、11/7 全终态且无增长、reserved=0、charged=4、global admission=7；域名 `main` fresh reload、默认 flags=false | config 4/revision 1 及 fallback 1/revision 2 三成员保留，DeepSeek 默认、现有 Preview Secret 及精确同意保留；Production、main/release 未改。独立证据复核 NO_BLOCKERS |
 | 自然保活 | **NOT RUN（等待自然调度）**：重建后尚无新 schedule run；最新成功自然 run 早于重建 | 下次配置时间为 2026-11-12 02:17 UTC，即上海 10:17；实际启动可能延迟。未手动 dispatch 共享 workflow |
 | 自动部署/CI | **PASS**：`214d563` 的既有检查保留；新 live harness `280eece`、诊断日志 `9054c0a` 分批提交并 push 同一草稿 PR #44，`9054c0a` 的 Web/工具、DB、CodeQL 全部 SUCCESS，新诊断 Preview Ready | main/release 未推进、PR 未合并；Supabase Preview check 仍为 SKIPPED，不冒充 Supabase main 同步或下一次 main push 已验证 |
 
@@ -49,7 +49,7 @@
 
 两处修复经独立审查，联合覆盖 5 个测试文件、93 项全部通过。最初联合命令误列一个不存在的测试文件名，Vitest 实际只运行 4 个文件、71 项；随后准确运行身份测试文件的 22 项通过，按实际输出合计 93，不把不存在的文件计入覆盖。
 
-修复分支为 `codex/test-acceptance-fixes`，草稿 [PR #44](https://github.com/Yuee98/typst-cv-template/pull/44)。前两轮源为 `214d5634964ca98af76447e73acceda77cb15f4e`，分批提交为 `aa56183`（Admin）、`0aaaf5c`（加密退出）、`214d563`（东京函数）；诊断轮又提交并 push `280eece`（live harness）及 `9054c0a01b427e53db563678329e803dd2f0b604`（安全诊断日志），后者为当前诊断部署源。同分支带入先前独立的数据库切换记录提交。PR 仍为草稿，未合并 main/release。
+修复分支为 `codex/test-acceptance-fixes`，草稿 [PR #44](https://github.com/Yuee98/typst-cv-template/pull/44)。前两轮源为 `214d5634964ca98af76447e73acceda77cb15f4e`，分批提交为 `aa56183`（Admin）、`0aaaf5c`（加密退出）、`214d563`（东京函数）；MiMo 诊断轮又提交并 push `280eece`（live harness）及 `9054c0a01b427e53db563678329e803dd2f0b604`（安全诊断日志）。后续 Gemini 采用仅文档变化的 `a2b7ce8`，部署边界见对应章节。同分支带入先前独立的数据库切换记录提交。PR 仍为草稿，未合并 main/release。
 
 前两轮的 Vercel 自动 Preview deployment 为 `Daz5hKYbHGQ2g7FRXhk8Jtdr7Mzq`，源/项目/Preview 属性均核对，地址为 `https://typst-cv-template-psuk1tv6f-yuee98s-projects.vercel.app/zh`。对应 `214d563` 的 Web CI `42769605166`、DB CI `42769605272` 及 CodeQL `42769601894` 均成功；后续 `9054c0a` 的新部署与 CI 见诊断轮。共享 test 域名临时切换后，实际登录态长编辑及部分真实 AI 路径已有上述结果；性能对比、退出等未完成项目继续单列，不能因 Ready 或 CI 成功一并记 PASS。
 
@@ -134,7 +134,33 @@
 
 日志记录的认证拒绝、同 endpoint/model 的本地成功、仅替换 Preview 凭据并同源部署后的 hosted 成功，共同支持已解决 test 的凭据认证问题；它们不揭示旧 Secret 的具体内容或为何被拒绝。旧轮快照及封存文件保持原样，7/3、8/4、9/5、10/6 分别对应各自观察阶段，不回写历史。
 
-当前仍未通过的项目为：Gemini 调用及 hosted USD 结算、CV 导出文件内容及 JSON 回环导入、真实手机 Safari、hosted 退出和普通账号隔离、真正持久化取消、hosted 同 ID 重放、正常 Admin 性能对比，以及 11 月 12 日重建后的自然保活。MiMo 成功已从待办中移除；供应商发票及前三条失败的实际费用仍超出本轮可证明范围。临时操作已收尾，本轮不为补全验收继续追加 Provider 调用。
+MiMo 诊断轮结束时仍未通过的项目为：Gemini 调用及 hosted USD 结算、CV 导出文件内容及 JSON 回环导入、真实手机 Safari、hosted 退出和普通账号隔离、真正持久化取消、hosted 同 ID 重放、正常 Admin 性能对比，以及 11 月 12 日重建后的自然保活。当时 MiMo 成功已从待办中移除；供应商发票及前三条失败的实际费用仍超出该轮可证明范围。该轮临时操作已收尾，后续 Gemini 验收另获用户授权并记录于下节。
+
+## Gemini 一次小额调用及 USD 结算验收
+
+本轮为用户明确授权的新验收窗口，仅允许一次正常 UI 小额确认；该次提交的 UI、30 项独立结算核对及 30 项最终恢复核对均 PASS。新证据目录 `output/gemini-acceptance-20261110/` 与之前已封存目录分开，不回写 MiMo 的 10/6 基线或旧轮账务记录。`gemini-baseline-summary.json` 在 2026-11-10 10:39:18 UTC 独立确认调用前为 runtime OFF、revision 29、10 请求/6 attempt、reserved=0、charged=3、global admission=6；当时没有 Gemini 配置、USD 价格或 USD 聚合，common 当前同意有效，Gemini document 5 尚无有效同意。
+
+**部署及配置准备完成。** 源 `a2b7ce8c84a98cb4f2e818eba5ac5316ea5bc46a` 相对 `9054c0a` 仅有文档变更。新 Preview `8MSDqmsTuThXkjRTaKP7SZbc4mMk` 于 2026-11-10 10:50:37 UTC（上海 18:50:37）Ready，地址为 `https://typst-cv-template-2lwexdkww-yuee98s-projects.vercel.app`；构建使用 latest Project Settings、build cache=false，未选择 Production。部署 AI flags 快照为 true，Ready 后两个项目默认 Preview flags 已通过正常 UI 保存回 false，不回填该部署快照。现场记录为 `preview-ready-ui.json`。
+
+旧 main 部署最初保存 Gemini 配置时，因其环境快照缺少凭据引用被正常拒绝，没有创建记录或发起调用；没有把项目 Secret 的存在当作旧 deployment 已采用变量。随后在新 Preview 上正常 UI 创建 config 4/revision 1，启用、展示名“Gemini 验收”、adapter 3，endpoint 为 `https://generativelanguage.googleapis.com/v1/interactions`，model 为 `gemini-3.8-flash`，引用既有 `AI_PROVIDER_KEY_GEMINI_PRIMARY` Preview Secret，绑定数据处理说明 document 5。没有读取凭据值或新增 Secret 上传。fallback 追加 Gemini 后有三个选项，DeepSeek 默认及原 MiMo 成员保留。
+
+**冻结 USD 费率的适用范围。** `gemini-pricing-reference.json` 记录本轮 Google 官网核查的 Gemini 3.8 Flash Standard Paid 费率：每百万 token，input standard USD 0.75、cache read USD 0.075、output（含 thought）USD 3.75，适用日期截至 2026-12-31。未使用 cache-write 组件映射为 0，仅表示本适配器的结构性未使用桶，不宣称官方独立写入价格免费。日期声明未指明转换时区，不臆造 UTC 切换时刻；配置费率不证明账户实际计费层级或发票。来源为 [Google 定价页](https://ai.google.dev/gemini-api/docs/pricing)及 [Gemini 3.8 Flash 模型页](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)，本轮记录也注明搜索结果与直接页面读取的取证边界。
+
+`ci-a2b-final.json` 确认本次源提交的 Web 静态构建、服务器构建、E2E、数据库测试、工具检查及 CodeQL 均成功，Supabase Preview 仍为 SKIPPED。收尾仅修改此验收文档；其常规 CI/自动 Preview 构建不替代上述真实调用证据，也不切换 main 域名或发布 Production。
+
+**调用 UI 与独立结算 PASS。** 提交时共享 test 域名临时跟踪 `codex/test-acceptance-fixes`，runtime 为 ALLOWLIST、用户每日 4/全局每日 7/每分钟 1。用户在操作时确认 common 2/provider 5；2026-11-10 10:57:49.213 UTC 唯一一次确认选择 Gemini，发送 15 字虚构正文、Level 0/context 0，成功进入逐条审阅，显示有效中文润色，未应用到 CV、没有手动重试。实际 attempt、token 和结算由独立回读核对，不从 UI 推算。
+
+`after-gemini-live-summary.json` 以 2026-11-10 10:58:32 UTC 的 DB 回读及审计检查确认 30 项全部 PASS：只新增 request 11 和一个 attempt，`FINALIZED/SUCCEEDED`、transmitted/billable=true、无内部 retry、usage 完整，原十条请求事实不变。input 571 全为 standard、cache read 0，output 156 包含 visible 21+reasoning 135，thought 不另加一次。config 4/revision 1 的配置及价格 audit 7 相匹配，common 2/provider 5 及 provider acceptance audit 5 精确有效。
+
+独立按冻结 USD 费率验算：`ceil((571×750000000 + 0×75000000 + 156×3750000000)/1000000)` 为 1013250 USD nanos，即 USD 0.00101325，full/known 一致、无 overflow。新建独立且完整的 USD 成功桶；原 CNY 两桶与调用前精确相同，CNY 已知估算下界仍为 0.0020606，三条失败造成的完整 CNY 总成本仍未知。USD 与 CNY 不相加、不换汇；这证明配置费率下的应用结算一致，不是 Google 账户计费层级或发票核对。调用后水位 11/7、reserved=0、charged=4、global admission=7。
+
+**Admin 展示及最终恢复 PASS。** `live-ui-and-restoration.json` 记录正常 UI 生成及收尾：Admin 用量页与 Gemini 详情实际显示 USD 0.00101325、1 已结算/1 成功/1 attempt、input 571/output 156，不完整用量和不完整成本均为 0，CNY 数据分行显示。runtime 正常保存 OFF、20/2000/3，列表显示未启用；域名 Save 并 fresh reload 已确认 `Valid Configuration · main`，两个默认 Preview flags=false。
+
+`gemini-final-readonly-summary.json` 的 2026-11-10 11:01:28 UTC 最终独立回读 30 项全部 PASS：runtime OFF/ALLOWLIST、唯一已授权账号、20/2000/3、revision 33；11 请求/7 attempt 全终态且水位未再增长，reserved=0、charged=4、global admission=7。USD audit 7 独立桶为 1 次成功/1 attempt，usage/cost 完整，估算 1013250 nanos；CNY 两桶和原十笔事实精确不变。config 4 仍 enabled/revision 1，fallback 1/revision 2 保留三成员及 DeepSeek 默认，common 2/provider 5 当前精确同意及原 Preview Secret 保留。这里的“配置/规则未变”比较的是完成正常 UI 准备后的 precall 到 postcall/final；10:39 最早基线到 precall 之间，Gemini 配置及 fallback 成员是本轮已授权新增，不能说整个窗口都没有配置改动。
+
+独立 `independent-evidence-review.json` 结论为 NO_BLOCKERS。项目默认 flags=false 不回填 `8MSDqms…` 的 true 构建快照，域名恢复 main 也没有重新部署 main；正式重新开启 test AI 前须确认 main 已用新环境变量构建。本轮没有推进 main/release、合并 PR 或修改 Production；不为补全验收追加调用，旧快照和封存文件保持原样。
+
+**本轮证明范围与剩余缺口。** Gemini 真实调用、应用 USD 估算/结算及与 CNY 的隔离已通过；Google 账户是否属于 Paid tier、实际发票及历史失败的供应商费用没有独立核查，不能据此宣称实际支付金额。当前未完成项为 CV 导出文件内容及 JSON 回环导入、真实手机 Safari、hosted 退出和普通账号隔离、真正持久化取消、hosted 同 ID 重放、正常 Admin 性能对比，以及 11 月 12 日重建后的自然保活。Gemini 调用及应用 USD 结算已从当前待办移除，较早章节的未完成列表保留其当时边界。
 
 ## 工具与现场异常
 
