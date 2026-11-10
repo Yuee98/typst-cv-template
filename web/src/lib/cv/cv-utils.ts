@@ -8,11 +8,25 @@ export function cloneCvData(data: CvData): CvData {
 }
 
 export function errorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
+  const fallback = "An unexpected error occurred.";
+  try {
+    if (error instanceof Error) {
+      const message = error.message;
+      return typeof message === "string" ? message : fallback;
+    }
 
-  return String(error);
+    if (error !== null && (typeof error === "object" || typeof error === "function")) {
+      // Supabase RPC errors are plain objects. Read only their own message;
+      // never serialize details/hints or invoke plain-object accessors/coercion.
+      const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+      const message: unknown = descriptor && "value" in descriptor ? descriptor.value : undefined;
+      return typeof message === "string" && message.trim() ? message : fallback;
+    }
+
+    return String(error);
+  } catch {
+    return fallback;
+  }
 }
 
 export function summarizeLocalDocument(document: LocalCvDocument): CvDocumentSummary {

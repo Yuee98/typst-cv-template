@@ -9,6 +9,7 @@ import { buildPolishPromptBlocks, POLISH_PROMPT_VERSION } from "./prompt";
 import { validatePolishOutput, POLISH_VALIDATOR_VERSION } from "./validate";
 import type { PolishInferenceResult } from "./inference";
 import { classifyProviderRetry, type ProviderRetryErrorMetadata } from "./provider-error";
+import { reportProviderFailure } from "./provider-diagnostics";
 const id = (prefix: string) => z.string().regex(new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{12}$`));
 const state = z.enum(["RESERVED", "RUNNING", "HELD", "FINALIZED"]);
 const reservation = z.strictObject({
@@ -221,6 +222,14 @@ export async function executePolish(deps: RuntimeDependencies, userId: string, r
             delay = decision.retryAfterMs;
             billable = didTransmit ? null : false;
           }
+          reportProviderFailure({
+            config_id: snapshot.config_id,
+            adapter_id: configuration.adapter_id,
+            request_id: reserved.request_id,
+            attempt_no: admission.attempt_no,
+            transmitted: didTransmit,
+            retryable: retry && attemptNo === 1 && !signal.aborted
+          }, error);
         }
       }
       if (!didTransmit) billable = false;

@@ -8,7 +8,7 @@ import { errorMessage } from "@/lib/cv/cv-utils";
 import { decryptCvData, encryptCvData, encryptedPayloadSchema } from "@/lib/cv/encryption";
 import type { EncryptedPayload } from "@/lib/cv/encryption";
 import { defaultLocale, type Locale } from "@/i18n/routing";
-import { storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
+import { captureEncryptionPasswordOwner, storeEncryptionPassword, storeTrustDevice } from "@/lib/cv/encryption-storage";
 import type { CloudStatus } from "@/components/cv-builder/hooks/use-cloud-session";
 import type { CvData } from "@/lib/cv/schema";
 import { loadCvDocument, removeCvDocument, type CvDocumentSummary } from "@/lib/cv/storage";
@@ -101,7 +101,8 @@ export function useCvCloudDocumentActions({
   }, [session?.user.id, activeDocumentId]);
   function actorGuard(includeDocument = true) {
     const start = actor.current;
-    return () => actor.current.owner === start.owner && actor.current.userId === session?.user.id && (!includeDocument || actor.current.activeDocumentId === start.activeDocumentId);
+    const ownsPassword = start.userId ? captureEncryptionPasswordOwner(start.userId) : () => true;
+    return () => ownsPassword() && actor.current.owner === start.owner && actor.current.userId === session?.user.id && (!includeDocument || actor.current.activeDocumentId === start.activeDocumentId);
   }
   const pendingEncryptedCreates = useRef(new Map<string, {
     source: string;

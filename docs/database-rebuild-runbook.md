@@ -1,6 +1,6 @@
 # 数据库重建与发布手册
 
-状态：第二轮实现与本地验收完成，结果见 [验证记录](database-rebuild-verification.md)。尚未执行 test/prod SQL、重置、配置变更、promotion 或发布。本文件只描述未来受控切换流程。
+状态：第二轮实现与本地验收完成，结果见 [验证记录](database-rebuild-verification.md)。本次 test 的重建、Preview 部署、明确 AI-off 范围接受、任务实跑/原计划、自动集成恢复、最终只读核验和现场证据归档均已完成；窗口于 2026-11-09T16:40:55.241363Z（北京时间 2026-11-10 00:40:55）关闭。prod 仅做三次只读保活 RPC，数据、配置、Auth、部署及 release 未改。实际结果见下方执行记录；记录文档独立本地提交，不改发布候选 SHA，不 push 触发部署。本文件维护可复用流程，不以步骤描述代替实际结果。
 
 test 的现场盘点、待办与后续逐步实录统一保存在 [test 重建执行记录](database-rebuild-test-execution.md)。本手册维护可复用流程；执行记录保存当次事实，不能用计划或本地演练结果代替线上完成结果。
 
@@ -18,6 +18,8 @@ test 的现场盘点、待办与后续逐步实录统一保存在 [test 重建�
 
 执行者准备本地连接与记录目录、下载并核验目标 CA、核对已有管理员身份、整理证明，代办维护开关、Vercel Preview 环境变量/Secret、部署与验收。凭据使用用户授权的安全来源，不要求用户手工拼 URL 或复制 SQL；如需本人登录或安全输入，再按实际界面交接。合并 PR、暂停 test 服务、清理 test 应用数据及部署须处于明确的 test 切换授权范围内，prod 重建另行授权。
 
+管理员身份在执行前由用户用准备实际使用的账号完成目标环境真实登录，再核对该会话对应的既有 Auth 身份、有效性和管理权限；UUID 关联仅保存在私有记录。唯一旧管理员不一定是用户本次登录的账号，不能凭邮箱相似、同名或旧管理员唯一性推断身份和权限。若登录账号不是管理员，先核对是否应改用原管理员；确需额外 grant 时，必须获得针对该既有账号和目标环境的明确授权，以 SYSTEM 审计记录操作，并保留原管理员及 Auth 记录，不自动提权或修改用户密码。本次 test 初始 FORBIDDEN 属登录账号不一致后的正确权限拒绝；后续授权纠正是操作记录，不是迁移缺陷，也不更换已核验 source SHA。prod 执行前须独立重做此核对，不能复制 test 的身份或 grant。
+
 ## 执行记录与证据保管
 
 维护开始前建立当次记录，逐步追加时间、操作者、目标、准确命令、执行前后状态、退出结果和证据位置。时间使用带时区的 ISO 8601；维护窗口同时标注北京时间。统一使用 `NOT_STARTED`、`RUNNING`、`PASS`、`FAIL`、`BLOCKED`，只读盘点使用 `OBSERVED`，非必需而未执行的项目使用 `NOT_RUN` 并说明范围，不把“没看到报错”当作通过。
@@ -27,6 +29,8 @@ test 的现场盘点、待办与后续逐步实录统一保存在 [test 重建�
 脱敏记录与经审查可公开的证据放入仓库 `docs`；原始证据含个人信息或其他敏感内容时，由项目所有者保存在受控位置，记录非敏感引用和 SHA-256。禁止保存密码、连接串、token、service-role key、AI key、Cookie、用户简历或会话。管理员用非敏感账号标签关联受控 UUID 记录。
 
 当前 DB CI 的 G3 artifact 保留期为 7 天。执行者须及时下载原始 artifact、校验 ZIP 与 proof 的 SHA-256，并将本地检查点、事件日志、plan/verify 输出、平台保留对比及人工验收一起长期归档；仅有 run URL 或被忽略的临时目录不算完成。脱敏副本和原始证明分别计算摘要，不能修改原 proof 后沿用旧摘要。维护结束前整理实录并提交仓库；工作中从独立记录工作区保存，执行 hosted 工具的候选 checkout 必须保持干净。本地检查点用于核对执行阶段，不是数据库备份。
+
+现场结束时封存证据索引与归档摘要；之后记录文档的 commit 信息写入独立 record-commit.json sidecar，不改已索引的现场档案。记录提交与实际部署/accepted SHA 分开，不能因保存实录而重新绑定 source 或再次 resume。本次归档排除凭据输入、私有身份关联和执行 checkout；原始私有资料另以 0600 保管。
 
 ## 本地开发和验证
 
@@ -54,7 +58,7 @@ scripts/db-rebuild.ts 提供 plan、rebuild、resume、verify。脚本在操作�
 
 hosted 初始化由同一次本地重建命令的受控阶段完成。独立 db-initialize.ts 仅允许 --local，输入已有且有效的 Auth 管理员 UUID。初始化同时建立环境实例和首管理员；不猜用户、不自动接受条款、不自动启用 AI。jobs 注册后保持 inactive，待验收完成才启用。
 
-命令示例仅供准备，尚未执行。先通过安全来源向当前进程提供上文连接与映射变量，再设置候选 SHA、私有绝对目录、管理员 UUID 和证明文件路径；真实值不进入 shell history 或实录。以下 plan 不写数据库：
+命令示例用于说明可复用流程，本次实际调用与结果单独记录在执行实录。先通过安全来源向当前进程提供上文连接与映射变量，再设置候选 SHA、私有绝对目录、管理员 UUID 和证明文件路径；真实值不进入 shell history 或实录。以下 plan 不写数据库：
 
 ```bash
 node scripts/db-rebuild.ts \
@@ -96,6 +100,8 @@ PR 的 synthetic merge SHA、PR head SHA、最终实际合并 SHA 分开记录�
 
 keepalive Action 继续对 test/prod 调用同一个只读 keep_project_active RPC，以 HTTP 成功判定调用完成，不再依赖无业务用途的返回类型。这样 test 升级、prod 保持旧库期间也继续防回收；切换后的两边分别核验，不为过渡升级 prod 函数。
 
+收尾可从本地分别探测目标的同一只读 RPC，不必 dispatch 包含两个环境的共享 Action。本地证据记录目标、RPC、每次开始/结束时间、HTTP 状态和响应类型；没有 Action run/job 就写不适用，不虚构编号。test 新 boolean 与 prod 旧 string 都以 HTTP 成功判断；prod 只读探测须单列为访问边界，不能概括为“未访问 prod”，也不代表获得 prod 写入或发布授权。
+
 ## Test 切换
 
 1. 准备本地连接、CA、绝对记录目录和管理员；记录 test 范围及合并/维护/清理/部署授权。只读预检目标，保存 Auth/Storage/OAuth、重定向、Git 与应用集成、任务、Vercel Preview 变量名/作用域和部署的原始配置摘要。
@@ -109,6 +115,12 @@ keepalive Action 继续对 test/prod 调用同一个只读 keep_project_active R
 9. 验收登录、CV v7、Admin 有权/无权访问、当前条款/准确链接、显式选择与同意、取消/额度/费用、多币种和手机/宽屏布局。AI 的启用范围与付费 smoke 单独记录；未授权的调用标记未执行，不冒充验收通过。
 10. 使用绑定实际部署 SHA、清单和实例的 acceptance evidence 在本地执行最终 resume，确认检查点为 accepted；只读 verify 不会推进为 accepted。未接受阶段的 rebuild/resume 会 register_jobs 并使任务 inactive，因此应在最终接受之后，明确启用需要的 `cv-ai-reconcile` / `cv-ai-retention` 并核验实际状态与运行结果。accepted 后只运行 verify，不再通过 rebuild/resume 更改本次状态或重新停用任务。
 11. 只有在历史与监听分支文件完全一致后，才恢复 test Git watch、应用自动部署和写入口；分别核验 test/prod keepalive 都正常。清理当前 shell 的凭据与确认变量，核对集成、Auth/Storage/OAuth 保留结果，关闭维护窗口并归档实录、异常和 prod 待办。
+
+维护窗口从操作 intent 至收尾关窗，不等同于网站或 Data API 全程不可用。本次窗口为 14:15:32Z–16:40:55Z UTC；Data API 仅在约 14:28 后实施停写，14:29 的关闭/503 证据确认，14:51:42 受控恢复供新应用验收。其后应用可访问，剩余时间用于用户阅读、验收、工具阻塞、任务与归档；prod 复用估算停写时间时须使用实际入口关闭/恢复时间，不把整个窗口当作宕机时长。
+
+accepted 检查点中的 maintenance=false 表示应用接受阶段已完成，不等于新任务已经成功运行或自动集成已恢复。任务实跑、原 schedule 恢复及集成开关须另有实际证据，完成前仍保留切换窗口进行中的状态；不能再用 resume 处理这些后置工作。
+
+任务操作脚本只读查询 managed `cron.job`，不要对它执行 `SELECT ... FOR UPDATE` 或直接 UPDATE，也不要为行锁失败新增 GRANT/提升平台角色。本次一次性脚本最初因 FOR UPDATE 需要 managed 表的 UPDATE 权限而报 SQLSTATE 42501；只读诊断确认两个 job 仍 inactive 且没有实际 run 后，保留原 ENABLE_REQUESTED intent，以去除该行锁的 continue 路径调用 `cron.alter_job` 成功，没有权限授予或新建 job。prod 复用时必须使用修正后的脚本，不能照抄失败的行锁版本。若为验收临时缩短 retention 计划，要保存原 schedule、观察实际运行并及时恢复；等待/恢复跨多个 tick 时可能执行多次，本次实际成功两次，不能承诺“只会执行一次”。启用、实跑和恢复均单独记录，不重放 accepted 后的 rebuild/resume。
 
 ## Prod 切换
 

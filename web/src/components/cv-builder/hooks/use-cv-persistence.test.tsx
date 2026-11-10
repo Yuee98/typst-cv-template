@@ -14,6 +14,8 @@ import { sampleCvDataEn } from "@/lib/cv/sample-data";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 import type { CvStorageAdapters } from "@/lib/cv/storage-adapters";
+import { clearUserEncryptionPasswords } from "@/lib/cv/encryption-storage";
+import { pauseEncryptedLoad } from "./__tests__/encrypted-load-boundary";
 
 import messages from "../../../../messages/en.json";
 
@@ -24,6 +26,8 @@ vi.mock("@/lib/typst/render", () => ({
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function makeSummary(storageKind: CvDocumentSummary["storageKind"] = "local"): CvDocumentSummary {
@@ -373,6 +377,25 @@ describe("useCvPersistence account-owned completion and saving state", () => {
 });
 
 describe("useCvPersistence cloud and encrypted discard", () => {
+  it("does not adopt a discarded encrypted body after a batched sign-out and same-user return during real decryption", async () => {
+    const h = renderPersistence("encrypted");
+    h.rerenderAccount("user-a");
+    const paused = await pauseEncryptedLoad("user-a", h.summary);
+    h.adapter.load.mockImplementationOnce(paused.load);
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.persistence.discardChanges(); });
+    await paused.entered;
+    act(() => {
+      clearUserEncryptionPasswords("user-a");
+      h.rerenderAccount(null);
+      h.rerenderAccount("user-a");
+    });
+    await act(async () => { paused.finish(); await pending; });
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.upsertDocumentSummary).not.toHaveBeenCalled();
+    expect(h.result.current.form.getValues().header.subtitle).toBe(sampleCvDataEn.header.subtitle);
+    expect(h.onError).not.toHaveBeenCalled();
+  });
   it.each(["cloud", "encrypted"] as const)("reloads %s data and clears only cloud drafts", async (storageKind) => {
     const h = renderPersistence(storageKind);
     const loaded = cloneCvData(sampleCvDataEn);

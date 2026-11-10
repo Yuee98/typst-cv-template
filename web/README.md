@@ -116,9 +116,17 @@ The smoke checks model availability, clones local schemas into a dedicated dispo
 
 DeepSeek and MiMo use Responses: DeepSeek `https://api.deepseek.com/responses` and MiMo `https://api.xiaomimimo.com/v1/responses`. Google uses native stable Interactions at `https://generativelanguage.googleapis.com/v1/interactions` with explicit interaction-storage opt-out, low thinking and JSON schema, without an OpenAI compatibility fallback. Current smoke models are `deepseek-flash`, `mimo-v2.6-flash` and `gemini-3.8-flash`. Each receives one short synthetic English resume item, no references, with at most two generation attempts per Provider and a hard 2048 output-token ceiling per attempt. There is no outer automatic rerun. The real accounts may be charged by their Providers; the database prices are deliberately synthetic to verify accounting and do not represent the upstream invoice. Sanitized evidence uses the ignored selected-run path described above.
 
+## Vercel function region
+
+Manage the function region in each Vercel project's **Settings → Functions → Function Regions**, close to its Supabase database. This project's test database is in Tokyo, so its selected function region is **Tokyo (`hnd1`)**. The project setting was saved and confirmed by a fresh reload on 2026-11-10. Keep region selection in Vercel: repository configuration must not override it with `regions`, function-specific regions or route `preferredRegion` exports.
+
+Region changes apply to subsequent deployments in that project, including Preview and Production; they do not move existing deployments or deploy Production. Verify the actual function region on a new Preview after changing the setting. Check each production project's database location and region separately before an authorized production deployment. See [Vercel's region configuration](https://vercel.com/docs/functions/configuring-functions/region) and the [region list](https://vercel.com/docs/regions).
+
+The configuration commit, new Preview's observed region and CI result for this change are recorded in `output/vercel-region-dashboard-20261110/verification-summary.json`. Historical performance samples retain their original deployment and source attribution in the [test acceptance record](../docs/test-environment-acceptance.md).
+
 ## Metrics and deployment boundary
 
-The repository and web roots both contain a Vercel Git configuration that disables automatic deployments only for `codex/database-rebuild`. This keeps review pushes from publishing an app while the hosted databases still use the old contract. Main/release must still follow the separate cutover authorization and maintenance gates below.
+The repository and web roots both contain a Vercel Git configuration that disables automatic deployments only for `codex/database-rebuild`. This exclusion protected the original cutover branch; it does not disable automatic Preview deployments for other branches. Main/release must still follow the separate cutover authorization and maintenance gates below.
 
 `pnpm metrics:ai` reads `admin_read` usage analytics with `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `ADMIN_ENVIRONMENT` and `SUPABASE_ADMIN_ACCESS_TOKEN`. It preserves native currencies and unknown usage/cost facts, and does not print credentials or request content. `pnpm --filter web smoke:api` is a local fake-mode HTTP check for an already running server; paid hosted smoke belongs to a separately authorized cutover.
 

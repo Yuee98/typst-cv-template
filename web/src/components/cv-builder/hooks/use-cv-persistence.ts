@@ -3,6 +3,7 @@ import type { UseFormReturn } from "react-hook-form";
 import { useTranslations } from "next-intl";
 
 import { errorMessage } from "@/lib/cv/cv-utils";
+import { captureEncryptionPasswordOwner } from "@/lib/cv/encryption-storage";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import type { CvDocumentSummary } from "@/lib/cv/storage";
 import type { CvStorageAdapters } from "@/lib/cv/storage-adapters";
@@ -87,7 +88,9 @@ export function useCvPersistence({
   }
 
   async function discardChanges() {
-    const ownsActor = actorGuard();
+    const ownsCurrentActor = actorGuard();
+    const ownsPassword = userId ? captureEncryptionPasswordOwner(userId) : () => true;
+    const ownsActor = () => ownsCurrentActor() && ownsPassword();
     if (!ownsActor()) return;
     if (!activeDocumentId || !activeDocument) {
       return;

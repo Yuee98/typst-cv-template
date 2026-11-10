@@ -7,6 +7,7 @@ import { useDocumentActionDialogs } from "@/components/cv-builder/hooks/use-docu
 import { isDraftRedundant } from "@/lib/cv/baseline";
 import { cloneCvData, createEmptyCvData, errorMessage } from "@/lib/cv/cv-utils";
 import { getSampleCvData } from "@/lib/cv/sample-data";
+import { captureEncryptionPasswordOwner } from "@/lib/cv/encryption-storage";
 import type { Locale } from "@/i18n/routing";
 import type { CvData } from "@/lib/cv/schema";
 import {
@@ -64,7 +65,8 @@ export function useCvDocumentActions({
   }, [userId, activeDocumentId]);
   function actorGuard() {
     const actor = ownerRef.current;
-    return () => ownerRef.current === actor && actor.userId === userId;
+    const ownsPassword = actor.userId ? captureEncryptionPasswordOwner(actor.userId) : () => true;
+    return () => ownsPassword() && ownerRef.current === actor && actor.userId === userId;
   }
   function formIntentGuard(documentId?: string) {
     const ownsActor = actorGuard();

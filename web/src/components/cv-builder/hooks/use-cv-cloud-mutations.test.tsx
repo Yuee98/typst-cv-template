@@ -24,7 +24,11 @@ vi.mock("@/lib/cv/encryption", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/cv/encryption")>(),
   encryptCvData: vi.fn(async () => envelope)
 }));
-vi.mock("@/lib/cv/encryption-storage", () => ({ storeEncryptionPassword: vi.fn(async () => undefined), storeTrustDevice: vi.fn() }));
+vi.mock("@/lib/cv/encryption-storage", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/cv/encryption-storage")>(),
+  storeEncryptionPassword: vi.fn(async () => undefined),
+  storeTrustDevice: vi.fn()
+}));
 
 const client = {} as SupabaseClient;
 const writeToken = {} as storage.CloudCvWriteToken;

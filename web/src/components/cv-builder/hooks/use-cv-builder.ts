@@ -26,7 +26,7 @@ import type { Locale } from "@/i18n/routing";
 import { baselineOnFormLoad, baselineOnPersisted, createCvBaseline, type CvBaseline } from "@/lib/cv/baseline";
 import { cloneCvData, errorMessage, titleFromImportedData } from "@/lib/cv/cv-utils";
 import { clearCvDraft, loadCvDraft, saveCvDraft } from "@/lib/cv/draft-storage";
-import { loadEncryptionPassword } from "@/lib/cv/encryption-storage";
+import { captureEncryptionPasswordOwner, loadEncryptionPassword } from "@/lib/cv/encryption-storage";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import { getSampleCvData } from "@/lib/cv/sample-data";
 import { type CvCloudAccessAction, createCvStorageAdapters, TermsNotAcceptedError } from "@/lib/cv/storage-adapters";
@@ -91,6 +91,9 @@ export function useCvBuilder() {
   // Dirty state is derived by comparing the form data against the persisted
   // baseline of the same document (see lib/cv/baseline.ts).
   const baselineRef = useRef<CvBaseline | null>(null);
+  const formAdoptionRef = useRef<object | null>(null);
+  // Renderable adoption state for the menu; event handlers check the live refs.
+  const [loadedDocumentId, setLoadedDocumentId] = useState<string | null>(null);
   const pendingDraftRevisions = useRef(new Map<string, string>());
   const form = useForm<CvData>({
     resolver: zodResolver(cvSchema),
@@ -195,7 +198,7 @@ export function useCvBuilder() {
     watchedData
   });
   const cvExport = useCvExport({
-    canExport: () => Boolean(activeDocumentId && activeDocument),
+    captureExport,
     locale,
     getCurrentData: getCurrentCvData,
     getDownloadTitle: currentDownloadTitle,
@@ -333,6 +336,8 @@ export function useCvBuilder() {
       dirty
     } = baselineOnFormLoad(id, data, options?.baselineData);
     baselineRef.current = baseline;
+    formAdoptionRef.current = {};
+    setLoadedDocumentId(id);
     setActiveDocumentId(id);
     saveActiveCvDocumentId(id);
     form.reset(data);
@@ -342,6 +347,8 @@ export function useCvBuilder() {
   }
   function setPersistedBaseline(id: string, data: CvData) {
     baselineRef.current = createCvBaseline(id, data);
+    formAdoptionRef.current = {};
+    setLoadedDocumentId(id);
   }
   function getDirtyBaseline() {
     return baselineRef.current;
@@ -386,6 +393,8 @@ export function useCvBuilder() {
     preview.reset();
     setLibraryError(null);
     baselineRef.current = null;
+    formAdoptionRef.current = null;
+    setLoadedDocumentId(null);
     setIsDirty(false);
   }
   async function acceptTerms() {
@@ -398,6 +407,21 @@ export function useCvBuilder() {
 
   // ── export / import ──────────────────────────────────────────────
 
+  function isExportReady(currentId: string | null, loadedId: string | null) {
+    return Boolean(activeDocument && activeDocumentId &&
+      currentId === activeDocumentId && loadedId === activeDocumentId);
+  }
+  function captureExport() {
+    const ready = () => isExportReady(activeDocumentIdRef.current, baselineRef.current?.documentId ?? null);
+    if (!ready()) return null;
+    // A normal save advances the persisted baseline without replacing the
+    // adopted form. Only a new load/reset should revoke a pending export.
+    const adoption = formAdoptionRef.current;
+    const userId = session?.user.id ?? null;
+    const ownsOwner = userId ? captureEncryptionPasswordOwner(userId) : () => true;
+    return () => ready() && formAdoptionRef.current === adoption &&
+      actorRef.current === userId && clientRef.current === supabase && ownsOwner();
+  }
   function getCurrentCvData() {
     const parsed = cvSchema.safeParse(form.getValues());
     if (!parsed.success) {
@@ -439,6 +463,7 @@ export function useCvBuilder() {
     isDirty,
     saving: persistence.saving,
     exportingFormat: cvExport.exportingFormat,
+    exportReady: isExportReady(activeDocumentId, loadedDocumentId),
     libraryCollapsed,
     session,
     supabase,

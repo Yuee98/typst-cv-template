@@ -140,4 +140,6 @@ See [web development](web/README.md) and the [database contract](docs/database-c
 
 The test Supabase project watches `main`; production watches `release`. Verify the separate database mapping for Vercel Preview/Production and Pages. `Promote Release` advances production manually. Follow the [rebuild runbook](docs/database-rebuild-runbook.md) for the one-time switch.
 
-This rebuild is being implemented on a local development branch. Test/prod have not been reset or deployed. The new migration chain must not be applied directly over the old history; hosted cutover requires separate authorization and the runbook.
+Manage Vercel function regions in the project's Settings, near its Supabase database; see the [region deployment guide](web/README.md#vercel-function-region). Repository configuration does not override that setting. Changing it affects new deployments, without moving existing deployments or redeploying Production.
+
+The test rebuild and its acceptance are recorded in the [test execution record](docs/database-rebuild-test-execution.md) and [test acceptance record](docs/test-environment-acceptance.md). Production cutover requires separate authorization. The new migration chain must not be applied directly over the old history; follow the runbook for any future hosted cutover.

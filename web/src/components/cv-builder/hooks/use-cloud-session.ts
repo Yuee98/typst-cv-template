@@ -1,7 +1,8 @@
 import { requireAppContext } from "@/lib/supabase/app-context";
 import type { Session } from "@supabase/supabase-js";
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { clearUserEncryptionPasswords } from "@/lib/cv/encryption-storage";
 export type CloudStatus = "idle" | "loading" | "ready" | "error";
 function readAuthRedirectError() {
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
@@ -19,6 +20,7 @@ export function useCloudSession({
   const [session, setSession] = useState<Session | null>(null);
   const [sessionInitialized, setSessionInitialized] = useState(() => !supabase);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("idle");
+  const currentUserId = useRef<string | null>(null);
   useEffect(() => {
     if (!supabase) {
       return;
@@ -26,7 +28,20 @@ export function useCloudSession({
     const client = supabase;
     let cancelled = false;
     let authRevision = 0;
-    let currentUserId: string | null = null;
+    function adoptSession(nextSession: Session | null) {
+      const nextUserId = nextSession?.user.id ?? null;
+      if (currentUserId.current !== nextUserId) {
+        if (currentUserId.current) {
+          // Each tab owns its sessionStorage. Peer-tab sign-out and direct
+          // account switches must revoke this tab's passwords synchronously.
+          clearUserEncryptionPasswords(currentUserId.current);
+        }
+        setCloudStatus("idle");
+      }
+      currentUserId.current = nextUserId;
+      setSessionInitialized(true);
+      setSession(nextSession);
+    }
     async function loadInitialSession() {
       const redirectError = readAuthRedirectError();
       if (redirectError) {
@@ -50,15 +65,14 @@ export function useCloudSession({
       try {
         if (data.session) await requireAppContext(client);
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && authRevision === startingRevision) {
           setCloudStatus("error");
           onError(error instanceof Error ? error.message : "Database unavailable");
         }
         return;
       }
       if (cancelled || authRevision !== startingRevision) return;
-      currentUserId = data.session?.user.id ?? null;
-      setSession(data.session);
+      adoptSession(data.session);
     }
     void loadInitialSession();
     const {
@@ -66,14 +80,9 @@ export function useCloudSession({
         subscription
       }
     } = client.auth.onAuthStateChange((_event, nextSession) => {
+      if (cancelled) return;
       authRevision += 1;
-      const nextUserId = nextSession?.user.id ?? null;
-      if (currentUserId !== nextUserId) {
-        setCloudStatus("idle");
-      }
-      currentUserId = nextUserId;
-      setSessionInitialized(true);
-      setSession(nextSession);
+      adoptSession(nextSession);
     });
     return () => {
       cancelled = true;

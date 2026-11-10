@@ -6,15 +6,17 @@ import { NextIntlClientProvider } from "next-intl";
 import { useForm } from "react-hook-form";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useCvAuthActions } from "@/components/cv-builder/hooks/use-cv-auth-actions";
-import { cloneCvData } from "@/lib/cv/cv-utils";
+import { cloneCvData, createEmptyCvData, summarizeLocalDocument } from "@/lib/cv/cv-utils";
 import { clearEncryptionPasswords } from "@/lib/cv/encryption-storage";
+import { cloudCacheScope } from "@/lib/supabase/app-context";
 import { sampleCvDataEn } from "@/lib/cv/sample-data";
 import type { CvData } from "@/lib/cv/schema";
-import type { CvDocumentSummary } from "@/lib/cv/storage";
+import { createLocalCvDocument, loadCvDocument, type CvDocumentSummary } from "@/lib/cv/storage";
 import messages from "../../../../messages/en.json";
-vi.mock("@/lib/cv/encryption-storage", () => ({
-  clearEncryptionPasswords: vi.fn()
-}));
+vi.mock("@/lib/cv/encryption-storage", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/lib/cv/encryption-storage")>();
+  return { ...actual, clearEncryptionPasswords: vi.fn(actual.clearEncryptionPasswords) };
+});
 afterEach(() => {
   cleanup();
 });
@@ -96,13 +98,14 @@ function renderAuthActions({
   const closeEncryptionModal = vi.fn();
   const loadDataIntoForm = vi.fn();
   const setOrderedDocuments = vi.fn();
-  const result = renderHook(() => {
+  const result = renderHook(({ selectedDocument }) => {
     const form = useForm<CvData>({
       defaultValues: cloneCvData(sampleCvDataEn)
     });
+    loadDataIntoForm.mockImplementation((_id: string, data: CvData) => form.reset(data));
     return {
       actions: useCvAuthActions({
-        activeDocument,
+        activeDocument: selectedDocument,
         authModal,
         closeEncryptionModal,
         documents,
@@ -115,6 +118,7 @@ function renderAuthActions({
       form
     };
   }, {
+    initialProps: { selectedDocument: activeDocument },
     wrapper: ({
       children
     }) => <NextIntlClientProvider locale="en" messages={messages}>
@@ -127,6 +131,7 @@ function renderAuthActions({
     closeEncryptionModal,
     loadDataIntoForm,
     result: result.result,
+    selectDocument: (selectedDocument: CvDocumentSummary) => result.rerender({ selectedDocument }),
     setOrderedDocuments,
     supabase
   };
@@ -259,5 +264,109 @@ describe("useCvAuthActions OAuth and sign-out boundaries", () => {
       title: "cloud-1 title"
     })]);
     expect(h.loadDataIntoForm).toHaveBeenCalledWith(expect.any(String), edited);
+  });
+  it.each([false, true])("does not persist decrypted content or its title on encrypted sign-out (existing local: %s)", async existingLocal => {
+    const localData = createEmptyCvData("en");
+    localData.header.name = "Existing local name";
+    const local = existingLocal ? createLocalCvDocument(localData, "Existing local CV") : null;
+    const encrypted = { ...summary("cv_ENCRYPTED001", "encrypted"), title: "PRIVATE_ENCRYPTED_TITLE" };
+    const plainCloud = summary("cv_PLAINCLOUD01", "cloud");
+    const h = renderAuthActions({
+      activeDocument: encrypted,
+      documents: [encrypted, plainCloud, ...(local ? [summarizeLocalDocument(local)] : [])],
+      sessionValue: session
+    });
+    const decrypted = cloneCvData(sampleCvDataEn);
+    decrypted.header.name = "PRIVATE_DECRYPTED_NAME";
+    decrypted.header.subtitle = "PRIVATE_UNSAVED_EDIT";
+    act(() => h.result.current.form.reset(decrypted));
+    const passwordKey = `typst-cv-builder:encryption:${cloudCacheScope()}:user-1:${encrypted.id}`;
+    window.sessionStorage.setItem(passwordKey, "wrapped-test-password");
+    window.localStorage.setItem(passwordKey, "wrapped-test-password");
+
+    await act(async () => h.result.current.actions.signOut());
+
+    expect(window.sessionStorage.getItem(passwordKey)).toBeNull();
+    expect(window.localStorage.getItem(passwordKey)).toBeNull();
+    expect(h.closeEncryptionModal).toHaveBeenCalledTimes(1);
+    const storedValues = [window.localStorage, window.sessionStorage].flatMap(storage => Array.from({ length: storage.length }, (_, index) => storage.getItem(storage.key(index)!))).join("\n");
+    for (const privateValue of [decrypted.header.name, decrypted.header.subtitle, encrypted.title]) {
+      expect(storedValues).not.toContain(privateValue);
+    }
+    const nextDocuments = h.setOrderedDocuments.mock.calls[0][0] as CvDocumentSummary[];
+    expect(nextDocuments).toHaveLength(1);
+    expect(nextDocuments[0].storageKind).toBe("local");
+    expect(nextDocuments[0].title).toBe(local?.title ?? messages.CvDocumentActions.emptyTitle);
+    const selectedId = nextDocuments[0].id;
+    if (local) expect(selectedId).toBe(local.id);
+    const selectedDocument = loadCvDocument(selectedId);
+    expect(selectedDocument?.data).toEqual(local?.data ?? createEmptyCvData("en"));
+    expect(h.loadDataIntoForm).toHaveBeenCalledWith(selectedId, selectedDocument?.data);
+    expect(h.result.current.form.getValues()).toEqual(selectedDocument?.data);
+  });
+  it("keeps an active local document and its unsaved edits on sign-out", async () => {
+    const local = createLocalCvDocument(createEmptyCvData("en"), "My local CV");
+    const h = renderAuthActions({
+      activeDocument: summarizeLocalDocument(local),
+      documents: [summary("cloud-1", "cloud"), summarizeLocalDocument(local)],
+      sessionValue: session
+    });
+    const unsaved = cloneCvData(local.data);
+    unsaved.header.name = "Unsaved local name";
+    act(() => h.result.current.form.reset(unsaved));
+    await act(async () => h.result.current.actions.signOut());
+    expect(h.setOrderedDocuments).toHaveBeenCalledWith([summarizeLocalDocument(local)]);
+    expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+    expect(h.result.current.form.getValues()).toEqual(unsaved);
+    expect(loadCvDocument(local.id)?.data).toEqual(local.data);
+  });
+  it.each([false, true])("binds a pending plain-cloud sign-out fallback to its starting form (auth fails: %s)", async authFails => {
+    const cloud = summary("cloud-1", "cloud");
+    const encrypted = { ...summary("cv_ENCRYPTED001", "encrypted"), title: "LATE_ENCRYPTED_TITLE" };
+    const h = renderAuthActions({
+      activeDocument: cloud,
+      documents: [cloud, encrypted],
+      sessionValue: session
+    });
+    const original = cloneCvData(sampleCvDataEn);
+    original.header.name = "Unsaved plain-cloud name";
+    act(() => h.result.current.form.reset(original));
+    let resolveSignOut!: (result: { error: Error | null }) => void;
+    h.auth.signOut.mockReturnValueOnce(new Promise(resolve => { resolveSignOut = resolve; }));
+    const passwordKey = `typst-cv-builder:encryption:${cloudCacheScope()}:user-1:${encrypted.id}`;
+    window.sessionStorage.setItem(passwordKey, "wrapped-test-password");
+    window.localStorage.setItem(passwordKey, "wrapped-test-password");
+    const storageBefore = JSON.stringify([window.localStorage, window.sessionStorage]);
+    let pending!: Promise<void>;
+    act(() => { pending = h.result.current.actions.signOut(); });
+    expect(JSON.stringify([window.localStorage, window.sessionStorage])).toBe(storageBefore);
+    const decrypted = cloneCvData(sampleCvDataEn);
+    decrypted.header.name = "LATE_DECRYPTED_NAME";
+    decrypted.header.subtitle = "LATE_DECRYPTED_UNSAVED_EDIT";
+    act(() => {
+      h.selectDocument(encrypted);
+      h.result.current.form.reset(decrypted);
+    });
+    await act(async () => {
+      resolveSignOut({ error: authFails ? new Error("sign-out failed") : null });
+      await pending;
+    });
+    if (authFails) {
+      expect(h.authModal.setError).toHaveBeenCalledWith("sign-out failed");
+      expect(JSON.stringify([window.localStorage, window.sessionStorage])).toBe(storageBefore);
+      expect(h.setOrderedDocuments).not.toHaveBeenCalled();
+      expect(h.loadDataIntoForm).not.toHaveBeenCalled();
+      expect(h.result.current.form.getValues()).toEqual(decrypted);
+      expect(clearEncryptionPasswords).not.toHaveBeenCalled();
+      return;
+    }
+    const storedValues = [window.localStorage, window.sessionStorage].flatMap(storage => Array.from({ length: storage.length }, (_, index) => storage.getItem(storage.key(index)!))).join("\n");
+    for (const value of [decrypted.header.name, decrypted.header.subtitle, encrypted.title]) expect(storedValues).not.toContain(value);
+    const selected = (h.setOrderedDocuments.mock.calls[0][0] as CvDocumentSummary[])[0];
+    expect(loadCvDocument(selected.id)?.data).toEqual(original);
+    expect(selected.title).toBe(cloud.title);
+    expect(h.result.current.form.getValues()).toEqual(original);
+    expect(window.sessionStorage.getItem(passwordKey)).toBeNull();
+    expect(window.localStorage.getItem(passwordKey)).toBeNull();
   });
 });

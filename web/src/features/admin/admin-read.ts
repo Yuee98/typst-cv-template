@@ -171,10 +171,16 @@ export function useAdminRead(client: SupabaseClient | null, project: string, act
           });
           return load(retried);
         }
-        queryClient.setQueryData(scopeKey(project, actor), {
+        // This validated owner/instance proof must outlive ordinary read GC.
+        // Auth and instance transitions still remove it through owner cleanup.
+        const retainedScope = queryClient.getQueryCache().build<Scope>(queryClient, {
+          queryKey: scopeKey(project, actor),
+          gcTime: Infinity
+        });
+        retainedScope.setData({
           instanceId: result.context.database_instance_id,
           context: result.context
-        });
+        }, { manual: true });
         if (!before) {
           queryClient.setQueryData(adminReadKey(project, actor, result.context.database_instance_id, requested), result);
           queryClient.removeQueries({
