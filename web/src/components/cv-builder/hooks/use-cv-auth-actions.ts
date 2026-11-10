@@ -3,11 +3,11 @@ import type { UseFormReturn } from "react-hook-form";
 import { useLocale, useTranslations } from "next-intl";
 import type { AuthModalMode } from "@/components/cv-builder/modals/auth-modal";
 import type { Locale } from "@/i18n/routing";
-import { cloneCvData, summarizeLocalDocument, titleFromImportedData } from "@/lib/cv/cv-utils";
+import { cloneCvData, createEmptyCvData, summarizeLocalDocument, titleFromImportedData } from "@/lib/cv/cv-utils";
 import { clearEncryptionPasswords } from "@/lib/cv/encryption-storage";
 import { cvSchema, type CvData } from "@/lib/cv/schema";
 import { getSampleCvData } from "@/lib/cv/sample-data";
-import { createLocalCvDocument, type CvDocumentSummary } from "@/lib/cv/storage";
+import { createLocalCvDocument, loadCvDocument, type CvDocumentSummary } from "@/lib/cv/storage";
 type AuthActionsModal = {
   closeAfterAuth: () => void;
   email: string;
@@ -45,6 +45,7 @@ export function useCvAuthActions({
   const locale = useLocale() as Locale;
   const t = useTranslations("CvAuthActions");
   const tImportExport = useTranslations("ImportExport");
+  const tDocumentActions = useTranslations("CvDocumentActions");
   async function signIn() {
     if (!supabase) {
       authModal.setError(t("supabaseNotConfigured"));
@@ -125,6 +126,17 @@ export function useCvAuthActions({
     if (!supabase) {
       return;
     }
+    const localDocuments = documents.filter(document => document.storageKind === "local");
+    let plaintextFallback: { data: CvData; title: string } | null = null;
+    if (activeDocument?.storageKind !== "encrypted" && (activeDocument?.storageKind === "cloud" || localDocuments.length === 0)) {
+      // Freeze this document's fallback before auth awaits can allow another form to be adopted.
+      const parsed = cvSchema.safeParse(form.getValues());
+      const data = parsed.success ? parsed.data : cloneCvData(getSampleCvData(locale));
+      plaintextFallback = {
+        data,
+        title: activeDocument?.title ?? titleFromImportedData(data, tImportExport("importFallbackTitle"))
+      };
+    }
     const {
       error: signOutError
     } = await supabase.auth.signOut();
@@ -137,13 +149,16 @@ export function useCvAuthActions({
       clearEncryptionPasswords(window.localStorage, session.user.id);
     }
     closeEncryptionModal();
-    const localDocuments = documents.filter(document => document.storageKind === "local");
-    const activeIsCloudBacked = activeDocument?.storageKind === "cloud" || activeDocument?.storageKind === "encrypted";
-    if (activeIsCloudBacked || localDocuments.length === 0) {
-      const parsed = cvSchema.safeParse(form.getValues());
-      const fallbackData = parsed.success ? parsed.data : cloneCvData(getSampleCvData(locale));
-      const fallbackTitle = activeDocument?.title ?? titleFromImportedData(fallbackData, tImportExport("importFallbackTitle"));
-      const localDocument = createLocalCvDocument(fallbackData, fallbackTitle);
+    if (activeDocument?.storageKind === "encrypted") {
+      // Signing out must never turn decrypted content or its title into a plaintext local copy.
+      const existingLocal = localDocuments.map(document => loadCvDocument(document.id)).find(document => document !== null);
+      const fallback = existingLocal ?? createLocalCvDocument(createEmptyCvData(locale), tDocumentActions("emptyTitle"));
+      setOrderedDocuments(existingLocal ? localDocuments : [summarizeLocalDocument(fallback), ...localDocuments]);
+      loadDataIntoForm(fallback.id, fallback.data);
+      return;
+    }
+    if (plaintextFallback) {
+      const localDocument = createLocalCvDocument(plaintextFallback.data, plaintextFallback.title);
       setOrderedDocuments([summarizeLocalDocument(localDocument), ...localDocuments]);
       loadDataIntoForm(localDocument.id, localDocument.data);
     } else {
