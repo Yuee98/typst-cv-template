@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 function sandbox(applicationHooks: unknown = []) {
   const directory = mkdtempSync(join(tmpdir(), "cv-g3-startup-"));
   for (const path of ["scripts", "bin", "supabase/migrations", "tmp/cv-remote-rehearsal/supabase"]) mkdirSync(join(directory, path), { recursive: true });
-  for (const name of ["db-remote-rehearsal.ts", "db-common.ts", "db-safety.ts"]) copyFileSync(new URL(name, import.meta.url), join(directory, "scripts", name));
+  for (const name of ["db-remote-rehearsal.ts", "db-common.ts", "db-safety.ts", "db-test-revalidation.ts"]) copyFileSync(new URL(name, import.meta.url), join(directory, "scripts", name));
   writeFileSync(join(directory, "package.json"), '{"type":"module"}');
   writeFileSync(join(directory, "supabase/migrations/20261108000000_fixture.sql"), "begin;select 1;commit;");
   writeFileSync(join(directory, "supabase/baseline.json"), JSON.stringify(["20261108000000_fixture.sql"]));

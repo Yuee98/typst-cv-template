@@ -1,13 +1,13 @@
 /** Operator-local hosted checkpoints. No database, GitHub, credentials or network I/O. */
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { parseRebuildState, type RebuildState } from "./db-safety.ts";
 
 type Target = "test" | "prod";
 type Mode = "plan" | "rebuild" | "resume" | "verify";
-type Facts = Partial<RebuildState> & { old_source_sha?: string; reset_catalog_digest?: string; test_state_digest?: string; stage?: string; result?: "PASS" | "FAIL" };
-const fields = ["operation_id", "phase", "maintenance", "source_sha", "old_source_sha", "baseline_digest", "migration_manifest_digest", "instance", "history", "reset_method", "cleanup_sql_digest", "retired_inventory_digest", "reset_catalog_digest", "test_state_digest", "stage", "result"] as const;
+type Facts = Partial<RebuildState> & { old_source_sha?: string; reset_catalog_digest?: string; test_state_digest?: string; test_revalidation_digest?: string; stage?: string; result?: "PASS" | "FAIL" };
+const fields = ["operation_id", "phase", "maintenance", "source_sha", "old_source_sha", "baseline_digest", "migration_manifest_digest", "instance", "history", "reset_method", "cleanup_sql_digest", "retired_inventory_digest", "reset_catalog_digest", "test_state_digest", "test_revalidation_digest", "stage", "result"] as const;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function privateFile(path: string) {
   const stat = lstatSync(path);
@@ -21,10 +21,39 @@ function minimalState(value: unknown) {
   return Object.fromEntries(["operation_id", "target", "project", "source_sha", "baseline_digest", "migration_manifest_digest", "phase", "history", "instance", "intent_time", "maintenance", "reset_method", "cleanup_sql_digest", "retired_inventory_digest"].filter(key => state[key as keyof RebuildState] !== undefined).map(key => [key, state[key as keyof RebuildState]])) as RebuildState;
 }
 export function readPrivateCheckpoint(path: string) {
-  if (!isAbsolute(path)) throw new Error("Checkpoint path must be absolute");
-  privateFile(path);
-  const text = readFileSync(path, "utf8");
-  return { state: minimalState(JSON.parse(text)), digest: createHash("sha256").update(text).digest("hex") };
+  const file = readPrivateJson(path);
+  return { state: minimalState(file.value), digest: file.digest };
+}
+export function readPrivateBytes(path: string, maximumBytes = 32 * 1024 * 1024) {
+  if (!isAbsolute(path)) throw new Error("Private evidence path must be absolute");
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600 || stat.uid !== process.getuid?.() || stat.size > maximumBytes) throw new Error("Private evidence must be a bounded owned regular 0600 file without links");
+    const bytes = readFileSync(fd);
+    if (bytes.length > maximumBytes) throw new Error("Private evidence exceeds its size limit");
+    return { bytes, digest: createHash("sha256").update(bytes).digest("hex") };
+  } finally { closeSync(fd); }
+}
+export function readPrivateJson(path: string) {
+  const file = readPrivateBytes(path, 2 * 1024 * 1024);
+  return { value: JSON.parse(file.bytes.toString("utf8")) as unknown, digest: file.digest };
+}
+/** Publish a complete private artifact once. Never replace an earlier proof. */
+export function writePrivateJsonNew(path: string, value: unknown) {
+  if (!isAbsolute(path)) throw new Error("Private evidence output must be absolute");
+  const directory = dirname(path), stat = lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o700 || stat.uid !== process.getuid?.()) throw new Error("Evidence output directory must be owned 0700");
+  const temporary = join(directory, `.evidence-${randomUUID()}.tmp`);
+  try {
+    const fd = openSync(temporary, "wx", 0o600);
+    try { writeFileSync(fd, JSON.stringify(value, null, 2) + "\n"); fsyncSync(fd); }
+    finally { closeSync(fd); }
+    linkSync(temporary, path); // Atomic no-replace publication, even under a race.
+    unlinkSync(temporary);
+    const parent = openSync(directory, "r");
+    try { fsyncSync(parent); } finally { closeSync(parent); }
+  } finally { if (existsSync(temporary)) unlinkSync(temporary); }
 }
 export function openHostedState(options: { directory: string; target: Target; project: string; mode: Mode; sourceSha: string }) {
   if (!isAbsolute(options.directory) || !/^[a-z0-9]{20}$/.test(options.project) || !/^[0-9a-f]{40}$/.test(options.sourceSha) || !["test", "prod"].includes(options.target) || !["plan", "rebuild", "resume", "verify"].includes(options.mode)) throw new Error("An absolute private state directory and exact project ref are required");
