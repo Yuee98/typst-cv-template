@@ -37,6 +37,10 @@ function github(path: string, projection: string) {
   if (result.error || result.status !== 0) throw new Error("CI origin lookup failed; captured output is withheld");
   return JSON.parse(result.stdout);
 }
+function requireReadOnlyObservation(value: unknown) {
+  const server = value as Record<string, unknown> | null;
+  if (!server || server.transaction_read_only !== "on" || server.statement_timeout !== "20s" || server.lock_timeout !== "3s") throw new Error("Actual read-only transaction and timeout observations are required");
+}
 function verifySupportingEvidence(directory: string, sourceSha: string, project: string, state: RebuildState, manifest: ManifestBinding, cleanup: CleanupBinding, files: { ci: string; rehearsal: string; application: string }, online: boolean) {
   const refs = { ci: reference(directory, files.ci), rehearsal: reference(directory, files.rehearsal), application: reference(directory, files.application) };
   const ci = parseCIInput(readPrivateJson(files.ci).value, sourceSha);
@@ -68,6 +72,7 @@ export function loadTestRevalidation(path: string, state: RebuildState, accepted
   }, false);
   const verification = readPrivateJson(referred(directory, proof.evidence.verification)).value as Record<string, unknown>;
   if (verification.source_sha !== sourceSha || verification.project !== project || verification.read_only !== true) throw new Error("Verification report source/target mismatch");
+  requireReadOnlyObservation(verification.server);
   requireVerifiedTestCatalog(verification.catalog, state, manifest);
   const archivedCI = validateCIOrigin(supported.ci, proof.ci.web_run, proof.ci.database_run, proof.ci.artifact);
   if (archivedCI.archive_sha256 !== proof.ci.archive_sha256 || supported.app.deployment_id !== proof.application_deployment_id) throw new Error("Detached CI/application binding changed");
@@ -102,8 +107,9 @@ export function main() {
     stage = "ci_origin";
     const verified = verifySupportingEvidence(directory, sourceSha, project, accepted.state, manifest, cleanup, files, true);
     stage = "read_only_catalog";
-    const server = jsonQueryReadOnly("select jsonb_build_object('server_version_num',current_setting('server_version_num'),'database',current_database(),'current_user',current_user);", false);
+    const server = jsonQueryReadOnly("select jsonb_build_object('server_version_num',current_setting('server_version_num'),'database',current_database(),'current_user',current_user,'transaction_read_only',current_setting('transaction_read_only'),'default_transaction_read_only',current_setting('default_transaction_read_only'),'statement_timeout',current_setting('statement_timeout'),'lock_timeout',current_setting('lock_timeout'));", false);
     validateDatabaseServer(server);
+    requireReadOnlyObservation(server);
     const catalog = checkContract(false, jsonQueryReadOnly);
     requireVerifiedTestCatalog(catalog, accepted.state, manifest);
     const runtime = jsonQueryReadOnly("select jsonb_build_object('enabled',enabled,'audience',audience,'revision',revision::text,'user_daily_limit',user_daily_limit::text,'global_daily_limit',global_daily_limit::text,'user_minute_limit',user_minute_limit::text) from ai.runtime_control where id=1;", false);
