@@ -14,6 +14,11 @@ import { currentCleanup, loadTestRevalidation } from "./db-test-revalidate.ts";
 const source = "b".repeat(40), original = "a".repeat(40), project = "c".repeat(20), instance = "00000000-0000-4000-8000-000000000071";
 const manifest = migrationManifest(), cleanup = currentCleanup();
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+const readOnlyPrefix = "BEGIN READ ONLY;\nSET LOCAL statement_timeout = '20s';\nSET LOCAL lock_timeout = '3s';\n";
+const readOnlySuffix = "\nCOMMIT;\n";
+function readOnlyBody(sql: string) {
+  return sql.startsWith(readOnlyPrefix) && sql.endsWith(readOnlySuffix) ? sql.slice(readOnlyPrefix.length, -readOnlySuffix.length) : "";
+}
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "cv-revalidation-entry-")), bin = join(directory, "bin"), log = join(directory, "calls.jsonl");
   mkdirSync(bin);
@@ -33,7 +38,7 @@ function fixture() {
   writeFileSync(guard, `import cp from 'node:child_process'; import {syncBuiltinESMExports} from 'node:module'; const spawn=cp.spawnSync; cp.spawnSync=(command,...args)=>{if(!['git','gh','psql','unzip'].includes(command))throw new Error('Unstubbed command refused'); return spawn(command,...args)}; syncBuiltinESMExports();`);
   const stub = `#!${process.execPath}
 import {appendFileSync,readFileSync} from 'node:fs'; import {basename} from 'node:path';
-const tool=basename(process.argv[1]),args=process.argv.slice(2),sql=tool==='psql'?readFileSync(0,'utf8'):'';
+const tool=basename(process.argv[1]),args=process.argv.slice(2);let sql=tool==='psql'?readFileSync(0,'utf8'):'';
 appendFileSync(process.env.ENTRY_LOG,JSON.stringify({tool,args,sql,pgoptions:process.env.PGOPTIONS??null})+'\\n');
 if(tool==='git'){
  if(args.join(' ')==='rev-parse HEAD')console.log(process.env.ENTRY_SHA);
@@ -42,8 +47,9 @@ if(tool==='git'){
  const path=args[1]; const run={id:path.endsWith('/11')?11:12,head_sha:process.env.ENTRY_SHA,path:path.endsWith('/11')?'.github/workflows/ci.yml':'.github/workflows/db-tests.yml',status:'completed',conclusion:'success',event:path.endsWith('/11')?'push':'workflow_dispatch',run_attempt:1};
  console.log(JSON.stringify(path.includes('/artifacts/')?{id:13,name:'database-rehearsal-evidence',expired:false,digest:'sha256:'+process.env.ENTRY_ZIP_DIGEST,workflow_run:{id:12,head_sha:process.env.ENTRY_SHA}}:run));
 }else{
- if(!/^select\\s/i.test(sql)||!process.env.ENTRY_PROD&&!process.env.PGOPTIONS?.includes('default_transaction_read_only=on'))process.exit(83);
- if(sql.includes("'server_version_num'"))console.log(JSON.stringify({server_version_num:'170006',database:'postgres',current_user:'postgres'}));
+ if(!process.env.ENTRY_PROD){const prefix=${JSON.stringify(readOnlyPrefix)},suffix=${JSON.stringify(readOnlySuffix)};if(!sql.startsWith(prefix)||!sql.endsWith(suffix)||!args.includes('-q'))process.exit(83);sql=sql.slice(prefix.length,-suffix.length);}
+ if(!/^select\\s/i.test(sql))process.exit(83);
+ if(sql.includes("'server_version_num'")){const observed={server_version_num:'170006',database:'postgres',current_user:'postgres',transaction_read_only:process.env.ENTRY_CASE==='readonly-off'?'off':'on',default_transaction_read_only:'off',statement_timeout:process.env.ENTRY_CASE==='readonly-timeout'?'2min':'20s',lock_timeout:'3s'};if(process.env.ENTRY_CASE==='readonly-missing')delete observed.transaction_read_only;console.log(JSON.stringify(observed));}
  else if(process.env.ENTRY_PROD&&sql.includes("'application_tables'"))console.log(JSON.stringify({application_tables:0,environment_relation:false,instance_id:null}));
  else if(process.env.ENTRY_PROD&&sql.includes('jsonb_agg(version order by version)'))console.log('[]');
  else if(process.env.ENTRY_PROD&&sql.includes("'public_tables'"))console.log(JSON.stringify({public_tables:[],public_functions:[],application_objects:[]}));
@@ -103,13 +109,15 @@ test("explicit read-only entry validates CI/G3 and live identity, preserving AI-
     const report = JSON.parse(readFileSync(join(f.directory, proof.evidence.verification.path), "utf8"));
     assert.equal(report.runtime.enabled, true);
     assert.equal(report.runtime.revision, "36");
+    assert.equal(report.server.transaction_read_only, "on");
+    assert.equal(report.server.default_transaction_read_only, "off", "The effective transaction, not the server default, supplies the guarantee");
     const archived = loadTestRevalidation(f.output, f.state, hash(f.originalBytes), source, project, manifest, cleanup, hash(readFileSync(f.rehearsalPath)));
     assert.equal(archived.proof.source_sha, source, "Archived evidence loads offline without gh or a database connection");
     assert.deepEqual(readFileSync(f.statePath), f.originalBytes);
     assert.equal(calls.filter(call => call.tool === "gh").length, 3);
     const queries = calls.filter(call => call.tool === "psql");
     assert.equal(queries.length, 3);
-    assert(queries.every(call => /^select\s/i.test(call.sql) && call.pgoptions?.includes("default_transaction_read_only=on") && !/\b(?:initialize|register_jobs|alter_job)\s*\(/i.test(call.sql)));
+    assert(queries.every(call => /^select\s/i.test(readOnlyBody(call.sql)) && call.args.includes("-q") && call.pgoptions === null && !/\b(?:initialize|register_jobs|alter_job)\s*\(/i.test(call.sql)));
   } finally { f.dispose(); }
 });
 
@@ -134,8 +142,40 @@ test("wrong live instance fails without publishing a proof, writing a checkpoint
     assert.equal(result.status, 1);
     assert.match(result.stderr, /read_only_catalog/);
     assert.equal(existsSync(f.output), false);
-    assert(calls.filter(call => call.tool === "psql").every(call => /^select\s/i.test(call.sql)));
+    assert(calls.filter(call => call.tool === "psql").every(call => /^select\s/i.test(readOnlyBody(call.sql))));
   } finally { f.dispose(); }
+});
+
+test("entry refuses missing/off effective read-only state or wrong timeouts before any catalog query", () => {
+  for (const observation of ["readonly-off", "readonly-missing", "readonly-timeout"]) {
+    const f = fixture();
+    try {
+      const { result, calls } = f.execute(true, observation);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /read_only_catalog/);
+      assert.equal(existsSync(f.output), false);
+      const queries = calls.filter(call => call.tool === "psql");
+      assert.equal(queries.length, 1);
+      assert(queries[0].sql.includes("'transaction_read_only'"));
+      assert.equal(queries.some(call => call.sql.includes("'tables'")), false);
+    } finally { f.dispose(); }
+  }
+});
+
+test("offline consumer rejects a read_only claim with missing or off observed server state", () => {
+  for (const server of [undefined, { transaction_read_only: "off", statement_timeout: "20s", lock_timeout: "3s" }]) {
+    const f = fixture();
+    try {
+      assert.equal(f.execute(true).result.status, 0);
+      const proof = JSON.parse(readFileSync(f.output, "utf8"));
+      const reportPath = join(f.directory, proof.evidence.verification.path), report = JSON.parse(readFileSync(reportPath, "utf8"));
+      report.server = server;
+      writeFileSync(reportPath, JSON.stringify(report));
+      proof.evidence.verification.sha256 = hash(readFileSync(reportPath));
+      writeFileSync(f.output, JSON.stringify(proof));
+      assert.throws(() => loadTestRevalidation(f.output, f.state, hash(f.originalBytes), source, project, manifest, cleanup, hash(readFileSync(f.rehearsalPath))), /Actual read-only transaction/);
+    } finally { f.dispose(); }
+  }
 });
 
 test("a changed application evidence file and mismatched CI ZIP are rejected before any hosted query", () => {
